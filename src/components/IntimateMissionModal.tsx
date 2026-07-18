@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Lock, Fingerprint, FileText, Download, CheckCircle, HelpCircle, Edit3, Trash2, Loader2, UploadCloud } from 'lucide-react';
+import { X, Lock, Fingerprint, FileText, Download, CheckCircle, HelpCircle, Edit3, Trash2, Loader2, UploadCloud, Mic, MicOff } from 'lucide-react';
 import { INTIMATE_QUESTIONS, IntimateQuestion } from '../App';
 
 interface IntimateMissionModalProps {
@@ -21,6 +21,154 @@ export function IntimateMissionModal({ isOpen, onClose, intimateAnswers, onUpdat
   const [analysisStatus, setAnalysisStatus] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // New States for Text reference and Voice input
+  const [showTextInputArea, setShowTextInputArea] = useState(false);
+  const [referenceText, setReferenceText] = useState("");
+  const [dictatingQuestionId, setDictatingQuestionId] = useState<number | null>(null);
+  const recognitionInstanceRef = useRef<any>(null);
+
+  const startVoiceDictation = (qId: number) => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Seu navegador não oferece suporte nativo para Reconhecimento de Voz. Experimente usar o Chrome ou Edge!");
+      return;
+    }
+
+    if (dictatingQuestionId === qId) {
+      stopVoiceDictation();
+      return;
+    }
+
+    if (recognitionInstanceRef.current) {
+      try {
+        recognitionInstanceRef.current.stop();
+      } catch (e) {}
+    }
+
+    try {
+      const rec = new SpeechRecognition();
+      rec.lang = 'pt-BR';
+      rec.continuous = false;
+      rec.interimResults = true;
+
+      rec.onstart = () => {
+        setDictatingQuestionId(qId);
+      };
+
+      rec.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        const inputEl = document.getElementById(`dossier-input-${qId}`) as HTMLInputElement;
+        if (inputEl) {
+          inputEl.value = transcript;
+        }
+      };
+
+      rec.onerror = (event: any) => {
+        console.error("Erro no reconhecimento de voz do dossiê:", event.error);
+        if (event.error === 'not-allowed') {
+          alert("Permissão de acesso ao microfone negada. Ative o acesso nas configurações do seu navegador para usar a voz.");
+        }
+      };
+
+      rec.onend = () => {
+        setDictatingQuestionId(null);
+      };
+
+      recognitionInstanceRef.current = rec;
+      rec.start();
+    } catch (err) {
+      console.error("Falha ao iniciar gravador de voz:", err);
+    }
+  };
+
+  const stopVoiceDictation = () => {
+    if (recognitionInstanceRef.current) {
+      try {
+        recognitionInstanceRef.current.stop();
+      } catch (e) {}
+    }
+    setDictatingQuestionId(null);
+  };
+
+  const handleAnalyzeTextReference = async () => {
+    if (!referenceText.trim()) return;
+    setIsAnalyzing(true);
+    setAnalysisError(null);
+    setAnalysisStatus("Lendo referências bibliográficas...");
+    
+    try {
+      // Base64 encode the string safely supporting utf-8
+      const utf8Bytes = new TextEncoder().encode(referenceText);
+      let binary = "";
+      const len = utf8Bytes.byteLength;
+      for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(utf8Bytes[i]);
+      }
+      const base64 = window.btoa(binary);
+      
+      setAnalysisStatus("Mapeando respostas com o Cérebro OSONE...");
+      
+      const response = await fetch('/api/dossier/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileData: base64,
+          mimeType: "text/plain",
+          questions: INTIMATE_QUESTIONS,
+          currentAnswers: intimateAnswers
+        })
+      });
+      
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || "Falha na análise automatizada do dossiê.");
+      }
+      
+      setAnalysisStatus("Inserindo sinapses...");
+      const data = await response.json();
+      
+      if (data.status === "success" && data.answers) {
+        const returnedAnswers = data.answers;
+        const formattedNewAnswers: { [id: number]: string } = {};
+        let filledCount = 0;
+        
+        Object.entries(returnedAnswers).forEach(([key, val]) => {
+          const id = Number(key);
+          const valStr = String(val).trim();
+          
+          if (!isNaN(id) && id >= 1 && id <= 55 && valStr) {
+            if (!intimateAnswers[id] || intimateAnswers[id].trim() === "") {
+              formattedNewAnswers[id] = valStr;
+              filledCount++;
+            }
+          }
+        });
+        
+        if (filledCount > 0) {
+          if (onUpdateBulkAnswers) {
+            onUpdateBulkAnswers(formattedNewAnswers);
+          } else {
+            Object.entries(formattedNewAnswers).forEach(([id, val]) => {
+              onUpdateAnswer(Number(id), val);
+            });
+          }
+          alert(`🧬 Mapeamento com sucesso! ${filledCount} novas respostas preenchidas a partir do texto!`);
+          setShowTextInputArea(false);
+          setReferenceText("");
+        } else {
+          alert(`📄 Texto analisado! Todas as informações extraídas já estavam preenchidas no seu Dossiê.`);
+        }
+      } else {
+        throw new Error("Formato inválido de resposta do servidor neural.");
+      }
+    } catch (err: any) {
+      console.error(err);
+      setAnalysisError(err.message || "Houve uma anomalia ao analisar o texto.");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
 
   const answeredCount = Object.keys(intimateAnswers).filter(id => intimateAnswers[Number(id)]?.trim() !== '').length;
   const totalCount = INTIMATE_QUESTIONS.length;
@@ -250,6 +398,20 @@ export function IntimateMissionModal({ isOpen, onClose, intimateAnswers, onUpdat
             </div>
 
             <div className="w-full md:w-auto shrink-0 flex flex-wrap items-center justify-end gap-2">
+              {/* Text Reference Toggle Button */}
+              <button
+                id="btn-paste-text-reference"
+                onClick={() => setShowTextInputArea(!showTextInputArea)}
+                className={`flex items-center gap-1.5 p-1.5 px-3 rounded-full border transition-all text-zinc-300 hover:text-white font-bold font-mono text-[10px] uppercase tracking-widest cursor-pointer ${
+                  showTextInputArea
+                    ? "bg-rose-500/15 border-rose-500/40 text-rose-300"
+                    : "bg-zinc-950/40 border-white/5 hover:border-white/15"
+                }`}
+              >
+                <FileText size={12} className="text-rose-400" />
+                <span>Colar Texto</span>
+              </button>
+
               {/* Usar Dossiê de referência - Sleek, Compact Pill */}
               <div 
                 className={`relative flex items-center gap-1.5 p-1.5 px-3 rounded-full border transition-all ${
@@ -305,6 +467,64 @@ export function IntimateMissionModal({ isOpen, onClose, intimateAnswers, onUpdat
               </button>
             </div>
           </div>
+
+          {/* Expandable Text Reference Input */}
+          <AnimatePresence>
+            {showTextInputArea && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden bg-rose-950/10 border-b border-rose-500/15"
+              >
+                <div className="p-4 flex flex-col gap-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
+                      <span className="text-xs font-mono font-bold uppercase tracking-wider text-rose-400">Inserir Texto de Referência</span>
+                    </div>
+                    <button 
+                      onClick={() => setShowTextInputArea(false)}
+                      className="text-[10px] font-mono text-zinc-400 hover:text-white uppercase"
+                    >
+                      [Fechar]
+                    </button>
+                  </div>
+                  <textarea
+                    value={referenceText}
+                    onChange={(e) => setReferenceText(e.target.value)}
+                    placeholder="Cole ou escreva aqui qualquer texto de referência sobre você (ex: uma breve biografia, perfil profissional, fatos que deseja registrar, anotações de conversa, etc.). A IA do OSONE fará uma varredura profunda no texto para mapear e preencher automaticamente as perguntas pendentes do seu Dossiê de Memória!"
+                    className="w-full h-32 bg-zinc-950/80 border border-white/10 rounded-xl p-3 text-xs text-white placeholder:text-zinc-500 focus:outline-none focus:border-rose-500/30 font-sans resize-none"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button
+                      onClick={() => setReferenceText("")}
+                      className="px-3.5 py-1.5 text-[10px] font-mono uppercase border border-white/5 hover:border-white/10 rounded-lg text-zinc-400 hover:text-white transition-colors"
+                    >
+                      Limpar
+                    </button>
+                    <button
+                      onClick={handleAnalyzeTextReference}
+                      disabled={isAnalyzing || !referenceText.trim()}
+                      className="px-4 py-1.5 text-[10px] font-mono uppercase bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-lg transition-colors flex items-center gap-1.5 font-bold shadow-[0_0_15px_rgba(244,63,94,0.2)]"
+                    >
+                      {isAnalyzing ? (
+                        <>
+                          <Loader2 size={12} className="animate-spin" />
+                          <span>Analisando...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Fingerprint size={12} />
+                          <span>🧬 Sincronizar Texto</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* Core interface content splitting */}
           <div className="flex-grow flex flex-col md:flex-row overflow-hidden min-h-0">
@@ -505,33 +725,53 @@ export function IntimateMissionModal({ isOpen, onClose, intimateAnswers, onUpdat
                                 </div>
                               ) : (
                                 <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2.5 w-full max-w-3xl">
-                                  <input 
-                                    type="text" 
-                                    placeholder="Escreva sua resposta para preencher esta lacuna..."
-                                    className="flex-1 bg-white/[0.02] hover:bg-white/[0.04] focus:bg-black/60 border border-white/5 focus:border-rose-400/30 rounded-xl px-3.5 py-2 text-xs text-white placeholder:text-zinc-650 focus:outline-none transition-all"
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') {
-                                        const target = e.currentTarget;
-                                        if (target.value.trim()) {
-                                          onUpdateAnswer(q.id, target.value.trim());
-                                          target.value = '';
+                                  <div className="relative flex-1 flex items-center">
+                                    <input 
+                                      id={`dossier-input-${q.id}`}
+                                      type="text" 
+                                      placeholder={dictatingQuestionId === q.id ? "Escutando... Fale agora para preencher" : "Escreva sua resposta ou use o microfone..."}
+                                      className="w-full bg-white/[0.02] hover:bg-white/[0.04] focus:bg-black/60 border border-white/5 focus:border-rose-400/30 rounded-xl pl-3.5 pr-10 py-2 text-xs text-white placeholder:text-zinc-550 focus:outline-none transition-all"
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          const target = e.currentTarget;
+                                          if (target.value.trim()) {
+                                            onUpdateAnswer(q.id, target.value.trim());
+                                            target.value = '';
+                                            if (dictatingQuestionId === q.id) {
+                                              stopVoiceDictation();
+                                            }
+                                          }
                                         }
-                                      }
-                                    }}
-                                    onBlur={(e) => {
-                                      const val = e.currentTarget.value.trim();
-                                      if (val) {
-                                        onUpdateAnswer(q.id, val);
-                                        e.currentTarget.value = '';
-                                      }
-                                    }}
-                                  />
+                                      }}
+                                    />
+                                    <button
+                                      id={`dossier-voice-btn-${q.id}`}
+                                      type="button"
+                                      onClick={() => startVoiceDictation(q.id)}
+                                      className={`absolute right-2.5 p-1.5 rounded-lg transition-all ${
+                                        dictatingQuestionId === q.id 
+                                          ? "text-red-500 bg-red-500/10 animate-pulse border border-red-500/30" 
+                                          : "text-zinc-400 hover:text-rose-450 hover:bg-white/5"
+                                      }`}
+                                      title="Preencher por Voz"
+                                    >
+                                      {dictatingQuestionId === q.id ? (
+                                        <MicOff size={13} className="text-red-500 animate-pulse" />
+                                      ) : (
+                                        <Mic size={13} />
+                                      )}
+                                    </button>
+                                  </div>
                                   <button
-                                    onClick={(e) => {
-                                      const input = e.currentTarget.previousElementSibling as HTMLInputElement;
+                                    id={`dossier-save-btn-${q.id}`}
+                                    onClick={() => {
+                                      const input = document.getElementById(`dossier-input-${q.id}`) as HTMLInputElement;
                                       if (input && input.value.trim()) {
                                         onUpdateAnswer(q.id, input.value.trim());
                                         input.value = '';
+                                        if (dictatingQuestionId === q.id) {
+                                          stopVoiceDictation();
+                                        }
                                       }
                                     }}
                                     className="bg-zinc-800 hover:bg-zinc-700 hover:text-white text-zinc-300 text-[10px] font-mono uppercase tracking-wider px-3.5 py-2 rounded-xl border border-white/5 shrink-0 transition-colors cursor-pointer"
