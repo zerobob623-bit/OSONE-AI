@@ -1,0 +1,13 @@
+{
+  "name": "OSONE G5",
+  "description": "A HER-inspired operating system with voice interaction, virtual file system, PWA support, and AI integration.",
+  "requestFramePermissions": [
+    "microphone",
+    "display-capture",
+    "camera",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
