@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && node -e \"if (process.env.GEMINI_API_KEY) { require('fs').writeFileSync('.gemini-fallback-key.txt', process.env.GEMINI_API_KEY.trim()); console.log('Successfully saved fallback Gemini API Key for production parity.'); }\" && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist",

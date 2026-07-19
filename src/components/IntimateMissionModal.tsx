@@ -23,7 +23,7 @@ export function IntimateMissionModal({ isOpen, onClose, intimateAnswers, onUpdat
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // New States for Text reference and Voice input
-  const [showTextInputArea, setShowTextInputArea] = useState(false);
+  const [showTextInputArea, setShowTextInputArea] = useState(true);
   const [referenceText, setReferenceText] = useState("");
   const [dictatingQuestionId, setDictatingQuestionId] = useState<number | null>(null);
   const recognitionInstanceRef = useRef<any>(null);

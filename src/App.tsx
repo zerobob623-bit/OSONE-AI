@@ -92,7 +92,7 @@ import { KaraokePanel } from './components/KaraokePanel';
 import { WhatsAppIntegration } from './components/WhatsAppIntegration';
 import { OSONEMap } from './components/OSONEMap';
 import { TeacherWhiteboard } from './components/TeacherWhiteboard';
-import { OSONELens } from './components/OSONELens';
+
 import { OSONESentinel } from './components/OSONESentinel';
 import { SkeletonBrainPopup } from './components/SkeletonBrainPopup';
 import { SensusEvolutionPanel } from './components/SensusEvolutionPanel';
@@ -8363,6 +8363,11 @@ ${dossierSummary || '(Nenhum fato íntimo do dossiê mapeado ainda.)'}
         - Assim que o usuário clicar em aprovar, o sistema enviará uma aprovação automática e você deve imediatamente iniciar as modificações de programação e entregar o trabalho concluído de forma autónoma.
         - VINCULAÇÃO E SINCRONIZAÇÃO DE ARQUIVOS COM O COMPUTADOR (RAG): O usuário sincronizou seus arquivos e pastas locais através do canal neural RAG local. Compreenda que é APENAS E EXCLUSIVAMENTE através do sistema de arquivos de RAG (IndexedDB sincronizado) que você pode interagir, criar ou editar arquivos (via ferramentas 'create_file' e 'write_to_file'). Sempre que for criar ou editar um arquivo, chame essas ferramentas correspondentes. Ao fazer isso, o OSONE sincronizará automaticamente em tempo real com a máquina física e a aba de documentos do usuário!! DIRETRIZ CRÍTICA DE COMUNICAÇÃO: Você possui 100% de acesso às informações e arquivos compartilhados de RAG locais. NUNCA diga 'não tenho acesso', 'não posso acessar seu PC' ou 'preciso que você compartilhe novamente'. O canal já está ativo, integrado e pronto. Fale com total confiança e utilize os dados de RAG ou chame as ferramentas quando o usuário solicitar!
         
+        SINCRONIZAÇÃO DO DIÁLOGO DE VOZ COM O CHAT DE TEXTO E MEMÓRIA (MANDATÓRIO):
+        - Como você está conversando com o usuário exclusivamente por VOZ/LIVE, o chat de texto principal e o cérebro de texto não se atualizam sozinhos.
+        - Portanto, para que o cérebro de texto e o Dossiê saibam o que está sendo conversado, você DEVE, de forma transparente ou silenciosa, chamar a ferramenta 'write_to_chat_history' para registrar resumos dos turnos ou transcrições completas das falas relevantes (do usuário e de si mesma).
+        - Sempre que o usuário revelar alguma informação pessoal relevante, gosto, preferência ou fato íntimo pertencente às 55 perguntas do dossiê, chame IMEDIATAMENTE a ferramenta 'auto_register_memory' para gravar esse aprendizado permanentemente, ou chame 'register_user_profile_facts' se corresponder a um ID das perguntas!
+
         CONTEXTO:
         - Workspace: ${workspaceMode}
         - Canvas: ${canvasSummary}${healthContext}
@@ -8522,6 +8527,29 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       insight: { type: Type.STRING, description: "O novo aprendizado ou informação a ser persistida." }
                     },
                     required: ["insight"]
+                  }
+                },
+                {
+                  name: "write_to_chat_history",
+                  description: "Escreve e registra as mensagens ou turnos da conversa de voz em tempo real no chat de texto principal do OSONE, atualizando o histórico visível.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      role: { type: Type.STRING, enum: ["user", "assistant"], description: "O emissor da mensagem ('user' ou 'assistant')." },
+                      content: { type: Type.STRING, description: "O conteúdo de texto da fala ou resumo fiel do turno da conversa." }
+                    },
+                    required: ["role", "content"]
+                  }
+                },
+                {
+                  name: "auto_register_memory",
+                  description: "Grava fatos, aprendizados ou segredos íntimos revelados pelo usuário por voz diretamente na memória de longo prazo do OSONE.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      memory_text: { type: Type.STRING, description: "O fato ou memória que deve ser gravada de forma duradoura." }
+                    },
+                    required: ["memory_text"]
                   }
                 },
                 {
@@ -9411,6 +9439,45 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       id: call.id,
                       response: { result: "Insight registrado com sucesso." }
                     });
+                  } else if (call.name === "write_to_chat_history") {
+                    const role = (call.args as any).role || 'assistant';
+                    const content = (call.args as any).content;
+                    if (content) {
+                      addMessage({
+                        role: role as any,
+                        content: content
+                      });
+                      responses.push({
+                        name: call.name,
+                        id: call.id,
+                        response: { result: "Mensagem registrada no chat de texto principal do OSONE." }
+                      });
+                    } else {
+                      responses.push({
+                        name: call.name,
+                        id: call.id,
+                        response: { error: "O conteúdo da mensagem não pode ser vazio." }
+                      });
+                    }
+                  } else if (call.name === "auto_register_memory") {
+                    const memoryText = (call.args as any).memory_text;
+                    if (memoryText) {
+                      const prevMemory = longTermMemory || "";
+                      const newMemory = `${prevMemory}\n- ${new Date().toLocaleDateString()}: ${memoryText}`;
+                      setLongTermMemory(newMemory);
+                      addNotification("Memória de Longo Prazo Sincronizada via Voz", "success");
+                      responses.push({
+                        name: call.name,
+                        id: call.id,
+                        response: { result: "Memória gravada com sucesso." }
+                      });
+                    } else {
+                      responses.push({
+                        name: call.name,
+                        id: call.id,
+                        response: { error: "O texto de memória não pode ser vazio." }
+                      });
+                    }
                   } else if (call.name === "google_search") {
                     const query = call.args.query as string;
                     playSearchNetworkSound();
@@ -12269,19 +12336,7 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
                 />
               </div>
             </motion.div>
-          ) : workspaceMode === 'lens' ? (
-            <motion.div
-              key="workspace-lens"
-              initial={{ opacity: 0, scale: 0.985 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.985 }}
-              className="w-full flex-1 flex flex-col min-h-0"
-            >
-              <OSONELens 
-                onClose={() => setWorkspaceMode('home')} 
-                onAddNotification={addNotification}
-              />
-            </motion.div>
+
           ) : workspaceMode === 'sensus_evolution' ? (
             <motion.div
               key="workspace-sensus-evolution"
@@ -13240,27 +13295,6 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
                                 <h3 className="text-xs font-bold text-zinc-100 uppercase tracking-wide group-hover:text-her-accent transition-colors">Prosa Livre</h3>
                                 <p className="text-[10px] text-her-muted/60 leading-normal mt-1 font-light">
                                   Explore insights mentais e criatividade usando o assistente neural por texto ou pelo motor de voz.
-                                </p>
-                              </div>
-                            </motion.div>
-
-                            {/* OSONE LENS */}
-                            <motion.div
-                              onClick={() => setWorkspaceMode('lens')}
-                              whileHover={{ y: -2 }}
-                              className="group bg-purple-500/[0.02] hover:bg-purple-500/[0.05] border border-purple-500/10 hover:border-purple-500/30 p-5 rounded-3xl transition-all duration-300 text-left relative overflow-hidden cursor-pointer active:scale-[0.98] flex flex-col justify-between h-44"
-                            >
-                              <div className="absolute -top-12 -left-12 w-24 h-24 bg-purple-500/10 rounded-full blur-2xl pointer-events-none group-hover:bg-purple-500/15 transition-all" />
-                              <div className="flex items-center justify-between">
-                                <div className="w-8 h-8 rounded-full bg-purple-500/10 flex items-center justify-center text-purple-400 border border-purple-500/20">
-                                  <Eye size={15} />
-                                </div>
-                                <span className="text-[8px] font-mono text-purple-400 font-bold uppercase tracking-wider bg-purple-500/10 px-2 py-0.5 rounded-md border border-purple-500/15">Varredura Lens</span>
-                              </div>
-                              <div className="mt-4">
-                                <h3 className="text-xs font-bold text-zinc-100 uppercase tracking-wide group-hover:text-purple-300 transition-colors">Lente OSONE</h3>
-                                <p className="text-[10px] text-her-muted/60 leading-normal mt-1 font-light">
-                                  Identifique espécies, monumentos ou objetos com inteligência artificial, web grounding e voz.
                                 </p>
                               </div>
                             </motion.div>
