@@ -165,17 +165,6 @@ export const Sidebar = ({ isOpen, onClose, mode, setMode, user, onLogout, onLogi
                 </button>
 
                 <button 
-                  onClick={() => { setMode('lens'); onClose(); }}
-                  className={cn(
-                    "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm",
-                    mode === 'lens' ? "bg-cyan-500/10 text-cyan-400 border border-cyan-500/25 shadow-[0_0_15px_rgba(6,182,212,0.15)]" : "hover:bg-white/[0.02] text-her-ink/60"
-                  )}
-                >
-                  <Eye size={18} className="text-cyan-400" />
-                  <span>Lente OSONE (Lens)</span>
-                </button>
-
-                <button 
                   onClick={() => { setMode('sensus_evolution'); onClose(); }}
                   className={cn(
                     "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm",

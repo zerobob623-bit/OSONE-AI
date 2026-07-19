@@ -26,18 +26,10 @@ async function startServer() {
 
   const PORT = 3000;
 
-  // Safe helper to read the Gemini API key from environment or fallback saved file (.gemini-fallback-key.txt)
+  // Safe helper to read the Gemini API key from environment
   const getSecretGeminiKey = (): string => {
     if (process.env.GEMINI_API_KEY) {
       return process.env.GEMINI_API_KEY;
-    }
-    try {
-      const keyPath = path.join(process.cwd(), ".gemini-fallback-key.txt");
-      if (fs.existsSync(keyPath)) {
-        return fs.readFileSync(keyPath, "utf8").trim();
-      }
-    } catch (e: any) {
-      console.warn("Fallback key file could not be read:", e.message);
     }
     return "";
   };
