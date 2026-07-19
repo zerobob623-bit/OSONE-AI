@@ -506,13 +506,15 @@ export const InfinityLogo = ({
   speaking, 
   style = 'neural',
   thinking = false,
-  searching = false
+  searching = false,
+  size = 100
 }: { 
   active: boolean; 
   speaking: boolean; 
   style?: OrbStyle;
   thinking?: boolean;
   searching?: boolean;
+  size?: number;
 }) => {
   const [userRms, setUserRms] = React.useState(0);
 
@@ -1161,11 +1163,19 @@ export const InfinityLogo = ({
     }
   };
 
+  const scale = size / 100;
+
   return (
-    <div className={cn(
-      "relative w-48 h-48 md:w-64 md:h-64 flex items-center justify-center cursor-pointer group transition-all",
-      !active && "opacity-60 saturate-50 scale-95"
-    )}>
+    <div 
+      style={{
+        transform: `scale(${scale})`,
+        transformOrigin: 'center center'
+      }}
+      className={cn(
+        "relative w-48 h-48 md:w-64 md:h-64 flex items-center justify-center cursor-pointer group transition-all",
+        !active && "opacity-60 saturate-50 scale-95"
+      )}
+    >
       {/* Outer Glow */}
       <div className={cn(
         "absolute inset-0 transition-all duration-1000",

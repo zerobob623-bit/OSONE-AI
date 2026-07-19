@@ -1814,6 +1814,24 @@ export default function App() {
     localStorage.setItem('osone_orb_style', orbStyle);
   }, [orbStyle]);
 
+  const [orbSize, setOrbSize] = useState<number>(() => {
+    const saved = localStorage.getItem('osone_orb_size');
+    return saved ? parseInt(saved, 10) : 100;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('osone_orb_size', String(orbSize));
+  }, [orbSize]);
+
+  const [orbCenterMode, setOrbCenterMode] = useState<boolean>(() => {
+    const saved = localStorage.getItem('osone_orb_center_mode');
+    return saved === 'true';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('osone_orb_center_mode', String(orbCenterMode));
+  }, [orbCenterMode]);
+
   useEffect(() => {
     // One-time factory restore flag v2 to clean up and fully reset Jarvis & Gemini Live to pristine defaults
     const hasRestored = localStorage.getItem('osone_v4_factory_restored_v2_clean');
@@ -12162,6 +12180,10 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
                 setVoiceModulation={setVoiceModulation}
                 orbStyle={orbStyle}
                 setOrbStyle={setOrbStyle}
+                orbSize={orbSize}
+                setOrbSize={setOrbSize}
+                orbCenterMode={orbCenterMode}
+                setOrbCenterMode={setOrbCenterMode}
                 appTheme={appTheme}
                 setAppTheme={setAppTheme}
                 aiProfile={aiProfile}
@@ -12520,19 +12542,23 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
                     mass: 0.85
                   }}
                   className={cn(
-                    "flex flex-col items-center justify-center py-2 z-50 w-full",
-                    ((liveState.status === 'connected' || isElevenLabsLiveActive) && !isChatExpanded)
-                      ? "relative flex-1 scale-100 md:scale-105" // Center scale
-                      : (chatHistory.length > 0 || isChatExpanded)
-                        ? "absolute -top-12 left-0 right-0 transform scale-50 opacity-40 animate-cloud-wave pointer-events-none" 
+                    "flex flex-col items-center justify-center py-2 z-50 w-full transition-all duration-500",
+                    orbCenterMode
+                      ? (chatHistory.length > 0 || isChatExpanded)
+                        ? "relative shrink-0 flex flex-col items-center justify-center transform scale-90 md:scale-100 origin-center pointer-events-auto py-4"
                         : "relative flex-1 flex flex-col items-center justify-center transform scale-95 md:scale-110 origin-center pointer-events-auto py-4"
+                      : ((liveState.status === 'connected' || isElevenLabsLiveActive) && !isChatExpanded)
+                        ? "relative flex-1 scale-100 md:scale-105" // Center scale
+                        : (chatHistory.length > 0 || isChatExpanded)
+                          ? "absolute -top-12 left-0 right-0 transform scale-50 opacity-40 animate-cloud-wave pointer-events-none" 
+                          : "relative flex-1 flex flex-col items-center justify-center transform scale-95 md:scale-110 origin-center pointer-events-auto py-4"
                   )}
                 >
                   {voicePageIndex === 1 ? (
                     /* DEDICATED ELEVENLABS INTERFACE */
                     <div className={cn(
                       "w-full flex flex-col items-center justify-center text-center max-w-xl mx-auto space-y-5 px-6 pointer-events-auto transition-all duration-500",
-                      (chatHistory.length > 0 || isChatExpanded) ? "scale-[0.8] opacity-80" : ""
+                      (!orbCenterMode && (chatHistory.length > 0 || isChatExpanded)) ? "scale-[0.8] opacity-80" : ""
                     )}>
                       {/* Page Title & Status */}
                       {(chatHistory.length === 0 && !isChatExpanded) && (
@@ -12562,6 +12588,7 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
                             style={orbStyle}
                             thinking={isGenerating || isAnalyzingCode || isTranscribing}
                             searching={isModelSearching}
+                            size={orbSize}
                           />
                           
                           {/* Floating physical indicators of pain */}
@@ -12716,6 +12743,7 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
                             style={orbStyle}
                             thinking={isGenerating || isAnalyzingCode || isTranscribing}
                             searching={isModelSearching}
+                            size={orbSize}
                           />
                           
                           {/* Floating physical indicators of pain */}
@@ -14406,6 +14434,10 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
         setVoiceModulation={setVoiceModulation}
         orbStyle={orbStyle}
         setOrbStyle={setOrbStyle}
+        orbSize={orbSize}
+        setOrbSize={setOrbSize}
+        orbCenterMode={orbCenterMode}
+        setOrbCenterMode={setOrbCenterMode}
         appTheme={appTheme}
         setAppTheme={setAppTheme}
         aiProfile={aiProfile}
@@ -14447,6 +14479,12 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
 
             const orbStyleVal = payload['osone_orb_style'] as OrbStyle;
             if (orbStyleVal) setOrbStyle(orbStyleVal);
+
+            const orbSizeVal = payload['osone_orb_size'];
+            if (orbSizeVal) setOrbSize(parseInt(orbSizeVal, 10));
+
+            const orbCenterModeVal = payload['osone_orb_center_mode'];
+            if (orbCenterModeVal) setOrbCenterMode(orbCenterModeVal === 'true');
 
             const isDuoModeVal = payload['osone_is_duo_mode'];
             if (isDuoModeVal) setIsDuoMode(isDuoModeVal === 'true');

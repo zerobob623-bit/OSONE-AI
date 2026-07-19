@@ -44,6 +44,10 @@ interface PersonalizationPanelProps {
   setVoiceModulation: (mod: VoiceModulation) => void;
   orbStyle: OrbStyle;
   setOrbStyle: (style: OrbStyle) => void;
+  orbSize: number;
+  setOrbSize: (size: number) => void;
+  orbCenterMode?: boolean;
+  setOrbCenterMode?: (centered: boolean) => void;
   appTheme: AppTheme;
   setAppTheme: (theme: AppTheme) => void;
   aiProfile: AIProfile;
@@ -70,6 +74,10 @@ export default function PersonalizationPanel({
   setVoiceModulation,
   orbStyle,
   setOrbStyle,
+  orbSize,
+  setOrbSize,
+  orbCenterMode,
+  setOrbCenterMode,
   appTheme,
   setAppTheme,
   aiProfile,
@@ -189,6 +197,8 @@ export default function PersonalizationPanel({
       payload['osone_chat_auto_speak'] = String(isChatAutoSpeakActive);
       payload['osone_voice_modulation'] = JSON.stringify(voiceModulation);
       payload['osone_orb_style'] = orbStyle;
+      payload['osone_orb_size'] = String(orbSize);
+      payload['osone_orb_center_mode'] = String(orbCenterMode);
       payload['osone_app_theme'] = appTheme;
       payload['osone_ai_profile'] = JSON.stringify(aiProfile);
 
@@ -261,6 +271,12 @@ export default function PersonalizationPanel({
 
         const orbStyleVal = payload['osone_orb_style'] as OrbStyle;
         if (orbStyleVal) setOrbStyle(orbStyleVal);
+
+        const orbSizeVal = payload['osone_orb_size'];
+        if (orbSizeVal) setOrbSize(parseInt(orbSizeVal, 10));
+
+        const orbCenterModeVal = payload['osone_orb_center_mode'];
+        if (orbCenterModeVal && setOrbCenterMode) setOrbCenterMode(orbCenterModeVal === 'true');
 
         const aiProfileVal = payload['osone_ai_profile'] ? JSON.parse(payload['osone_ai_profile']) : null;
         if (aiProfileVal) setAiProfile(aiProfileVal);
@@ -1132,6 +1148,58 @@ export default function PersonalizationPanel({
                       )}
                     </button>
                   ))}
+                </div>
+
+                <div className="mt-6 pt-6 border-t border-white/[0.03] space-y-3">
+                  <div className="flex justify-between items-center text-[10px] uppercase font-bold text-her-muted tracking-[0.2em] select-none">
+                    <span>Calibrador de Tamanho do Orb</span>
+                    <span className="text-her-accent font-mono tracking-normal lowercase">{orbSize}%</span>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <span className="text-[10px] text-her-muted/50 font-light font-mono">50%</span>
+                    <input 
+                      type="range"
+                      min="50"
+                      max="250"
+                      step="5"
+                      value={orbSize}
+                      onChange={(e) => setOrbSize(Number(e.target.value))}
+                      className="flex-1 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-her-accent focus:outline-none"
+                    />
+                    <span className="text-[10px] text-her-muted/50 font-light font-mono">250%</span>
+                  </div>
+                  <p className="text-[10px] text-her-muted/40 font-light leading-normal">
+                    Deslize para calibrar e redimensionar o tamanho físico de todas as interfaces e renderizações do Orb do OSONE.
+                  </p>
+                </div>
+
+                <div className="mt-6 pt-6 border-t border-white/[0.03] space-y-3 animate-in fade-in duration-300">
+                  <div className="flex justify-between items-center text-[10px] uppercase font-bold text-her-muted tracking-[0.2em] select-none">
+                    <span>Centralização do Orb</span>
+                    <span className={cn("font-mono tracking-normal text-[10px] uppercase", orbCenterMode ? "text-her-accent" : "text-her-muted/50")}>
+                      {orbCenterMode ? "Sempre Centralizado" : "Minimizado no Topo"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-4 bg-white/[0.01] border border-white/[0.03] p-3 rounded-2xl">
+                    <div className="space-y-0.5 text-left">
+                      <span className="block text-[10px] text-zinc-300 font-medium">Manter Orb no Centro</span>
+                      <span className="block text-[9px] text-her-muted/40 font-light leading-normal">
+                        Evita que o Orb seja ocultado no topo ao interagir pelo chat de texto.
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setOrbCenterMode && setOrbCenterMode(!orbCenterMode)}
+                      className={cn(
+                        "w-10 h-5 rounded-full relative transition-colors focus:outline-none cursor-pointer shrink-0",
+                        orbCenterMode ? "bg-her-accent" : "bg-white/10"
+                      )}
+                    >
+                      <div className={cn(
+                        "w-4 h-4 rounded-full bg-white absolute top-0.5 transition-all",
+                        orbCenterMode ? "left-5.5" : "left-0.5"
+                      )} />
+                    </button>
+                  </div>
                 </div>
               </div>
             </motion.div>
