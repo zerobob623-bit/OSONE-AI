@@ -107,7 +107,7 @@ export const Sidebar = ({ isOpen, onClose, mode, setMode, user, onLogout, onLogi
                   )}
                 >
                   <Compass size={18} className="text-purple-400" />
-                  <span>Mapa Neural</span>
+                  <span>Mapa OS</span>
                 </button>
                 <button 
                   onClick={() => { setMode('aural_control'); onClose(); }}

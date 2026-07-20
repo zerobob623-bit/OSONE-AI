@@ -666,7 +666,7 @@ const getFriendlyModeName = (mode: WorkspaceMode): string => {
     case 'aural_control': return 'Ajustes de Voz & Perfil';
     case 'sounds': return 'Biblioteca de Sons';
     case 'whatsapp': return 'Gerenciador WhatsApp';
-    case 'map': return 'Mapa Neural';
+    case 'map': return 'Mapa OS';
     case 'rag': return 'RAG • Conector de Arquivos PC';
     case 'creator': return 'Estúdio de Criação Viral';
     case 'memory_book': return 'Livro de Memórias';
@@ -1250,6 +1250,10 @@ export default function App() {
   - IMPORTANTE: Identifique e guarde ativamente preferências de código, hábitos, fatos marcantes sobre o usuário, gostos e conteúdos de diálogos considerados muito relevantes que o usuário menciona na conversa através de 'update_long_term_memory'.
   - O critério principal para acionar essa memória é prever se essa informação ou escolha poderá ser útil ou citável em diálogos futuros que venham à tona a qualquer momento. Se o usuário te disser preferências do projeto, regras de negócio ou segredos pessoais, atualize a memória imediatamente com 'update_long_term_memory'!
   
+  DIRETRIZ CRÍTICA DE MAPA E LOCALIZAÇÕES (MAPA OS):
+  - Quando o usuário mencionar qualquer local, endereço, coordenadas, cidade ou país (ex: "mostre São Paulo no mapa", "me leve até Tóquio", "onde fica Londres"), ou pedir para abrir o mapa em alguma localidade, você DEVE acionar imediatamente a ferramenta 'open_map_workspace' passando a localização indicada.
+  - É EXPRESSAMENTE PROIBIDO fazer pesquisas na internet ou usar 'openUrl' para links externos do Google Maps ou OpenStreetMap para estes casos. Você deve se concentrar INTEGRALMENTE no ambiente do Mapa OS integrado.
+
   MODULAÇÃO DE VOZ:
   - IMPORTANTE: Não altere seus parâmetros de voz (pitch/rate) a menos que o usuário peça explicitamente ou a situação seja DRAMATICAMENTE necessária para um efeito criativo (ex: contar uma história de terror ou imitar um robô). NÃO troque de voz em diálogos comuns.
   
@@ -10225,7 +10229,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         aural_control: "Sintonizada! Estou atenta aos seus Ajustes de Voz & Perfil. Modifique meu motor neural, mude meu timbre, ajuste a modulação ou escolha uma nova personalidade para as minhas redes cognitivas.",
         sounds: "Sintonizada! Estou de olho na sua Biblioteca de Sons e Efeitos. Aqui você pode carregar novos arquivos locais, classificar trilhas e montar as suas músicas preferidas.",
         whatsapp: "Sintonizada! Estou sintonizando suas interações no Gerenciador WhatsApp Evolution. Pronta para disparar campanhas ou responder seus contatos com inteligência de ponta.",
-        map: "Sintonizada! Estou atenta ao Mapa Neural de satélite. Diga o nome de uma cidade ou localidade para eu traçar um dossiê geográfico completo com pontos históricos interessantes!",
+        map: "Sintonizada! Estou atenta ao Mapa OS de satélite. Diga o nome de uma cidade ou localidade para eu traçar um dossiê geográfico completo com pontos históricos interessantes!",
         rag: "Sintonizada! Estou no painel de RAG e Conectividade de Arquivos do Computador. Lembra-se: tenho acesso total e integrado a todos os arquivos que você compartilhou aqui no IndexedDB. Posso carregar novos arquivos, ler dados, sincronizar ideias e salvá-los localmente em tempo real.",
         creator: "Sintonizada! Estou pronta no Estúdio Neural de Criação Viral. Defina o nicho e referências do canal do seu computador e eu irei pesquisar e raciocinar sobre 9 ideias incríveis, destacar as 3 melhores e criar um roteiro em 3 estágios dramáticos de retenção para o seu próximo vídeo viral!"
       };

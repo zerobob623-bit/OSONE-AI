@@ -129,7 +129,7 @@ const NeuralConstellationCanvas = ({
     }
 
     const cloudParticles: CloudParticle[] = [];
-    const PARTICLE_COUNT = 1800;
+    const PARTICLE_COUNT = 3500;
 
     for (let k = 0; k < PARTICLE_COUNT; k++) {
       const typeRand = Math.random();
@@ -325,6 +325,13 @@ const NeuralConstellationCanvas = ({
       const targetThinking = (thinking || searching) ? 1.0 : 0.0;
       smoothThinking += (targetThinking - smoothThinking) * 0.08;
 
+      // Very slow, deeply resting breathing multiplier when idle (almost static, no jerky motion)
+      const restingBreathing = 1.0 + 0.03 * Math.sin(time * 0.3);
+      // Precise universe expansion: expands and contracts directly and exclusively with voice energy (reduced magnitude)
+      const expansionVolume = 1.0 + smoothSpeak * 0.12;
+      // Contraction scale factor
+      const scaleFactor = 1.0 - smoothThinking * 0.65; // contracts by 65% towards the center
+
       // 1. Calculate morph factor: smooth, graceful base shape morphing combined with voice reactions
       const baseMorph = 0.5 + 0.3 * Math.sin(time * 0.4);
       const morphFactor = active 
@@ -367,13 +374,6 @@ const NeuralConstellationCanvas = ({
         const waveFrequency = 14.0;
         const waveOffset = Math.sin((x + y + z) * waveFrequency + time * waveSpeed) * (1.1 + smoothSpeak * 2.8);
         
-        // Very slow, deeply resting breathing multiplier when idle (almost static, no jerky motion)
-        const restingBreathing = 1.0 + 0.03 * Math.sin(time * 0.3);
-        // Precise universe expansion: expands and contracts directly and exclusively with voice energy (reduced magnitude)
-        const expansionVolume = 1.0 + smoothSpeak * 0.12;
-        
-        // Contraction scale factor
-        const scaleFactor = 1.0 - smoothThinking * 0.65; // contracts by 65% towards the center
         // Core density contraction (pulls inner bulge particles even closer to make dense nucleus)
         const coreContractionMultiplier = 1.0 - smoothThinking * 0.25 * Math.exp(-Math.hypot(x, y) * 2.0);
 
@@ -396,7 +396,25 @@ const NeuralConstellationCanvas = ({
       const cosY = Math.cos(rotY), sinY = Math.sin(rotY);
       const cosZ = Math.cos(rotZ), sinZ = Math.sin(rotZ);
 
-      // 5. Rotate and project all nodes
+      // Helper function to rotate and project a 3D point to 2D screen space with perspective
+      const rotateAndProject = (cx_val: number, cy_val: number, cz_val: number) => {
+        let y1 = cy_val * cosX - cz_val * sinX;
+        let z1 = cy_val * sinX + cz_val * cosX;
+
+        let x2 = cx_val * cosY + z1 * sinY;
+        let z2 = -cx_val * sinY + z1 * cosY;
+
+        let x3 = x2 * cosZ - y1 * sinZ;
+        let y3 = x2 * sinZ + y1 * cosZ;
+
+        const perspective = 1 / (1 - (z2 / 240)); 
+        const screenX = cx + x3 * perspective;
+        const screenY = cy + y3 * perspective;
+
+        return { x: screenX, y: screenY, z: z2 };
+      };
+
+      // 5. Rotate and project all neural particles
       interface ProjectedNode {
         x: number;
         y: number;
@@ -409,23 +427,10 @@ const NeuralConstellationCanvas = ({
       const projected: ProjectedNode[] = coords3D.map((c, idx) => {
         const p = cloudParticles[idx];
 
-        // Rotate around X
-        let y1 = c.y * cosX - c.z * sinX;
-        let z1 = c.y * sinX + c.z * cosX;
+        const proj = rotateAndProject(c.x, c.y, c.z);
 
-        // Rotate around Y
-        let x2 = c.x * cosY + z1 * sinY;
-        let z2 = -c.x * sinY + z1 * cosY;
-
-        // Rotate around Z
-        let x3 = x2 * cosZ - y1 * sinZ;
-        let y3 = x2 * sinZ + y1 * cosZ;
-
-        // Depth projection mapping
-        const dFactor = (z2 + 85) / 170; // Map depth factor normalized range
-        const perspective = 1 / (1 - (z2 / 240)); 
-        const screenX = cx + x3 * perspective;
-        const screenY = cy + y3 * perspective;
+        const dFactor = (proj.z + 85) / 170; // Map depth factor normalized range
+        const perspective = 1 / (1 - (proj.z / 240)); 
 
         const isSparkNow = activeSparks.has(idx);
         const sparkLife = activeSparks.get(idx) || 0;
@@ -444,17 +449,16 @@ const NeuralConstellationCanvas = ({
         }
 
         return {
-          x: screenX,
-          y: screenY,
-          z: z2,
+          x: proj.x,
+          y: proj.y,
+          z: proj.z,
           size: p.size * perspective,
           rgba: color,
           flashScale
         };
       });
 
-      // --- RENDERING PHASE ---
-      // 1. Draw Sorted Cloud Particles (Occlusion Depth buffer sorting)
+      // --- RENDERING PHASE (Particles depth-sorted for a stunning 3D cloud effect) ---
       const sortedIndices = Array.from({ length: projected.length }, (_, i) => i)
         .sort((a, b) => projected[a].z - projected[b].z);
 
@@ -463,7 +467,7 @@ const NeuralConstellationCanvas = ({
 
         ctx.beginPath();
         if (node.flashScale > 0) {
-          // Glow and active shadow blur for synapic flashes
+          // Glow and active shadow blur for synaptic flashes
           const sizeBonus = node.size * (1.1 + node.flashScale * 3.0);
           ctx.arc(node.x, node.y, Math.max(1.0, sizeBonus), 0, Math.PI * 2);
           ctx.shadowBlur = Math.round(14 * node.flashScale);
