@@ -184,3 +184,22 @@
   background: rgba(255, 255, 255, 0.3);
 }
 
+/* OSONE G5 Custom Scanning Keyframes */
+@keyframes scanDown {
+  0% { top: 0%; opacity: 0.3; }
+  50% { top: 100%; opacity: 1; }
+  100% { top: 0%; opacity: 0.3; }
+}
+
+.animate-scan-down {
+  animation: scanDown 1.5s ease-in-out infinite;
+}
+
+/* Leaflet Map overrides for dark styling */
+.leaflet-container {
+  background: #09090b !important;
+}
+.custom-radar-marker {
+  overflow: visible !important;
+}
+
