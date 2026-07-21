@@ -43,6 +43,7 @@ interface CreativeEngineOutput {
     whyTop3: string;
   }[];
   bestIdea: {
+    id?: number;
     title: string;
     justification: string;
     storytelling: {
@@ -111,6 +112,25 @@ export function ContentCreator({ apiKeys, addNotification, onSaveToVirtualWorksp
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [copiedScript, setCopiedScript] = useState(false);
   
+  // Selection and multi-script state
+  const [selectedIdeaId, setSelectedIdeaId] = useState<number | null>(null);
+  const [ideaScripts, setIdeaScripts] = useState<{
+    [ideaId: number]: {
+      title: string;
+      justification: string;
+      storytelling: {
+        hook: string;
+        conflict: string;
+        conclusion: string;
+      };
+      script: {
+        scene: string;
+        narration: string;
+      }[];
+    };
+  }>({});
+  const [isGeneratingIdeaScript, setIsGeneratingIdeaScript] = useState(false);
+  
   // Image prompts state
   const [isGeneratingPrompts, setIsGeneratingPrompts] = useState(false);
   const [imagePrompts, setImagePrompts] = useState<{
@@ -136,6 +156,9 @@ export function ContentCreator({ apiKeys, addNotification, onSaveToVirtualWorksp
     setStrictKnowledgeBase(false);
     setKbFileName('');
     setOutput(null);
+    setSelectedIdeaId(null);
+    setIdeaScripts({});
+    setIsGeneratingIdeaScript(false);
     setImagePrompts(null);
     setGenerationError(null);
     setPromptError(null);
@@ -327,7 +350,7 @@ O schema JSON deve ser rigorosamente o seguinte:
         },
         body: JSON.stringify({
           clientApiKey: effectiveKey,
-          model: apiKeys.geminiModel || 'gemini-3.5-flash',
+          model: apiKeys.geminiModel || 'gemini-3.6-flash',
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           responseMimeType: 'application/json'
         })
@@ -347,6 +370,18 @@ O schema JSON deve ser rigorosamente o seguinte:
       // Parse JSON safely
       const parsedData: CreativeEngineOutput = JSON.parse(rawText);
       setOutput(parsedData);
+      
+      const bestId = parsedData.bestIdea?.id || parsedData.topThreeChosen?.[0]?.id || parsedData.allNineIdeas?.[0]?.id || 1;
+      setSelectedIdeaId(bestId);
+      setIdeaScripts({
+        [bestId]: {
+          title: parsedData.bestIdea.title,
+          justification: parsedData.bestIdea.justification,
+          storytelling: parsedData.bestIdea.storytelling,
+          script: parsedData.bestIdea.script
+        }
+      });
+
       setActiveResultTab('master_script');
       addNotification('Roteiro Viral gerado e estruturado com sucesso!', 'success');
     } catch (err: any) {
@@ -357,6 +392,109 @@ O schema JSON deve ser rigorosamente o seguinte:
       setIsGenerating(false);
       setLoadingStep(0);
     }
+  };
+
+  const handleSelectIdea = async (ideaId: number) => {
+    if (!output) return;
+    
+    const targetIdea = output.allNineIdeas.find(i => i.id === ideaId) 
+      || output.topThreeChosen.find(i => i.id === ideaId);
+      
+    setSelectedIdeaId(ideaId);
+    setActiveResultTab('master_script');
+    setImagePrompts(null);
+    setPromptError(null);
+
+    // If script for this idea already exists, no need to re-fetch
+    if (ideaScripts[ideaId]) {
+      return;
+    }
+
+    if (!targetIdea) return;
+
+    setIsGeneratingIdeaScript(true);
+    try {
+      const effectiveKey = apiKeys.gemini || '';
+      if (!effectiveKey) {
+        addNotification('API Key do Gemini ausente.', 'error');
+        return;
+      }
+
+      const prompt = `
+Você é o OSONE Neural Short-Form Scriptwriter.
+O usuário selecionou especificamente a Ideia #${ideaId} de 9 ideias virais geradas para o canal sobre: "${channelTema}".
+
+[DADOS DA IDEIA SELECIONADA]:
+- Título: "${targetIdea.title}"
+- Descrição: "${'description' in targetIdea ? targetIdea.description : ''}"
+- Estilo e Tom desejados: "${customStyle}"
+- Meta Neurocognitiva: "${cognitiveGoal}"
+
+Sua tarefa é gerar a estrutura completa de storytelling em 3 partes e o roteiro sequencial de falas (vídeo curto de até 1m) para esta ideia específica.
+
+Responda APENAS em formato JSON válido:
+{
+  "id": ${ideaId},
+  "title": "${targetIdea.title}",
+  "justification": "Explicação rápida de por que este roteiro para a Ideia #${ideaId} foi construído com este ângulo e apelo de retenção.",
+  "storytelling": {
+    "hook": "Gancho visual traumático e impactante (primeiros 3 segundos)",
+    "conflict": "Conflito aflitivo e angustiante de alto impacto",
+    "conclusion": "Conclusão inesperada com gatilho de surpresa ou humor"
+  },
+  "script": [
+    {
+      "scene": "Descrição visual rápida para a tela",
+      "narration": "Texto exato a ser falado pelo locutor"
+    }
+  ]
+}
+`;
+
+      const response = await fetch('/api/gemini/generateContent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientApiKey: effectiveKey,
+          model: apiKeys.geminiModel || 'gemini-3.6-flash',
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          responseMimeType: 'application/json'
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Status ${response.status} ao gerar roteiro da Ideia #${ideaId}`);
+      }
+
+      const resData = await response.json();
+      const rawText = resData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      if (!rawText) throw new Error('Resposta vazia');
+
+      const parsedScript = JSON.parse(rawText);
+      setIdeaScripts(prev => ({
+        ...prev,
+        [ideaId]: {
+          title: parsedScript.title || targetIdea.title,
+          justification: parsedScript.justification || `Roteiro expandido com sucesso para a Ideia #${ideaId}.`,
+          storytelling: parsedScript.storytelling,
+          script: parsedScript.script
+        }
+      }));
+      addNotification(`Roteiro para a Ideia #${ideaId} ("${targetIdea.title}") gerado com sucesso!`, 'success');
+    } catch (err: any) {
+      console.error(err);
+      addNotification(`Erro ao gerar roteiro para a Ideia #${ideaId}.`, 'error');
+    } finally {
+      setIsGeneratingIdeaScript(false);
+    }
+  };
+
+  const getActiveIdeaScript = () => {
+    if (!output) return null;
+    if (selectedIdeaId && ideaScripts[selectedIdeaId]) {
+      return ideaScripts[selectedIdeaId];
+    }
+    return output.bestIdea;
   };
 
   const handleCopyText = (text: string, index?: number) => {
@@ -373,26 +511,28 @@ O schema JSON deve ser rigorosamente o seguinte:
 
   const handleExportToFile = () => {
     if (!output || !onSaveToVirtualWorkspace) return;
-    const { bestIdea } = output;
+    const activeScript = getActiveIdeaScript();
+    if (!activeScript) return;
+
     const fileContent = `=====================================================
 OSONE VIRAL SHORT-FORM CREATIVE AUDIO/SCRIPT
 =====================================================
 TEMA DE CANAL: ${channelTema}
-IDEIA CONCEITO: ${bestIdea.title}
+IDEIA CONCEITO: ${activeScript.title} (Ideia #${selectedIdeaId || 1})
 ESTILO/TOM: ${customStyle}
 
 --- STORYTELLING EM 3 PARTES ---
 [PARTE 1] GANCHO VISUAL TRAUMÁTICO E IMPACTANTE:
-${bestIdea.storytelling.hook}
+${activeScript.storytelling.hook}
 
 [PARTE 2] CONFLITO AFLITIVO & ANGUSTIANTE:
-${bestIdea.storytelling.conflict}
+${activeScript.storytelling.conflict}
 
 [PARTE 3] CONCLUSÃO COM SURPRESA/HUMOR:
-${bestIdea.storytelling.conclusion}
+${activeScript.storytelling.conclusion}
 
 --- ROTEIRO COMPLETO DE FALAS (VÍDEO DE 1 MINUTO) ---
-${bestIdea.script.map((s, idx) => `
+${activeScript.script.map((s, idx) => `
 SCENE ${idx + 1}: ${s.scene}
 🎙️ NARRAÇÃO: "${s.narration}"
 `).join('\n')}
@@ -400,13 +540,15 @@ SCENE ${idx + 1}: ${s.scene}
 ---
 Gerado por OSONE G5 Creative Media Center.
 `;
-    const cleanFileName = `roteiro_viral_${bestIdea.title.toLowerCase().replace(/[^a-z0-9]/g, '_')}.txt`;
+    const cleanFileName = `roteiro_viral_${activeScript.title.toLowerCase().replace(/[^a-z0-9]/g, '_')}.txt`;
     onSaveToVirtualWorkspace(cleanFileName, fileContent);
     addNotification(`Arquivo '${cleanFileName}' salvo na aba Escrita/RAG com sucesso!`, 'success');
   };
 
   const handleGenerateImagePrompts = async () => {
     if (!output) return;
+    const activeScript = getActiveIdeaScript();
+    if (!activeScript) return;
     
     setIsGeneratingPrompts(true);
     setPromptError(null);
@@ -426,11 +568,11 @@ Sua tarefa é analisar o seguinte roteiro de vídeo curto viral e gerar prompts 
 
 === CONTEXTO DO CANAL E VÍDEO ===
 Nicho do Canal: "${channelTema}"
-Título Vencedor: "${output.bestIdea.title}"
+Título Selecionado: "${activeScript.title}"
 Estilo Geral / Sentimento: "${customStyle}"
 
 === AS CENAS DO ROTEIRO DO VÍDEO ===
-${output.bestIdea.script.map((s, idx) => `CENA ${idx + 1}:
+${activeScript.script.map((s, idx) => `CENA ${idx + 1}:
 Visual sugerido: ${s.scene}
 Locução falada: ${s.narration}`).join('\n\n')}
 
@@ -463,7 +605,7 @@ Responda RIGOROSAMENTE com um objeto JSON puro, sem textos adicionais, seguindo 
         },
         body: JSON.stringify({
           clientApiKey: effectiveKey,
-          model: apiKeys.geminiModel || 'gemini-3.5-flash',
+          model: apiKeys.geminiModel || 'gemini-3.6-flash',
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           responseMimeType: 'application/json'
         })
@@ -898,6 +1040,40 @@ Responda RIGOROSAMENTE com um objeto JSON puro, sem textos adicionais, seguindo 
                 exit={{ opacity: 0, y: -10 }}
                 className="flex-1 flex flex-col gap-4"
               >
+                {/* IDEA SWITCHER BAR */}
+                <div className="flex items-center gap-1.5 overflow-x-auto p-3 bg-[#181716] border border-orange-500/15 rounded-2xl custom-scrollbar select-none">
+                  <span className="text-[10px] font-mono text-orange-400 uppercase tracking-widest font-bold shrink-0 flex items-center gap-1 mr-1">
+                    <Zap size={12} className="text-orange-400 animate-pulse" />
+                    Alternar Ideia:
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {output.allNineIdeas.map((idea) => {
+                      const isSelected = selectedIdeaId === idea.id;
+                      const isAiBest = (output.bestIdea?.id || 1) === idea.id;
+                      const hasScript = !!ideaScripts[idea.id] || isAiBest;
+                      
+                      return (
+                        <button
+                          key={idea.id}
+                          onClick={() => handleSelectIdea(idea.id)}
+                          className={cn(
+                            "px-2.5 py-1.5 rounded-xl text-[11px] font-medium transition-all shrink-0 flex items-center gap-1.5 cursor-pointer border select-none",
+                            isSelected
+                              ? "bg-gradient-to-r from-orange-500 to-amber-600 text-white border-orange-400/50 shadow-[0_0_12px_rgba(249,115,22,0.35)] font-bold scale-[1.02]"
+                              : "bg-white/[0.02] text-stone-300 border-white/[0.05] hover:bg-white/[0.06] hover:border-orange-500/30"
+                          )}
+                          title={`Ideia #${idea.id}: ${idea.title}`}
+                        >
+                          <span>#{idea.id}</span>
+                          <span className="max-w-[90px] sm:max-w-[120px] truncate">{idea.title}</span>
+                          {isAiBest && <span className="text-[10px]" title="Escolha Inicial da IA">🏆</span>}
+                          {hasScript && !isAiBest && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" title="Roteiro pronto" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 {/* CONTROLS & TAB HEADERS */}
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 bg-white/[0.01] border border-white/[0.04] rounded-2xl">
                   {/* Tabs */}
@@ -905,13 +1081,13 @@ Responda RIGOROSAMENTE com um objeto JSON puro, sem textos adicionais, seguindo 
                     <button
                       onClick={() => setActiveResultTab('master_script')}
                       className={cn(
-                        "flex-1 sm:flex-none px-3 py-1.5 rounded-lg text-xs font-medium transition-all select-none cursor-pointer shrink-0",
+                        "flex-1 sm:flex-none px-3 py-1.5 rounded-lg text-xs font-medium transition-all select-none cursor-pointer shrink-0 flex items-center gap-1.5",
                         activeResultTab === 'master_script' 
-                          ? "bg-orange-500/10 text-orange-400 border border-orange-500/20" 
+                          ? "bg-orange-500/10 text-orange-400 border border-orange-500/20 font-bold" 
                           : "text-her-muted hover:text-white"
                       )}
                     >
-                      🏆 Roteiro Vencedor
+                      <span>🏆 Roteiro da Ideia #{selectedIdeaId || 1}</span>
                     </button>
                     <button
                       onClick={() => setActiveResultTab('comparison')}
@@ -981,33 +1157,80 @@ Responda RIGOROSAMENTE com um objeto JSON puro, sem textos adicionais, seguindo 
                         exit={{ opacity: 0, x: 10 }}
                         className="space-y-4"
                       >
-                        <div className="border-b border-white/[0.04] pb-3 mb-5">
-                          <h4 className="text-xs uppercase tracking-[0.2em] font-bold text-orange-400 mb-1">
-                            Explosão Criativa Coletiva
-                          </h4>
-                          <p className="text-[11px] text-her-muted">
-                            Estas são 9 ideias formadas para o nicho fornecido. O algoritmo do OSONE analisará todas antes de fazer as escolhas principais.
-                          </p>
+                        <div className="border-b border-white/[0.04] pb-3 mb-5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div>
+                            <h4 className="text-xs uppercase tracking-[0.2em] font-bold text-orange-400 mb-1">
+                              Explosão Criativa Coletiva (9 Ideias)
+                            </h4>
+                            <p className="text-[11px] text-her-muted">
+                              Clique em <strong>"Escolher Esta Ideia"</strong> para alternar e gerar o roteiro de qualquer uma das 9 opções!
+                            </p>
+                          </div>
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          {output.allNineIdeas.map((idea) => (
-                            <div 
-                              key={idea.id}
-                              className="p-4 rounded-2xl bg-white/[0.01] border border-white/[0.04] hover:bg-white/[0.02] hover:border-orange-500/20 transition-all flex flex-col gap-2 relative group"
-                            >
-                              <div className="absolute top-3 right-3 text-[8px] uppercase tracking-wider font-bold text-amber-500 bg-amber-500/5 border border-amber-500/20 px-2 rounded-full">
-                                {idea.viralPotential} Potential
+                          {output.allNineIdeas.map((idea) => {
+                            const isSelected = selectedIdeaId === idea.id;
+                            const isAiBest = (output.bestIdea?.id || 1) === idea.id;
+                            const hasScript = !!ideaScripts[idea.id] || isAiBest;
+
+                            return (
+                              <div 
+                                key={idea.id}
+                                className={cn(
+                                  "p-4 rounded-2xl border transition-all flex flex-col gap-2.5 relative group",
+                                  isSelected 
+                                    ? "bg-orange-500/[0.06] border-orange-500/40 shadow-[0_0_20px_rgba(249,115,22,0.15)]" 
+                                    : "bg-white/[0.01] border-white/[0.04] hover:bg-white/[0.02] hover:border-orange-500/20"
+                                )}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[10px] font-mono text-her-muted flex items-center gap-1">
+                                    IDEIA #{idea.id}
+                                    {isAiBest && (
+                                      <span className="text-[8px] uppercase tracking-wider font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded">
+                                        Escolha IA
+                                      </span>
+                                    )}
+                                  </span>
+                                  <span className="text-[8px] uppercase tracking-wider font-bold text-amber-500 bg-amber-500/5 border border-amber-500/20 px-2 rounded-full">
+                                    {idea.viralPotential} Potential
+                                  </span>
+                                </div>
+
+                                <h5 className="text-xs font-serif font-bold text-white tracking-wide">{idea.title}</h5>
+                                <p className="text-[11px] text-her-ink/65 leading-relaxed">{idea.description}</p>
+                                
+                                <div className="mt-auto pt-3 border-t border-white/[0.03] flex flex-col gap-2">
+                                  <div className="text-[10px] italic text-orange-400">
+                                    💬 {idea.reason}
+                                  </div>
+
+                                  <button
+                                    onClick={() => handleSelectIdea(idea.id)}
+                                    className={cn(
+                                      "w-full py-2 rounded-xl text-[10px] font-bold uppercase transition-all shrink-0 flex items-center justify-center gap-1.5 cursor-pointer border select-none mt-1",
+                                      isSelected
+                                        ? "bg-orange-500 text-white border-orange-400/40 shadow-[0_0_10px_rgba(249,115,22,0.3)]"
+                                        : "bg-orange-500/10 text-orange-300 border-orange-500/20 hover:bg-orange-500/20 hover:border-orange-500/40"
+                                    )}
+                                  >
+                                    {isSelected ? (
+                                      <>
+                                        <Check size={12} />
+                                        <span>✔ Ideia Ativa no Roteiro</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Zap size={12} />
+                                        <span>{hasScript ? 'Ver Roteiro' : 'Escolher Esta Ideia'}</span>
+                                      </>
+                                    )}
+                                  </button>
+                                </div>
                               </div>
-                              <span className="text-[10px] font-mono text-her-muted">IDEIA #{idea.id}</span>
-                              <h5 className="text-xs font-serif font-bold text-white tracking-wide">{idea.title}</h5>
-                              <p className="text-[11px] text-her-ink/65 leading-relaxed">{idea.description}</p>
-                              
-                              <div className="mt-auto pt-3 border-t border-white/[0.03] text-[10px] italic text-orange-400">
-                                💬 {idea.reason}
-                              </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </motion.div>
                     )}
@@ -1026,38 +1249,68 @@ Responda RIGOROSAMENTE com um objeto JSON puro, sem textos adicionais, seguindo 
                             A Destilação: Funil Seletivo de Audiência
                           </h4>
                           <p className="text-[11px] text-her-muted">
-                            Dentre as 9, o cérebro matemático de retenção extraiu as 3 com potencial mais elevado.
+                            Dentre as 9, o cérebro matemático de retenção extraiu as 3 com potencial mais elevado. Clique para alternar entre elas!
                           </p>
                         </div>
 
                         <div className="space-y-4">
-                          {output.topThreeChosen.map((top, idx) => (
-                            <div 
-                              key={top.id}
-                              className={cn(
-                                "p-5 rounded-2xl border flex flex-col md:flex-row gap-4 items-start shadow-xl relative overflow-hidden",
-                                idx === 0 
-                                  ? "bg-orange-500/[0.03] border-orange-500/20" 
-                                  : "bg-white/[0.01] border-white/[0.04]"
-                              )}
-                            >
-                              <div className="w-8 h-8 rounded-full bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-orange-400 font-mono text-xs font-bold leading-none select-none shrink-0">
-                                {idx + 1}
-                              </div>
-                              <div className="flex-1 space-y-2">
-                                <h5 className="text-xs font-serif font-bold text-white flex items-center gap-2">
-                                  {top.title}
-                                  {idx === 0 && (
-                                    <span className="text-[8px] bg-red-500/10 border border-red-500/20 text-red-400 px-2 py-0.5 rounded-full uppercase font-sans tracking-widest font-bold">Favorito do Algoritmo</span>
-                                  )}
-                                </h5>
-                                <p className="text-xs text-her-ink/75 font-light leading-relaxed">{top.description}</p>
-                                <div className="text-[10px] text-amber-300 bg-amber-500/5 px-3 py-2 rounded-xl mt-2 border border-amber-500/10">
-                                  <strong>Métrica Cognitiva:</strong> {top.whyTop3}
+                          {output.topThreeChosen.map((top, idx) => {
+                            const isSelected = selectedIdeaId === top.id;
+                            const isAiBest = (output.bestIdea?.id || 1) === top.id;
+
+                            return (
+                              <div 
+                                key={top.id}
+                                className={cn(
+                                  "p-5 rounded-2xl border flex flex-col md:flex-row gap-4 items-start shadow-xl relative overflow-hidden transition-all",
+                                  isSelected 
+                                    ? "bg-orange-500/[0.06] border-orange-500/40 shadow-[0_0_20px_rgba(249,115,22,0.15)]" 
+                                    : "bg-white/[0.01] border-white/[0.04] hover:bg-white/[0.02]"
+                                )}
+                              >
+                                <div className="w-8 h-8 rounded-full bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-orange-400 font-mono text-xs font-bold leading-none select-none shrink-0">
+                                  {idx + 1}
                                 </div>
+                                <div className="flex-1 space-y-2">
+                                  <h5 className="text-xs font-serif font-bold text-white flex items-center gap-2">
+                                    {top.title}
+                                    {isAiBest && (
+                                      <span className="text-[8px] bg-red-500/10 border border-red-500/20 text-red-400 px-2 py-0.5 rounded-full uppercase font-sans tracking-widest font-bold">Favorito Inicial da IA</span>
+                                    )}
+                                    {isSelected && (
+                                      <span className="text-[8px] bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full uppercase font-sans tracking-widest font-bold">Ativa no Roteiro</span>
+                                    )}
+                                  </h5>
+                                  <p className="text-xs text-her-ink/75 font-light leading-relaxed">{top.description}</p>
+                                  <div className="text-[10px] text-amber-300 bg-amber-500/5 px-3 py-2 rounded-xl mt-2 border border-amber-500/10">
+                                    <strong>Métrica Cognitiva:</strong> {top.whyTop3}
+                                  </div>
+                                </div>
+
+                                <button
+                                  onClick={() => handleSelectIdea(top.id)}
+                                  className={cn(
+                                    "px-4 py-2 rounded-xl text-[10px] font-bold uppercase transition-all shrink-0 flex items-center gap-1.5 cursor-pointer border select-none self-start md:self-center",
+                                    isSelected
+                                      ? "bg-orange-500 text-white border-orange-400/30"
+                                      : "bg-orange-500/10 text-orange-300 border-orange-500/20 hover:bg-orange-500/20"
+                                  )}
+                                >
+                                  {isSelected ? (
+                                    <>
+                                      <Check size={12} />
+                                      <span>✔ Ativa</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Zap size={12} />
+                                      <span>Escolher Esta</span>
+                                    </>
+                                  )}
+                                </button>
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </motion.div>
                     )}
@@ -1071,232 +1324,259 @@ Responda RIGOROSAMENTE com um objeto JSON puro, sem textos adicionais, seguindo 
                         exit={{ opacity: 0, x: -10 }}
                         className="space-y-6"
                       >
-                        {/* Winner Pitch */}
-                        <div className="p-5 rounded-2xl bg-[#1e1d1b] border border-orange-500/10 relative overflow-hidden shadow-xl">
-                          <div className="absolute top-0 right-0 w-24 h-24 bg-orange-500/5 blur-2xl rounded-full" />
-                          <span className="text-[9px] uppercase tracking-widest font-mono text-orange-400 font-bold bg-orange-500/10 px-2.5 py-0.5 rounded-full border border-orange-500/10">🏆 Vencedora Incontestável</span>
-                          <h4 className="text-base font-serif italic font-bold text-white mt-2 mb-1">
-                            {output.bestIdea.title}
-                          </h4>
-                          <p className="text-xs text-her-muted italic font-light leading-relaxed">
-                            "{output.bestIdea.justification}"
-                          </p>
-                        </div>
-
-                        {/* Tri-Part Storytelling structure as requested by user */}
-                        <div className="space-y-3">
-                          <h5 className="text-xs uppercase tracking-wider font-bold text-stone-400 flex items-center gap-1.5 border-b border-white/[0.04] pb-2">
-                            <Sparkles size={14} className="text-orange-400" />
-                            A Estrutura de Retenção Psíquica (Três Partes)
-                          </h5>
-
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            {/* Part 1: Visual hook */}
-                            <div className="p-4 rounded-2xl bg-red-950/5 border border-red-900/10 flex flex-col gap-2 relative group hover:border-red-500/25 transition-all">
-                              <span className="text-[8px] uppercase tracking-widest font-mono text-red-400 font-bold">Parte I • Hook de Alto Impacto</span>
-                              <h6 className="text-[11px] font-bold text-white">Chocante & Chamatino</h6>
-                              <p className="text-[11px] text-her-ink/70 leading-relaxed font-light">{output.bestIdea.storytelling.hook}</p>
-                            </div>
-
-                            {/* Part 2: Distressing conflict */}
-                            <div className="p-4 rounded-2xl bg-amber-950/5 border border-amber-900/10 flex flex-col gap-2 relative group hover:border-amber-500/25 transition-all">
-                              <span className="text-[8px] uppercase tracking-widest font-mono text-amber-400 font-bold">Parte II • Conflito Aflitivo</span>
-                              <h6 className="text-[11px] font-bold text-white">Angustiante & Intenso</h6>
-                              <p className="text-[11px] text-her-ink/70 leading-relaxed font-light">{output.bestIdea.storytelling.conflict}</p>
-                            </div>
-
-                            {/* Part 3: Conclusion unexpected */}
-                            <div className="p-4 rounded-2xl bg-emerald-950/5 border border-emerald-900/10 flex flex-col gap-2 relative group hover:border-emerald-500/25 transition-all">
-                              <span className="text-[8px] uppercase tracking-widest font-mono text-emerald-400 font-bold">Parte III • Desfecho Inesperado</span>
-                              <h6 className="text-[11px] font-bold text-white">Humor ou Choque surpresa</h6>
-                              <p className="text-[11px] text-her-ink/70 leading-relaxed font-light">{output.bestIdea.storytelling.conclusion}</p>
-                            </div>
+                        {isGeneratingIdeaScript ? (
+                          <div className="p-12 rounded-3xl bg-[#1e1d1b] border border-orange-500/20 text-center flex flex-col items-center justify-center gap-4 shadow-2xl">
+                            <RefreshCw className="w-9 h-9 text-orange-400 animate-spin" />
+                            <h4 className="text-sm font-bold text-white tracking-wide">
+                              Expandindo Roteiro de Retenção para a Ideia #{selectedIdeaId}...
+                            </h4>
+                            <p className="text-xs text-her-muted max-w-sm leading-relaxed">
+                              O OSONE está formatando a estrutura em 3 partes e a linha de narração personalizada para a sua ideia escolhida.
+                            </p>
                           </div>
-                        </div>
+                        ) : (() => {
+                          const activeScript = getActiveIdeaScript();
+                          if (!activeScript) return null;
 
-                        {/* Sequential Audio/Video Script */}
-                        <div className="space-y-4 pt-3">
-                          <div className="flex items-center justify-between border-b border-white/[0.04] pb-2">
-                            <h5 className="text-xs uppercase tracking-wider font-bold text-stone-400 flex items-center gap-1.5">
-                              <FileText size={14} className="text-orange-400" />
-                              Cronologia de Falas (Sequencial - Até 1m)
-                            </h5>
-                            <button
-                              onClick={() => {
-                                const fullLines = output.bestIdea.script.map((s, idx) => `Cena ${idx + 1}: ${s.scene}\n🎙️ "${s.narration}"`).join('\n\n');
-                                handleCopyText(fullLines);
-                              }}
-                              className="text-[10px] text-orange-400 hover:text-white flex items-center gap-1 transition-colors bg-orange-500/5 px-2.5 py-1.5 rounded-lg border border-orange-500/10 select-none cursor-pointer"
-                            >
-                              {copiedScript ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-                              {copiedScript ? "Copiado!" : "Copiar Roteiro"}
-                            </button>
-                          </div>
+                          return (
+                            <>
+                              {/* Active Idea Header Pitch */}
+                              <div className="p-5 rounded-2xl bg-[#1e1d1b] border border-orange-500/15 relative overflow-hidden shadow-xl">
+                                <div className="absolute top-0 right-0 w-24 h-24 bg-orange-500/5 blur-2xl rounded-full" />
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[9px] uppercase tracking-widest font-mono text-orange-400 font-bold bg-orange-500/10 px-2.5 py-0.5 rounded-full border border-orange-500/10">
+                                    🏆 Ideia #{selectedIdeaId || 1} Em Foco
+                                  </span>
+                                  {(output.bestIdea?.id || 1) === selectedIdeaId && (
+                                    <span className="text-[9px] uppercase tracking-widest font-mono text-amber-300 font-bold bg-amber-500/10 px-2.5 py-0.5 rounded-full border border-amber-500/10">
+                                      Escolha AI
+                                    </span>
+                                  )}
+                                </div>
+                                <h4 className="text-base font-serif italic font-bold text-white mt-2 mb-1">
+                                  {activeScript.title}
+                                </h4>
+                                <p className="text-xs text-her-muted italic font-light leading-relaxed">
+                                  "{activeScript.justification}"
+                                </p>
+                              </div>
 
-                          <div className="space-y-3.5">
-                            {output.bestIdea.script.map((speech, sIdx) => (
-                              <div 
-                                key={sIdx}
-                                className="p-4 rounded-2xl bg-[#141312] border border-white/[0.02] hover:bg-[#181716] transition-all flex flex-col md:flex-row gap-3.5 items-start relative group"
-                              >
-                                <span className="text-[9px] font-mono text-orange-400 bg-orange-500/10 px-2 py-1 rounded-md border border-orange-500/10 shrink-0">
-                                  CENA {sIdx + 1}
-                                </span>
+                              {/* Tri-Part Storytelling structure */}
+                              <div className="space-y-3">
+                                <h5 className="text-xs uppercase tracking-wider font-bold text-stone-400 flex items-center gap-1.5 border-b border-white/[0.04] pb-2">
+                                  <Sparkles size={14} className="text-orange-400" />
+                                  A Estrutura de Retenção Psíquica (Três Partes)
+                                </h5>
 
-                                <div className="space-y-2 flex-1">
-                                  {/* Scene layout directions */}
-                                  <div className="text-[10px] text-her-muted flex items-start gap-1 font-light italic bg-white/[0.01] p-2 rounded-lg border border-white/[0.02]">
-                                    <CornerDownRight size={11} className="text-orange-400 shrink-0 mt-0.5" />
-                                    <span>Visual sugerido: {speech.scene}</span>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                  {/* Part 1: Visual hook */}
+                                  <div className="p-4 rounded-2xl bg-red-950/5 border border-red-900/10 flex flex-col gap-2 relative group hover:border-red-500/25 transition-all">
+                                    <span className="text-[8px] uppercase tracking-widest font-mono text-red-400 font-bold">Parte I • Hook de Alto Impacto</span>
+                                    <h6 className="text-[11px] font-bold text-white">Chocante & Chamatino</h6>
+                                    <p className="text-[11px] text-her-ink/70 leading-relaxed font-light">{activeScript.storytelling.hook}</p>
                                   </div>
 
-                                  {/* Speech narration audio stream */}
-                                  <div className="p-3.5 bg-neutral-900 rounded-xl border border-white/[0.03] relative">
-                                    <p className="text-xs font-light text-white leading-relaxed tracking-wide select-text">
-                                      🎙️ {speech.narration}
-                                    </p>
-                                    <button
-                                      onClick={() => handleCopyText(speech.narration, sIdx)}
-                                      className="absolute top-2 right-2 p-1.5 text-her-muted hover:text-white rounded-lg hover:bg-white/[0.02] opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
-                                      title="Copiar apenas esta fala"
-                                    >
-                                      {copiedIndex === sIdx ? <Check size={12} className="text-emerald-400" /> : <Copy size={11} />}
-                                    </button>
+                                  {/* Part 2: Distressing conflict */}
+                                  <div className="p-4 rounded-2xl bg-amber-950/5 border border-amber-900/10 flex flex-col gap-2 relative group hover:border-amber-500/25 transition-all">
+                                    <span className="text-[8px] uppercase tracking-widest font-mono text-amber-400 font-bold">Parte II • Conflito Aflitivo</span>
+                                    <h6 className="text-[11px] font-bold text-white">Angustiante & Intenso</h6>
+                                    <p className="text-[11px] text-her-ink/70 leading-relaxed font-light">{activeScript.storytelling.conflict}</p>
+                                  </div>
+
+                                  {/* Part 3: Conclusion unexpected */}
+                                  <div className="p-4 rounded-2xl bg-emerald-950/5 border border-emerald-900/10 flex flex-col gap-2 relative group hover:border-emerald-500/25 transition-all">
+                                    <span className="text-[8px] uppercase tracking-widest font-mono text-emerald-400 font-bold">Parte III • Desfecho Inesperado</span>
+                                    <h6 className="text-[11px] font-bold text-white">Humor ou Choque surpresa</h6>
+                                    <p className="text-[11px] text-her-ink/70 leading-relaxed font-light">{activeScript.storytelling.conclusion}</p>
                                   </div>
                                 </div>
                               </div>
-                            ))}
-                          </div>
-                        </div>
 
-                        {/* SEÇÃO DE PROMPTS DE IMAGEM ADICIONADA */}
-                        <div className="pt-6 border-t border-white/[0.04] mt-8" id="image-prompts-section">
-                          <div className="p-6 rounded-2xl bg-gradient-to-br from-amber-500/[0.02] to-orange-500/[0.02] border border-orange-500/15 relative overflow-hidden flex flex-col gap-5">
-                            <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/5 blur-3xl rounded-full pointer-events-none" />
-                            
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                              <div className="flex items-center gap-2.5">
-                                <div className="w-9 h-9 rounded-xl bg-orange-500/15 flex items-center justify-center text-orange-400 border border-orange-500/10">
-                                  <Sparkles size={16} />
-                                </div>
-                                <div>
-                                  <h5 className="text-xs font-bold text-white uppercase tracking-wider">Gostou deste roteiro? Crie os visuais viciantes!</h5>
-                                  <p className="text-[10px] text-her-muted mt-0.5">O OSONE criará fórmulas e prompts cinematográficos ultra detalhados para cada cena deste vídeo.</p>
-                                </div>
-                              </div>
-                              
-                              {!imagePrompts ? (
-                                <button
-                                  onClick={handleGenerateImagePrompts}
-                                  disabled={isGeneratingPrompts}
-                                  className={cn(
-                                    "px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer flex items-center gap-1.5 border shadow-md shrink-0",
-                                    isGeneratingPrompts
-                                      ? "bg-stone-800 border-white/5 text-stone-500 cursor-not-allowed"
-                                      : "bg-orange-500 hover:bg-orange-600 text-white border-orange-400/20 active:scale-95 shadow-[0_0_15px_rgba(249,115,22,0.15)]"
-                                  )}
-                                >
-                                  {isGeneratingPrompts ? (
-                                    <>
-                                      <RefreshCw size={13} className="animate-spin" />
-                                      <span>Gerando Fórmulas...</span>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Sparkles size={13} />
-                                      <span>Gerar Prompts de Imagem</span>
-                                    </>
-                                  )}
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={handleGenerateImagePrompts}
-                                  disabled={isGeneratingPrompts}
-                                  className="px-3 py-1.5 rounded-lg text-[10px] text-orange-400 border border-orange-500/15 bg-orange-500/5 hover:bg-orange-500/10 transition-all select-none cursor-pointer flex items-center gap-1 shrink-0"
-                                >
-                                  <RefreshCw size={11} className={cn(isGeneratingPrompts && "animate-spin")} />
-                                  Regerar Prompts
-                                </button>
-                              )}
-                            </div>
-
-                            {/* Prompts error display */}
-                            {promptError && (
-                              <div className="p-3 bg-red-950/20 border border-red-500/15 rounded-xl text-[11px] text-red-400 flex items-center gap-1.5">
-                                <AlertCircle size={14} />
-                                <span>{promptError}</span>
-                              </div>
-                            )}
-
-                            {/* Render generated prompts */}
-                            {imagePrompts && (
-                              <div className="space-y-4 pt-1">
-                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/[0.04] pb-2 pointer-events-auto">
-                                  <span className="text-[10px] font-mono text-orange-400 uppercase tracking-widest font-bold">🎯 Fórmulas Fotográficas (Aspecto 9:16):</span>
+                              {/* Sequential Audio/Video Script */}
+                              <div className="space-y-4 pt-3">
+                                <div className="flex items-center justify-between border-b border-white/[0.04] pb-2">
+                                  <h5 className="text-xs uppercase tracking-wider font-bold text-stone-400 flex items-center gap-1.5">
+                                    <FileText size={14} className="text-orange-400" />
+                                    Cronologia de Falas (Sequencial - Até 1m)
+                                  </h5>
                                   <button
                                     onClick={() => {
-                                      const promptDoc = imagePrompts.scenes.map(s => 
-                                        `=====================================================\n[CENA ${s.sceneNumber}] Humor: ${s.mood} | Iluminação: ${s.lighting}\nVisual Sugerido: ${s.suggestedVisual}\n\nPROMPT PARA GERADOR (MIDJOURNEY):\n${s.midjourneyPrompt}\n=====================================================\n`
-                                      ).join('\n\n');
-                                      
-                                      if (onSaveToVirtualWorkspace) {
-                                        onSaveToVirtualWorkspace(`prompts_imagens_${output.bestIdea.title.toLowerCase().replace(/[^a-z0-9]/g, '_')}.txt`, promptDoc);
-                                        addNotification('Fórmulas de imagem salvas na Biblioteca RAG!', 'success');
-                                      } else {
-                                        navigator.clipboard.writeText(promptDoc);
-                                        addNotification('Fórmulas copiadas para a área de transferência!', 'success');
-                                      }
+                                      const fullLines = activeScript.script.map((s, idx) => `Cena ${idx + 1}: ${s.scene}\n🎙️ "${s.narration}"`).join('\n\n');
+                                      handleCopyText(fullLines);
                                     }}
-                                    className="px-2.5 py-1 text-[9px] bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-400 border border-cyan-500/20 rounded-lg transition-all font-mono select-none cursor-pointer flex items-center gap-1"
+                                    className="text-[10px] text-orange-400 hover:text-white flex items-center gap-1 transition-colors bg-orange-500/5 px-2.5 py-1.5 rounded-lg border border-orange-500/10 select-none cursor-pointer"
                                   >
-                                    <FileText size={11} />
-                                    Salvar no Canal RAG
+                                    {copiedScript ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                                    {copiedScript ? "Copiado!" : "Copiar Roteiro"}
                                   </button>
                                 </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                  {imagePrompts.scenes.map((p, idx) => (
+                                <div className="space-y-3.5">
+                                  {activeScript.script.map((speech, sIdx) => (
                                     <div 
-                                      key={p.sceneNumber}
-                                      className="p-4 rounded-xl bg-black/20 border border-white/[0.03] flex flex-col gap-2.5 group relative hover:border-orange-500/25 transition-all"
+                                      key={sIdx}
+                                      className="p-4 rounded-2xl bg-[#141312] border border-white/[0.02] hover:bg-[#181716] transition-all flex flex-col md:flex-row gap-3.5 items-start relative group"
                                     >
-                                      {/* Header badges */}
-                                      <div className="flex items-center justify-between mb-0.5">
-                                        <span className="text-[9px] font-mono text-orange-400/80 font-bold bg-orange-500/5 px-2 py-0.5 rounded border border-orange-500/5">CENA {p.sceneNumber}</span>
-                                        <div className="flex items-center gap-1.5">
-                                          <span className="text-[8px] bg-amber-500/5 text-amber-300 border border-amber-500/10 px-2 py-0.5 rounded-full uppercase font-medium">{p.mood}</span>
-                                          <span className="text-[8px] bg-stone-800 text-stone-400 px-2 py-0.5 rounded-full font-light truncate max-w-[120px]">{p.lighting}</span>
+                                      <span className="text-[9px] font-mono text-orange-400 bg-orange-500/10 px-2 py-1 rounded-md border border-orange-500/10 shrink-0">
+                                        CENA {sIdx + 1}
+                                      </span>
+
+                                      <div className="space-y-2 flex-1">
+                                        {/* Scene layout directions */}
+                                        <div className="text-[10px] text-her-muted flex items-start gap-1 font-light italic bg-white/[0.01] p-2 rounded-lg border border-white/[0.02]">
+                                          <CornerDownRight size={11} className="text-orange-400 shrink-0 mt-0.5" />
+                                          <span>Visual sugerido: {speech.scene}</span>
                                         </div>
-                                      </div>
 
-                                      <p className="text-[11px] text-her-ink/75 font-light leading-relaxed">
-                                        <strong className="text-stone-300 font-medium">Visual da Cena:</strong> {p.suggestedVisual}
-                                      </p>
-
-                                      <div className="p-3 bg-neutral-950 rounded-xl border border-white/[0.02] relative mt-1">
-                                        <p className="text-[11px] font-mono text-stone-300 leading-relaxed font-light break-words pr-7 select-all">
-                                          {p.midjourneyPrompt}
-                                        </p>
-                                        <button
-                                          onClick={() => {
-                                            navigator.clipboard.writeText(p.midjourneyPrompt);
-                                            setCopiedPromptIdx(idx);
-                                            setTimeout(() => setCopiedPromptIdx(null), 2000);
-                                            addNotification(`Prompt da cena ${p.sceneNumber} copiado!`, 'success');
-                                          }}
-                                          className="absolute top-2.5 right-2 text-stone-500 hover:text-white transition-colors cursor-pointer select-none"
-                                          title="Copiar prompt"
-                                        >
-                                          {copiedPromptIdx === idx ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
-                                        </button>
+                                        {/* Speech narration audio stream */}
+                                        <div className="p-3.5 bg-neutral-900 rounded-xl border border-white/[0.03] relative">
+                                          <p className="text-xs font-light text-white leading-relaxed tracking-wide select-text">
+                                            🎙️ {speech.narration}
+                                          </p>
+                                          <button
+                                            onClick={() => handleCopyText(speech.narration, sIdx)}
+                                            className="absolute top-2 right-2 p-1.5 text-her-muted hover:text-white rounded-lg hover:bg-white/[0.02] opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                                            title="Copiar apenas esta fala"
+                                          >
+                                            {copiedIndex === sIdx ? <Check size={12} className="text-emerald-400" /> : <Copy size={11} />}
+                                          </button>
+                                        </div>
                                       </div>
                                     </div>
                                   ))}
                                 </div>
                               </div>
-                            )}
-                          </div>
-                        </div>
+
+                              {/* PROMPTS DE IMAGEM */}
+                              <div className="pt-6 border-t border-white/[0.04] mt-8" id="image-prompts-section">
+                                <div className="p-6 rounded-2xl bg-gradient-to-br from-amber-500/[0.02] to-orange-500/[0.02] border border-orange-500/15 relative overflow-hidden flex flex-col gap-5">
+                                  <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/5 blur-3xl rounded-full pointer-events-none" />
+                                  
+                                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                                    <div className="flex items-center gap-2.5">
+                                      <div className="w-9 h-9 rounded-xl bg-orange-500/15 flex items-center justify-center text-orange-400 border border-orange-500/10">
+                                        <Sparkles size={16} />
+                                      </div>
+                                      <div>
+                                        <h5 className="text-xs font-bold text-white uppercase tracking-wider">Prompts de Imagem para a Ideia #{selectedIdeaId || 1}</h5>
+                                        <p className="text-[10px] text-her-muted mt-0.5">O OSONE criará fórmulas e prompts cinematográficos ultra detalhados para cada cena desta ideia.</p>
+                                      </div>
+                                    </div>
+                                    
+                                    {!imagePrompts ? (
+                                      <button
+                                        onClick={handleGenerateImagePrompts}
+                                        disabled={isGeneratingPrompts}
+                                        className={cn(
+                                          "px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer flex items-center gap-1.5 border shadow-md shrink-0",
+                                          isGeneratingPrompts
+                                            ? "bg-stone-800 border-white/5 text-stone-500 cursor-not-allowed"
+                                            : "bg-orange-500 hover:bg-orange-600 text-white border-orange-400/20 active:scale-95 shadow-[0_0_15px_rgba(249,115,22,0.15)]"
+                                        )}
+                                      >
+                                        {isGeneratingPrompts ? (
+                                          <>
+                                            <RefreshCw size={13} className="animate-spin" />
+                                            <span>Gerando Fórmulas...</span>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Sparkles size={13} />
+                                            <span>Gerar Prompts de Imagem</span>
+                                          </>
+                                        )}
+                                      </button>
+                                    ) : (
+                                      <button
+                                        onClick={handleGenerateImagePrompts}
+                                        disabled={isGeneratingPrompts}
+                                        className="px-3 py-1.5 rounded-lg text-[10px] text-orange-400 border border-orange-500/15 bg-orange-500/5 hover:bg-orange-500/10 transition-all select-none cursor-pointer flex items-center gap-1 shrink-0"
+                                      >
+                                        <RefreshCw size={11} className={cn(isGeneratingPrompts && "animate-spin")} />
+                                        Regerar Prompts
+                                      </button>
+                                    )}
+                                  </div>
+
+                                  {/* Prompts error display */}
+                                  {promptError && (
+                                    <div className="p-3 bg-red-950/20 border border-red-500/15 rounded-xl text-[11px] text-red-400 flex items-center gap-1.5">
+                                      <AlertCircle size={14} />
+                                      <span>{promptError}</span>
+                                    </div>
+                                  )}
+
+                                  {/* Render generated prompts */}
+                                  {imagePrompts && (
+                                    <div className="space-y-4 pt-1">
+                                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/[0.04] pb-2 pointer-events-auto">
+                                        <span className="text-[10px] font-mono text-orange-400 uppercase tracking-widest font-bold">🎯 Fórmulas Fotográficas (Aspecto 9:16):</span>
+                                        <button
+                                          onClick={() => {
+                                            const promptDoc = imagePrompts.scenes.map(s => 
+                                              `=====================================================\n[CENA ${s.sceneNumber}] Humor: ${s.mood} | Iluminação: ${s.lighting}\nVisual Sugerido: ${s.suggestedVisual}\n\nPROMPT PARA GERADOR (MIDJOURNEY):\n${s.midjourneyPrompt}\n=====================================================\n`
+                                            ).join('\n\n');
+                                            
+                                            if (onSaveToVirtualWorkspace) {
+                                              onSaveToVirtualWorkspace(`prompts_imagens_${activeScript.title.toLowerCase().replace(/[^a-z0-9]/g, '_')}.txt`, promptDoc);
+                                              addNotification('Fórmulas de imagem salvas na Biblioteca RAG!', 'success');
+                                            } else {
+                                              navigator.clipboard.writeText(promptDoc);
+                                              addNotification('Fórmulas copiadas para a área de transferência!', 'success');
+                                            }
+                                          }}
+                                          className="px-2.5 py-1 text-[9px] bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-400 border border-cyan-500/20 rounded-lg transition-all font-mono select-none cursor-pointer flex items-center gap-1"
+                                        >
+                                          <FileText size={11} />
+                                          Salvar no Canal RAG
+                                        </button>
+                                      </div>
+
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        {imagePrompts.scenes.map((p, idx) => (
+                                          <div 
+                                            key={p.sceneNumber}
+                                            className="p-4 rounded-xl bg-black/20 border border-white/[0.03] flex flex-col gap-2.5 group relative hover:border-orange-500/25 transition-all"
+                                          >
+                                            <div className="flex items-center justify-between mb-0.5">
+                                              <span className="text-[9px] font-mono text-orange-400/80 font-bold bg-orange-500/5 px-2 py-0.5 rounded border border-orange-500/5">CENA {p.sceneNumber}</span>
+                                              <div className="flex items-center gap-1.5">
+                                                <span className="text-[8px] bg-amber-500/5 text-amber-300 border border-amber-500/10 px-2 py-0.5 rounded-full uppercase font-medium">{p.mood}</span>
+                                                <span className="text-[8px] bg-stone-800 text-stone-400 px-2 py-0.5 rounded-full font-light truncate max-w-[120px]">{p.lighting}</span>
+                                              </div>
+                                            </div>
+
+                                            <p className="text-[11px] text-her-ink/75 font-light leading-relaxed">
+                                              <strong className="text-stone-300 font-medium">Visual da Cena:</strong> {p.suggestedVisual}
+                                            </p>
+
+                                            <div className="p-3 bg-neutral-950 rounded-xl border border-white/[0.02] relative mt-1">
+                                              <p className="text-[11px] font-mono text-stone-300 leading-relaxed font-light break-words pr-7 select-all">
+                                                {p.midjourneyPrompt}
+                                              </p>
+                                              <button
+                                                onClick={() => {
+                                                  navigator.clipboard.writeText(p.midjourneyPrompt);
+                                                  setCopiedPromptIdx(idx);
+                                                  setTimeout(() => setCopiedPromptIdx(null), 2000);
+                                                  addNotification(`Prompt da cena ${p.sceneNumber} copiado!`, 'success');
+                                                }}
+                                                className="absolute top-2.5 right-2 text-stone-500 hover:text-white transition-colors cursor-pointer select-none"
+                                                title="Copiar prompt"
+                                              >
+                                                {copiedPromptIdx === idx ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
+                                              </button>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </>
+                          );
+                        })()}
                       </motion.div>
                     )}
 

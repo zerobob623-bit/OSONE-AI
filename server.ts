@@ -177,7 +177,7 @@ Responda brevemente e com muita energia, carisma, carinho e sintonia (máximo 1 
 Comentário de @${user}: "${text}"`;
 
       const gResult = await generateContentWithFallback(ai, {
-        model: "gemini-3.5-flash",
+        model: "gemini-3.5-flash-lite",
         contents: prompt
       });
 
@@ -603,14 +603,14 @@ Comentário de @${user}: "${text}"`;
         return res.json({ status: "error", error: "Gemini API key is not configured" });
       }
 
-      // Use modern GoogleGenAI SDK to speak with Gemini 3.5-flash
+      // Use modern GoogleGenAI SDK to speak with Gemini 3.5-flash-lite
       const ai = new GoogleGenAI({ apiKey: geminiApiKeyToUse, vertexai: false });
       const systemPrompt = `Você é o OSONE G5, o cérebro eletrônico central de inteligência artificial de elite, hiperfocado em ajudar o usuário com uma clareza deslumbrante, respostas estruturadas, elegantes e um toque futurista e polido.
 Você está atendendo o usuário pelo WhatsApp em nome do proprietário deste dispositivo OSONE. Responda diretamente e com muita inteligência, clareza, formatação impecável de parágrafos breves e emojis adequados.
 Nome do interlocutor: ${cleanSender}`;
 
       const gResult = await generateContentWithFallback(ai, {
-        model: "gemini-3.5-flash",
+        model: "gemini-3.5-flash-lite",
         contents: cleanText,
         config: {
           systemInstruction: systemPrompt
@@ -782,7 +782,7 @@ Retorne SOMENTE o objeto JSON conforme o esquema.
 
       // Call Gemini with structured JSON response config and fallbacks
       const response = await generateContentWithFallback(ai, {
-        model: "gemini-3.5-flash",
+        model: "gemini-3.6-flash",
         contents: { parts },
         config: {
           responseMimeType: "application/json",
@@ -987,14 +987,14 @@ Retorne SOMENTE o objeto JSON conforme o esquema.
         return res.json({ status: "error", error: "Gemini API key is not configured" });
       }
 
-      // Use modern GoogleGenAI SDK to speak with Gemini 3.5-flash (forcing Developer API over Vertex AI)
+      // Use modern GoogleGenAI SDK to speak with Gemini 3.5-flash-lite (forcing Developer API over Vertex AI)
       const ai = new GoogleGenAI({ apiKey: geminiApiKeyToUse, vertexai: false });
       const systemPrompt = `Você é o OSONE G5, o cérebro eletrônico central de inteligência artificial de elite, hiperfocado em ajudar o usuário com uma clareza deslumbrante, respostas estruturadas, elegantes e um toque futurista e polido.
 Você está atendendo o usuário pelo WhatsApp em nome do proprietário deste dispositivo OSONE. Responda diretamente e com muita inteligência, clareza, formatação impecável de parágrafos breves e emojis adequados.
 Nome do interlocutor: ${senderName}`;
 
       const gResult = await generateContentWithFallback(ai, {
-        model: "gemini-3.5-flash",
+        model: "gemini-3.5-flash-lite",
         contents: text,
         config: {
           systemInstruction: systemPrompt
@@ -1346,9 +1346,10 @@ Nome do interlocutor: ${senderName}`;
         // Tiered model candidates list of premium intelligent voice models
         const candidateModels = [
           "gemini-3.1-flash-tts-preview",
-          "gemini-3.5-flash",
-          "gemini-2.5-flash",
-          "gemini-3.1-flash-lite"
+          "gemini-3.6-flash",
+          "gemini-3.5-flash-lite",
+          "gemini-3.1-flash-lite",
+          "gemini-2.5-flash"
         ];
 
         for (const modelName of candidateModels) {
@@ -1448,14 +1449,17 @@ ${processedChunk}`;
 
   // Helper to run content generation with automated fallbacks
   async function generateContentWithFallback(ai: GoogleGenAI, params: { model: string; contents: any; config?: any }) {
-    const primaryModel = params.model || "gemini-3.5-flash";
+    const primaryModel = params.model || "gemini-3.6-flash";
     
     // Tiered candidates using standard non-deprecated Gemini 3.x and 2.5 models for maximum resilience
     const modelsToTry = [
       primaryModel, 
+      "gemini-3.6-flash",
+      "gemini-3.5-flash-lite",
+      "gemini-3.1-flash-lite",
       "gemini-3.5-flash", 
       "gemini-2.5-flash",
-      "gemini-3.1-flash-lite"
+      "gemini-flash-latest"
     ];
     
     // Remove duplicates keeping order
@@ -1475,16 +1479,23 @@ ${processedChunk}`;
         } catch (err: any) {
           lastError = err;
           const errMsg = err?.message || String(err);
-          const isTransient = errMsg.includes("503") || errMsg.includes("UNAVAILABLE") || errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED");
+          const isQuota = errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.toLowerCase().includes("quota") || errMsg.toLowerCase().includes("limit");
+          const isTransient = (errMsg.includes("503") || errMsg.includes("UNAVAILABLE") || errMsg.toLowerCase().includes("high demand")) && !isQuota;
+          
+          if (isQuota) {
+            console.warn(`[Fallback Log] Model ${modelName} hit quota limit (429/RESOURCE_EXHAUSTED). Skipping directly to next candidate model...`);
+            break; // Skip retry attempts for this model and try next candidate model
+          }
           
           if (isTransient && attempt < 2) {
-            console.log(`[Fallback Log] Model ${modelName} hit transient error on attempt ${attempt}. Waiting 400ms before retry...`);
-            await new Promise(resolve => setTimeout(resolve, 400));
+            const delay = attempt * 400;
+            console.log(`[Fallback Log] Model ${modelName} hit transient 503 error on attempt ${attempt}. Waiting ${delay}ms before retry...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
             continue;
           }
           
           console.log(`[Fallback Log] Model ${modelName} attempt ${attempt} returned exception:`, errMsg);
-          break; // Move to next model
+          break; // Move to next candidate model
         }
       }
     }
@@ -1493,14 +1504,17 @@ ${processedChunk}`;
 
   // Helper to run content stream generation with automated fallbacks
   async function generateContentStreamWithFallback(ai: GoogleGenAI, params: { model: string; contents: any; config?: any }) {
-    const primaryModel = params.model || "gemini-3.5-flash";
+    const primaryModel = params.model || "gemini-3.6-flash";
     
     // Tiered candidates using standard non-deprecated Gemini 3.x and 2.5 models for maximum resilience
     const modelsToTry = [
       primaryModel, 
+      "gemini-3.6-flash",
+      "gemini-3.5-flash-lite",
+      "gemini-3.1-flash-lite",
       "gemini-3.5-flash", 
       "gemini-2.5-flash",
-      "gemini-3.1-flash-lite"
+      "gemini-flash-latest"
     ];
     
     // Remove duplicates keeping order
@@ -1520,16 +1534,23 @@ ${processedChunk}`;
         } catch (err: any) {
           lastError = err;
           const errMsg = err?.message || String(err);
-          const isTransient = errMsg.includes("503") || errMsg.includes("UNAVAILABLE") || errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED");
+          const isQuota = errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.toLowerCase().includes("quota") || errMsg.toLowerCase().includes("limit");
+          const isTransient = (errMsg.includes("503") || errMsg.includes("UNAVAILABLE") || errMsg.toLowerCase().includes("high demand")) && !isQuota;
+          
+          if (isQuota) {
+            console.warn(`[Fallback Stream Log] Model ${modelName} hit quota limit (429/RESOURCE_EXHAUSTED). Skipping directly to next candidate model...`);
+            break; // Skip retry attempts for this model and try next candidate model
+          }
           
           if (isTransient && attempt < 2) {
-            console.log(`[Fallback Stream Log] Model ${modelName} hit transient error on attempt ${attempt}. Waiting 400ms before retry...`);
-            await new Promise(resolve => setTimeout(resolve, 400));
+            const delay = attempt * 400;
+            console.log(`[Fallback Stream Log] Model ${modelName} hit transient 503 error on attempt ${attempt}. Waiting ${delay}ms before retry...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
             continue;
           }
           
           console.log(`[Fallback Stream Log] Model ${modelName} attempt ${attempt} returned exception:`, errMsg);
-          break; // Move to next model
+          break; // Move to next candidate model
         }
       }
     }
@@ -1556,7 +1577,7 @@ ${processedChunk}`;
       });
 
       const response = await generateContentWithFallback(ai, {
-        model: "gemini-3.5-flash",
+        model: "gemini-3.6-flash",
         contents: historyContents,
         config: {
           maxOutputTokens: 250,
@@ -1597,7 +1618,7 @@ ${processedChunk}`;
       res.setHeader("X-Accel-Buffering", "no");
 
       const responseStream = await generateContentStreamWithFallback(ai, {
-        model: "gemini-3.5-flash",
+        model: "gemini-3.6-flash",
         contents: historyContents,
         config: {
           maxOutputTokens: 250,
@@ -1619,7 +1640,7 @@ ${processedChunk}`;
     }
   });
 
-  // Generic and robust POST endpoint for server-side Gemini 3.5-flash content generation 
+  // Generic and robust POST endpoint for server-side Gemini 3.6-flash content generation 
   app.post("/api/generate", async (req, res) => {
     try {
       const { prompt, systemInstruction, clientApiKey, model, responseMimeType } = req.body;
@@ -1639,7 +1660,7 @@ ${processedChunk}`;
         }
       });
 
-      const selectedModel = model || "gemini-3.5-flash";
+      const selectedModel = model || "gemini-3.6-flash";
 
       const config: any = {};
       if (systemInstruction) config.systemInstruction = systemInstruction;
@@ -1678,7 +1699,7 @@ ${processedChunk}`;
         }
       });
 
-      const selectedModel = model || "gemini-3.5-flash";
+      const selectedModel = model || "gemini-3.6-flash";
       const response = await generateContentWithFallback(ai, {
         model: selectedModel,
         contents: contents,
@@ -1836,56 +1857,41 @@ ${processedChunk}`;
       };
 
       // Execute with self-healing fallback logic
-      if (requestedModel.startsWith("gemini-")) {
+      const candidates = [
+        requestedModel,
+        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-flash"
+      ].filter(Boolean);
+
+      const uniqueImageCandidates = Array.from(new Set(candidates));
+      let lastImageError: any = null;
+
+      for (const candidateModel of uniqueImageCandidates) {
         try {
-          console.log(`[Image Gen] Tentando gerar com o modelo primário via REST: ${requestedModel}`);
-          const result = await tryGeminiModelREST(requestedModel);
-          return res.json(result);
-        } catch (err: any) {
-          const errMsg = err?.message || String(err);
-          console.warn(`[Image Gen] Falha no modelo primário ${requestedModel}: ${errMsg}. Tentando fallback com imagen-3.0-generate-002 via REST...`);
-          
-          try {
-            const fallbackResult = await tryImagenModelREST("imagen-3.0-generate-002");
-            return res.json(fallbackResult);
-          } catch (fallbackErr: any) {
-            console.error("[Image Gen] Falha também no modelo de fallback imagen-3.0-generate-002:", fallbackErr);
-            
-            try {
-              console.log("[Image Gen] Iniciando fallback ultra-robusto com Pollinations.ai...");
-              const pollinationsResult = await tryPollinationsModel(prompt);
-              return res.json(pollinationsResult);
-            } catch (pollinationsErr: any) {
-              console.error("[Image Gen] Falha também no modelo de fallback final Pollinations.ai:", pollinationsErr);
-              return res.status(500).json({ error: formatGeminiError(err) });
-            }
+          console.log(`[Image Gen] Tentando gerar imagem com modelo: ${candidateModel}`);
+          if (candidateModel.startsWith("gemini-")) {
+            const result = await tryGeminiModelREST(candidateModel);
+            return res.json(result);
+          } else {
+            const result = await tryImagenModelREST(candidateModel);
+            return res.json(result);
           }
-        }
-      } else {
-        try {
-          console.log(`[Image Gen] Tentando gerar com o modelo primário via REST: ${requestedModel}`);
-          const result = await tryImagenModelREST(requestedModel);
-          return res.json(result);
         } catch (err: any) {
-          const errMsg = err?.message || String(err);
-          console.warn(`[Image Gen] Falha no modelo primário ${requestedModel}: ${errMsg}. Tentando fallback com gemini-2.5-flash via REST...`);
-          
-          try {
-            const fallbackResult = await tryGeminiModelREST("gemini-2.5-flash");
-            return res.json(fallbackResult);
-          } catch (fallbackErr: any) {
-            console.error("[Image Gen] Falha também no modelo de fallback gemini-2.5-flash:", fallbackErr);
-            
-            try {
-              console.log("[Image Gen] Iniciando fallback ultra-robusto com Pollinations.ai...");
-              const pollinationsResult = await tryPollinationsModel(prompt);
-              return res.json(pollinationsResult);
-            } catch (pollinationsErr: any) {
-              console.error("[Image Gen] Falha também no modelo de fallback final Pollinations.ai:", pollinationsErr);
-              return res.status(500).json({ error: formatGeminiError(err) });
-            }
-          }
+          lastImageError = err;
+          console.log(`[Image Gen] Modelo ${candidateModel} não pôde ser utilizado. Alternando para o próximo candidato...`);
         }
+      }
+
+      // If all API models hit quota or error, execute Pollinations.ai fallback
+      try {
+        console.log("[Image Gen] Iniciando fallback ultra-robusto com Pollinations.ai...");
+        const pollinationsResult = await tryPollinationsModel(prompt);
+        return res.json(pollinationsResult);
+      } catch (pollinationsErr: any) {
+        console.error("[Image Gen] Falha no modelo de fallback final Pollinations.ai:", pollinationsErr);
+        return res.status(500).json({ error: formatGeminiError(lastImageError || pollinationsErr) });
       }
     } catch (err: any) {
       console.error("[Image Generation] Erro geral na rota de geração de imagem:", err);
@@ -1904,7 +1910,7 @@ ${processedChunk}`;
       const trimApiKey = geminiApiKey.trim();
       
       // Realizar chamada HTTP direta à API do Gemini para evitar auto-detecção do Vertex AI em plataformas GCP/Cloud Run
-      const verifyRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${trimApiKey}`, {
+      const verifyRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${trimApiKey}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -2092,7 +2098,7 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
       }
 
       const response = await generateContentWithFallback(ai, {
-        model: "gemini-2.5-flash",
+        model: "gemini-3.6-flash",
         contents: { parts: [imagePart, { text: promptText }] },
         config: config
       });
@@ -2404,7 +2410,7 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
       3. **Dica Pro**: Uma dica rápida para manter as senhas protegidas ou sobre como testar de forma simulada.`;
 
       const response = await generateContentWithFallback(ai, {
-        model: "gemini-3.5-flash",
+        model: "gemini-3.6-flash",
         contents: prompt,
         config: {
           systemInstruction: "Você é um Engenheiro de API de Software experiente, empático e de linguagem extremamente clara e acessível."
