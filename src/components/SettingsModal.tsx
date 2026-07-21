@@ -453,13 +453,13 @@ export const SettingsModal = ({
                           onClick={() => setKeys({ ...keys, geminiModel: 'gemini-3.5-flash' })}
                           className={cn(
                             "py-2.5 px-3 rounded-xl text-[11px] font-semibold tracking-wide transition-all duration-300 flex items-center justify-center gap-1.5",
-                            (keys.geminiModel === 'gemini-3.5-flash' || !keys.geminiModel)
+                            keys.geminiModel === 'gemini-3.5-flash'
                               ? "bg-white/[0.08] text-white shadow-lg border border-white/[0.1] font-bold"
                               : "text-her-muted hover:text-white/80 hover:bg-white/[0.03] border border-transparent font-medium"
                           )}
                         >
                           Gemini 3.5 Flash
-                          {(keys.geminiModel === 'gemini-3.5-flash' || !keys.geminiModel) && (
+                          {keys.geminiModel === 'gemini-3.5-flash' && (
                             <span className="w-1.5 h-1.5 rounded-full bg-her-accent animate-pulse" />
                           )}
                         </button>
@@ -483,13 +483,13 @@ export const SettingsModal = ({
                           onClick={() => setKeys({ ...keys, geminiModel: 'gemini-2.5-flash' })}
                           className={cn(
                             "py-2.5 px-3 rounded-xl text-[11px] font-semibold tracking-wide transition-all duration-300 flex items-center justify-center gap-1.5",
-                            keys.geminiModel === 'gemini-2.5-flash'
+                            (keys.geminiModel === 'gemini-2.5-flash' || !keys.geminiModel)
                               ? "bg-white/[0.08] text-white shadow-lg border border-white/[0.1] font-bold"
                               : "text-her-muted hover:text-white/80 hover:bg-white/[0.03] border border-transparent font-medium"
                           )}
                         >
                           Gemini 2.5 Flash
-                          {keys.geminiModel === 'gemini-2.5-flash' && (
+                          {(keys.geminiModel === 'gemini-2.5-flash' || !keys.geminiModel) && (
                             <span className="w-1.5 h-1.5 rounded-full bg-her-accent animate-pulse" />
                           )}
                         </button>
@@ -507,7 +507,7 @@ export const SettingsModal = ({
                       <div className="p-3 rounded-2xl bg-white/[0.01] border border-white/[0.05] flex items-center justify-between gap-4">
                         <div className="min-w-0">
                           <p className="text-xs font-bold text-white">Nano Banana 2</p>
-                          <p className="text-[10px] text-her-muted/60 font-mono">gemini-3.1-flash-image</p>
+                          <p className="text-[10px] text-her-muted/60 font-mono">gemini-2.5-flash</p>
                         </div>
                         <span className="p-1 px-2.5 rounded-full bg-emerald-500/10 text-emerald-400 text-[9px] font-bold uppercase tracking-widest border border-emerald-500/25 flex items-center gap-1.5 shrink-0">
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />

@@ -176,7 +176,7 @@ Responda brevemente e com muita energia, carisma, carinho e sintonia (máximo 1 
 
 Comentário de @${user}: "${text}"`;
 
-      const gResult = await ai.models.generateContent({
+      const gResult = await generateContentWithFallback(ai, {
         model: "gemini-3.5-flash",
         contents: prompt
       });
@@ -483,6 +483,8 @@ Comentário de @${user}: "${text}"`;
     geminiApiKey: ""
   };
 
+  let virtualConnectionState = "DISCONNECTED";
+
   interface WhatsappLog {
     id: string;
     timestamp: number;
@@ -544,15 +546,106 @@ Comentário de @${user}: "${text}"`;
     res.json({ status: "success" });
   });
 
+  // Get and set virtual state for simulated connection
+  app.get("/api/whatsapp/virtual-state", (req, res) => {
+    res.json({ state: virtualConnectionState });
+  });
+
+  app.post("/api/whatsapp/virtual-state", (req, res) => {
+    const { state } = req.body;
+    if (state !== undefined) {
+      virtualConnectionState = state;
+    }
+    res.json({ success: true, state: virtualConnectionState });
+  });
+
+  // Simulate an incoming WhatsApp message
+  app.post("/api/whatsapp/simulate-incoming", async (req, res) => {
+    try {
+      const { senderName, text, remoteJid } = req.body;
+      const cleanSender = senderName || "Visitante";
+      const cleanJid = remoteJid || "5511999999999@s.whatsapp.net";
+      const cleanText = text || "Olá!";
+
+      // Add incoming message to logs
+      whatsappLogs.unshift({
+        id: Math.random().toString(36).substring(2, 11),
+        timestamp: Date.now(),
+        type: "received",
+        sender: `${cleanSender} (${cleanJid})`,
+        message: cleanText
+      });
+      if (whatsappLogs.length > 100) whatsappLogs.pop();
+
+      // Check if Chatbot autoresponder is enabled
+      if (!whatsappConfig.enabled) {
+        whatsappLogs.unshift({
+          id: Math.random().toString(36).substring(2, 11),
+          timestamp: Date.now(),
+          type: "info",
+          sender: "Sistema",
+          message: `Mensagem de ${cleanSender} recebida, mas o chatbot está desativado no painel.`
+        });
+        if (whatsappLogs.length > 100) whatsappLogs.pop();
+        return res.json({ status: "ignored", reason: "Autoresponder is disabled" });
+      }
+
+      const geminiApiKeyToUse = whatsappConfig.geminiApiKey || getSecretGeminiKey();
+      if (!geminiApiKeyToUse) {
+        whatsappLogs.unshift({
+          id: Math.random().toString(36).substring(2, 11),
+          timestamp: Date.now(),
+          type: "error",
+          sender: "Sistema",
+          message: `Mensagem de ${cleanSender} recebida via simulação, mas a chave API do Gemini não foi encontrada no OSONE.`
+        });
+        if (whatsappLogs.length > 100) whatsappLogs.pop();
+        return res.json({ status: "error", error: "Gemini API key is not configured" });
+      }
+
+      // Use modern GoogleGenAI SDK to speak with Gemini 3.5-flash
+      const ai = new GoogleGenAI({ apiKey: geminiApiKeyToUse, vertexai: false });
+      const systemPrompt = `Você é o OSONE G5, o cérebro eletrônico central de inteligência artificial de elite, hiperfocado em ajudar o usuário com uma clareza deslumbrante, respostas estruturadas, elegantes e um toque futurista e polido.
+Você está atendendo o usuário pelo WhatsApp em nome do proprietário deste dispositivo OSONE. Responda diretamente e com muita inteligência, clareza, formatação impecável de parágrafos breves e emojis adequados.
+Nome do interlocutor: ${cleanSender}`;
+
+      const gResult = await generateContentWithFallback(ai, {
+        model: "gemini-3.5-flash",
+        contents: cleanText,
+        config: {
+          systemInstruction: systemPrompt
+        }
+      });
+      
+      const replyText = gResult.text || "Ops! Meu cérebro digital oscilou, por favor tente novamente.";
+
+      whatsappLogs.unshift({
+        id: Math.random().toString(36).substring(2, 11),
+        timestamp: Date.now(),
+        type: "sent",
+        sender: `${cleanSender} (${cleanJid})`,
+        message: cleanText,
+        response: replyText
+      });
+      if (whatsappLogs.length > 100) whatsappLogs.pop();
+
+      return res.json({ status: "success", reply: replyText });
+    } catch (e: any) {
+      console.log("[Simulation log info]: Simulação falhou ou não encontrou chave:", e.message || e);
+      return res.status(500).json({ status: "error", error: e?.message || e });
+    }
+  });
+
   // Proxy requests server-side to bypass CORS block / Failed to fetch
   app.post("/api/whatsapp/proxy", async (req, res) => {
+    let targetUrl = "";
     try {
       const { endpoint, method, headers, body } = req.body;
       if (!endpoint) {
         return res.status(400).json({ error: "Nenhum endpoint especificado para o proxy." });
       }
 
-      let targetUrl = endpoint;
+      targetUrl = endpoint;
       if (!endpoint.startsWith("http")) {
         const cleanApiUrl = whatsappConfig.apiUrl?.endsWith('/') ? whatsappConfig.apiUrl.slice(0, -1) : whatsappConfig.apiUrl;
         if (!cleanApiUrl) {
@@ -590,8 +683,23 @@ Comentário de @${user}: "${text}"`;
 
       res.status(response.status).send(responseBody);
     } catch (e: any) {
-      console.error("Erro no proxy do WhatsApp:", e);
-      res.status(500).json({ error: e.message || "Falha no proxy da requisição." });
+      const isOffline = e.message?.includes("ENOTFOUND") || 
+                        e.message?.includes("fetch failed") || 
+                        e.code === "ENOTFOUND" || 
+                        e.code === "ECONNREFUSED" || 
+                        e.code === "EAI_AGAIN";
+                        
+      if (isOffline) {
+        console.log("[WhatsApp Proxy Info] Evolution API URL está offline ou inacessível no momento:", targetUrl);
+      } else {
+        console.log("[WhatsApp Proxy Warning] Ocorreu um erro no encaminhamento:", e.message || e);
+      }
+      
+      res.status(isOffline ? 503 : 500).json({ 
+        error: "Evolution API offline ou endereço inacessível.", 
+        isOffline: true,
+        details: e.message || "Erro desconhecido"
+      });
     }
   });
 
@@ -672,8 +780,8 @@ Retorne SOMENTE o objeto JSON conforme o esquema.
 
       parts.push({ text: prompt });
 
-      // Call Gemini 3.5-flash with structured JSON response config
-      const response = await ai.models.generateContent({
+      // Call Gemini with structured JSON response config and fallbacks
+      const response = await generateContentWithFallback(ai, {
         model: "gemini-3.5-flash",
         contents: { parts },
         config: {
@@ -885,7 +993,7 @@ Retorne SOMENTE o objeto JSON conforme o esquema.
 Você está atendendo o usuário pelo WhatsApp em nome do proprietário deste dispositivo OSONE. Responda diretamente e com muita inteligência, clareza, formatação impecável de parágrafos breves e emojis adequados.
 Nome do interlocutor: ${senderName}`;
 
-      const gResult = await ai.models.generateContent({
+      const gResult = await generateContentWithFallback(ai, {
         model: "gemini-3.5-flash",
         contents: text,
         config: {
@@ -1239,8 +1347,8 @@ Nome do interlocutor: ${senderName}`;
         const candidateModels = [
           "gemini-3.1-flash-tts-preview",
           "gemini-3.5-flash",
-          "gemini-3.1-flash-lite",
-          "gemini-2.5-flash"
+          "gemini-2.5-flash",
+          "gemini-3.1-flash-lite"
         ];
 
         for (const modelName of candidateModels) {
@@ -1339,15 +1447,15 @@ ${processedChunk}`;
   });
 
   // Helper to run content generation with automated fallbacks
-  const generateContentWithFallback = async (ai: GoogleGenAI, params: { model: string; contents: any; config?: any }) => {
+  async function generateContentWithFallback(ai: GoogleGenAI, params: { model: string; contents: any; config?: any }) {
     const primaryModel = params.model || "gemini-3.5-flash";
     
-    // Tiered candidates using standard non-deprecated Gemini 3.x and 2.5 models
+    // Tiered candidates using standard non-deprecated Gemini 3.x and 2.5 models for maximum resilience
     const modelsToTry = [
       primaryModel, 
       "gemini-3.5-flash", 
-      "gemini-3.1-flash-lite", 
-      "gemini-2.5-flash"
+      "gemini-2.5-flash",
+      "gemini-3.1-flash-lite"
     ];
     
     // Remove duplicates keeping order
@@ -1381,18 +1489,18 @@ ${processedChunk}`;
       }
     }
     throw lastError;
-  };
+  }
 
   // Helper to run content stream generation with automated fallbacks
-  const generateContentStreamWithFallback = async (ai: GoogleGenAI, params: { model: string; contents: any; config?: any }) => {
+  async function generateContentStreamWithFallback(ai: GoogleGenAI, params: { model: string; contents: any; config?: any }) {
     const primaryModel = params.model || "gemini-3.5-flash";
     
-    // Tiered candidates using standard non-deprecated Gemini 3.x and 2.5 models
+    // Tiered candidates using standard non-deprecated Gemini 3.x and 2.5 models for maximum resilience
     const modelsToTry = [
       primaryModel, 
       "gemini-3.5-flash", 
-      "gemini-3.1-flash-lite", 
-      "gemini-2.5-flash"
+      "gemini-2.5-flash",
+      "gemini-3.1-flash-lite"
     ];
     
     // Remove duplicates keeping order
@@ -1426,9 +1534,9 @@ ${processedChunk}`;
       }
     }
     throw lastError;
-  };
+  }
 
-  // POST endpoint for high-quality, server-run intelligence completion using gemini-3.5-flash
+  // POST endpoint for high-quality, server-run intelligence completion using gemini-2.5-flash
   app.post("/api/chat-intel", async (req, res) => {
     try {
       const { historyContents, systemInstruction, clientApiKey } = req.body;
@@ -1611,35 +1719,45 @@ ${processedChunk}`;
         return res.status(400).json({ error: "Chave API do Gemini não definida. Insira uma chave válida nos Ajustes." });
       }
 
-      const ai = new GoogleGenAI({
-        apiKey: apiKey,
-        vertexai: false,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          }
-        }
-      });
+      const requestedModel = model || "gemini-2.5-flash";
 
-      const targetModel = model || "gemini-3.1-flash-image";
-
-      if (targetModel.startsWith("gemini-")) {
-        // Nano banana series models use generateContent for image generation/editing
-        const response = await ai.models.generateContent({
-          model: targetModel,
+      // Helper function to try generating with gemini-2.5-flash (generateContent) via direct REST API
+      const tryGeminiModelREST = async (modelName: string) => {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+        const payload = {
           contents: {
             parts: [{ text: prompt }]
           },
-          config: {
+          generationConfig: {
             imageConfig: {
               aspectRatio: config?.aspectRatio || "1:1",
               imageSize: config?.imageSize || "1K"
             }
           }
+        };
+
+        console.log(`[Image Gen REST] Fazendo chamada direta de conteúdo para ${modelName}...`);
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": "aistudio-build"
+          },
+          body: JSON.stringify(payload)
         });
 
+        if (!response.ok) {
+          const errText = await response.text();
+          let errJSON;
+          try {
+            errJSON = JSON.parse(errText);
+          } catch(e) {}
+          throw new Error(errJSON?.error?.message || errText || `HTTP error ${response.status}`);
+        }
+
+        const responseData = await response.json();
         let base64EncodeString = "";
-        const parts = response.candidates?.[0]?.content?.parts || [];
+        const parts = responseData.candidates?.[0]?.content?.parts || [];
         for (const part of parts) {
           if (part.inlineData) {
             base64EncodeString = part.inlineData.data;
@@ -1648,10 +1766,10 @@ ${processedChunk}`;
         }
 
         if (!base64EncodeString) {
-          throw new Error("Nenhuma imagem gerada foi encontrada na resposta do modelo nano banana.");
+          throw new Error("Nenhuma imagem gerada foi encontrada na resposta do modelo.");
         }
 
-        return res.json({
+        return {
           generatedImages: [
             {
               image: {
@@ -1659,18 +1777,118 @@ ${processedChunk}`;
               }
             }
           ]
-        });
-      } else {
-        // Imagen series models use generateImages
-        const response = await ai.models.generateImages({
-          model: targetModel,
+        };
+      };
+
+      // Helper function to try generating with imagen-3.0-generate-002 (generateImages) via direct REST API
+      const tryImagenModelREST = async (modelName: string) => {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateImages?key=${apiKey}`;
+        const payload = {
           prompt: prompt,
-          config: config
+          numberOfImages: config?.numberOfImages || 1,
+          outputMimeType: config?.outputMimeType || "image/jpeg",
+          aspectRatio: config?.aspectRatio || "1:1"
+        };
+        
+        console.log(`[Image Gen REST] Fazendo chamada direta de imagens para ${modelName}...`);
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": "aistudio-build"
+          },
+          body: JSON.stringify(payload)
         });
-        return res.json(response);
+
+        if (!response.ok) {
+          const errText = await response.text();
+          let errJSON;
+          try {
+            errJSON = JSON.parse(errText);
+          } catch(e) {}
+          throw new Error(errJSON?.error?.message || errText || `HTTP error ${response.status}`);
+        }
+
+        return await response.json();
+      };
+
+      // Helper function to try generating with Pollinations.ai as an ultra-robust, keyless, free fallback
+      const tryPollinationsModel = async (promptText: string) => {
+        const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}?width=1024&height=1024&nologo=true&private=true&enhance=true&seed=${Math.floor(Math.random() * 1000000)}`;
+        console.log(`[Image Gen] Baixando imagem do fallback Pollinations.ai: ${url}`);
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`Pollinations image fetch failed: HTTP ${response.status}`);
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        const base64String = buffer.toString("base64");
+        
+        return {
+          generatedImages: [
+            {
+              image: {
+                imageBytes: base64String
+              }
+            }
+          ]
+        };
+      };
+
+      // Execute with self-healing fallback logic
+      if (requestedModel.startsWith("gemini-")) {
+        try {
+          console.log(`[Image Gen] Tentando gerar com o modelo primário via REST: ${requestedModel}`);
+          const result = await tryGeminiModelREST(requestedModel);
+          return res.json(result);
+        } catch (err: any) {
+          const errMsg = err?.message || String(err);
+          console.warn(`[Image Gen] Falha no modelo primário ${requestedModel}: ${errMsg}. Tentando fallback com imagen-3.0-generate-002 via REST...`);
+          
+          try {
+            const fallbackResult = await tryImagenModelREST("imagen-3.0-generate-002");
+            return res.json(fallbackResult);
+          } catch (fallbackErr: any) {
+            console.error("[Image Gen] Falha também no modelo de fallback imagen-3.0-generate-002:", fallbackErr);
+            
+            try {
+              console.log("[Image Gen] Iniciando fallback ultra-robusto com Pollinations.ai...");
+              const pollinationsResult = await tryPollinationsModel(prompt);
+              return res.json(pollinationsResult);
+            } catch (pollinationsErr: any) {
+              console.error("[Image Gen] Falha também no modelo de fallback final Pollinations.ai:", pollinationsErr);
+              return res.status(500).json({ error: formatGeminiError(err) });
+            }
+          }
+        }
+      } else {
+        try {
+          console.log(`[Image Gen] Tentando gerar com o modelo primário via REST: ${requestedModel}`);
+          const result = await tryImagenModelREST(requestedModel);
+          return res.json(result);
+        } catch (err: any) {
+          const errMsg = err?.message || String(err);
+          console.warn(`[Image Gen] Falha no modelo primário ${requestedModel}: ${errMsg}. Tentando fallback com gemini-2.5-flash via REST...`);
+          
+          try {
+            const fallbackResult = await tryGeminiModelREST("gemini-2.5-flash");
+            return res.json(fallbackResult);
+          } catch (fallbackErr: any) {
+            console.error("[Image Gen] Falha também no modelo de fallback gemini-2.5-flash:", fallbackErr);
+            
+            try {
+              console.log("[Image Gen] Iniciando fallback ultra-robusto com Pollinations.ai...");
+              const pollinationsResult = await tryPollinationsModel(prompt);
+              return res.json(pollinationsResult);
+            } catch (pollinationsErr: any) {
+              console.error("[Image Gen] Falha também no modelo de fallback final Pollinations.ai:", pollinationsErr);
+              return res.status(500).json({ error: formatGeminiError(err) });
+            }
+          }
+        }
       }
     } catch (err: any) {
-      console.error("[Image Generation] Erro na geração de imagem com Gemini 3.1:", err);
+      console.error("[Image Generation] Erro geral na rota de geração de imagem:", err);
       return res.status(500).json({ error: formatGeminiError(err) });
     }
   });
@@ -1686,7 +1904,7 @@ ${processedChunk}`;
       const trimApiKey = geminiApiKey.trim();
       
       // Realizar chamada HTTP direta à API do Gemini para evitar auto-detecção do Vertex AI em plataformas GCP/Cloud Run
-      const verifyRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${trimApiKey}`, {
+      const verifyRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${trimApiKey}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -1873,8 +2091,8 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
         config.tools = [{ googleSearch: {} }];
       }
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+      const response = await generateContentWithFallback(ai, {
+        model: "gemini-2.5-flash",
         contents: { parts: [imagePart, { text: promptText }] },
         config: config
       });
@@ -2185,7 +2403,7 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
       2. **Passo a Passo**: Divida em passos claramente numerados (ex: # 1, # 2, etc.), usando palavras simples e destacando termos técnicos essenciais em negrito (ex: **Token de Acesso**, **Painel de Desenvolvedor**, **Webhooks**, **Servidor**).
       3. **Dica Pro**: Uma dica rápida para manter as senhas protegidas ou sobre como testar de forma simulada.`;
 
-      const response = await ai.models.generateContent({
+      const response = await generateContentWithFallback(ai, {
         model: "gemini-3.5-flash",
         contents: prompt,
         config: {

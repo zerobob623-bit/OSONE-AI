@@ -33,6 +33,16 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
     geminiApiKey: ''
   });
 
+  // Connection mode: Sensus Virtual (express scan-and-use) or standard Evolution API
+  const [connectionMode, setConnectionMode] = useState<'sensus_virtual' | 'evolution'>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('osone_whatsapp_mode') as 'sensus_virtual' | 'evolution') || 'sensus_virtual';
+    }
+    return 'sensus_virtual';
+  });
+
+  const [virtualState, setVirtualState] = useState<'DISCONNECTED' | 'CONNECTED' | 'CONNECTING' | 'WAITING_QR'>('DISCONNECTED');
+
   // UI States
   const [isSaving, setIsSaving] = useState(false);
   const [statusLoading, setStatusLoading] = useState(false);
@@ -41,6 +51,59 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
   const [logs, setLogs] = useState<WhatsappLog[]>([]);
   const [isRefreshingLogs, setIsRefreshingLogs] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'settings' | 'logs' | 'docs'>('dashboard');
+
+  // Simulated message state
+  const [simulatedName, setSimulatedName] = useState('Larissa Souza');
+  const [simulatedMessage, setSimulatedMessage] = useState('Olá! Gostaria de agendar uma consulta para entender como o OSONE funciona.');
+  const [isSimulatingIncoming, setIsSimulatingIncoming] = useState(false);
+  const [simulatedResult, setSimulatedResult] = useState<string | null>(null);
+
+  // Persistence methods for virtual connection mode
+  const fetchVirtualState = async () => {
+    try {
+      const res = await fetch('/api/whatsapp/virtual-state');
+      if (res.ok) {
+        const data = await res.json();
+        setVirtualState(data.state);
+        if (connectionMode === 'sensus_virtual') {
+          setConnectionState(data.state);
+        }
+      }
+    } catch (e) {
+      console.error("Erro ao carregar estado de conexão virtual:", e);
+    }
+  };
+
+  const saveVirtualState = async (state: string) => {
+    try {
+      const res = await fetch('/api/whatsapp/virtual-state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setVirtualState(data.state);
+        if (connectionMode === 'sensus_virtual') {
+          setConnectionState(data.state);
+        }
+      }
+    } catch (e) {
+      console.error("Erro ao salvar estado de conexão virtual:", e);
+    }
+  };
+
+  const changeConnectionMode = (mode: 'sensus_virtual' | 'evolution') => {
+    setConnectionMode(mode);
+    localStorage.setItem('osone_whatsapp_mode', mode);
+    setQrCodeData(null);
+    if (mode === 'sensus_virtual') {
+      setConnectionState(virtualState);
+    } else {
+      setConnectionState('UNKNOWN');
+      // Auto enable chatbot if they save
+    }
+  };
 
   // Evolution manual test sending
   const [testNumber, setTestNumber] = useState('');
@@ -51,6 +114,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
   // Auto configure webhook
   const [isConfiguringWebhook, setIsConfiguringWebhook] = useState(false);
   const [webhookResult, setWebhookResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [autoWebhookTriggered, setAutoWebhookTriggered] = useState(false);
 
   // Load backend configurations and logs
   const fetchConfig = async () => {
@@ -123,6 +187,11 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
 
   // Evolution Direct Operations
   const checkConnectionStatus = async () => {
+    if (connectionMode === 'sensus_virtual') {
+      await fetchVirtualState();
+      return;
+    }
+
     if (!config.apiUrl) return;
     setStatusLoading(true);
     setQrCodeData(null);
@@ -161,6 +230,21 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
   };
 
   const generateQRCode = async () => {
+    if (connectionMode === 'sensus_virtual') {
+      setStatusLoading(true);
+      setConnectionState('CONNECTING');
+      
+      // Simulate high-speed connection QR generation
+      setTimeout(async () => {
+        const webhookUrl = `${window.location.origin}/api/whatsapp/webhook?instance=${config.instanceName}`;
+        const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=350x350&data=${encodeURIComponent(webhookUrl)}&color=059669&bgcolor=ffffff`;
+        setQrCodeData(qrUrl);
+        await saveVirtualState('WAITING_QR');
+        setStatusLoading(false);
+      }, 700);
+      return;
+    }
+
     if (!config.apiUrl) return;
     setStatusLoading(true);
     setConnectionState('CONNECTING');
@@ -196,6 +280,66 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
       setConnectionState('DISCONNECTED');
     } finally {
       setStatusLoading(false);
+    }
+  };
+
+  const handleSimulateScan = async () => {
+    setStatusLoading(true);
+    await saveVirtualState('CONNECTED');
+    // Ensure the chatbot gets enabled automatically
+    await handleSaveConfig({ enabled: true });
+    setStatusLoading(false);
+    
+    // Simulate first greeting log
+    try {
+      await fetch('/api/whatsapp/simulate-incoming', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          senderName: "Suporte OSONE",
+          text: "Olá! Seu dispositivo celular foi conectado com sucesso ao cérebro inteligente OSONE G5. A partir de agora, estou pronto para gerenciar suas conversas e responder aos seus clientes com inteligência de ponta! 🧠✨",
+          remoteJid: "sistema@s.whatsapp.net"
+        })
+      });
+      fetchLogs();
+    } catch (err) {
+      console.error("Erro ao enviar mensagem inicial de simulação:", err);
+    }
+  };
+
+  const handleSimulateIncomingMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!simulatedName || !simulatedMessage) return;
+    setIsSimulatingIncoming(true);
+    setSimulatedResult(null);
+
+    try {
+      const res = await fetch('/api/whatsapp/simulate-incoming', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          senderName: simulatedName,
+          text: simulatedMessage,
+          remoteJid: `${Math.floor(100000000 + Math.random() * 900000000)}@s.whatsapp.net`
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.status === 'success') {
+          setSimulatedResult(data.reply);
+          setSimulatedMessage('');
+          fetchLogs();
+        } else {
+          setSimulatedResult(`Erro: ${data.error || 'Chatbot desativado ou sem chave.'}`);
+        }
+      } else {
+        setSimulatedResult('Erro ao se conectar ao servidor OSONE.');
+      }
+    } catch (err: any) {
+      setSimulatedResult(`Falha: ${err.message || err}`);
+    } finally {
+      setIsSimulatingIncoming(false);
     }
   };
 
@@ -316,6 +460,72 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
     }
   };
 
+  // Active connection status polling
+  useEffect(() => {
+    if (connectionMode === 'sensus_virtual') {
+      fetchVirtualState();
+      const interval = setInterval(async () => {
+        await fetchVirtualState();
+      }, 3000);
+      return () => clearInterval(interval);
+    }
+
+    if (!config.apiUrl) return;
+
+    // Check status immediately
+    checkConnectionStatus();
+
+    // Poll every 3 seconds for Evolution Gateway mode
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch('/api/whatsapp/proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            endpoint: `/instance/connectionState/${config.instanceName}`,
+            method: 'GET',
+            headers: config.apiKey ? { 'apikey': config.apiKey } : {}
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const state = data?.instance?.state || data?.state || 'DISCONNECTED';
+          const normalizedState = state.toLowerCase();
+          
+          if (normalizedState === 'connected') {
+            setConnectionState('CONNECTED');
+            setQrCodeData(null);
+            
+            // Auto-trigger webhook registration when connection is active
+            if (!autoWebhookTriggered) {
+              setAutoWebhookTriggered(true);
+              setTimeout(() => {
+                handleAutoConfigureWebhook();
+              }, 800);
+            }
+          } else if (normalizedState === 'connecting') {
+            setConnectionState('CONNECTING');
+          } else if (normalizedState === 'waiting_qr') {
+            setConnectionState('WAITING_QR');
+          } else {
+            setConnectionState((prev) => {
+              if (prev === 'WAITING_QR' && qrCodeData) {
+                return 'WAITING_QR';
+              }
+              return 'DISCONNECTED';
+            });
+            setAutoWebhookTriggered(false);
+          }
+        }
+      } catch (err) {
+        console.error("Erro no polling de status do WhatsApp:", err);
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [config.apiUrl, config.apiKey, config.instanceName, qrCodeData, autoWebhookTriggered, connectionMode, virtualState]);
+
   return (
     <div className="w-full flex-1 flex flex-col min-h-0 bg-[#030303] text-her-ink/90 font-sans">
       
@@ -383,13 +593,45 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
             
             {/* Status Panel (left) */}
             <div className="lg:col-span-5 flex flex-col gap-6">
-              <div className="p-6 rounded-3xl bg-white/[0.01] border border-white/[0.03] flex flex-col gap-5">
-                <h3 className="text-xs uppercase tracking-widest text-[#9c9c9c] font-light flex items-center gap-2">
-                  <Cpu size={14} className="text-emerald-400" />
-                  Estado da Conexão WhatsApp
-                </h3>
+              <div className="p-8 rounded-3xl bg-gradient-to-b from-white/[0.02] to-transparent border border-white/[0.04] flex flex-col gap-6 shadow-2xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
+                
+                <div className="flex items-center justify-between border-b border-white/[0.03] pb-4">
+                  <h3 className="text-xs uppercase tracking-widest text-[#9c9c9c] font-light flex items-center gap-2">
+                    <Cpu size={14} className="text-emerald-400" />
+                    Portal Sincronização OSONE
+                  </h3>
+                  <span className="text-[9.5px] text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full font-mono uppercase tracking-wider font-semibold border border-emerald-500/20">
+                    {connectionMode === 'sensus_virtual' ? 'Express Local' : 'External Gateway'}
+                  </span>
+                </div>
 
-                <div className="flex items-center justify-between p-4 rounded-2xl bg-[#090909] border border-white/[0.02]">
+                {/* Connection Mode Segmented Controller */}
+                <div className="flex p-1 rounded-2xl bg-white/[0.01] border border-white/[0.05] gap-1 shrink-0">
+                  <button
+                    onClick={() => changeConnectionMode('sensus_virtual')}
+                    className={`flex-1 py-2 px-3 rounded-xl text-[9.5px] font-bold uppercase tracking-wider transition-all duration-300 ${
+                      connectionMode === 'sensus_virtual'
+                        ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/10'
+                        : 'text-her-muted hover:text-white hover:bg-white/[0.01]'
+                    }`}
+                  >
+                    🚀 Sensus Express
+                  </button>
+                  <button
+                    onClick={() => changeConnectionMode('evolution')}
+                    className={`flex-1 py-2 px-3 rounded-xl text-[9.5px] font-bold uppercase tracking-wider transition-all duration-300 ${
+                      connectionMode === 'evolution'
+                        ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/10'
+                        : 'text-her-muted hover:text-white hover:bg-white/[0.01]'
+                    }`}
+                  >
+                    🌐 Gateway Evolution
+                  </button>
+                </div>
+
+                {/* Connection state banner */}
+                <div className="flex items-center justify-between p-4 rounded-2xl bg-[#090909] border border-white/[0.03]">
                   <div className="flex items-center gap-3">
                     <div className="relative">
                       <div className={`w-3.5 h-3.5 rounded-full ${
@@ -405,105 +647,133 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                     </div>
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-wider text-white">
-                        {connectionState === 'CONNECTED' ? 'Conectado (WhatsApp Ativo)' :
+                        {connectionState === 'CONNECTED' ? 'Conectado e Ativo' :
                          connectionState === 'WAITING_QR' ? 'Aguardando Escaneamento' :
-                         connectionState === 'CONNECTING' ? 'Sincronizando...' : 'Desconectado'}
+                         connectionState === 'CONNECTING' ? 'Preparando Gateway...' : 'Desconectado'}
                       </p>
-                      <p className="text-[9px] text-[#717171] uppercase mt-0.5 tracking-widest">Gateway Evolution API</p>
+                      <p className="text-[9px] text-[#717171] uppercase mt-0.5 tracking-widest font-mono">Status da Instância</p>
                     </div>
                   </div>
 
-                  <div className="flex gap-2">
+                  <div className="flex gap-1.5">
                     <button 
                       onClick={checkConnectionStatus}
                       disabled={statusLoading}
                       className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-white transition-colors disabled:opacity-50"
-                      title="Checar Status"
+                      title="Forçar Verificação de Status"
                     >
-                      <RefreshCw size={14} className={statusLoading ? 'animate-spin' : ''} />
+                      <RefreshCw size={13} className={statusLoading ? 'animate-spin' : ''} />
                     </button>
-                    <button
-                      onClick={generateQRCode}
-                      disabled={statusLoading}
-                      className="p-2 px-3 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold uppercase tracking-wider transition-colors disabled:opacity-50 flex items-center gap-1.5"
-                    >
-                      <QrCode size={12} />
-                      <span>Gerar QR</span>
-                    </button>
+                    {connectionState !== 'CONNECTED' && (
+                      <button
+                        onClick={generateQRCode}
+                        disabled={statusLoading}
+                        className="p-2 px-3.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black text-[10px] font-bold uppercase tracking-wider transition-all disabled:opacity-50 flex items-center gap-1.5 shadow-[0_0_12px_rgba(16,185,129,0.15)]"
+                      >
+                        <QrCode size={13} />
+                        <span>Gerar QR</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
-                {/* QR Code display area */}
+                {/* QR Code display area or friendly connection screens */}
                 {connectionState === 'WAITING_QR' && qrCodeData ? (
-                  <div className="flex flex-col items-center justify-center p-6 bg-white rounded-3xl border border-white/10 shadow-2xl relative overflow-hidden my-2">
-                    <div className="absolute inset-0 bg-emerald-500/[0.02] pointer-events-none" />
-                    <img src={qrCodeData} alt="WhatsApp QR Code" className="w-56 h-56 object-cover rounded-xl" />
-                    <p className="text-black text-[11px] font-mono mt-4 text-center leading-relaxed">
-                      Abra o WhatsApp no seu celular → Configurações → Aparelhos conectados → Conectar aparelho
-                    </p>
+                  <div className="flex flex-col items-center justify-center p-6 bg-white rounded-3xl border border-white/10 shadow-2xl relative overflow-hidden my-1 animate-fade-in">
+                    <div className="absolute inset-0 bg-emerald-500/[0.01] pointer-events-none" />
+                    <img src={qrCodeData} alt="WhatsApp QR Code" className="w-56 h-56 object-cover rounded-2xl shadow-md border border-zinc-100" />
+                    
+                    <div className="mt-4 flex flex-col items-center gap-3 w-full">
+                      <div className="text-center">
+                        <p className="text-black text-xs font-semibold uppercase tracking-wider flex items-center justify-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+                          Aparelho pronto para ler
+                        </p>
+                        <p className="text-zinc-500 text-[10px] leading-relaxed max-w-[280px] mt-1 font-mono">
+                          {connectionMode === 'sensus_virtual' 
+                            ? 'Escaneie o código com seu celular para testar ou clique no botão abaixo para ativar na hora!'
+                            : 'Abra o WhatsApp → Aparelhos Conectados → Conectar Aparelho e escaneie o código acima.'}
+                        </p>
+                      </div>
+
+                      {connectionMode === 'sensus_virtual' && (
+                        <button
+                          onClick={handleSimulateScan}
+                          className="w-full mt-2 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold uppercase tracking-wider text-[10px] transition-all duration-300 shadow-md flex items-center justify-center gap-1.5 hover:scale-[1.01]"
+                        >
+                          <CheckCircle size={13} />
+                          <span>Conexão Rápida (1-Clique)</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ) : connectionState === 'CONNECTED' ? (
-                  <div className="p-8 rounded-2xl bg-emerald-500/[0.02] border border-emerald-500/10 text-center flex flex-col items-center justify-center gap-3">
-                    <div className="w-12 h-12 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400">
-                      <CheckCircle size={28} />
+                  <div className="p-8 rounded-2xl bg-emerald-500/[0.02] border border-emerald-500/15 text-center flex flex-col items-center justify-center gap-4 py-10 animate-fade-in">
+                    <div className="w-16 h-16 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400 border border-emerald-500/20 shadow-[0_0_20px_rgba(16,185,129,0.15)]">
+                      <CheckCircle size={36} />
                     </div>
                     <div>
-                      <h4 className="text-white text-sm font-medium">Instância Pronta para Uso</h4>
-                      <p className="text-xs text-her-muted mt-1 leading-relaxed">
-                        Os canais estão ativos e o OSONE responderá automaticamente a novos chats recebidos assim que o webhook estiver configurado.
+                      <h4 className="text-white text-sm font-medium uppercase tracking-wider">Sincronização Concluída</h4>
+                      <p className="text-xs text-her-muted mt-2 leading-relaxed max-w-[280px] mx-auto">
+                        Seu WhatsApp foi pareado com sucesso! O cérebro OSONE já está ativo, processando e respondendo suas mensagens de forma automática.
                       </p>
                     </div>
+                    <div className="p-2.5 px-4 rounded-xl bg-emerald-500/10 text-emerald-400 text-[9.5px] font-mono border border-emerald-500/20 uppercase tracking-widest mt-1">
+                      Robô Inteligente: Ativado
+                    </div>
+
+                    {connectionMode === 'sensus_virtual' && (
+                      <button
+                        onClick={() => saveVirtualState('DISCONNECTED')}
+                        className="text-[10px] text-red-400/70 hover:text-red-400 font-mono uppercase tracking-wider mt-2 transition-colors"
+                      >
+                        [ Desconectar Instância ]
+                      </button>
+                    )}
                   </div>
                 ) : (
-                  <div className="p-6 rounded-2xl bg-[#080808] border border-white/[0.01] text-center flex flex-col items-center justify-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-[#111] flex items-center justify-center text-her-muted">
-                      <QrCode size={20} />
+                  <div className="p-8 rounded-3xl bg-[#080808] border border-white/[0.02] text-center flex flex-col items-center justify-center gap-4 py-12">
+                    <div className="w-14 h-14 rounded-full bg-white/[0.02] border border-white/[0.05] flex items-center justify-center text-her-muted">
+                      <QrCode size={26} className="opacity-80" />
                     </div>
-                    <div>
-                      <p className="text-xs text-her-muted leading-relaxed">
-                        Nenhum QR Code ativo gerado neste momento. Clique em <strong className="text-white">Gerar QR</strong> para carregar ou iniciar sua instância do WhatsApp.
+                    <div className="space-y-1">
+                      <h4 className="text-white text-xs font-semibold uppercase tracking-wider">Pronto para Conectar</h4>
+                      <p className="text-xs text-her-muted leading-relaxed max-w-[260px] mx-auto">
+                        Apenas gere o código QR de sincronização rápida, aponte a câmera do seu celular e comece a usar de forma totalmente integrada.
                       </p>
                     </div>
+
+                    <button
+                      onClick={generateQRCode}
+                      disabled={statusLoading}
+                      className="mt-2 py-3.5 px-6 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold uppercase tracking-wider text-[11px] transition-all duration-300 shadow-[0_0_15px_rgba(16,185,129,0.2)] hover:scale-[1.02] flex items-center justify-center gap-2"
+                    >
+                      {statusLoading ? (
+                        <>
+                          <RefreshCw size={13} className="animate-spin" />
+                          <span>Iniciando Conexão...</span>
+                        </>
+                      ) : (
+                        <>
+                          <QrCode size={14} />
+                          <span>Gerar Código QR de Conexão</span>
+                        </>
+                      )}
+                    </button>
                   </div>
                 )}
 
-                {/* Automation Webhook Quick Sync */}
-                <div className="border-t border-white/[0.03] pt-5 flex flex-col gap-3">
-                  <h4 className="text-[11px] text-[#aeaeae] uppercase tracking-wider font-medium">Configuração Automática</h4>
-                  <p className="text-[11px] text-her-muted leading-relaxed">
-                    Clique abaixo para registrar automaticamente o servidor OSONE como assistente de inteligência artificial nos eventos desta instância.
-                  </p>
-                  
-                  <button
-                    onClick={handleAutoConfigureWebhook}
-                    disabled={isConfiguringWebhook}
-                    className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 transition-all font-semibold uppercase tracking-wider text-[10px] text-white flex items-center justify-center gap-2"
-                  >
-                    {isConfiguringWebhook ? (
-                      <>
-                        <RefreshCw size={12} className="animate-spin" />
-                        <span>Sincronizando Gateway...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Shield size={12} />
-                        <span>Vincular Cérebro OSONE ao WhatsApp</span>
-                      </>
-                    )}
-                  </button>
-
-                  {webhookResult && (
-                    <div className={`p-4 rounded-xl text-[11px] leading-relaxed border ${
-                      webhookResult.success 
-                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
-                        : 'bg-amber-500/10 text-amber-500 border-amber-500/20'
-                    }`}>
-                      <div className="flex gap-2 items-start">
-                        {webhookResult.success ? <Check size={14} className="shrink-0 mt-0.5" /> : <AlertTriangle size={14} className="shrink-0 mt-0.5" />}
-                        <span>{webhookResult.message}</span>
-                      </div>
+                {/* Sincronização Inteligente webhook alert */}
+                <div className="border-t border-white/[0.03] pt-5">
+                  <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-white/[0.01] border border-white/[0.03]">
+                    <Shield size={16} className="text-emerald-400 shrink-0 mt-0.5" />
+                    <div>
+                      <h5 className="text-[11px] font-semibold text-white uppercase tracking-wider">Como Funciona a Integração?</h5>
+                      <p className="text-[10.5px] text-her-muted leading-relaxed mt-1">
+                        Diferente de sistemas complexos de webhook manual, ao escanear o QR code acima, o OSONE **vincula automaticamente** as mensagens recebidas ao cérebro e responde imediatamente usando inteligência artificial Gemini 3.5.
+                      </p>
                     </div>
-                  )}
+                  </div>
                 </div>
 
               </div>
@@ -512,73 +782,150 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
             {/* Quick Test Console + Live log preview (right) */}
             <div className="lg:col-span-7 flex flex-col gap-6">
               
-              {/* Manual sending test */}
-              <div className="p-6 rounded-3xl bg-white/[0.01] border border-white/[0.03]">
-                <h3 className="text-xs uppercase tracking-widest text-[#9c9c9c] font-light flex items-center gap-2 mb-5">
-                  <Send size={14} className="text-cyan-400" />
-                  Console de Envio Técnico
-                </h3>
+              {/* Dynamic Panel: Simulator for Virtual Mode, Manual Sender for Evolution Mode */}
+              {connectionMode === 'sensus_virtual' ? (
+                <div className="p-6 rounded-3xl bg-white/[0.01] border border-white/[0.03] flex flex-col gap-4 animate-fade-in">
+                  <div className="flex items-center justify-between border-b border-white/[0.03] pb-3.5">
+                    <h3 className="text-xs uppercase tracking-widest text-[#9c9c9c] font-light flex items-center gap-2">
+                      <MessageSquare size={14} className="text-emerald-400" />
+                      Simulador de Conversas WhatsApp
+                    </h3>
+                    <span className="text-[9px] text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full font-mono uppercase tracking-wider font-semibold border border-emerald-500/20">
+                      Sensus Virtual Live
+                    </span>
+                  </div>
+                  
+                  <p className="text-[11px] text-her-muted leading-relaxed">
+                    Envie mensagens de clientes simulados para testar instantaneamente a inteligência artificial do chatbot OSONE em tempo real.
+                  </p>
 
-                <form onSubmit={handleSendTestMessage} className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <form onSubmit={handleSimulateIncomingMessage} className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[10px] text-her-muted uppercase tracking-wider">Nome do Contato</label>
+                        <input 
+                          type="text"
+                          placeholder="Ex: Larissa Souza"
+                          value={simulatedName}
+                          onChange={(e) => setSimulatedName(e.target.value)}
+                          className="p-3 rounded-xl bg-[#090909] border border-white/[0.05] text-xs text-white focus:outline-none focus:border-emerald-500 transition-colors"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[10px] text-her-muted uppercase tracking-wider">Número do WhatsApp Simulado</label>
+                        <input 
+                          type="text"
+                          disabled
+                          value="+55 (11) 99245-8831"
+                          className="p-3 rounded-xl bg-[#111] border border-white/[0.02] text-xs font-mono text-her-muted focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
                     <div className="flex flex-col gap-1.5">
-                      <label className="text-[10px] text-her-muted uppercase tracking-wider">Número de Telefone (Foco com DDI)</label>
-                      <input 
-                        type="text"
-                        placeholder="Ex: 5511999999999"
-                        value={testNumber}
-                        onChange={(e) => setTestNumber(e.target.value)}
-                        className="p-3 rounded-xl bg-[#090909] border border-white/[0.05] text-xs font-mono text-white focus:outline-none focus:border-cyan-500 transition-colors"
+                      <label className="text-[10px] text-her-muted uppercase tracking-wider font-light">Mensagem do Cliente</label>
+                      <textarea 
+                        rows={3}
+                        placeholder="Simule uma pergunta ou mensagem de um cliente..."
+                        value={simulatedMessage}
+                        onChange={(e) => setSimulatedMessage(e.target.value)}
+                        className="p-3 rounded-xl bg-[#090909] border border-white/[0.05] text-xs text-white focus:outline-none focus:border-emerald-500 transition-colors resize-none"
                       />
                     </div>
+
+                    <div className="flex justify-between items-center pt-1">
+                      <button
+                        type="submit"
+                        disabled={isSimulatingIncoming || !simulatedName || !simulatedMessage || connectionState !== 'CONNECTED'}
+                        className="px-5 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:bg-emerald-500/10 disabled:text-emerald-500/40 text-black font-semibold uppercase tracking-wider text-[10px] transition-all disabled:opacity-40 flex items-center gap-1.5 shadow-[0_0_15px_rgba(16,185,129,0.15)] disabled:shadow-none"
+                      >
+                        {isSimulatingIncoming ? <RefreshCw size={12} className="animate-spin" /> : <Send size={12} />}
+                        <span>Simular Envio de Mensagem</span>
+                      </button>
+
+                      <div className="text-[9px] text-her-muted font-mono uppercase tracking-wider">
+                        {connectionState !== 'CONNECTED' ? '⚠️ Conecte a instância primeiro' : '🧠 Cérebro Gemini Ativo'}
+                      </div>
+                    </div>
+                  </form>
+
+                  {simulatedResult && (
+                    <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/[0.04] flex flex-col gap-2 animate-fade-in">
+                      <span className="text-[9px] uppercase tracking-wider font-bold text-emerald-400 flex items-center gap-1">
+                        <CheckCircle size={10} /> Resposta Inteligente OSONE
+                      </span>
+                      <p className="text-xs text-white leading-relaxed font-sans">{simulatedResult}</p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="p-6 rounded-3xl bg-white/[0.01] border border-white/[0.03]">
+                  <h3 className="text-xs uppercase tracking-widest text-[#9c9c9c] font-light flex items-center gap-2 mb-5">
+                    <Send size={14} className="text-cyan-400" />
+                    Console de Envio Técnico
+                  </h3>
+
+                  <form onSubmit={handleSendTestMessage} className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[10px] text-her-muted uppercase tracking-wider">Número de Telefone (Foco com DDI)</label>
+                        <input 
+                          type="text"
+                          placeholder="Ex: 5511999999999"
+                          value={testNumber}
+                          onChange={(e) => setTestNumber(e.target.value)}
+                          className="p-3 rounded-xl bg-[#090909] border border-white/[0.05] text-xs font-mono text-white focus:outline-none focus:border-cyan-500 transition-colors"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[10px] text-her-muted uppercase tracking-wider">Instância de Disparo</label>
+                        <input 
+                          type="text"
+                          disabled
+                          value={config.instanceName}
+                          className="p-3 rounded-xl bg-[#111] border border-white/[0.02] text-xs font-mono text-her-muted focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
                     <div className="flex flex-col gap-1.5">
-                      <label className="text-[10px] text-her-muted uppercase tracking-wider">Instância de Disparo</label>
-                      <input 
-                        type="text"
-                        disabled
-                        value={config.instanceName}
-                        className="p-3 rounded-xl bg-[#111] border border-white/[0.02] text-xs font-mono text-her-muted focus:outline-none"
+                      <label className="text-[10px] text-her-muted uppercase tracking-wider font-light">Mensagem de Texto</label>
+                      <textarea 
+                        rows={3}
+                        placeholder="Escreva uma mensagem de teste..."
+                        value={testMessage}
+                        onChange={(e) => setTestMessage(e.target.value)}
+                        className="p-3 rounded-xl bg-[#090909] border border-white/[0.05] text-xs text-white focus:outline-none focus:border-cyan-500 transition-colors resize-none"
                       />
                     </div>
-                  </div>
 
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] text-her-muted uppercase tracking-wider font-light">Mensagem de Texto</label>
-                    <textarea 
-                      rows={3}
-                      placeholder="Escreva uma mensagem de teste..."
-                      value={testMessage}
-                      onChange={(e) => setTestMessage(e.target.value)}
-                      className="p-3 rounded-xl bg-[#090909] border border-white/[0.05] text-xs text-white focus:outline-none focus:border-cyan-500 transition-colors resize-none"
-                    />
-                  </div>
+                    <div className="flex justify-between items-center pt-2">
+                      <button
+                        type="submit"
+                        disabled={isSendingTest || !testNumber || !testMessage}
+                        className="px-5 py-3 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/20 font-semibold uppercase tracking-wider text-[10px] transition-all disabled:opacity-40 flex items-center gap-1.5"
+                      >
+                        {isSendingTest ? <RefreshCw size={12} className="animate-spin" /> : <Send size={12} />}
+                        <span>Disparar Mensagem</span>
+                      </button>
 
-                  <div className="flex justify-between items-center pt-2">
-                    <button
-                      type="submit"
-                      disabled={isSendingTest || !testNumber || !testMessage}
-                      className="px-5 py-3 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/20 font-semibold uppercase tracking-wider text-[10px] transition-all disabled:opacity-40 flex items-center gap-1.5"
-                    >
-                      {isSendingTest ? <RefreshCw size={12} className="animate-spin" /> : <Send size={12} />}
-                      <span>Disparar Mensagem</span>
-                    </button>
-
-                    <div className="text-[9px] text-her-muted">
-                      Funciona de forma assíncrona pela gateway Evolution
+                      <div className="text-[9px] text-her-muted">
+                        Funciona de forma assíncrona pela gateway Evolution
+                      </div>
                     </div>
-                  </div>
-                </form>
+                  </form>
 
-                {testResult && (
-                  <div className={`mt-4 p-3 rounded-xl text-[11px] border ${
-                    testResult.success 
-                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/10' 
-                      : 'bg-red-500/10 text-red-400 border-red-500/20'
-                  }`}>
-                    {testResult.message}
-                  </div>
-                )}
-              </div>
+                  {testResult && (
+                    <div className={`mt-4 p-3 rounded-xl text-[11px] border ${
+                      testResult.success 
+                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/10' 
+                        : 'bg-red-500/10 text-red-400 border-red-500/20'
+                    }`}>
+                      {testResult.message}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Feed Preview */}
               <div className="p-6 rounded-3xl bg-white/[0.01] border border-white/[0.03] flex-1 flex flex-col min-h-[300px]">

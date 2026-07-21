@@ -314,6 +314,18 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
     setCurrentCoords({ lat, lng });
     setFocalCoords({ lat, lng });
     setLocationName(label);
+    setOrbitMode('off');
+
+    const s = stateRef.current;
+    if (s) {
+      s.orbitMode = 'off';
+      const { yaw, pitch } = computeCenteringAngles(lat, lng);
+      s.targetYaw = yaw;
+      s.targetPitch = pitch;
+      s.yawVel = 0;
+      s.pitchVel = 0;
+      s.isCentering = true;
+    }
 
     setSearchHistory(prev => {
       if (prev.some(h => Math.abs(h.lat - lat) < 0.001 && Math.abs(h.lng - lng) < 0.001)) return prev;
@@ -580,7 +592,7 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
         if (s.orbitMode === '3d') s.pitch = 0.25 + 0.12 * Math.sin(time * 0.4);
       }
 
-      if (!s.isDragging) {
+      if (!s.isDragging && !s.isCentering) {
         s.yaw += s.yawVel;
         s.pitch = THREE.MathUtils.clamp(s.pitch + s.pitchVel, -Math.PI / 2.05, Math.PI / 2.05);
         s.yawVel *= 0.94;
