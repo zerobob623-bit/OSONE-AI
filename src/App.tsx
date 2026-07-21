@@ -1880,7 +1880,7 @@ export default function App() {
         elevenLabsStyle: 0.0,
         elevenLabsSpeakerBoost: true,
         elevenLabsModel: 'eleven_multilingual_v2',
-        geminiModel: 'gemini-3.5-flash',
+        geminiModel: 'gemini-3.6-flash',
       });
       localStorage.setItem('osone_v4_factory_restored_v2_clean', 'true');
     }
@@ -1930,7 +1930,7 @@ export default function App() {
       elevenLabsStyle: 0.0,
       elevenLabsSpeakerBoost: true,
       elevenLabsModel: 'eleven_multilingual_v2',
-      geminiModel: 'gemini-3.5-flash',
+      geminiModel: 'gemini-3.6-flash',
     };
     try {
       const saved = localStorage.getItem('osone_api_keys');
@@ -1958,7 +1958,7 @@ export default function App() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: "gemini-3.5-flash",
+            model: "gemini-3.6-flash",
             contents: [{ role: 'user', parts: [{ text: "ping" }] }],
             config: { maxOutputTokens: 1 }
           })

@@ -68,13 +68,13 @@ const customFetch = async function (input: RequestInfo | URL, init?: RequestInit
 
       if (useFallback) {
         let clientApiKey = "";
-        let geminiModel = "gemini-3.5-flash";
+        let geminiModel = "gemini-3.6-flash";
         try {
           const stored = localStorage.getItem("osone_api_keys");
           if (stored) {
             const parsed = JSON.parse(stored);
             clientApiKey = parsed.gemini || "";
-            geminiModel = parsed.geminiModel || "gemini-3.5-flash";
+            geminiModel = parsed.geminiModel || "gemini-3.6-flash";
           }
         } catch (_) {}
 
@@ -94,7 +94,7 @@ const customFetch = async function (input: RequestInfo | URL, init?: RequestInit
           try {
             if (isGeminiVerifyProxy) {
               const verifyApiKey = reqBody.geminiApiKey || clientApiKey;
-              const directRes = await originalFetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${verifyApiKey.trim()}`, {
+              const directRes = await originalFetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${verifyApiKey.trim()}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -231,42 +231,32 @@ const customFetch = async function (input: RequestInfo | URL, init?: RequestInit
             }
 
             if (isGeminiImageProxy) {
-              let selectedModel = reqBody.model || "imagen-3.0-generate-002";
-              // Se o modelo solicitado começar com "gemini-", usamos o modelo Imagen apropriado (imagen-3.0-generate-002)
-              // porque o endpoint REST ":generateImages" do Google é exclusivo para a família Imagen.
-              if (selectedModel.startsWith("gemini-")) {
-                selectedModel = "imagen-3.0-generate-002";
-              }
               const promptStr = reqBody.prompt || "";
-              const numberOfImages = reqBody.config?.numberOfImages || 1;
-              const outputMimeType = reqBody.config?.outputMimeType || "image/jpeg";
               const aspectRatio = reqBody.config?.aspectRatio || "1:1";
 
-              const payload = {
-                prompt: promptStr,
-                numberOfImages,
-                outputMimeType,
-                aspectRatio
-              };
+              // Always attempt high-quality keyless / resilient Pollinations fallback on client-side direct calls
+              try {
+                const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptStr)}?width=1024&height=1024&nologo=true&private=true&enhance=true&seed=${Math.floor(Math.random() * 1000000)}`;
+                const polRes = await originalFetch(pollinationsUrl);
+                if (polRes.ok) {
+                  const arrayBuffer = await polRes.arrayBuffer();
+                  const bytes = new Uint8Array(arrayBuffer);
+                  let binary = "";
+                  for (let i = 0; i < bytes.byteLength; i++) {
+                    binary += String.fromCharCode(bytes[i]);
+                  }
+                  const base64 = btoa(binary);
+                  return new Response(JSON.stringify({
+                    generatedImages: [{ image: { imageBytes: base64 } }]
+                  }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" }
+                  });
+                }
+              } catch (_) {}
 
-              const imagenUrl = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateImages?key=${clientApiKey.trim()}`;
-              const directRes = await originalFetch(imagenUrl, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload)
-              });
-
-              if (!directRes.ok) {
-                const errText = await directRes.text();
-                return new Response(JSON.stringify({ error: `Direct Imagen error: ${errText}` }), {
-                  status: directRes.status,
-                  headers: { "Content-Type": "application/json" }
-                });
-              }
-
-              const imagenData = await directRes.json();
-              return new Response(JSON.stringify(imagenData), {
-                status: 200,
+              return new Response(JSON.stringify({ error: "Direct image generation unavailable." }), {
+                status: 500,
                 headers: { "Content-Type": "application/json" }
               });
             }
