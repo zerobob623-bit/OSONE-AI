@@ -132,20 +132,26 @@ export function IntimateMissionModal({ isOpen, onClose, intimateAnswers, onUpdat
         const returnedAnswers = data.answers;
         const formattedNewAnswers: { [id: number]: string } = {};
         let filledCount = 0;
+        let updatedCount = 0;
         
         Object.entries(returnedAnswers).forEach(([key, val]) => {
           const id = Number(key);
           const valStr = String(val).trim();
           
           if (!isNaN(id) && id >= 1 && id <= 55 && valStr) {
-            if (!intimateAnswers[id] || intimateAnswers[id].trim() === "") {
+            const oldVal = intimateAnswers[id] ? String(intimateAnswers[id]).trim() : "";
+            if (!oldVal) {
               formattedNewAnswers[id] = valStr;
               filledCount++;
+            } else if (oldVal !== valStr) {
+              formattedNewAnswers[id] = valStr;
+              updatedCount++;
             }
           }
         });
         
-        if (filledCount > 0) {
+        const totalChanges = filledCount + updatedCount;
+        if (totalChanges > 0) {
           if (onUpdateBulkAnswers) {
             onUpdateBulkAnswers(formattedNewAnswers);
           } else {
@@ -153,11 +159,14 @@ export function IntimateMissionModal({ isOpen, onClose, intimateAnswers, onUpdat
               onUpdateAnswer(Number(id), val);
             });
           }
-          alert(`🧬 Mapeamento com sucesso! ${filledCount} novas respostas preenchidas a partir do texto!`);
+          let msg = `🧬 Mapeamento com sucesso!`;
+          if (filledCount > 0) msg += ` ${filledCount} novas respostas preenchidas.`;
+          if (updatedCount > 0) msg += ` ${updatedCount} respostas atualizadas com novos dados de comparação.`;
+          alert(msg);
           setShowTextInputArea(false);
           setReferenceText("");
         } else {
-          alert(`📄 Texto analisado! Todas as informações extraídas já estavam preenchidas no seu Dossiê.`);
+          alert(`📄 Texto analisado! Nenhuma informação nova ou diferente foi encontrada para atualizar seu Dossiê.`);
         }
       } else {
         throw new Error("Formato inválido de resposta do servidor neural.");
@@ -241,21 +250,26 @@ export function IntimateMissionModal({ isOpen, onClose, intimateAnswers, onUpdat
         
         const formattedNewAnswers: { [id: number]: string } = {};
         let filledCount = 0;
+        let updatedCount = 0;
         
         Object.entries(returnedAnswers).forEach(([key, val]) => {
           const id = Number(key);
           const valStr = String(val).trim();
           
           if (!isNaN(id) && id >= 1 && id <= 55 && valStr) {
-            // Fill empty fields only (as requested: "preencher caso falte, ou preencher automaticamente se dossiê limpo")
-            if (!intimateAnswers[id] || intimateAnswers[id].trim() === "") {
+            const oldVal = intimateAnswers[id] ? String(intimateAnswers[id]).trim() : "";
+            if (!oldVal) {
               formattedNewAnswers[id] = valStr;
               filledCount++;
+            } else if (oldVal !== valStr) {
+              formattedNewAnswers[id] = valStr;
+              updatedCount++;
             }
           }
         });
         
-        if (filledCount > 0) {
+        const totalChanges = filledCount + updatedCount;
+        if (totalChanges > 0) {
           if (onUpdateBulkAnswers) {
             onUpdateBulkAnswers(formattedNewAnswers);
           } else {
@@ -263,9 +277,12 @@ export function IntimateMissionModal({ isOpen, onClose, intimateAnswers, onUpdat
               onUpdateAnswer(Number(id), val);
             });
           }
-          alert(`🧬 Mapeamento com sucesso! ${filledCount} novas respostas integradas às lacunas do seu Dossiê!`);
+          let msg = `🧬 Mapeamento com sucesso!`;
+          if (filledCount > 0) msg += ` ${filledCount} novas respostas integradas.`;
+          if (updatedCount > 0) msg += ` ${updatedCount} respostas existentes atualizadas com novos dados.`;
+          alert(msg);
         } else {
-          alert(`📄 Documento analisado! Todas as informações extraídas já estavam preenchidas no seu Dossiê.`);
+          alert(`📄 Documento analisado! Nenhuma informação nova ou diferente foi encontrada para atualizar seu Dossiê.`);
         }
       } else {
         throw new Error("Formato inválido de resposta do servidor neural.");

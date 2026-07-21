@@ -94,7 +94,7 @@ const customFetch = async function (input: RequestInfo | URL, init?: RequestInit
           try {
             if (isGeminiVerifyProxy) {
               const verifyApiKey = reqBody.geminiApiKey || clientApiKey;
-              const directRes = await originalFetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${verifyApiKey.trim()}`, {
+              const directRes = await originalFetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${verifyApiKey.trim()}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -231,7 +231,12 @@ const customFetch = async function (input: RequestInfo | URL, init?: RequestInit
             }
 
             if (isGeminiImageProxy) {
-              const selectedModel = reqBody.model || "gemini-3.1-flash-image";
+              let selectedModel = reqBody.model || "imagen-3.0-generate-002";
+              // Se o modelo solicitado começar com "gemini-", usamos o modelo Imagen apropriado (imagen-3.0-generate-002)
+              // porque o endpoint REST ":generateImages" do Google é exclusivo para a família Imagen.
+              if (selectedModel.startsWith("gemini-")) {
+                selectedModel = "imagen-3.0-generate-002";
+              }
               const promptStr = reqBody.prompt || "";
               const numberOfImages = reqBody.config?.numberOfImages || 1;
               const outputMimeType = reqBody.config?.outputMimeType || "image/jpeg";

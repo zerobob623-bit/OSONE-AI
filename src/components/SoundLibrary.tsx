@@ -405,7 +405,7 @@ export const SoundLibrary = ({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           clientApiKey: apiKey,
-          model: "gemini-2.5-flash",
+          model: "gemini-3.5-flash",
           contents: [{ role: "user", parts: [{ text: prompt }] }]
         })
       });

@@ -1229,11 +1229,13 @@ export default function App() {
   
   MISSÃO INTERNA E ÍNTIMA DO OSONE (DURA MEMÓRIA COGNITIVA):
   - Você tem a missão ativa de construir e preencher o Dossiê de Memória Íntima do usuário através de 55 perguntas estruturadas.
-  - REGRAS DA MISSÃO:
-    1. Nunca envie todas as perguntas de uma vez de forma mecânica em listas extensas no chat.
-    2. Em cada interação (conversando por chat ou voz), você deve dedicar turnos para ativamente, mas de forma extremamente instigante, carismática e natural, puxar assunto e perguntar sobre pelo menos DUAS dessas 55 lacunas. OSONE deve ser curioso! Vá provocando perguntas criativas de rotina, gostos, trabalho ou valores para coletar os depoimentos ordinários.
-    3. Assim que o usuário der a resposta para alguma das perguntas (direta ou deduzida), chame imediatamente a ferramenta 'register_user_profile_facts' passando um objeto com o ID da pergunta mapeado com a respectiva resposta.
-    4. Siga este processo incansavelmente a cada conversa para preencher o perfil por completo sem travas!
+  - REGRAS DA MISSÃO (ESTRITAMENTE SILENCIOSAS E NEURO-COMPATIVEL):
+    1. PROIBIDO fazer perguntas de forma ativa ou repetitiva para preencher o dossiê durante as conversas por chat de texto ou voz, pois isso se torna chato e irritante para o usuário. Respeite o espaço do usuário sem interrogatórios.
+    2. EXTRAÇÃO E COMPARAÇÃO AUTOMÁTICA EM MULTI-CANAL (TEXTO, ARQUIVO OU FALA): Quando o usuário enviar qualquer material biográfico, depoimento espontâneo de vida, rascunho de dossiê completo, colar uma lista de fatos ou falar sobre si mesmo em áudio/fala, você deve processar essas informações de forma abrangente e cirúrgica.
+    3. Compare as novas informações fornecidas com o Dossiê atualizado (usando a ferramenta 'read_user_profile_facts' para consultar o estado do dossiê, caso necessário).
+    4. Extraia todos os fatos que correspondam a qualquer uma das 55 perguntas abaixo e chame IMEDIATAMENTE a ferramenta 'register_user_profile_facts' passando todas as respostas mapeadas de uma só vez (preenchimento em massa / bulk) no objeto de fatos.
+    5. Se o usuário fornecer novos dados no chat ou voz que atualizem ou complementem respostas que já existem, faça a comparação de forma madura e inteligente e atualize o dossiê com a nova versão mais completa e correta usando 'register_user_profile_facts'.
+    6. Nunca pergunte de volta ou crie rodeios para registrar essas informações. Faça o mapeamento de maneira silenciosa, fluida e eficiente em segundo plano.
   - A LISTA DAS 55 PERGUNTAS DO SEU DESAFIO SEGRETO PARA VOCÊ MAPEAR:
     [Identidade] 1: Nome completo; 2: Idade/nasc; 3: Gênero/pronome; 4: Cidade/país atual; 5: Nacionalidade/cultura; 6: Fluência em idiomas.
     [Carreira] 7: Formação acadêmica; 8: Profissão/área; 9: Autônomo/CLT/estudante; 10: Responsabilidades; 11: Objetivos curto/longo prazo; 12: Transições de carreira.
@@ -3960,17 +3962,30 @@ DIRETRIZ DE SENTIMENTO E PERSONALIDADE DINÂMICA ("HER"):
     setIntimateAnswers(prev => {
       const updated = { ...prev };
       let newCount = 0;
+      let updatedCount = 0;
       Object.entries(facts).forEach(([key, val]) => {
         const idNum = parseInt(key, 10);
-        if (!isNaN(idNum) && idNum >= 1 && idNum <= 55 && val) {
-          if (!updated[idNum]) {
-            newCount++;
+        if (!isNaN(idNum) && idNum >= 1 && idNum <= 55 && val !== undefined && val !== null) {
+          const cleanVal = String(val).trim();
+          if (cleanVal) {
+            const oldVal = updated[idNum] ? String(updated[idNum]).trim() : '';
+            if (!oldVal) {
+              updated[idNum] = cleanVal;
+              newCount++;
+            } else if (oldVal !== cleanVal) {
+              // Compare and update with the new value if it is different
+              updated[idNum] = cleanVal;
+              updatedCount++;
+            }
           }
-          updated[idNum] = val;
         }
       });
-      if (newCount > 0) {
-        addNotification(`Missão Íntima: ${newCount} fato(s) de identidade salvo(s)!`, "success");
+      if (newCount > 0 && updatedCount > 0) {
+        addNotification(`Dossiê de Memória: ${newCount} novos fatos salvos e ${updatedCount} atualizados!`, "success");
+      } else if (newCount > 0) {
+        addNotification(`Dossiê de Memória: ${newCount} fato(s) de identidade salvo(s)!`, "success");
+      } else if (updatedCount > 0) {
+        addNotification(`Dossiê de Memória: ${updatedCount} fato(s) de identidade atualizado(s)!`, "success");
       }
       return updated;
     });
@@ -7548,7 +7563,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           clientApiKey: effectiveApiKey,
-          model: apiKeys.geminiModel || "gemini-3.5-flash",
+          model: apiKeys.geminiModel || "gemini-2.5-flash",
           contents: historyContents,
           config: {
             systemInstruction: `${activeSystemInstruction}
@@ -7862,7 +7877,7 @@ tools: tools
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                       clientApiKey: effectiveApiKey,
-                      model: 'gemini-3.1-flash-image',
+                      model: 'gemini-2.5-flash',
                       prompt: prompt,
                       config: {
                         numberOfImages: 1,
@@ -10042,7 +10057,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({
                               clientApiKey: effectiveApiKey,
-                              model: 'gemini-3.1-flash-image',
+                              model: 'gemini-2.5-flash',
                               prompt: prompt,
                               config: {
                                 numberOfImages: 1,
