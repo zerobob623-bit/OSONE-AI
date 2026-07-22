@@ -8968,7 +8968,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         },
         callbacks: {
           onopen: () => {
-            sessionPromise.then((session) => {
+            sessionPromise.then((session: any) => {
               liveSessionRef.current = session;
               setLiveState({ status: 'connected' });
               setIsListening(true);
