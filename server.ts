@@ -7,6 +7,9 @@ import { WebSocketServer, WebSocket } from "ws";
 import { GoogleGenAI, Modality } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
+import pkgWhatsapp from "whatsapp-web.js";
+const { Client: WWebClient, LocalAuth: WWebLocalAuth } = pkgWhatsapp;
+import QRCode from "qrcode";
 
 dotenv.config();
 
@@ -485,6 +488,14 @@ Comentário de @${user}: "${text}"`;
 
   let virtualConnectionState = "DISCONNECTED";
 
+  // ====== WHATSAPP-WEB.JS LOCAL CLIENT STATE ======
+  let wwebjsClient: any = null;
+  let wwebjsStatus: "desconectado" | "iniciando" | "aguardando_qr" | "conectado" | "erro" = "desconectado";
+  let wwebjsQrRaw = "";
+  let wwebjsQrBase64 = "";
+  let wwebjsPhoneInfo: { number?: string; name?: string } = {};
+  let wwebjsLastError = "";
+
   interface WhatsappLog {
     id: string;
     timestamp: number;
@@ -503,6 +514,218 @@ Comentário de @${user}: "${text}"`;
       message: "Canal do WhatsApp OSONE de pé. Pronto para evolução de fluxos."
     }
   ];
+
+  // Helper function to initialize WhatsApp Web Client via Puppeteer
+  const initializeWhatsAppWebClient = async () => {
+    if (wwebjsClient) {
+      try {
+        await wwebjsClient.destroy();
+      } catch (_) {}
+      wwebjsClient = null;
+    }
+
+    wwebjsStatus = "iniciando";
+    wwebjsQrRaw = "";
+    wwebjsQrBase64 = "";
+    wwebjsLastError = "";
+
+    try {
+      wwebjsClient = new WWebClient({
+        authStrategy: new WWebLocalAuth({
+          clientId: "osone_copilot_session",
+          dataPath: path.join(process.cwd(), ".wwebjs_auth")
+        }),
+        puppeteer: {
+          headless: true,
+          args: [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-accelerated-2d-canvas",
+            "--no-first-run",
+            "--no-zygote",
+            "--disable-gpu"
+          ]
+        }
+      });
+
+      wwebjsClient.on("qr", async (qr: string) => {
+        wwebjsStatus = "aguardando_qr";
+        wwebjsQrRaw = qr;
+        try {
+          wwebjsQrBase64 = await QRCode.toDataURL(qr, { margin: 2, scale: 6 });
+        } catch (e: any) {
+          console.error("[WhatsApp] Erro ao converter QR Code:", e);
+        }
+        whatsappLogs.unshift({
+          id: Math.random().toString(36).substring(2, 11),
+          timestamp: Date.now(),
+          type: "info",
+          sender: "WhatsApp Web",
+          message: "Novo QR Code gerado. Prontos para escanear no app do WhatsApp!"
+        });
+        if (whatsappLogs.length > 100) whatsappLogs.pop();
+      });
+
+      wwebjsClient.on("authenticated", () => {
+        wwebjsStatus = "iniciando";
+        wwebjsQrRaw = "";
+        wwebjsQrBase64 = "";
+        whatsappLogs.unshift({
+          id: Math.random().toString(36).substring(2, 11),
+          timestamp: Date.now(),
+          type: "info",
+          sender: "WhatsApp Web",
+          message: "Sessão autenticada via WhatsApp Web com sucesso."
+        });
+        if (whatsappLogs.length > 100) whatsappLogs.pop();
+      });
+
+      wwebjsClient.on("ready", () => {
+        wwebjsStatus = "conectado";
+        virtualConnectionState = "CONNECTED";
+        wwebjsQrRaw = "";
+        wwebjsQrBase64 = "";
+        wwebjsPhoneInfo = {
+          number: wwebjsClient.info?.wid?.user || "Conectado",
+          name: wwebjsClient.info?.pushname || "OSONE WhatsApp"
+        };
+        whatsappLogs.unshift({
+          id: Math.random().toString(36).substring(2, 11),
+          timestamp: Date.now(),
+          type: "info",
+          sender: "WhatsApp Web",
+          message: `Conexão WhatsApp Ativa! Telefone/Conta: ${wwebjsPhoneInfo.name} (${wwebjsPhoneInfo.number})`
+        });
+        if (whatsappLogs.length > 100) whatsappLogs.pop();
+      });
+
+      wwebjsClient.on("auth_failure", (msg: string) => {
+        wwebjsStatus = "erro";
+        wwebjsLastError = `Falha de Autenticação: ${msg}`;
+        whatsappLogs.unshift({
+          id: Math.random().toString(36).substring(2, 11),
+          timestamp: Date.now(),
+          type: "error",
+          sender: "WhatsApp Web",
+          message: `Falha na autenticação do WhatsApp: ${msg}`
+        });
+        if (whatsappLogs.length > 100) whatsappLogs.pop();
+      });
+
+      wwebjsClient.on("disconnected", (reason: string) => {
+        wwebjsStatus = "desconectado";
+        virtualConnectionState = "DISCONNECTED";
+        wwebjsQrRaw = "";
+        wwebjsQrBase64 = "";
+        wwebjsPhoneInfo = {};
+        whatsappLogs.unshift({
+          id: Math.random().toString(36).substring(2, 11),
+          timestamp: Date.now(),
+          type: "error",
+          sender: "WhatsApp Web",
+          message: `WhatsApp Web desconectado: ${reason}`
+        });
+        if (whatsappLogs.length > 100) whatsappLogs.pop();
+      });
+
+      wwebjsClient.on("message", async (msg: any) => {
+        try {
+          if (msg.isStatus || msg.from.endsWith("@g.us")) return;
+          const sender = msg.from;
+          const body = msg.body;
+          if (!body) return;
+
+          whatsappLogs.unshift({
+            id: Math.random().toString(36).substring(2, 11),
+            timestamp: Date.now(),
+            type: "received",
+            sender: sender,
+            message: body
+          });
+          if (whatsappLogs.length > 100) whatsappLogs.pop();
+
+          if (whatsappConfig.enabled) {
+            const geminiApiKeyToUse = whatsappConfig.geminiApiKey || getSecretGeminiKey();
+            const ai = new GoogleGenAI({ apiKey: geminiApiKeyToUse, vertexai: false });
+            const systemPrompt = `Você é o OSONE G5, o cérebro eletrônico central de inteligência artificial de elite, hiperfocado em ajudar o usuário com uma clareza deslumbrante, respostas estruturadas, elegantes e um toque futurista e polido.
+Você está atendendo o usuário pelo WhatsApp em nome do proprietário deste dispositivo OSONE. Responda diretamente e com muita inteligência, clareza, formatação impecável de parágrafos breves e emojis adequados.`;
+
+            const gResult = await generateContentWithFallback(ai, {
+              model: "gemini-3.5-flash-lite",
+              contents: body,
+              config: { systemInstruction: systemPrompt }
+            });
+
+            const replyText = gResult.text || "Olá! Recebi sua mensagem no OSONE.";
+            await msg.reply(replyText);
+
+            whatsappLogs.unshift({
+              id: Math.random().toString(36).substring(2, 11),
+              timestamp: Date.now(),
+              type: "sent",
+              sender: sender,
+              message: replyText
+            });
+            if (whatsappLogs.length > 100) whatsappLogs.pop();
+          }
+        } catch (err: any) {
+          console.error("[WhatsApp] Erro no listener de mensagem:", err);
+        }
+      });
+
+      wwebjsClient.initialize().catch((err: any) => {
+        wwebjsStatus = "erro";
+        wwebjsLastError = err?.message || String(err);
+        console.error("[WhatsApp] Erro na inicialização do Client:", err);
+      });
+    } catch (err: any) {
+      wwebjsStatus = "erro";
+      wwebjsLastError = err?.message || String(err);
+      console.error("[WhatsApp] Erro no setup do Client:", err);
+    }
+  };
+
+  // WhatsApp Web API routes
+  app.get("/api/whatsapp/status", (req, res) => {
+    res.json({
+      status: wwebjsStatus,
+      phone: wwebjsPhoneInfo,
+      error: wwebjsLastError,
+      qrAvailable: !!wwebjsQrBase64,
+      virtualState: virtualConnectionState
+    });
+  });
+
+  app.get("/api/whatsapp/qr", (req, res) => {
+    res.json({
+      qr: wwebjsQrBase64,
+      status: wwebjsStatus
+    });
+  });
+
+  app.post("/api/whatsapp/connect", async (req, res) => {
+    if (wwebjsStatus === "conectado") {
+      return res.json({ status: "conectado", message: "WhatsApp já está conectado!" });
+    }
+    initializeWhatsAppWebClient();
+    res.json({ status: "iniciando", message: "Inicializando WhatsApp Web via Puppeteer..." });
+  });
+
+  app.post("/api/whatsapp/disconnect", async (req, res) => {
+    if (wwebjsClient) {
+      try {
+        await wwebjsClient.destroy();
+      } catch (_) {}
+      wwebjsClient = null;
+    }
+    wwebjsStatus = "desconectado";
+    virtualConnectionState = "DISCONNECTED";
+    wwebjsQrRaw = "";
+    wwebjsQrBase64 = "";
+    wwebjsPhoneInfo = {};
+    res.json({ status: "desconectado", message: "Sessão do WhatsApp encerrada." });
+  });
 
   // API Endpoints for WhatsApp Frontend configuration
   app.get("/api/whatsapp/config", (req, res) => {
@@ -1897,6 +2120,15 @@ ${processedChunk}`;
       console.error("[Image Generation] Erro geral na rota de geração de imagem:", err);
       return res.status(500).json({ error: formatGeminiError(err) });
     }
+  });
+
+  // GET endpoint to securely retrieve server-side Gemini key for serverless Gemini Live fallback (e.g. Vercel)
+  app.get("/api/gemini/key", (req, res) => {
+    const apiKey = getSecretGeminiKey();
+    if (apiKey) {
+      return res.json({ success: true, apiKey });
+    }
+    return res.status(404).json({ success: false, message: "Chave API do Gemini não configurada nas variáveis do servidor." });
   });
 
   // POST endpoint for verifying Gemini API credentials in real-time

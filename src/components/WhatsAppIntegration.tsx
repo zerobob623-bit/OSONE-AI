@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
+import { WhatsAppConnect } from './WhatsAppConnect';
 import { 
   QrCode, MessageSquare, Settings, AlertCircle, CheckCircle, 
   RefreshCw, Play, Pause, Trash2, Cpu, ExternalLink, Shield, 
@@ -589,7 +590,11 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
         
         {/* TAB 1: DASHBOARD */}
         {activeTab === 'dashboard' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          <div className="flex flex-col gap-8">
+            {/* Real WhatsApp Web Local QR Code Connector */}
+            <WhatsAppConnect />
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
             
             {/* Status Panel (left) */}
             <div className="lg:col-span-5 flex flex-col gap-6">
@@ -1009,6 +1014,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
 
             </div>
 
+          </div>
           </div>
         )}
 
