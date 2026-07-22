@@ -103,16 +103,51 @@ export class AudioProcessor {
 
 export class AudioPlayer {
   private audioContext: AudioContext | null = null;
+  private analyserNode: AnalyserNode | null = null;
   private nextStartTime: number = 0;
   private onActivityChange?: (active: boolean) => void;
   private activeSources: Set<AudioBufferSourceNode> = new Set();
+  private animFrameId: number | null = null;
   public modulation: { pitch: number; rate: number; distortion: number } = { pitch: 1.0, rate: 1.0, distortion: 0 };
 
   constructor(onActivityChange?: (active: boolean) => void) {
     this.onActivityChange = onActivityChange;
+    this.initAudioContext();
+  }
+
+  private initAudioContext() {
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
     if (AudioContextClass) {
       this.audioContext = new AudioContextClass({ sampleRate: 24000 });
+      this.analyserNode = this.audioContext.createAnalyser();
+      this.analyserNode.fftSize = 64;
+      this.analyserNode.smoothingTimeConstant = 0.8;
+      this.analyserNode.connect(this.audioContext.destination);
+    }
+  }
+
+  private startLevelMonitoring() {
+    if (this.animFrameId !== null) return;
+    const monitor = () => {
+      if (this.activeSources.size > 0 && this.analyserNode) {
+        const dataArray = new Uint8Array(this.analyserNode.frequencyBinCount);
+        this.analyserNode.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          sum += dataArray[i];
+        }
+        const level = sum / (dataArray.length * 255);
+        window.dispatchEvent(new CustomEvent('osone_assistant_voice', { detail: { level } }));
+      }
+      this.animFrameId = requestAnimationFrame(monitor);
+    };
+    this.animFrameId = requestAnimationFrame(monitor);
+  }
+
+  private stopLevelMonitoring() {
+    if (this.animFrameId !== null) {
+      cancelAnimationFrame(this.animFrameId);
+      this.animFrameId = null;
     }
   }
 
@@ -143,9 +178,11 @@ export class AudioPlayer {
       }
       
       const pcmData = new Int16Array(bytes.buffer);
+      if (pcmData.length === 0) return;
+
       const floatData = new Float32Array(pcmData.length);
       for (let i = 0; i < pcmData.length; i++) {
-        floatData[i] = pcmData[i] / 0x7FFF;
+        floatData[i] = pcmData[i] / 32768.0;
       }
   
       const buffer = this.audioContext.createBuffer(1, floatData.length, 24000);
@@ -155,39 +192,53 @@ export class AudioPlayer {
       source.buffer = buffer;
       
       // Apply modulation
-      const effectiveRate = this.modulation.pitch * this.modulation.rate;
+      const effectiveRate = Math.max(0.5, Math.min(2.0, this.modulation.pitch * this.modulation.rate));
       source.playbackRate.value = effectiveRate;
+
+      // Anti-pop Gain Envelope Node
+      const gainNode = this.audioContext.createGain();
 
       if (this.modulation.distortion > 0) {
         const distort = this.audioContext.createWaveShaper();
         distort.curve = this.createDistortionCurve(this.modulation.distortion);
         distort.oversample = '4x';
-        source.connect(distort);
-        distort.connect(this.audioContext.destination);
+        source.connect(gainNode);
+        gainNode.connect(distort);
+        distort.connect(this.analyserNode || this.audioContext.destination);
       } else {
-        source.connect(this.audioContext.destination);
+        source.connect(gainNode);
+        gainNode.connect(this.analyserNode || this.audioContext.destination);
       }
   
       const currentTime = this.audioContext.currentTime;
-      if (this.nextStartTime < currentTime) {
-        this.nextStartTime = currentTime;
+      // Jitter buffer management: if nextStartTime is behind currentTime or starting fresh, add 50ms buffer
+      if (this.nextStartTime < currentTime + 0.02) {
+        this.nextStartTime = currentTime + 0.05;
       }
   
       const startTime = this.nextStartTime;
-      source.start(startTime);
-      
-      // Calculate duration adjusted by playback rate
       const adjustedDuration = buffer.duration / effectiveRate;
+
+      // Apply smooth micro ramps (1.5ms) at chunk boundaries to eliminate clicks/pops
+      const rampTime = Math.min(0.0015, adjustedDuration / 4);
+      gainNode.gain.setValueAtTime(0.001, startTime);
+      gainNode.gain.linearRampToValueAtTime(1.0, startTime + rampTime);
+      gainNode.gain.setValueAtTime(1.0, Math.max(startTime + rampTime, startTime + adjustedDuration - rampTime));
+      gainNode.gain.linearRampToValueAtTime(0.001, startTime + adjustedDuration);
+
+      source.start(startTime);
       this.nextStartTime += adjustedDuration;
 
       this.activeSources.add(source);
       if (this.activeSources.size === 1) {
         this.onActivityChange?.(true);
+        this.startLevelMonitoring();
       }
 
       source.onended = () => {
         this.activeSources.delete(source);
         if (this.activeSources.size === 0) {
+          this.stopLevelMonitoring();
           this.onActivityChange?.(false);
         }
       };
@@ -197,15 +248,13 @@ export class AudioPlayer {
   }
 
   stop() {
+    this.stopLevelMonitoring();
     this.activeSources.forEach(s => {
       try { s.stop(); } catch(e) {}
     });
     this.activeSources.clear();
     this.audioContext?.close();
-    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-    if (AudioContextClass) {
-      this.audioContext = new AudioContextClass({ sampleRate: 24000 });
-    }
+    this.initAudioContext();
     this.nextStartTime = 0;
     this.onActivityChange?.(false);
   }

@@ -17,15 +17,21 @@ const NeuralConstellationCanvas = ({
 }) => {
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const userRmsRef = React.useRef(0);
+  const assistantLevelRef = React.useRef(0);
   const animationRef = React.useRef<number | null>(null);
   
   React.useEffect(() => {
     const handleUserVoice = (e: any) => {
       userRmsRef.current = active ? e.detail.rms : 0;
     };
+    const handleAssistantVoice = (e: any) => {
+      assistantLevelRef.current = active ? e.detail.level : 0;
+    };
     window.addEventListener('osone_user_voice', handleUserVoice);
+    window.addEventListener('osone_assistant_voice', handleAssistantVoice);
     return () => {
       window.removeEventListener('osone_user_voice', handleUserVoice);
+      window.removeEventListener('osone_assistant_voice', handleAssistantVoice);
     };
   }, [active]);
 
@@ -295,8 +301,9 @@ const NeuralConstellationCanvas = ({
 
       const time = frameId * 0.025;
       const currentRms = userRmsRef.current;
-      const speakIntensity = speaking ? 1.0 : (currentRms * 12.0);
-      const isAudiblyActive = speaking || currentRms > 0.015;
+      const assistantLevel = assistantLevelRef.current;
+      const speakIntensity = speaking ? Math.max(0.35, assistantLevel * 3.5) : (currentRms * 12.0);
+      const isAudiblyActive = speaking || currentRms > 0.015 || assistantLevel > 0.01;
 
       // Update synaptic spark lifetime
       activeSparks.forEach((life, idx) => {
