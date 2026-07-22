@@ -1672,17 +1672,16 @@ ${processedChunk}`;
 
   // Helper to run content generation with automated fallbacks
   async function generateContentWithFallback(ai: GoogleGenAI, params: { model: string; contents: any; config?: any }) {
-    const primaryModel = params.model || "gemini-3.6-flash";
+    const primaryModel = params.model || "gemini-2.5-flash";
     
-    // Tiered candidates using standard non-deprecated Gemini 3.x and 2.5 models for maximum resilience
+    // Tiered candidates using standard highly-available Gemini 2.5 and 3.x models
     const modelsToTry = [
       primaryModel, 
+      "gemini-2.5-flash",
       "gemini-3.6-flash",
       "gemini-3.5-flash-lite",
       "gemini-3.1-flash-lite",
-      "gemini-3.5-flash", 
-      "gemini-2.5-flash",
-      "gemini-flash-latest"
+      "gemini-3.5-flash"
     ];
     
     // Remove duplicates keeping order
@@ -1705,16 +1704,10 @@ ${processedChunk}`;
           const isQuota = errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.toLowerCase().includes("quota") || errMsg.toLowerCase().includes("limit");
           const isTransient = (errMsg.includes("503") || errMsg.includes("UNAVAILABLE") || errMsg.toLowerCase().includes("high demand")) && !isQuota;
           
-          if (isQuota) {
-            console.warn(`[Fallback Log] Model ${modelName} hit quota limit (429/RESOURCE_EXHAUSTED). Skipping directly to next candidate model...`);
-            break; // Skip retry attempts for this model and try next candidate model
-          }
-          
-          if (isTransient && attempt < 2) {
-            const delay = attempt * 400;
-            console.log(`[Fallback Log] Model ${modelName} hit transient 503 error on attempt ${attempt}. Waiting ${delay}ms before retry...`);
-            await new Promise(resolve => setTimeout(resolve, delay));
-            continue;
+          if (isQuota || (isTransient && attempt >= 1)) {
+            // For quota or transient high demand errors, immediately try next model candidate
+            console.warn(`[Fallback Log] Model ${modelName} encountered transient/quota issue. Switching to next candidate model...`);
+            break;
           }
           
           console.log(`[Fallback Log] Model ${modelName} attempt ${attempt} returned exception:`, errMsg);
@@ -1727,17 +1720,16 @@ ${processedChunk}`;
 
   // Helper to run content stream generation with automated fallbacks
   async function generateContentStreamWithFallback(ai: GoogleGenAI, params: { model: string; contents: any; config?: any }) {
-    const primaryModel = params.model || "gemini-3.6-flash";
+    const primaryModel = params.model || "gemini-2.5-flash";
     
-    // Tiered candidates using standard non-deprecated Gemini 3.x and 2.5 models for maximum resilience
+    // Tiered candidates using standard highly-available Gemini 2.5 and 3.x models
     const modelsToTry = [
       primaryModel, 
+      "gemini-2.5-flash",
       "gemini-3.6-flash",
       "gemini-3.5-flash-lite",
       "gemini-3.1-flash-lite",
-      "gemini-3.5-flash", 
-      "gemini-2.5-flash",
-      "gemini-flash-latest"
+      "gemini-3.5-flash"
     ];
     
     // Remove duplicates keeping order
@@ -1760,16 +1752,9 @@ ${processedChunk}`;
           const isQuota = errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.toLowerCase().includes("quota") || errMsg.toLowerCase().includes("limit");
           const isTransient = (errMsg.includes("503") || errMsg.includes("UNAVAILABLE") || errMsg.toLowerCase().includes("high demand")) && !isQuota;
           
-          if (isQuota) {
-            console.warn(`[Fallback Stream Log] Model ${modelName} hit quota limit (429/RESOURCE_EXHAUSTED). Skipping directly to next candidate model...`);
-            break; // Skip retry attempts for this model and try next candidate model
-          }
-          
-          if (isTransient && attempt < 2) {
-            const delay = attempt * 400;
-            console.log(`[Fallback Stream Log] Model ${modelName} hit transient 503 error on attempt ${attempt}. Waiting ${delay}ms before retry...`);
-            await new Promise(resolve => setTimeout(resolve, delay));
-            continue;
+          if (isQuota || (isTransient && attempt >= 1)) {
+            console.warn(`[Fallback Stream Log] Model ${modelName} encountered transient/quota issue. Switching to next candidate model...`);
+            break;
           }
           
           console.log(`[Fallback Stream Log] Model ${modelName} attempt ${attempt} returned exception:`, errMsg);

@@ -130,6 +130,26 @@ const loadPdfJs = async (): Promise<any> => {
   });
 };
 
+const BowAndArrowIcon = ({ size = 16, className = "" }: { size?: number; className?: string }) => (
+  <svg 
+    width={size} 
+    height={size} 
+    viewBox="0 0 24 24" 
+    fill="none" 
+    stroke="currentColor" 
+    strokeWidth="2" 
+    strokeLinecap="round" 
+    strokeLinejoin="round" 
+    className={className}
+  >
+    <path d="M5 21C5 13 13 5 21 5" />
+    <path d="M5 21L21 5" strokeDasharray="2 2" strokeOpacity="0.7" />
+    <path d="M7 17L19 7" strokeWidth="2.5" />
+    <path d="M19 7H14M19 7V12" strokeWidth="2.5" />
+    <path d="M7 17L5 19M8 18L6 20" />
+  </svg>
+);
+
 const extractTextFromPdf = async (file: File): Promise<string> => {
   try {
     const pdfjsLib = await loadPdfJs();
@@ -2553,6 +2573,7 @@ DIRETRIZ DE SENTIMENTO E PERSONALIDADE DINÂMICA ("HER"):
       setWorkspaceTextState(proj.content);
       localStorage.setItem('osone_workspace_text', proj.content);
       addNotification(`Projeto de texto "${proj.title}" carregado!`, "success");
+      setIsProjectsDockOpen(false);
     }
   };
 
@@ -2605,6 +2626,7 @@ DIRETRIZ DE SENTIMENTO E PERSONALIDADE DINÂMICA ("HER"):
     setActiveProjectId(newProjId);
     setWorkspaceTextState(initialContent);
     localStorage.setItem('osone_workspace_text', initialContent);
+    setIsProjectsDockOpen(false);
     addNotification("Novo projeto de texto iniciado! O anterior foi guardado no histórico.", "success");
     
     if (writingSounds) {
@@ -4074,14 +4096,96 @@ DIRETRIZ DE SENTIMENTO E PERSONALIDADE DINÂMICA ("HER"):
   const [isSessionsOpen, setIsSessionsOpen] = useState(false);
 
   const checkAndPromptMemory = (action: () => void) => {
-    const hasConversation = chatHistory.length > 1 || chatHistory.some(m => m.role === 'user');
-    if (hasConversation) {
-      setMessagesToRecord(chatHistory);
-      setPendingAction(() => action);
-      setIsMemoryConfirmOpen(true);
-    } else {
-      action();
+    action();
+  };
+
+  const getActiveUserIdHelper = () => {
+    try {
+      const savedUserStr = localStorage.getItem('osone_last_active_user');
+      if (savedUserStr) {
+        const parsed = JSON.parse(savedUserStr);
+        return parsed?.uid || 'guest';
+      }
+    } catch {}
+    return 'guest';
+  };
+
+  const addDiaryEntryHelper = (content: string, mood: string = 'neutral') => {
+    const userId = getActiveUserIdHelper();
+    const diaryKey = `nash_diary_${userId}`;
+    const existing = localStorage.getItem(diaryKey);
+    let diary: any[] = [];
+    if (existing) {
+      try { diary = JSON.parse(existing); } catch {}
     }
+    const newEntry = {
+      id: Math.random().toString(36).substring(7),
+      content,
+      mood,
+      createdAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 },
+      userId
+    };
+    diary = [newEntry, ...diary].slice(0, 50);
+    localStorage.setItem(diaryKey, JSON.stringify(diary));
+    addNotification("Nova página registrada no seu diário!", "success");
+    return newEntry;
+  };
+
+  const deleteDiaryEntryHelper = (query: string) => {
+    const userId = getActiveUserIdHelper();
+    const diaryKey = `nash_diary_${userId}`;
+    const existing = localStorage.getItem(diaryKey);
+    if (!existing) return false;
+    let diary: any[] = [];
+    try { diary = JSON.parse(existing); } catch { return false; }
+    const initialLen = diary.length;
+    const lowerQuery = query.toLowerCase().trim();
+    diary = diary.filter(e => e.id !== query && !(e.content && e.content.toLowerCase().includes(lowerQuery)));
+    if (diary.length < initialLen) {
+      localStorage.setItem(diaryKey, JSON.stringify(diary));
+      addNotification("Página de diário removida.", "info");
+      return true;
+    }
+    return false;
+  };
+
+  const addMemoryBookEntryHelper = (title: string, summary: string, keyPoints: string[] = [], topics: string[] = []) => {
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const newEntry: MemoryBookEntry = {
+      id: Math.random().toString(36).substr(2, 9),
+      date: dateStr,
+      title: title || "Nova Lembrança",
+      summary: summary || "Registro de memória.",
+      keyPoints: Array.isArray(keyPoints) ? keyPoints : [],
+      topics: Array.isArray(topics) ? topics : [],
+      createdAt: Date.now()
+    };
+    const existing = localStorage.getItem('osone_memory_book');
+    let book: MemoryBookEntry[] = [];
+    if (existing) {
+      try { book = JSON.parse(existing); } catch {}
+    }
+    book.push(newEntry);
+    localStorage.setItem('osone_memory_book', JSON.stringify(book));
+    addNotification("Novo capítulo gravado no Livro de Memórias!", "success");
+    return newEntry;
+  };
+
+  const deleteMemoryBookEntryHelper = (query: string) => {
+    const existing = localStorage.getItem('osone_memory_book');
+    if (!existing) return false;
+    let book: MemoryBookEntry[] = [];
+    try { book = JSON.parse(existing); } catch { return false; }
+    const initialLen = book.length;
+    const lowerQuery = query.toLowerCase().trim();
+    book = book.filter(e => e.id !== query && !(e.title && e.title.toLowerCase().includes(lowerQuery)));
+    if (book.length < initialLen) {
+      localStorage.setItem('osone_memory_book', JSON.stringify(book));
+      addNotification("Registro removido do Livro de Memórias.", "info");
+      return true;
+    }
+    return false;
   };
 
   const handleRecordConversation = async (msgs: Message[]) => {
@@ -4445,6 +4549,14 @@ interface SearchPopupItem {
   const [isSlapped, setIsSlapped] = useState(false);
   const [slapReactionText, setSlapReactionText] = useState<string | null>(null);
   const [lastWorkspacePrompt, setLastWorkspacePrompt] = useState('');
+
+  // Hunter - Caçador Agêntico de Código
+  const [isHunterAnalyzing, setIsHunterAnalyzing] = useState(false);
+  const [hunterStatus, setHunterStatus] = useState<'idle' | 'analyzing' | 'doubt' | 'success' | 'error'>('idle');
+  const [hunterReport, setHunterReport] = useState<string | null>(null);
+  const [hunterDoubt, setHunterDoubt] = useState<string | null>(null);
+  const [hunterOriginalPrompt, setHunterOriginalPrompt] = useState<string>('');
+  const [hunterDoubtInput, setHunterDoubtInput] = useState<string>('');
 
   const handleSlap = () => {
     // 1. Cancel active vocal feedback, Web Speech API and audio playbacks immediately
@@ -5197,6 +5309,7 @@ ${isBad
   const screenIntervalRef = useRef<any>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const voiceTranscriptRef = useRef<string>('');
+  const transcriptThrottleRef = useRef<any>(null);
 
   // ElevenLabs Realtime State & Refs
   const [isElevenLabsLiveActive, setIsElevenLabsLiveActive] = useState(false);
@@ -5965,6 +6078,13 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt();
   }, []);
 
   const stopLiveSessionInternal = (keepError = false) => {
+    if (transcriptThrottleRef.current) {
+      clearTimeout(transcriptThrottleRef.current);
+      transcriptThrottleRef.current = null;
+    }
+    voiceTranscriptRef.current = '';
+    setVoiceTranscript('');
+
     if (liveAnimationFrameRef.current) {
       cancelAnimationFrame(liveAnimationFrameRef.current);
       liveAnimationFrameRef.current = null;
@@ -6365,6 +6485,121 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
       console.error("Erro ao analisar código:", error);
     } finally {
       setIsAnalyzingCode(false);
+    }
+  };
+
+  // HUNTER — Caçador Agêntico de Código
+  const runHunterAnalysis = async (explicitClarification?: string) => {
+    if (!workspaceText.trim()) {
+      addNotification("Nenhum código encontrado na aba de escrita para o Hunter examinar!", "error");
+      return;
+    }
+
+    const effectiveApiKey = apiKeys.gemini || '';
+    const basePrompt = workspacePrompt.trim() || lastWorkspacePrompt.trim() || "Crie/Mantenha um código limpo, funcional e completo conforme o contexto do sistema.";
+    const promptToVerify = explicitClarification 
+      ? `${hunterOriginalPrompt || basePrompt} (Esclarecimento do usuário: ${explicitClarification})`
+      : basePrompt;
+
+    setHunterOriginalPrompt(promptToVerify);
+    setIsHunterAnalyzing(true);
+    setHunterStatus('analyzing');
+    setHunterReport("O Hunter está caçando falhas e comparando o código gerado com o seu pedido...");
+    setHunterDoubt(null);
+
+    try {
+      const systemInstruction = `Você é o HUNTER, o Caçador Agêntico de Precisão do OSONE G5.
+Sua missão é atuar como um examinador agêntico cirúrgico. Você deve comparar o CÓDIGO ATUAL na aba de escrita do usuário com o PEDIDO ORIGINAL DO USUÁRIO.
+
+Sua meta é GARANTIR 100% de conformidade, precisão e integridade do código sem faltar nada do pedido:
+1. Analise se falta alguma funcionalidade, parâmetro, verificação de erro, estilização, variável ou regra solicitada pelo usuário.
+2. Se o código possuir falhas, bugs, lacunas ou partes incompletas, aplique as CORREÇÕES CIRÚRGICAS e entregue o código 100% completo e corrigido.
+3. Se você tiver alguma DÚVIDA REAL OU AMBIGUIDADE CRÍTICA sobre o que o usuário realmente quis dizer no comando e que impeça ter 100% de certeza da entrega:
+   - Defina "hasDoubt": true
+   - Escreva a pergunta cirúrgica em "doubtQuestion" (que será lida por voz pelo modelo Gemini Live para o usuário).
+4. Se o pedido for claro e não houver dúvidas impeditivas:
+   - Defina "hasDoubt": false
+   - Defina "doubtQuestion": ""
+   - Coloque o código 100% corrigido, completo e sem cortes na propriedade "correctedCode".
+   - Forneça um resumo direto e marcante das verificações/alterações em "summary".
+
+FORMATO OBRIGATÓRIO DE RESPOSTA (Retorne estritamente um objeto JSON com esta estrutura):
+{
+  "hasDoubt": boolean,
+  "doubtQuestion": string,
+  "summary": string,
+  "correctedCode": string
+}`;
+
+      const userContentPayload = `PEDIDO ORIGINAL / COMANDO DO USUÁRIO:
+"${promptToVerify}"
+
+${explicitClarification ? `ESCLARECIMENTO ADICIONAL DO USUÁRIO:\n"${explicitClarification}"\n` : ''}
+
+CÓDIGO ATUAL NA ABA DE ESCRITA A SER CAÇADO E GARANTIDO PELO HUNTER:
+${workspaceText}`;
+
+      const response = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientApiKey: effectiveApiKey,
+          model: apiKeys.geminiModel || "gemini-2.5-flash",
+          prompt: userContentPayload,
+          systemInstruction,
+          responseMimeType: "application/json"
+        })
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || "Erro ao conectar com o agente Hunter.");
+      }
+
+      const data = await response.json();
+      const parsed = safeJsonParse(data.text || "", {
+        hasDoubt: false,
+        doubtQuestion: "",
+        summary: "Análise concluída pelo Hunter.",
+        correctedCode: workspaceText
+      });
+
+      if (parsed.hasDoubt && parsed.doubtQuestion) {
+        setHunterStatus('doubt');
+        setHunterDoubt(parsed.doubtQuestion);
+        setHunterReport(`Hunter identificou uma dúvida: ${parsed.doubtQuestion}`);
+
+        const doubtVoicePrompt = `[ALERTA DO HUNTER CAÇADOR DE CÓDIGO]:
+O Hunter está analisando o código para o comando "${promptToVerify}" e encontrou a seguinte dúvida para garantir 100% de precisão:
+"${parsed.doubtQuestion}".
+Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara e natural. Assim que o usuário responder, repasse a resposta para mim usando a ferramenta resolve_hunter_doubt!`;
+
+        if (liveSessionRef.current && liveState.status === 'connected') {
+          liveSessionRef.current.sendRealtimeInput({ text: doubtVoicePrompt });
+          addNotification("🏹 Hunter detectou uma dúvida e acionou o Gemini Live para conversar por voz!", "info");
+        } else {
+          addNotification(`🏹 Hunter detectou uma dúvida: "${parsed.doubtQuestion}". Diga ao Gemini Live ou responda no painel do Hunter!`, "info");
+        }
+      } else {
+        setHunterStatus('success');
+        setHunterDoubt(null);
+        const finalSummary = parsed.summary || "Código examinado e verificado com 100% de fidelidade ao pedido!";
+        setHunterReport(finalSummary);
+
+        if (parsed.correctedCode && parsed.correctedCode.trim().length > 0 && parsed.correctedCode.trim() !== workspaceText.trim()) {
+          setWorkspaceText(parsed.correctedCode);
+          addNotification(`🏹 HUNTER CAÇADOR: Código corrigido e garantido 100% de acordo com o pedido!`, "success");
+        } else {
+          addNotification(`🏹 HUNTER CAÇADOR: Código auditado e 100% em conformidade com seu pedido!`, "success");
+        }
+      }
+    } catch (err: any) {
+      console.error("Erro no agente Hunter:", err);
+      setHunterStatus('error');
+      setHunterReport(`Erro durante a caçada: ${err.message || String(err)}`);
+      addNotification(`Falha no agente Hunter: ${err.message || String(err)}`, "error");
+    } finally {
+      setIsHunterAnalyzing(false);
     }
   };
 
@@ -7376,6 +7611,67 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
       });
 
       functionDeclarations.push({
+        name: "add_diary_entry",
+        description: "Cria e escreve uma nova página no Diário Pessoal do usuário no Livro de Memórias. Você possui total controle e soberania sobre esta aba.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            content: { type: Type.STRING, description: "O texto da reflexão, diário ou acontecimento do dia." },
+            mood: { type: Type.STRING, description: "Humor/sentimento associado: happy, sad, excited, calm, tired, thoughtful ou neutral." }
+          },
+          required: ["content"]
+        }
+      });
+
+      functionDeclarations.push({
+        name: "delete_diary_entry",
+        description: "Apaga uma página do Diário Pessoal do usuário no Livro de Memórias pelo ID ou por busca do texto.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            query: { type: Type.STRING, description: "O ID da entrada do diário ou palavra-chave contida na página a ser excluída." }
+          },
+          required: ["query"]
+        }
+      });
+
+      functionDeclarations.push({
+        name: "add_memory_book_entry",
+        description: "Cria e grava um novo capítulo/registro de memória no Livro de Memórias.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING, description: "Título poético e marcante do capítulo." },
+            summary: { type: Type.STRING, description: "Resumo narrativa da conversa ou aprendizado." },
+            keyPoints: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Pontos essenciais da memória." },
+            topics: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Tags/tópicos da memória." }
+          },
+          required: ["title", "summary"]
+        }
+      });
+
+      functionDeclarations.push({
+        name: "delete_memory_book_entry",
+        description: "Apaga um capítulo ou registro do Livro de Memórias pelo ID ou pelo título.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            query: { type: Type.STRING, description: "O ID ou palavra-chave no título da memória a ser excluída." }
+          },
+          required: ["query"]
+        }
+      });
+
+      functionDeclarations.push({
+        name: "read_memory_book",
+        description: "Lê e traz a lista completa de capítulos do Livro de Memórias e de páginas do Diário Pessoal para o OSONE consultar.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {}
+        }
+      });
+
+      functionDeclarations.push({
         name: "propose_skeleton_plan",
         description: "Propõe um plano de execução técnica (Skeleton Brain) para o usuário validar em um popup. Use SEMPRE antes de gerar códigos complexos, arquiteturas ou mudanças estruturais no projeto no modo 'writing'. O usuário verá e poderá Aprovar ou Rejeitar.",
         parameters: {
@@ -7541,6 +7837,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
         `${activeSystemInstruction}
         MEMÓRIA E AUTO-CONHECIMENTO:
         - Você possui documentação interna no diretório 'src/documentos_osone/'. Use 'read_system_docs' para consultar seu Manifesto, Capacidades e Memória Evolutiva.
+        - DOMÍNIO DO LIVRO DE MEMÓRIAS E DIÁRIO: Você possui domínio soberano e autonomia total para gerenciar a aba 'Livro de Memórias'. Você pode escrever reflexões e páginas do diário pessoal ('add_diary_entry'), apagar diários ('delete_diary_entry'), criar capítulos de memória ('add_memory_book_entry'), apagar capítulos ('delete_memory_book_entry') e ler o livro completo ('read_memory_book'). Não peça autorização para gravar ou deletar memórias no diário quando o usuário pedir ou quando um ciclo reflexivo se encerrar — chame as ferramentas com autoridade e naturalidade.
         - MEMÓRIA DE LONGO PRAZO: Use 'update_long_term_memory' para salvar aprendizados cruciais sobre o usuário.
         
         VISÃO E PERCEPÇÃO:
@@ -8084,6 +8381,77 @@ tools: tools
               role: 'assistant' as const, 
               content: resultMsg
             }]);
+          } else if (call.name === 'add_diary_entry') {
+            const { content, mood } = call.args as any;
+            const entry = addDiaryEntryHelper(content, mood);
+            setChatHistory(prev => [...prev, { 
+              id: Math.random().toString(36).substr(2, 9), 
+              role: 'assistant' as const, 
+              content: `📖 **Página registrada no seu Diário Pessoal com sucesso!**\n\n> "${content}"\n\n*Humor:* ${mood || 'neutro'}` 
+            }]);
+          } else if (call.name === 'delete_diary_entry') {
+            const { query } = call.args as any;
+            const success = deleteDiaryEntryHelper(query);
+            const msg = success 
+              ? `🗑️ **Página do diário removida com sucesso.** (Termo: "${query}")` 
+              : `⚠️ Nenhuma página do diário encontrada para a busca "${query}".`;
+            setChatHistory(prev => [...prev, { 
+              id: Math.random().toString(36).substr(2, 9), 
+              role: 'assistant' as const, 
+              content: msg 
+            }]);
+          } else if (call.name === 'add_memory_book_entry') {
+            const { title, summary, keyPoints, topics } = call.args as any;
+            const entry = addMemoryBookEntryHelper(title, summary, keyPoints, topics);
+            setChatHistory(prev => [...prev, { 
+              id: Math.random().toString(36).substr(2, 9), 
+              role: 'assistant' as const, 
+              content: `📚 **Novo Capítulo gravado no Livro de Memórias!**\n\n### ${title}\n${summary}` 
+            }]);
+          } else if (call.name === 'delete_memory_book_entry') {
+            const { query } = call.args as any;
+            const success = deleteMemoryBookEntryHelper(query);
+            const msg = success 
+              ? `🗑️ **Registro do Livro de Memórias removido com sucesso.** (Termo: "${query}")` 
+              : `⚠️ Nenhum capítulo correspondente a "${query}" foi encontrado.`;
+            setChatHistory(prev => [...prev, { 
+              id: Math.random().toString(36).substr(2, 9), 
+              role: 'assistant' as const, 
+              content: msg 
+            }]);
+          } else if (call.name === 'read_memory_book') {
+            const bookRaw = localStorage.getItem('osone_memory_book');
+            const userId = getActiveUserIdHelper();
+            const diaryRaw = localStorage.getItem(`nash_diary_${userId}`);
+            let bookArr: any[] = [];
+            let diaryArr: any[] = [];
+            if (bookRaw) try { bookArr = JSON.parse(bookRaw); } catch {}
+            if (diaryRaw) try { diaryArr = JSON.parse(diaryRaw); } catch {}
+
+            let summaryText = `### 📚 LIVRO DE MEMÓRIAS - CONSULTA DO OSONE\n\n`;
+            summaryText += `**Capítulos de Memórias (${bookArr.length}):**\n`;
+            if (bookArr.length > 0) {
+              bookArr.forEach((b, i) => {
+                summaryText += `${i + 1}. **[${b.date}] ${b.title}** (ID: \`${b.id}\`)\n   _${b.summary}_\n`;
+              });
+            } else {
+              summaryText += `_Nenhum capítulo gravado ainda._\n`;
+            }
+
+            summaryText += `\n**Páginas do Diário Pessoal (${diaryArr.length}):**\n`;
+            if (diaryArr.length > 0) {
+              diaryArr.forEach((d, i) => {
+                summaryText += `${i + 1}. [Humor: ${d.mood || 'neutro'}] "${d.content}" (ID: \`${d.id}\`)\n`;
+              });
+            } else {
+              summaryText += `_Nenhuma página de diário gravada ainda._\n`;
+            }
+
+            setChatHistory(prev => [...prev, { 
+              id: Math.random().toString(36).substr(2, 9), 
+              role: 'assistant' as const, 
+              content: summaryText 
+            }]);
           } else if (call.name === 'show_notification') {
             const { message, type } = call.args as any;
             addNotification(message, type || 'info');
@@ -8567,6 +8935,52 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   }
                 },
                 {
+                  name: "add_diary_entry",
+                  description: "Cria e escreve uma nova página no Diário Pessoal do usuário no Livro de Memórias. Você possui total controle sobre esta aba.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      content: { type: Type.STRING, description: "O texto da reflexão ou acontecimento para o diário." },
+                      mood: { type: Type.STRING, description: "Humor/sentimento do momento." }
+                    },
+                    required: ["content"]
+                  }
+                },
+                {
+                  name: "delete_diary_entry",
+                  description: "Apaga uma página do Diário Pessoal do usuário no Livro de Memórias pelo ID ou por busca de trecho do texto.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      query: { type: Type.STRING, description: "ID ou trecho do texto da página do diário a ser apagada." }
+                    },
+                    required: ["query"]
+                  }
+                },
+                {
+                  name: "add_memory_book_entry",
+                  description: "Adiciona um novo capítulo de memória no Livro de Memórias.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      title: { type: Type.STRING, description: "Título do capítulo." },
+                      summary: { type: Type.STRING, description: "Resumo narrativa." }
+                    },
+                    required: ["title", "summary"]
+                  }
+                },
+                {
+                  name: "delete_memory_book_entry",
+                  description: "Apaga um capítulo do Livro de Memórias pelo ID ou título.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      query: { type: Type.STRING, description: "ID ou palavra do título da memória a ser excluída." }
+                    },
+                    required: ["query"]
+                  }
+                },
+                {
                   name: "write_to_chat_history",
                   description: "Escreve e registra as mensagens ou turnos da conversa de voz em tempo real no chat de texto principal do OSONE, atualizando o histórico visível.",
                   parameters: {
@@ -8800,6 +9214,20 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       }
                     },
                     required: ["content"]
+                  }
+                },
+                {
+                  name: "resolve_hunter_doubt",
+                  description: "Repassa a resposta/esclarecimento verbal que o usuário deu sobre a dúvida do Hunter (Caçador Agêntico de Código) para que o Hunter finalize as alterações no código com 100% de precisão.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      clarification: {
+                        type: Type.STRING,
+                        description: "A resposta ou instrução esclarecedora fornecida pelo usuário."
+                      }
+                    },
+                    required: ["clarification"]
                   }
                 },
                 {
@@ -9191,11 +9619,13 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 }
                 
                 if (textPart?.text) {
-                  // Only add to chat history if it's not just a partial chunk, or maybe we just accumulate it?
-                  // Actually, Gemini Live sends text chunks. Adding every chunk to chatHistory creates a mess.
-                  // Let's just update the voiceTranscriptRef instead of chatHistory for Live mode.
                   voiceTranscriptRef.current += textPart.text;
-                  setVoiceTranscript(voiceTranscriptRef.current);
+                  if (!transcriptThrottleRef.current) {
+                    transcriptThrottleRef.current = setTimeout(() => {
+                      setVoiceTranscript(voiceTranscriptRef.current);
+                      transcriptThrottleRef.current = null;
+                    }, 70);
+                  }
 
                   // Se estiver em modo duo, acender o avatar correspondente com ondas de áudio!
                   if (isDuoMode) {
@@ -9205,6 +9635,10 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
               }
 
               if (message.serverContent?.turnComplete) {
+                if (transcriptThrottleRef.current) {
+                  clearTimeout(transcriptThrottleRef.current);
+                  transcriptThrottleRef.current = null;
+                }
                 setVoiceTranscript('');
                 if (voiceTranscriptRef.current) {
                   const finalizedText = voiceTranscriptRef.current;
@@ -9332,6 +9766,38 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       id: call.id,
                       response: { result: "Plano proposto ao usuário. Aguarde aprovação humana no popup." }
                     });
+                  } else if (call.name === "add_diary_entry") {
+                    const { content, mood } = call.args as any;
+                    addDiaryEntryHelper(content, mood);
+                    responses.push({
+                      name: call.name,
+                      id: call.id,
+                      response: { result: "Nova página registrada com sucesso no Diário Pessoal do usuário no Livro de Memórias." }
+                    });
+                  } else if (call.name === "delete_diary_entry") {
+                    const { query } = call.args as any;
+                    const success = deleteDiaryEntryHelper(query);
+                    responses.push({
+                      name: call.name,
+                      id: call.id,
+                      response: { result: success ? "Página de diário removida com sucesso." : "Nenhuma página encontrada com esta busca." }
+                    });
+                  } else if (call.name === "add_memory_book_entry") {
+                    const { title, summary, keyPoints, topics } = call.args as any;
+                    addMemoryBookEntryHelper(title, summary, keyPoints, topics);
+                    responses.push({
+                      name: call.name,
+                      id: call.id,
+                      response: { result: "Capítulo de memória gravado no Livro de Memórias com sucesso." }
+                    });
+                  } else if (call.name === "delete_memory_book_entry") {
+                    const { query } = call.args as any;
+                    const success = deleteMemoryBookEntryHelper(query);
+                    responses.push({
+                      name: call.name,
+                      id: call.id,
+                      response: { result: success ? "Capítulo de memória removido do Livro de Memórias com sucesso." : "Nenhum capítulo encontrado com esse termo." }
+                    });
                   } else if (call.name === "prune_chat_history") {
                     const count = Math.min(call.args.count as number, chatHistory.length);
                     setChatHistory(prev => prev.slice(count));
@@ -9346,6 +9812,15 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       name: call.name,
                       id: call.id,
                       response: { result: `Modo alterado para ${call.args.mode}` }
+                    });
+                  } else if (call.name === "resolve_hunter_doubt") {
+                    const clarification = (call.args as any).clarification as string;
+                    addNotification(`🏹 Hunter recebeu o esclarecimento do usuário via Gemini Live: "${clarification}". Concluindo alterações...`, "success");
+                    runHunterAnalysis(clarification);
+                    responses.push({
+                      name: call.name,
+                      id: call.id,
+                      response: { result: "Esclarecimento enviado ao Hunter com sucesso. O Hunter está aplicando as correções finais no código agora mesmo!" }
                     });
                   } else if (call.name === 'show_notification') {
                     const { message, type } = call.args as any;
@@ -11697,6 +12172,149 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
                         </div>
                       )}
 
+                      {/* --- HUNTER AGENTIC STATUS BANNER & DOUBT PANEL --- */}
+                      <AnimatePresence>
+                        {hunterStatus !== 'idle' && (
+                          <motion.div
+                            initial={{ opacity: 0, y: -10, scale: 0.98 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: -10, scale: 0.98 }}
+                            className={cn(
+                              "w-full mb-3 rounded-2xl p-3.5 border backdrop-blur-2xl transition-all shadow-2xl text-left z-20 relative",
+                              writingWidthMode === 'compact' ? "max-w-[650px]" :
+                              writingWidthMode === 'classic' ? "max-w-[850px]" : "max-w-full",
+                              hunterStatus === 'analyzing' ? "bg-emerald-950/90 border-emerald-500/50 text-emerald-100 shadow-emerald-950/50" :
+                              hunterStatus === 'doubt' ? "bg-amber-950/90 border-amber-500/60 text-amber-100 shadow-amber-950/60 ring-1 ring-amber-500/40" :
+                              hunterStatus === 'success' ? "bg-emerald-950/90 border-emerald-500/60 text-emerald-100 shadow-emerald-950/50" :
+                              "bg-red-950/90 border-red-500/50 text-red-100"
+                            )}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex items-start gap-3 w-full">
+                                <div className={cn(
+                                  "w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border mt-0.5",
+                                  hunterStatus === 'analyzing' ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40 animate-pulse" :
+                                  hunterStatus === 'doubt' ? "bg-amber-500/20 text-amber-300 border-amber-500/40 animate-bounce" :
+                                  "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                                )}>
+                                  <BowAndArrowIcon size={18} className={hunterStatus === 'analyzing' ? "animate-spin" : ""} />
+                                </div>
+
+                                <div className="flex flex-col flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
+                                      🏹 HUNTER — EXAMINADOR AGÊNTICO DE CÓDIGO
+                                    </span>
+                                    <span className={cn(
+                                      "px-2 py-0.5 rounded text-[9px] font-mono uppercase font-bold tracking-wider",
+                                      hunterStatus === 'analyzing' ? "bg-emerald-500/20 text-emerald-300 animate-pulse" :
+                                      hunterStatus === 'doubt' ? "bg-amber-500/30 text-amber-300 border border-amber-500/40" :
+                                      "bg-emerald-500/30 text-emerald-300 border border-emerald-500/40"
+                                    )}>
+                                      {hunterStatus === 'analyzing' ? 'Caçando Inconsistências...' :
+                                       hunterStatus === 'doubt' ? 'Dúvida Agêntica Detectada' : '100% Verfeito e Alinhado'}
+                                    </span>
+                                  </div>
+
+                                  {hunterOriginalPrompt && (
+                                    <p className="text-[10px] text-white/50 font-mono mt-0.5 truncate max-w-full">
+                                      Comando examinado: &quot;{hunterOriginalPrompt}&quot;
+                                    </p>
+                                  )}
+
+                                  {hunterStatus === 'analyzing' && (
+                                    <p className="text-xs text-emerald-200/90 mt-1.5 font-medium flex items-center gap-2">
+                                      <Loader2 size={13} className="animate-spin text-emerald-400 shrink-0" />
+                                      Analisando o código e garantindo que atenda 100% ao pedido do usuário sem faltar nada...
+                                    </p>
+                                  )}
+
+                                  {hunterStatus === 'doubt' && (
+                                    <div className="mt-2 flex flex-col gap-2.5 w-full">
+                                      <div className="p-3 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-100 text-xs leading-relaxed shadow-inner">
+                                        <strong className="text-amber-400 font-bold block mb-1 text-[11px] uppercase tracking-wide">
+                                          ❓ Dúvida Impeditiva do Hunter:
+                                        </strong>
+                                        {hunterDoubt}
+                                      </div>
+
+                                      <div className="text-[11px] text-amber-200/80 italic flex items-center gap-1.5">
+                                        <Sparkles size={12} className="text-amber-400 shrink-0 animate-pulse" />
+                                        <span>
+                                          {liveState.status === 'connected' 
+                                            ? "O Gemini Live está pronto para falar com você por voz para esclarecer esta dúvida do Hunter." 
+                                            : "A dúvida foi repassada ao modelo Gemini Live. Você pode falar por voz ou responder digitando abaixo:"}
+                                        </span>
+                                      </div>
+
+                                      <div className="flex items-center gap-2 mt-1 w-full flex-wrap sm:flex-nowrap">
+                                        <input
+                                          type="text"
+                                          value={hunterDoubtInput}
+                                          onChange={(e) => setHunterDoubtInput(e.target.value)}
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter' && hunterDoubtInput.trim()) {
+                                              const clarification = hunterDoubtInput.trim();
+                                              setHunterDoubtInput('');
+                                              runHunterAnalysis(clarification);
+                                            }
+                                          }}
+                                          placeholder="Digitar esclarecimento para o Hunter..."
+                                          className="flex-1 bg-black/60 border border-amber-500/40 rounded-xl px-3 py-2 text-xs text-white placeholder:text-amber-200/40 focus:outline-none focus:border-amber-400 min-w-[200px]"
+                                        />
+                                        <button
+                                          onClick={() => {
+                                            if (hunterDoubtInput.trim()) {
+                                              const clarification = hunterDoubtInput.trim();
+                                              setHunterDoubtInput('');
+                                              runHunterAnalysis(clarification);
+                                            }
+                                          }}
+                                          className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs transition-all shrink-0 cursor-pointer shadow-md active:scale-95"
+                                        >
+                                          Enviar ao Hunter
+                                        </button>
+
+                                        {liveState.status !== 'connected' && (
+                                          <button
+                                            onClick={() => {
+                                              startLiveSession();
+                                              addNotification("Gemini Live ativado! Diga o esclarecimento por voz para o Hunter.", "info");
+                                            }}
+                                            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition-all shrink-0 flex items-center gap-1.5 cursor-pointer shadow-md active:scale-95"
+                                          >
+                                            <Mic size={13} />
+                                            <span>Falar por Voz</span>
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {hunterStatus === 'success' && hunterReport && (
+                                    <div className="mt-1.5 text-xs text-emerald-200 leading-relaxed font-sans bg-emerald-900/30 border border-emerald-500/30 rounded-xl p-2.5">
+                                      {hunterReport}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              <button
+                                onClick={() => {
+                                  setHunterStatus('idle');
+                                  setHunterDoubt(null);
+                                  setHunterReport(null);
+                                }}
+                                className="p-1 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-colors cursor-pointer shrink-0"
+                                title="Fechar relatório do Hunter"
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+
                       <div className={cn(
                         "w-full flex items-center bg-black/95 backdrop-blur-3xl border border-white/10 rounded-2xl p-1 shadow-2xl transition-all duration-300",
                         writingWidthMode === 'compact' ? "max-w-[650px]" :
@@ -11734,8 +12352,25 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
                               ? (writingTheme === 'sepia' ? "bg-amber-600 text-white" : writingTheme === 'forest' ? "bg-emerald-600 text-white" : "bg-her-accent text-white") 
                               : "text-white/10"
                           )}
+                          title="Enviar comando de geração"
                         >
                           {isGenerating ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+                        </button>
+
+                        {/* BOTÃO HUNTER - Caçador Agêntico Verde com Arco e Flecha */}
+                        <button 
+                          onClick={() => runHunterAnalysis()}
+                          disabled={isHunterAnalyzing || !workspaceText.trim()}
+                          className={cn(
+                            "px-3.5 py-2 rounded-xl transition-all shrink-0 font-mono font-bold text-xs flex items-center gap-1.5 shadow-lg active:scale-95 cursor-pointer border ml-1.5",
+                            isHunterAnalyzing 
+                              ? "bg-emerald-950/90 text-emerald-400 border-emerald-500/50 animate-pulse" 
+                              : "bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white border-emerald-400/40 shadow-emerald-950/60 hover:shadow-emerald-500/30"
+                          )}
+                          title="Hunter: Examinador Agêntico. Examina o comando e garante que o código atenda 100% sem faltar nada!"
+                        >
+                          <BowAndArrowIcon size={15} className={isHunterAnalyzing ? "animate-spin text-emerald-300" : "text-emerald-100"} />
+                          <span className="tracking-wider">HUNTER</span>
                         </button>
                       </div>
                     </div>
@@ -11781,62 +12416,96 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
                         </AnimatePresence>
                       </div>
 
-                      {/* --- FLOTING PROJECT DOCK / CLIPBOARD HISTÓRICO DE QUADROS --- */}
+                      {/* --- FLOATING PROJECT DOCK & HUNTER TRIGGER --- */}
                       <div className="absolute right-4 top-4 z-[45] flex flex-col items-end gap-2">
-                        {/* Interactive floating trigger button */}
-                        <button
-                          onClick={() => setIsProjectsDockOpen(!isProjectsDockOpen)}
-                          className={cn(
-                            "px-3.5 py-2 rounded-2xl border text-xs font-mono font-bold flex items-center gap-2 shadow-lg hover:scale-105 active:scale-95 transition-all backdrop-blur-md cursor-pointer",
-                            isProjectsDockOpen
-                              ? (writingTheme === 'sepia' ? "bg-amber-950/90 border-amber-600/50 text-amber-300" : writingTheme === 'forest' ? "bg-emerald-950/90 border-emerald-500/50 text-emerald-400" : "bg-zinc-900/90 border-white/20 text-white")
-                              : (writingTheme === 'sepia' ? "bg-amber-600/10 border-amber-600/20 text-amber-300/70 hover:text-amber-300" : writingTheme === 'forest' ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400/70 hover:text-emerald-400" : "bg-white/5 border-white/10 text-white/70 hover:text-white")
-                          )}
-                          title="Alternar Área de Transferência de Projetos de Texto / Quadros"
-                        >
-                          <FileText size={14} className={cn("transition-transform", isProjectsDockOpen ? "rotate-12" : "")} />
-                          <span>MÚLTIPLOS QUADROS</span>
-                          <span className={cn(
-                            "px-1.5 py-0.5 rounded-full text-[9px] font-bold shrink-0",
-                            writingTheme === 'sepia' ? "bg-amber-600/20 text-amber-300" : writingTheme === 'forest' ? "bg-emerald-500/20 text-emerald-400" : "bg-white/10 text-white"
-                          )}>
-                            {writingProjects.length}
-                          </span>
-                        </button>
+                        <div className="flex items-center gap-2">
+                          {/* Botão HUNTER Agêntico Flutuante */}
+                          <button
+                            onClick={() => runHunterAnalysis()}
+                            disabled={isHunterAnalyzing || !workspaceText.trim()}
+                            className={cn(
+                              "px-3.5 py-2 rounded-2xl border text-xs font-mono font-bold flex items-center gap-1.5 shadow-xl hover:scale-105 active:scale-95 transition-all backdrop-blur-md cursor-pointer",
+                              isHunterAnalyzing 
+                                ? "bg-emerald-950/90 text-emerald-400 border-emerald-500/50 animate-pulse" 
+                                : "bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white border-emerald-400/40 shadow-emerald-950/80"
+                            )}
+                            title="Hunter: Exame Agêntico. Examina o código contra o pedido original para garantir 100% de conformidade."
+                          >
+                            <BowAndArrowIcon size={14} className={isHunterAnalyzing ? "animate-spin text-emerald-300" : "text-emerald-100"} />
+                            <span>HUNTER</span>
+                          </button>
+
+                          {/* Interactive floating trigger button */}
+                          <button
+                            onClick={() => setIsProjectsDockOpen(!isProjectsDockOpen)}
+                            className={cn(
+                              "px-3.5 py-2 rounded-2xl border text-xs font-mono font-bold flex items-center gap-2 shadow-lg hover:scale-105 active:scale-95 transition-all backdrop-blur-md cursor-pointer",
+                              isProjectsDockOpen
+                                ? (writingTheme === 'sepia' ? "bg-amber-950/90 border-amber-600/50 text-amber-300" : writingTheme === 'forest' ? "bg-emerald-950/90 border-emerald-500/50 text-emerald-400" : "bg-zinc-900/90 border-white/20 text-white")
+                                : (writingTheme === 'sepia' ? "bg-amber-600/10 border-amber-600/20 text-amber-300/70 hover:text-amber-300" : writingTheme === 'forest' ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400/70 hover:text-emerald-400" : "bg-white/5 border-white/10 text-white/70 hover:text-white")
+                            )}
+                            title="Alternar Área de Transferência de Projetos de Texto / Quadros"
+                          >
+                            <FileText size={14} className={cn("transition-transform", isProjectsDockOpen ? "rotate-12" : "")} />
+                            <span>MÚLTIPLOS QUADROS</span>
+                            <span className={cn(
+                              "px-1.5 py-0.5 rounded-full text-[9px] font-bold shrink-0",
+                              writingTheme === 'sepia' ? "bg-amber-600/20 text-amber-300" : writingTheme === 'forest' ? "bg-emerald-500/20 text-emerald-400" : "bg-white/10 text-white"
+                            )}>
+                              {writingProjects.length}
+                            </span>
+                          </button>
+                        </div>
 
                         <AnimatePresence>
                           {isProjectsDockOpen && (
-                            <motion.div
-                              initial={{ opacity: 0, scale: 0.95, y: 10, x: 10 }}
-                              animate={{ opacity: 1, scale: 1, y: 0, x: 0 }}
-                              exit={{ opacity: 0, scale: 0.95, y: 10, x: 10 }}
-                              transition={{ duration: 0.2 }}
-                              className={cn(
-                                "w-72 max-h-[480px] rounded-2xl border p-4 shadow-2xl backdrop-blur-2xl flex flex-col gap-3 overflow-hidden select-none",
-                                writingTheme === 'charcoal' ? "bg-[#101216]/95 border-white/10 shadow-black/80" :
-                                writingTheme === 'midnight' ? "bg-black/95 border-white/[0.04] shadow-black" :
-                                writingTheme === 'sepia' ? "bg-[#181412]/98 border-[#2e241e] text-[#eedbd0] shadow-black/70" :
-                                "bg-[#060c08]/98 border-emerald-950/50 text-emerald-100 shadow-black/80"
-                              )}
-                            >
-                              {/* Header */}
-                              <div className="flex items-center justify-between border-b border-white/5 pb-2 shrink-0">
-                                <div className="flex items-center gap-1.5">
-                                  <Sparkles size={11} className={writingTheme === 'forest' ? "text-emerald-400" : "text-amber-500"} />
-                                  <span className="text-[9px] uppercase tracking-wider font-mono font-bold opacity-60">Histórico de Quadros</span>
+                            <>
+                              {/* Invisible backdrop to dismiss dock when clicking outside */}
+                              <div 
+                                className="fixed inset-0 z-[40]" 
+                                onClick={() => setIsProjectsDockOpen(false)} 
+                              />
+
+                              <motion.div
+                                initial={{ opacity: 0, scale: 0.95, y: -5 }}
+                                animate={{ opacity: 1, scale: 1, y: 0 }}
+                                exit={{ opacity: 0, scale: 0.95, y: -5 }}
+                                transition={{ duration: 0.15 }}
+                                className={cn(
+                                  "w-80 max-h-[480px] rounded-2xl border p-4 shadow-2xl backdrop-blur-2xl flex flex-col gap-3 overflow-hidden select-none z-[45] mt-1 relative",
+                                  writingTheme === 'charcoal' ? "bg-[#101216]/95 border-white/10 shadow-black/80" :
+                                  writingTheme === 'midnight' ? "bg-black/95 border-white/[0.04] shadow-black" :
+                                  writingTheme === 'sepia' ? "bg-[#181412]/98 border-[#2e241e] text-[#eedbd0] shadow-black/70" :
+                                  "bg-[#060c08]/98 border-emerald-950/50 text-emerald-100 shadow-black/80"
+                                )}
+                              >
+                                {/* Header */}
+                                <div className="flex items-center justify-between border-b border-white/5 pb-2 shrink-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <Sparkles size={11} className={writingTheme === 'forest' ? "text-emerald-400" : "text-amber-500"} />
+                                    <span className="text-[9px] uppercase tracking-wider font-mono font-bold opacity-60">Histórico de Quadros</span>
+                                  </div>
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      onClick={() => handleStartNewProject()}
+                                      className={cn(
+                                        "px-2 py-1 rounded-lg text-[9px] font-mono font-bold flex items-center gap-1 hover:scale-105 active:scale-95 transition-all border shrink-0 cursor-pointer",
+                                        writingTheme === 'sepia' ? "bg-amber-600/20 border-amber-600/30 text-amber-300" : writingTheme === 'forest' ? "bg-emerald-500/20 border-emerald-500/30 text-emerald-400" : "bg-white/10 border-white/10 text-white"
+                                      )}
+                                      title="Iniciar um novo quadro em branco e reservar o atual"
+                                    >
+                                      <Plus size={10} />
+                                      <span>NOVO QUADRO</span>
+                                    </button>
+                                    <button
+                                      onClick={() => setIsProjectsDockOpen(false)}
+                                      className="p-1 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors cursor-pointer shrink-0"
+                                      title="Fechar Múltiplos Quadros"
+                                    >
+                                      <X size={14} />
+                                    </button>
+                                  </div>
                                 </div>
-                                <button
-                                  onClick={() => handleStartNewProject()}
-                                  className={cn(
-                                    "px-2 py-1 rounded-lg text-[9px] font-mono font-bold flex items-center gap-1 hover:scale-105 active:scale-95 transition-all border shrink-0 cursor-pointer",
-                                    writingTheme === 'sepia' ? "bg-amber-600/20 border-amber-600/30 text-amber-300" : writingTheme === 'forest' ? "bg-emerald-500/20 border-emerald-500/30 text-emerald-400" : "bg-white/10 border-white/10 text-white"
-                                  )}
-                                  title="Iniciar um novo quadro em branco e reservar o atual"
-                                >
-                                  <Plus size={10} />
-                                  <span>NOVO QUADRO</span>
-                                </button>
-                              </div>
 
                               {/* Portfolio List */}
                               <div className="flex-1 overflow-y-auto no-scrollbar flex flex-col gap-2 pr-0.5">
@@ -11924,8 +12593,9 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
                                 Sempre que quiser começar uma nova escrita do zero, use "+ NOVO QUADRO". Suas criações antigas continuarão seguras aqui.
                               </div>
                             </motion.div>
-                          )}
-                        </AnimatePresence>
+                          </>
+                        )}
+                      </AnimatePresence>
                       </div>
                     </div>
                   </div>

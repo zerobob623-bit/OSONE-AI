@@ -64,10 +64,14 @@ export const MemoryBookPanel = ({ onBack, onAddNotification }: MemoryBookPanelPr
     memory,
     diary,
     addFact,
+    deleteFact,
     addImportantDate,
+    deleteImportantDate,
     addDiaryEntry,
+    deleteDiaryEntry,
     getUpcomingDates,
-    addSemanticFact
+    addSemanticFact,
+    deleteSemanticFact
   } = useUserMemory();
 
   // Estados locais para formulários de inserção de memórias
@@ -708,10 +712,22 @@ export const MemoryBookPanel = ({ onBack, onAddNotification }: MemoryBookPanelPr
                         key={idx}
                         initial={{ opacity: 0, x: -10 }}
                         animate={{ opacity: 1, x: 0 }}
-                        className="p-3 bg-zinc-950/40 border border-white/[0.03] rounded-xl flex items-start gap-3 text-xs text-zinc-300 font-sans"
+                        className="p-3 bg-zinc-950/40 border border-white/[0.03] hover:border-white/10 transition-all rounded-xl flex items-center justify-between gap-3 text-xs text-zinc-300 font-sans group"
                       >
-                        <span className="text-pink-500 mt-0.5">•</span>
-                        <span className="flex-1">{fact}</span>
+                        <div className="flex items-start gap-2 min-w-0 flex-1">
+                          <span className="text-pink-500 mt-0.5">•</span>
+                          <span className="flex-1 break-words">{fact}</span>
+                        </div>
+                        <button
+                          onClick={() => {
+                            deleteFact(idx);
+                            onAddNotification("Fato removido com sucesso.", "info");
+                          }}
+                          className="p-1.5 text-zinc-500 hover:text-red-400 opacity-60 group-hover:opacity-100 transition-all cursor-pointer rounded-lg hover:bg-red-500/10 shrink-0"
+                          title="Excluir fato"
+                        >
+                          <Trash2 size={13} />
+                        </button>
                       </motion.div>
                     ))
                   ) : (
@@ -809,13 +825,25 @@ export const MemoryBookPanel = ({ onBack, onAddNotification }: MemoryBookPanelPr
                         memory.importantDates.map((d, idx) => (
                           <div
                             key={idx}
-                            className="p-2 bg-zinc-950/40 border border-white/[0.02] rounded-xl flex items-center justify-between text-xs font-sans text-zinc-400"
+                            className="p-2 bg-zinc-950/40 border border-white/[0.02] hover:border-white/10 transition-all rounded-xl flex items-center justify-between text-xs font-sans text-zinc-400 group"
                           >
-                            <span>{d.label}</span>
-                            <span className="font-mono text-[10px]">
-                              {d.date.split('-').reverse().join('/')}
-                              {d.year ? `/${d.year}` : ''}
-                            </span>
+                            <span className="truncate flex-1 pr-2">{d.label}</span>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="font-mono text-[10px]">
+                                {d.date.split('-').reverse().join('/')}
+                                {d.year ? `/${d.year}` : ''}
+                              </span>
+                              <button
+                                onClick={() => {
+                                  deleteImportantDate(idx);
+                                  onAddNotification("Data importante removida.", "info");
+                                }}
+                                className="p-1 text-zinc-500 hover:text-red-400 opacity-60 group-hover:opacity-100 transition-all cursor-pointer rounded hover:bg-red-500/10"
+                                title="Excluir data"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
                           </div>
                         ))
                       ) : (
@@ -935,7 +963,21 @@ export const MemoryBookPanel = ({ onBack, onAddNotification }: MemoryBookPanelPr
 
                         {/* Content column */}
                         <div className="flex-1 min-w-0">
-                          <span className="text-[9px] font-mono text-zinc-500">{dateStr}</span>
+                          <div className="flex items-center justify-between">
+                            <span className="text-[9px] font-mono text-zinc-500">{dateStr}</span>
+                            <button
+                              onClick={() => {
+                                if (entry.id) {
+                                  deleteDiaryEntry(entry.id);
+                                  onAddNotification("Página de diário removida.", "info");
+                                }
+                              }}
+                              className="p-1 text-zinc-500 hover:text-red-400 opacity-60 hover:opacity-100 transition-all cursor-pointer rounded hover:bg-red-500/10"
+                              title="Excluir página do diário"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
                           <p className="text-xs text-zinc-300 font-serif italic mt-2 leading-relaxed whitespace-pre-wrap">
                             "{entry.content}"
                           </p>
@@ -1032,11 +1074,23 @@ export const MemoryBookPanel = ({ onBack, onAddNotification }: MemoryBookPanelPr
                       className="p-5 bg-zinc-900/30 border border-white/5 rounded-2xl hover:border-white/10 hover:bg-zinc-900/50 transition-all flex flex-col justify-between"
                     >
                       <div>
-                        <div className="flex items-center gap-1.5 mb-2 flex-wrap">
-                          <Tag className="text-pink-400" size={10} />
-                          <span className="text-[9px] font-mono uppercase text-pink-300 font-bold bg-pink-500/10 px-2 py-0.5 rounded-md">
-                            {item.category || 'Conceito'}
-                          </span>
+                        <div className="flex items-center justify-between gap-1.5 mb-2 flex-wrap">
+                          <div className="flex items-center gap-1.5">
+                            <Tag className="text-pink-400" size={10} />
+                            <span className="text-[9px] font-mono uppercase text-pink-300 font-bold bg-pink-500/10 px-2 py-0.5 rounded-md">
+                              {item.category || 'Conceito'}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => {
+                              deleteSemanticFact(idx);
+                              onAddNotification("Conceito semântico removido.", "info");
+                            }}
+                            className="p-1 text-zinc-500 hover:text-red-400 opacity-60 hover:opacity-100 transition-all cursor-pointer rounded hover:bg-red-500/10"
+                            title="Excluir conceito"
+                          >
+                            <Trash2 size={13} />
+                          </button>
                         </div>
                         
                         <h4 className="text-xs font-bold text-white mb-2 uppercase tracking-wide font-mono">{item.concept}</h4>

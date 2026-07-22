@@ -305,18 +305,88 @@ export function useUserMemory() {
     });
   }, [userId]);
 
+  // Remove uma entrada do diário pelo id ou índice
+  const deleteDiaryEntry = useCallback(async (entryId: string) => {
+    if (!userId) return;
+    const diaryKey = `nash_diary_${userId}`;
+
+    setDiary(prev => {
+      const updated = prev.filter(e => e.id !== entryId);
+      localStorage.setItem(diaryKey, JSON.stringify(updated));
+      return updated;
+    });
+  }, [userId]);
+
+  // Remove um fato simples pelo índice ou pelo texto exatamente
+  const deleteFact = useCallback(async (factIndexOrText: number | string) => {
+    if (!userId) return;
+    const memoryKey = `nash_memory_${userId}`;
+
+    setMemory(prev => {
+      let updatedFacts: string[];
+      if (typeof factIndexOrText === 'number') {
+        updatedFacts = prev.facts.filter((_, idx) => idx !== factIndexOrText);
+      } else {
+        updatedFacts = prev.facts.filter(f => f.toLowerCase().trim() !== factIndexOrText.toLowerCase().trim());
+      }
+      const updated = { ...prev, facts: updatedFacts };
+      localStorage.setItem(memoryKey, JSON.stringify(updated));
+      return updated;
+    });
+  }, [userId]);
+
+  // Remove uma data importante pelo índice ou descrição
+  const deleteImportantDate = useCallback(async (dateIndexOrLabel: number | string) => {
+    if (!userId) return;
+    const memoryKey = `nash_memory_${userId}`;
+
+    setMemory(prev => {
+      let updatedDates: ImportantDate[];
+      if (typeof dateIndexOrLabel === 'number') {
+        updatedDates = prev.importantDates.filter((_, idx) => idx !== dateIndexOrLabel);
+      } else {
+        updatedDates = prev.importantDates.filter(d => d.label.toLowerCase().trim() !== dateIndexOrLabel.toLowerCase().trim());
+      }
+      const updated = { ...prev, importantDates: updatedDates };
+      localStorage.setItem(memoryKey, JSON.stringify(updated));
+      return updated;
+    });
+  }, [userId]);
+
+  // Remove um conceito da memória semântica
+  const deleteSemanticFact = useCallback(async (conceptIndexOrName: number | string) => {
+    if (!userId) return;
+    const memoryKey = `nash_memory_${userId}`;
+
+    setMemory(prev => {
+      let updatedSemantic: SemanticFact[];
+      if (typeof conceptIndexOrName === 'number') {
+        updatedSemantic = prev.semanticMemory.filter((_, idx) => idx !== conceptIndexOrName);
+      } else {
+        updatedSemantic = prev.semanticMemory.filter(s => s.concept.toLowerCase().trim() !== conceptIndexOrName.toLowerCase().trim());
+      }
+      const updated = { ...prev, semanticMemory: updatedSemantic };
+      localStorage.setItem(memoryKey, JSON.stringify(updated));
+      return updated;
+    });
+  }, [userId]);
+
   return {
     userId,
     memory,
     diary,
     saveMemory,
     addFact,
+    deleteFact,
     addImportantDate,
+    deleteImportantDate,
     addDiaryEntry,
+    deleteDiaryEntry,
     getUpcomingDates,
     updateWorkspace,
     clearWorkspace,
     addSemanticFact,
+    deleteSemanticFact,
     addSummary
   };
 }
