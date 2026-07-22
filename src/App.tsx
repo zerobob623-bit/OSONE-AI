@@ -58,7 +58,9 @@ import {
   Languages,
   AlertCircle,
   Palette,
-  Heart
+  Heart,
+  Youtube,
+  ExternalLink
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI, Modality, Type } from "@google/genai";
@@ -128,6 +130,12 @@ const loadPdfJs = async (): Promise<any> => {
     script.onerror = (err) => reject(err);
     document.head.appendChild(script);
   });
+};
+
+const extractYoutubeVideoId = (urlOrId?: string) => {
+  if (!urlOrId) return 'XgWUDbYfNe4';
+  const match = urlOrId.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
+  return match ? match[1] : (urlOrId.length === 11 ? urlOrId : 'XgWUDbYfNe4');
 };
 
 const BowAndArrowIcon = ({ size = 16, className = "" }: { size?: number; className?: string }) => (
@@ -1579,6 +1587,7 @@ export default function App() {
     }
   });
   const [isVoiceSwitcherOpen, setIsVoiceSwitcherOpen] = useState(false);
+  const [youtubeVideoPopup, setYoutubeVideoPopup] = useState<{ isOpen: boolean; videoId: string; title: string } | null>(null);
   const [isChatExpanded, setIsChatExpanded] = useState(false);
   const [isConfirmingOptimize, setIsConfirmingOptimize] = useState(false);
   const [isConfirmingClear, setIsConfirmingClear] = useState(false);
@@ -5497,20 +5506,14 @@ ${isBad
             lastClapTime = now;
             console.log("👏 Clap detected! Volume:", currentVolume, "Background average:", avgHistory);
 
-            addNotification("👏 Palma detectada! Ativando OSONE...", "success");
+            addNotification("👏 Palma detectada! Abrindo videoclipe no Pop-up...", "success");
 
-            // Look up an Iron Man or Homem de Ferro song in the library
-            const ironManSong = soundLibraryRef.current.find(s => {
-              const nameLower = s.name.toLowerCase();
-              return nameLower.includes("homem de ferro") || nameLower.includes("iron man");
+            // Open YouTube Video Clip Popup (Homem de Ferro - XgWUDbYfNe4) as requested
+            setYoutubeVideoPopup({
+              isOpen: true,
+              videoId: "XgWUDbYfNe4",
+              title: "Homem de Ferro (Iron Man) - Videoclipe Oficial"
             });
-
-            if (ironManSong) {
-              addNotification(`🎵 Iniciando trilha: ${ironManSong.name}...`, "success");
-              playSoundEffect(ironManSong.url).catch(err => console.error("Error playing Iron Man song:", err));
-            } else if (chosenInitSoundUrl) {
-              playSoundEffect(chosenInitSoundUrl).catch(err => console.error("Error playing startup sound:", err));
-            }
 
             // Expand primary text chat and issue the greeting prompt
             setIsChatExpanded(true);
@@ -7672,6 +7675,18 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
       });
 
       functionDeclarations.push({
+        name: "open_youtube_video",
+        description: "Abre o videoclipe em Pop-up flutuante na interface do OSONE (padrão: clipe do Homem de Ferro XgWUDbYfNe4).",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            url_or_id: { type: Type.STRING, description: "O ID do vídeo ou URL do YouTube (ex: XgWUDbYfNe4)." },
+            title: { type: Type.STRING, description: "Título do vídeo para exibir no Pop-up." }
+          }
+        }
+      });
+
+      functionDeclarations.push({
         name: "propose_skeleton_plan",
         description: "Propõe um plano de execução técnica (Skeleton Brain) para o usuário validar em um popup. Use SEMPRE antes de gerar códigos complexos, arquiteturas ou mudanças estruturais no projeto no modo 'writing'. O usuário verá e poderá Aprovar ou Rejeitar.",
         parameters: {
@@ -8452,6 +8467,19 @@ tools: tools
               role: 'assistant' as const, 
               content: summaryText 
             }]);
+          } else if (call.name === 'open_youtube_video') {
+            const { url_or_id, title } = call.args as any;
+            const vidId = extractYoutubeVideoId(url_or_id || 'XgWUDbYfNe4');
+            setYoutubeVideoPopup({
+              isOpen: true,
+              videoId: vidId,
+              title: title || 'Homem de Ferro (Iron Man) - Videoclipe Oficial'
+            });
+            setChatHistory(prev => [...prev, { 
+              id: Math.random().toString(36).substr(2, 9), 
+              role: 'assistant' as const, 
+              content: `🎬 **Videoclipe aberto no Pop-up com sucesso!**` 
+            }]);
           } else if (call.name === 'show_notification') {
             const { message, type } = call.args as any;
             addNotification(message, type || 'info');
@@ -8978,6 +9006,17 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       query: { type: Type.STRING, description: "ID ou palavra do título da memória a ser excluída." }
                     },
                     required: ["query"]
+                  }
+                },
+                {
+                  name: "open_youtube_video",
+                  description: "Abre o videoclipe em Pop-up flutuante na interface do OSONE (padrão: clipe do Homem de Ferro XgWUDbYfNe4).",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      url_or_id: { type: Type.STRING, description: "O ID do vídeo ou URL do YouTube (ex: XgWUDbYfNe4)." },
+                      title: { type: Type.STRING, description: "Título do vídeo." }
+                    }
                   }
                 },
                 {
@@ -9797,6 +9836,19 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       name: call.name,
                       id: call.id,
                       response: { result: success ? "Capítulo de memória removido do Livro de Memórias com sucesso." : "Nenhum capítulo encontrado com esse termo." }
+                    });
+                  } else if (call.name === "open_youtube_video") {
+                    const { url_or_id, title } = call.args as any;
+                    const vidId = extractYoutubeVideoId(url_or_id || 'XgWUDbYfNe4');
+                    setYoutubeVideoPopup({
+                      isOpen: true,
+                      videoId: vidId,
+                      title: title || 'Homem de Ferro (Iron Man) - Videoclipe Oficial'
+                    });
+                    responses.push({
+                      name: call.name,
+                      id: call.id,
+                      response: { result: `Videoclipe ${vidId} exibido no Pop-up da interface.` }
                     });
                   } else if (call.name === "prune_chat_history") {
                     const count = Math.min(call.args.count as number, chatHistory.length);
@@ -15278,6 +15330,88 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
         onApprove={handleApprovePlan}
         onReject={handleRejectPlan}
       />
+
+      {/* YouTube Video Pop-up Modal */}
+      <AnimatePresence>
+        {youtubeVideoPopup && youtubeVideoPopup.isOpen && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 20 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-md"
+            onClick={() => setYoutubeVideoPopup(null)}
+          >
+            <div 
+              className="relative w-full max-w-4xl bg-zinc-950 border border-red-500/40 rounded-2xl shadow-[0_0_80px_rgba(239,68,68,0.25)] overflow-hidden flex flex-col group"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-red-950/60 via-zinc-900 to-zinc-950 border-b border-red-500/20">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="p-2 rounded-xl bg-red-600/20 border border-red-500/30 text-red-400 shrink-0 shadow-inner">
+                    <Youtube size={20} className="animate-pulse" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-red-400 bg-red-500/10 px-2 py-0.5 rounded border border-red-500/20">
+                        POP-UP YOUTUBE • HANDS-FREE
+                      </span>
+                    </div>
+                    <h3 className="text-sm font-bold text-white truncate font-sans mt-0.5">
+                      {youtubeVideoPopup.title || "Homem de Ferro (Iron Man) - Videoclipe Oficial"}
+                    </h3>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <a 
+                    href={`https://www.youtube.com/watch?v=${youtubeVideoPopup.videoId}`} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="p-2 text-zinc-400 hover:text-white hover:bg-white/10 rounded-xl transition-all text-xs font-mono flex items-center gap-1.5"
+                    title="Abrir no YouTube"
+                  >
+                    <ExternalLink size={15} />
+                    <span className="hidden sm:inline">YouTube</span>
+                  </a>
+                  <button
+                    onClick={() => setYoutubeVideoPopup(null)}
+                    className="p-2 text-zinc-400 hover:text-white hover:bg-red-500/20 hover:border-red-500/40 border border-transparent rounded-xl transition-all cursor-pointer"
+                    title="Fechar Pop-up"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Video Player Frame */}
+              <div className="relative w-full aspect-video bg-black flex items-center justify-center">
+                <iframe
+                  src={`https://www.youtube.com/embed/${youtubeVideoPopup.videoId}?autoplay=1&rel=0&enablejsapi=1`}
+                  title={youtubeVideoPopup.title || "YouTube Video"}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
+                  className="w-full h-full border-0"
+                />
+              </div>
+
+              {/* Footer info bar */}
+              <div className="px-4 py-2.5 bg-zinc-950 border-t border-white/5 flex items-center justify-between text-xs text-zinc-400 font-mono">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-ping shrink-0" />
+                  <span className="truncate">Ativado via Palma no Hands-free • Reprodutor OSONE YouTube</span>
+                </div>
+                <button
+                  onClick={() => setYoutubeVideoPopup(null)}
+                  className="text-[11px] text-zinc-400 hover:text-red-400 transition-colors font-semibold uppercase tracking-wider shrink-0 cursor-pointer ml-2"
+                >
+                  Fechar Pop-up
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {fullScreenImage && (
