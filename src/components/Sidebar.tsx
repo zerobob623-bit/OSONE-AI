@@ -1,10 +1,10 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Volume2, FileText, Folder, Music, Gamepad2, Zap, Activity, LogOut, User, Cpu, Puzzle, MessageSquare, Sliders, Compass, Database, Video, Radio, Eye, Heart, BookOpen } from 'lucide-react';
+import { X, Volume2, FileText, Folder, Music, Gamepad2, Zap, Activity, LogOut, User, Cpu, Puzzle, MessageSquare, Sliders, Compass, Database, Video, Radio, Eye, Heart, BookOpen, Settings } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { WorkspaceMode } from '../types';
 
-export const Sidebar = ({ isOpen, onClose, mode, setMode, user, onLogout, onLogin, onOpenProfileModal }: { 
+export const Sidebar = ({ isOpen, onClose, mode, setMode, user, onLogout, onLogin, onOpenProfileModal, onOpenSettings }: { 
   isOpen: boolean; 
   onClose: () => void;
   mode: WorkspaceMode;
@@ -13,6 +13,7 @@ export const Sidebar = ({ isOpen, onClose, mode, setMode, user, onLogout, onLogi
   onLogout?: () => void;
   onLogin?: () => void;
   onOpenProfileModal?: () => void;
+  onOpenSettings?: () => void;
 }) => (
   <AnimatePresence>
     {isOpen && (
@@ -110,14 +111,11 @@ export const Sidebar = ({ isOpen, onClose, mode, setMode, user, onLogout, onLogi
                   <span>Mapa OS</span>
                 </button>
                 <button 
-                  onClick={() => { setMode('aural_control'); onClose(); }}
-                  className={cn(
-                    "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm",
-                    mode === 'aural_control' ? "bg-her-accent/10 text-her-accent border border-her-accent/20" : "hover:bg-white/[0.02] text-her-ink/60"
-                  )}
+                  onClick={() => { if (onOpenSettings) onOpenSettings(); onClose(); }}
+                  className="w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm hover:bg-white/[0.02] text-her-ink/60 cursor-pointer"
                 >
-                  <Sliders size={18} />
-                  <span>Ajustes & Perfil</span>
+                  <Settings size={18} className="text-her-accent" />
+                  <span>Configurações ⚙️</span>
                 </button>
 
                 <button 
