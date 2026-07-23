@@ -28,13 +28,41 @@ import { cn } from '../lib/utils';
  *   npm install -D @types/three @types/topojson-client @types/d3-geo
  * ──────────────────────────────────────────────────────────────────────── */
 
-// Banco de dados geográfico local offline para sintonização instantânea das principais cidades brasileiras e globais
+// Banco de dados geográfico local offline para sintonização instantânea das principais cidades brasileiras, estados e países globais
 const LOCAL_GEO_DB: Array<{ names: string[]; displayName: string; lat: number; lng: number; desc: string }> = [
-  // Capitais brasileiras e grandes polos
+  // Estados Brasileiros
+  { names: ['rio grande do sul', 'estado do rio grande do sul', 'rs', 'gaucho'], displayName: 'Rio Grande do Sul, Brasil', lat: -30.0346, lng: -51.2177, desc: 'Estado gaúcho no extremo sul do Brasil, famoso pela cultura tradicional, pampas e serras' },
+  { names: ['rio grande do norte', 'estado do rio grande do norte', 'rn'], displayName: 'Rio Grande do Norte, Brasil', lat: -5.7945, lng: -35.2110, desc: 'Estado do nordeste brasileiro famoso pelas dunas, praias e litoral exuberante' },
+  { names: ['bahia', 'estado da bahia', 'ba'], displayName: 'Bahia, Brasil', lat: -12.9714, lng: -38.5014, desc: 'Estado no nordeste brasileiro, centro de história, cultura afro-brasileira e praias' },
+  { names: ['minas gerais', 'estado de minas gerais', 'mg'], displayName: 'Minas Gerais, Brasil', lat: -19.9167, lng: -43.9345, desc: 'Estado mineiro no sudeste, rico em cidades históricas, serras e gastronomia' },
+  { names: ['santa catarina', 'estado de santa catarina', 'sc'], displayName: 'Santa Catarina, Brasil', lat: -27.5954, lng: -48.5480, desc: 'Estado do sul com litoral paradisíaco, serras frias e forte cultura europeia' },
+  { names: ['parana', 'estado do parana', 'pr'], displayName: 'Paraná, Brasil', lat: -25.4284, lng: -49.2733, desc: 'Estado do sul, lar das Cataratas do Iguaçu e florestas de araucárias' },
+  { names: ['sao paulo estado', 'estado de sao paulo', 'sp estado'], displayName: 'São Paulo (Estado), Brasil', lat: -23.5505, lng: -46.6333, desc: 'Motor econômico do Brasil, com metrópoles vibrantes, indústria e litoral' },
+  { names: ['rio de janeiro estado', 'estado do rio de janeiro', 'rj estado'], displayName: 'Rio de Janeiro (Estado), Brasil', lat: -22.9068, lng: -43.1729, desc: 'Estado da Região Sudeste, de belas praias na Costa Verde e Região dos Lagos' },
+  { names: ['ceara', 'estado do ceara', 'ce'], displayName: 'Ceará, Brasil', lat: -3.7319, lng: -38.5267, desc: 'Estado do nordeste famoso por dunas, falésias e vento constante para kitesurf' },
+  { names: ['pernambuco', 'estado de pernambuco', 'pe'], displayName: 'Pernambuco, Brasil', lat: -8.0543, lng: -34.8813, desc: 'Estado do nordeste, berço do frevo, maracatu e Fernando de Noronha' },
+  { names: ['goias', 'estado de goias', 'go'], displayName: 'Goiás, Brasil', lat: -16.6869, lng: -49.2648, desc: 'Coração do centro-oeste brasileiro, rico em águas termais e arquitetura colonial' },
+  { names: ['mato grosso', 'estado de mato grosso', 'mt'], displayName: 'Mato Grosso, Brasil', lat: -15.6010, lng: -56.0974, desc: 'Estado do Pantanal e da Amazônia meridional, gigante do agronegócio' },
+  { names: ['mato grosso do sul', 'estado de mato grosso do sul', 'ms'], displayName: 'Mato Grosso do Sul, Brasil', lat: -20.4697, lng: -54.6201, desc: 'Estado santuário do Pantanal e águas cristalinas de Bonito' },
+  { names: ['para', 'estado do para', 'pa'], displayName: 'Pará, Brasil', lat: -1.4558, lng: -48.4902, desc: 'Gigante amazônico do norte, terra do açaí, carimbó e rio Amazonas' },
+  { names: ['amazonas', 'estado do amazonas', 'am'], displayName: 'Amazonas, Brasil', lat: -3.1190, lng: -60.0217, desc: 'Maior estado brasileiro, coberto pela imensa Floresta Amazônica' },
+  { names: ['maranhao', 'estado do maranhao', 'ma'], displayName: 'Maranhão, Brasil', lat: -2.5307, lng: -44.3068, desc: 'Estado dos deslumbrantes Lençóis Maranhenses e casarões coloniais' },
+  { names: ['espirito santo', 'estado do espirito santo', 'es'], displayName: 'Espírito Santo, Brasil', lat: -20.3155, lng: -40.3128, desc: 'Estado capixaba, famoso pela moqueca, praias e montanhas da Serra' },
+  { names: ['alagoas', 'estado de alagoas', 'al'], displayName: 'Alagoas, Brasil', lat: -9.6658, lng: -35.7350, desc: 'Estado do caribe brasileiro, com águas cristalinas e barreiras de corais' },
+  { names: ['sergipe', 'estado de sergipe', 'se'], displayName: 'Sergipe, Brasil', lat: -10.9472, lng: -37.0731, desc: 'Menor estado do Brasil em extensão, rico em cânions do São Francisco' },
+  { names: ['piaui', 'estado do piaui', 'pi'], displayName: 'Piauí, Brasil', lat: -5.0919, lng: -42.8034, desc: 'Estado da Serra da Capivara, berço da pré-história sul-americana' },
+  { names: ['paraiba', 'estado da paraiba', 'pb'], displayName: 'Paraíba, Brasil', lat: -7.1195, lng: -34.8450, desc: 'Ponto mais oriental das Américas e tradição do Maior São João do Mundo' },
+  { names: ['tocantins', 'estado de tocantins', 'to'], displayName: 'Tocantins, Brasil', lat: -10.1844, lng: -48.3336, desc: 'Estado do Jalapão, fervedouros de águas cristalinas e dunas douradas' },
+  { names: ['rondonia', 'estado de rondonia', 'ro'], displayName: 'Rondônia, Brasil', lat: -8.7619, lng: -63.9039, desc: 'Estado do norte banhado pelo rio Madeira e de forte produção agrícola' },
+  { names: ['acre', 'estado do acre', 'ac'], displayName: 'Acre, Brasil', lat: -9.9747, lng: -67.8076, desc: 'Estado da borracha, biodiversidade amazônica e geoglifos ancestrais' },
+  { names: ['roraima', 'estado de roraima', 'rr'], displayName: 'Roraima, Brasil', lat: 2.8196, lng: -60.6714, desc: 'Estado do imponente Monte Roraima e da savana amazônica' },
+  { names: ['amapa', 'estado do amapa', 'ap'], displayName: 'Amapá, Brasil', lat: 0.0349, lng: -51.0694, desc: 'Estado cortado pelo Equador, banhado pelo Amazonas e Atlântico' },
+
+  // Capitais brasileiras e grandes cidades
   { names: ['sao paulo', 'sp', 'sao paulo, brasil', 'sao paulo city', 'sampa'], displayName: 'São Paulo, Brasil', lat: -23.5505, lng: -46.6333, desc: 'Maior metrópole e polo financeiro da América do Sul' },
   { names: ['rio de janeiro', 'rio', 'rj', 'rio de janeiro, brasil', 'cidade maravilhosa'], displayName: 'Rio de Janeiro, Brasil', lat: -22.9068, lng: -43.1729, desc: 'Coração tropical, praias icônicas e relevo sinuoso' },
   { names: ['brasilia', 'df', 'capital do brasil', 'distrito federal'], displayName: 'Brasília, Brasil', lat: -15.7975, lng: -47.8919, desc: 'Capital federal, obra-prima do urbanismo modernista de Oscar Niemeyer' },
-  { names: ['salvador', 'salvador, bahia', 'ssa', 'bahia'], displayName: 'Salvador, Brasil', lat: -12.9714, lng: -38.5014, desc: 'Primeira capital do Brasil, rica cultura afro-brasileira e Pelourinho' },
+  { names: ['salvador', 'salvador, bahia', 'ssa'], displayName: 'Salvador, Brasil', lat: -12.9714, lng: -38.5014, desc: 'Primeira capital do Brasil, rica cultura afro-brasileira e Pelourinho' },
   { names: ['belo horizonte', 'bh', 'belo horizonte, minas gerais', 'beaga'], displayName: 'Belo Horizonte, Brasil', lat: -19.9167, lng: -43.9345, desc: 'Capital mineira, cercada por serras e famosa pela gastronomia tradicional' },
   { names: ['fortaleza', 'fortaleza, ceara'], displayName: 'Fortaleza, Brasil', lat: -3.7319, lng: -38.5267, desc: 'Capital cearense, belas praias urbanas e vibrante polo do Nordeste' },
   { names: ['manaus', 'manaus, amazonas', 'amazonia'], displayName: 'Manaus, Brasil', lat: -3.1190, lng: -60.0217, desc: 'Metrópole no coração da Floresta Amazônica e Teatro Amazonas' },
@@ -65,18 +93,38 @@ const LOCAL_GEO_DB: Array<{ names: string[]; displayName: string; lat: number; l
   { names: ['ribeirao preto', 'ribeirao preto, sao paulo', 'capital do chopp'], displayName: 'Ribeirão Preto, Brasil', lat: -21.1767, lng: -47.8100, desc: 'Polo do agronegócio e tradicionalmente chamada de Califórnia Brasileira' },
   { names: ['sao jose dos campos', 'sjc', 'sao jose dos campos, sao paulo'], displayName: 'São José dos Campos, Brasil', lat: -23.1791, lng: -45.8872, desc: 'Centro aeroespacial brasileiro e sede da Embraer' },
 
+  // Países e territórios globais
+  { names: ['china', 'republica popular da china', 'prc'], displayName: 'China', lat: 35.8617, lng: 104.1954, desc: 'Nação milenar do leste asiático, centro industrial e cultural' },
+  { names: ['japao', 'japan', 'nippon', 'nihon'], displayName: 'Japão', lat: 36.2048, lng: 138.2529, desc: 'Arquipélago vulcânico do pacífico, pioneiro em tecnologia e tradições' },
+  { names: ['estados unidos', 'usa', 'eua', 'united states', 'america'], displayName: 'Estados Unidos', lat: 37.0902, lng: -95.7129, desc: 'Vasta nação norte-americana do atlântico ao pacífico' },
+  { names: ['franca', 'france'], displayName: 'França', lat: 46.2276, lng: 2.2137, desc: 'Nação europeia famosa por arte, gastronomia e monumentos históricos' },
+  { names: ['alemanha', 'germany', 'deutschland'], displayName: 'Alemanha', lat: 51.1657, lng: 10.4515, desc: 'Potência industrial e cultural no centro da Europa' },
+  { names: ['italia', 'italy'], displayName: 'Itália', lat: 41.8719, lng: 12.5674, desc: 'Península mediterrânea rica em história da antiguidade e arte renascentista' },
+  { names: ['espanha', 'spain', 'espana'], displayName: 'Espanha', lat: 40.4637, lng: -3.7492, desc: 'Nação ibérica vibrante com litoral mediterrâneo e rica arquitetura' },
+  { names: ['reino unido', 'inglaterra', 'uk', 'united kingdom', 'england'], displayName: 'Reino Unido', lat: 55.3781, lng: -3.4360, desc: 'Nação insular no noroeste da Europa com milênios de tradições' },
+  { names: ['russia', 'russian federation'], displayName: 'Rússia', lat: 61.5240, lng: 105.3188, desc: 'Maior país do planeta em extensão territorial, unindo Europa e Ásia' },
+  { names: ['india'], displayName: 'Índia', lat: 20.5937, lng: 78.9629, desc: 'Subcontinente asiático de imensa diversidade cultural e histórica' },
+  { names: ['australia'], displayName: 'Austrália', lat: -25.2744, lng: 133.7751, desc: 'País-continente cercado pelos oceanos Índico e Pacífico' },
+  { names: ['canada'], displayName: 'Canadá', lat: 56.1304, lng: -106.3468, desc: 'Vasto território norte-americano de paisagens glaciais e florestas' },
+  { names: ['mexico'], displayName: 'México', lat: 23.6345, lng: -102.5528, desc: 'Terra de antigas civilizações maias e astecas e rica cultura' },
+  { names: ['argentina'], displayName: 'Argentina', lat: -38.4161, lng: -63.6167, desc: 'Nação sul-americana da Patagônia aos Andes' },
+  { names: ['chile'], displayName: 'Chile', lat: -35.6751, lng: -71.5430, desc: 'Extensa faixa entre os Andes e o Pacífico' },
+  { names: ['colombia'], displayName: 'Colômbia', lat: 4.5709, lng: -74.2973, desc: 'Portal da América do Sul banhado pelo Caribe e Pacífico' },
+  { names: ['egito', 'egypt'], displayName: 'Egito', lat: 26.8206, lng: 30.8025, desc: 'Berço da civilização faraônica e do Rio Nilo' },
+  { names: ['portugal'], displayName: 'Portugal', lat: 39.3999, lng: -8.2245, desc: 'Nação ibérica banhada pelo Atlântico, história das navegações' },
+
   // Grandes hubs mundiais
-  { names: ['toquio', 'tokyo', 'japao', 'tokio', 'capital do japao'], displayName: 'Tóquio, Japão', lat: 35.6762, lng: 139.6503, desc: 'A capital cibernética e de néon do amanhã' },
-  { names: ['paris', 'franca', 'cidade luz', 'capital da franca'], displayName: 'Paris, França', lat: 48.8566, lng: 2.3522, desc: 'Cidade Luz, epicentro de arte, moda e arquitetura secular' },
-  { names: ['nova york', 'new york', 'ny', 'nyc', 'estados unidos', 'usa'], displayName: 'Nova York, EUA', lat: 40.7128, lng: -74.0060, desc: 'Coração financeiro e cultural do planeta, a cidade que nunca dorme' },
-  { names: ['londres', 'london', 'inglaterra', 'capital da inglaterra', 'uk'], displayName: 'Londres, Reino Unido', lat: 51.5074, lng: -0.1278, desc: 'Metrópole histórica com rica fusão de realeza e vanguarda cultural' },
-  { names: ['roma', 'rome', 'italia', 'capital da italia'], displayName: 'Roma, Itália', lat: 41.9028, lng: 12.4964, desc: 'Cidade Eterna, museu a céu aberto do antigo Império Romano' },
-  { names: ['berlim', 'berlin', 'alemanha', 'capital da alemanha'], displayName: 'Berlim, Alemanha', lat: 52.5200, lng: 13.4050, desc: 'Vibrante centro de arte, música eletrônica e história da Guerra Fria' },
-  { names: ['madri', 'madrid', 'espanha', 'capital da espanha'], displayName: 'Madri, Espanha', lat: 40.4168, lng: -3.7038, desc: 'Capital espanhola, famosa por museus reais e gastronomia refinada' },
-  { names: ['lisboa', 'lisbon', 'portugal', 'capital de portugal'], displayName: 'Lisboa, Portugal', lat: 38.7223, lng: -9.1393, desc: 'Cidade das sete colinas, fado e azulejos centenários' },
-  { names: ['reykjavik', 'islandia', 'capital da islandia'], displayName: 'Reykjavík, Islândia', lat: 64.1466, lng: -21.9426, desc: 'Refúgio ártico cercado de gêiseres, vulcões e auroras boreais' },
+  { names: ['toquio', 'tokyo', 'tokio', 'capital do japao'], displayName: 'Tóquio, Japão', lat: 35.6762, lng: 139.6503, desc: 'A capital cibernética e de néon do amanhã' },
+  { names: ['paris', 'cidade luz', 'capital da franca'], displayName: 'Paris, França', lat: 48.8566, lng: 2.3522, desc: 'Cidade Luz, epicentro de arte, moda e arquitetura secular' },
+  { names: ['nova york', 'new york', 'ny', 'nyc'], displayName: 'Nova York, EUA', lat: 40.7128, lng: -74.0060, desc: 'Coração financeiro e cultural do planeta, a cidade que nunca dorme' },
+  { names: ['londres', 'london', 'capital da inglaterra'], displayName: 'Londres, Reino Unido', lat: 51.5074, lng: -0.1278, desc: 'Metrópole histórica com rica fusão de realeza e vanguarda cultural' },
+  { names: ['roma', 'rome', 'capital da italia'], displayName: 'Roma, Itália', lat: 41.9028, lng: 12.4964, desc: 'Cidade Eterna, museu a céu aberto do antigo Império Romano' },
+  { names: ['berlim', 'berlin', 'capital da alemanha'], displayName: 'Berlim, Alemanha', lat: 52.5200, lng: 13.4050, desc: 'Vibrante centro de arte, música eletrônica e história da Guerra Fria' },
+  { names: ['madri', 'madrid', 'capital da espanha'], displayName: 'Madri, Espanha', lat: 40.4168, lng: -3.7038, desc: 'Capital espanhola, famosa por museus reais e gastronomia refinada' },
+  { names: ['lisboa', 'lisbon', 'capital de portugal'], displayName: 'Lisboa, Portugal', lat: 38.7223, lng: -9.1393, desc: 'Cidade das sete colinas, fado e azulejos centenários' },
+  { names: ['reykjavik', 'capital da islandia'], displayName: 'Reykjavík, Islândia', lat: 64.1466, lng: -21.9426, desc: 'Refúgio ártico cercado de gêiseres, vulcões e auroras boreais' },
   { names: ['seul', 'seoul', 'coreia do sul', 'capital da coreia'], displayName: 'Seul, Coreia do Sul', lat: 37.5665, lng: 126.9780, desc: 'Metrópole futurista líder em K-Pop, skincare e semicondutores' },
-  { names: ['pequim', 'beijing', 'china', 'capital da china'], displayName: 'Pequim, China', lat: 39.9042, lng: 116.4074, desc: 'Capital milenar chinesa, lar da Cidade Proibida e Grande Muralha' },
+  { names: ['pequim', 'beijing', 'capital da china'], displayName: 'Pequim, China', lat: 39.9042, lng: 116.4074, desc: 'Capital milenar chinesa, lar da Cidade Proibida e Grande Muralha' },
   { names: ['xangai', 'shanghai'], displayName: 'Xangai, China', lat: 31.2304, lng: 121.4737, desc: 'Pulsante floresta de arranha-céus na costa da China' },
   { names: ['singapura', 'singapore'], displayName: 'Singapura', lat: 1.3521, lng: 103.8198, desc: 'Cidade-estado ultra-moderna integrada à natureza e arranha-céus verdes' },
   { names: ['mumbai', 'baimbaim', 'bombaim', 'india'], displayName: 'Mumbai, Índia', lat: 19.0760, lng: 72.8777, desc: 'Coração econômico indiano e o vibrante lar de Bollywood' },
@@ -280,10 +328,15 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
   // Satellite Lens Viewfinder State
   const [satPanelOpen, setSatPanelOpen] = useState(false);
   const [satZoom, setSatZoom] = useState(16);
-  const [satProvider, setSatProvider] = useState<'satellite' | 'street'>('satellite');
+  const [satProvider, setSatProvider] = useState<'satellite' | 'street' | 'terrain'>('satellite');
   const [isScanning, setIsScanning] = useState(false);
   const [isTraveling, setIsTraveling] = useState(false);
   const satMapContainerRef = useRef<HTMLDivElement | null>(null);
+
+  // Unified Globe-to-2D Map state
+  const [activeViewMode, setActiveViewMode] = useState<'globe' | 'map2d'>('globe');
+  const [isGlobeNavigating, setIsGlobeNavigating] = useState(false);
+  const fullMapContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Trilateration solver — pure math, unchanged
   const triangulatedPoint = useMemo(() => {
@@ -338,10 +391,12 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
   const triggerSatelliteFocus = (lat: number, lng: number, label: string) => {
     setIsTraveling(true);
     setIsScanning(true);
+    setIsGlobeNavigating(true);
+    setActiveViewMode('globe');
     setOrbitMode('off');
     setMapStyle('satellite');
     
-    // Phase 1: Zoom out deeply to show the whole globe in screen space
+    // Phase 1: Zoom out to show full globe rotation
     setZoomLevel(0.85);
     const s = stateRef.current;
     if (s) {
@@ -349,23 +404,98 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
       s.targetDist = BASE_DISTANCE / 0.85;
     }
 
-    // Centering: rotates the globe beautifully in orbit towards coordinates
+    // Centering: rotates the globe beautifully towards target coordinates
     updateMapPosition(lat, lng, label);
 
-    // Phase 2: After flying across space, zoom in tightly (the descent)
+    // Phase 2: Camera descent zoom-in towards the surface
     setTimeout(() => {
-      setZoomLevel(2.75);
+      setZoomLevel(2.85);
       if (s) {
-        s.targetDist = BASE_DISTANCE / 2.75;
+        s.targetDist = BASE_DISTANCE / 2.85;
       }
       
-      // Phase 3: Locked signal, fade out scanner and slide back UI panels
+      // Phase 3: Transition smoothly from 3D Globe into 2D Satellite Map!
       setTimeout(() => {
+        setActiveViewMode('map2d');
+        setIsGlobeNavigating(false);
         setIsTraveling(false);
         setIsScanning(false);
-      }, 1200);
-    }, 1100);
+      }, 850);
+    }, 850);
   };
+
+  // ── Fullscreen 2D Satellite Map Sync ───────────────────────────────
+  useEffect(() => {
+    if (activeViewMode !== 'map2d' || !fullMapContainerRef.current) return;
+    const container = fullMapContainerRef.current;
+
+    let map = (container as any)._leaflet_map as L.Map | undefined;
+    if (!map) {
+      map = L.map(container, {
+        zoomControl: false,
+        attributionControl: false
+      });
+      (container as any)._leaflet_map = map;
+    }
+
+    // Set view smoothly
+    map.setView([currentCoords.lat, currentCoords.lng], satZoom);
+
+    // Reuse tile layer unless provider changed
+    const currentProvider = (container as any)._osone_provider;
+    const tileUrl = satProvider === 'satellite'
+      ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+      : satProvider === 'street'
+      ? 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+      : 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png';
+
+    if (currentProvider !== satProvider || !(container as any)._osone_tile_layer) {
+      if ((container as any)._osone_tile_layer) {
+        map.removeLayer((container as any)._osone_tile_layer);
+      }
+      const newTileLayer = L.tileLayer(tileUrl, { maxZoom: 19 });
+      newTileLayer.addTo(map);
+      (container as any)._osone_tile_layer = newTileLayer;
+      (container as any)._osone_provider = satProvider;
+    }
+
+    // Reuse marker unless not present
+    const customIcon = L.divIcon({
+      className: 'custom-radar-marker',
+      html: `
+        <div class="relative flex items-center justify-center w-12 h-12">
+          <span class="absolute inline-flex h-10 w-10 rounded-full bg-fuchsia-500/30 border border-fuchsia-400 animate-ping" style="animation-duration: 2s;"></span>
+          <span class="relative inline-flex rounded-full h-4 w-4 bg-fuchsia-500 border-2 border-white shadow-[0_0_15px_#d946ef]"></span>
+          <div class="absolute w-8 h-8 border border-dashed border-fuchsia-400/60 rounded-full animate-spin-slow"></div>
+          <div class="absolute w-10 h-[1px] bg-fuchsia-400/60"></div>
+          <div class="absolute h-10 w-[1px] bg-fuchsia-400/60"></div>
+        </div>
+      `,
+      iconSize: [48, 48],
+      iconAnchor: [24, 24]
+    });
+
+    if ((container as any)._osone_marker) {
+      (container as any)._osone_marker.setLatLng([currentCoords.lat, currentCoords.lng]);
+    } else {
+      const marker = L.marker([currentCoords.lat, currentCoords.lng], { icon: customIcon }).addTo(map);
+      (container as any)._osone_marker = marker;
+    }
+
+    const handleMoveEnd = () => {
+      if (!map) return;
+      const center = map.getCenter();
+      setCurrentCoords({ lat: center.lat, lng: center.lng });
+    };
+    map.off('moveend', handleMoveEnd);
+    map.on('moveend', handleMoveEnd);
+
+    const timer = setTimeout(() => {
+      if (map) map.invalidateSize();
+    }, 50);
+
+    return () => clearTimeout(timer);
+  }, [currentCoords.lat, currentCoords.lng, satZoom, satProvider, activeViewMode]);
 
   // ── Mount: build the Three.js scene once ────────────────────────────
   useEffect(() => {
@@ -541,11 +671,17 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
       if (!mountRef.current) return;
       const w = mountRef.current.clientWidth;
       const h = mountRef.current.clientHeight;
+      if (w === 0 || h === 0) return;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
     };
     window.addEventListener('resize', handleResize);
+
+    const resizeObserver = new ResizeObserver(() => {
+      handleResize();
+    });
+    resizeObserver.observe(mount);
 
     const animate = () => {
       const s = stateRef.current;
@@ -621,6 +757,7 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
       const s = stateRef.current;
       if (s) cancelAnimationFrame(s.animId);
       window.removeEventListener('resize', handleResize);
+      resizeObserver.disconnect();
       disposeObject3D(scene);
       renderer.dispose();
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
@@ -690,6 +827,43 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
     const dist = THREE.MathUtils.clamp(BASE_DISTANCE / zoomLevel, 3.3, 22);
     s.targetDist = dist;
   }, [zoomLevel]);
+
+  // ── Sync viewport sizes on view mode change ──────────────────────────
+  useEffect(() => {
+    if (stateRef.current && mountRef.current) {
+      const w = mountRef.current.clientWidth;
+      const h = mountRef.current.clientHeight;
+      if (w > 0 && h > 0) {
+        stateRef.current.camera.aspect = w / h;
+        stateRef.current.camera.updateProjectionMatrix();
+        stateRef.current.renderer.setSize(w, h);
+      }
+    }
+  }, [activeViewMode]);
+
+  // ── Auto-search on initialSearchQuery prop changes & custom events ────
+  const lastSearchedRef = useRef<string>('');
+  useEffect(() => {
+    if (initialSearchQuery && initialSearchQuery.trim() !== '' && initialSearchQuery !== lastSearchedRef.current) {
+      lastSearchedRef.current = initialSearchQuery;
+      handleAddressSearch(initialSearchQuery);
+    }
+  }, [initialSearchQuery]);
+
+  useEffect(() => {
+    const handleNavEvent = (e: Event) => {
+      const customEvent = e as CustomEvent<{ location: string }>;
+      const loc = customEvent.detail?.location;
+      if (loc && loc.trim() !== '') {
+        lastSearchedRef.current = loc;
+        handleAddressSearch(loc);
+      }
+    };
+    window.addEventListener('osone-navigate-map', handleNavEvent);
+    return () => {
+      window.removeEventListener('osone-navigate-map', handleNavEvent);
+    };
+  }, []);
 
   // ── Orbit mode ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -963,13 +1137,16 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
     }
   };
 
-  const handleAddressSearch = async (queryText = searchQuery) => {
-    if (!queryText.trim()) return;
+  const handleAddressSearch = async (queryText?: string) => {
+    const textToSearch = (typeof queryText === 'string' && queryText.trim() !== '' ? queryText : searchQuery).trim();
+    if (!textToSearch) return;
+    
+    setSearchQuery(textToSearch);
     setIsSearching(true);
     setNoResults(false);
     
     // Normalização para comparação na base local
-    const normalizedQuery = queryText
+    const normalizedQuery = textToSearch
       .toLowerCase()
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
@@ -978,7 +1155,7 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
     try {
       // 1. Verificar se é uma coordenada direta (ex: -23.5505, -46.6333)
       const coordRegex = /^\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*$/;
-      const coordMatch = queryText.match(coordRegex);
+      const coordMatch = textToSearch.match(coordRegex);
       if (coordMatch) {
         const latVal = parseFloat(coordMatch[1]);
         const lngVal = parseFloat(coordMatch[2]);
@@ -988,70 +1165,106 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
         }
       }
 
-      // 2. Buscar no banco geográfico local offline para sintonização instantânea
-      const foundLocal = LOCAL_GEO_DB.find(place => 
+      // 2. Buscar no banco geográfico local offline (Primeiro busca exata, depois por prefixo se termo for longo)
+      let foundLocal = LOCAL_GEO_DB.find(place => 
         place.names.some(name => {
           const normName = name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-          return normName === normalizedQuery || normalizedQuery.includes(normName) || normName.includes(normalizedQuery);
+          return normName === normalizedQuery;
         })
       );
+
+      if (!foundLocal) {
+        foundLocal = LOCAL_GEO_DB.find(place => 
+          place.names.some(name => {
+            const normName = name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+            if (normName.length <= 3) return false;
+            return normName.startsWith(normalizedQuery) || normalizedQuery.startsWith(normName);
+          })
+        );
+      }
 
       if (foundLocal) {
         triggerSatelliteFocus(foundLocal.lat, foundLocal.lng, foundLocal.displayName);
         return;
       }
 
-      // 3. Caso não encontre localmente, faz a chamada para o Nominatim do OpenStreetMap
-      const formattedQuery = encodeURIComponent(queryText);
-      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${formattedQuery}&limit=1`;
-      const response = await fetch(url, {
-        headers: { Accept: 'application/json', 'User-Agent': 'OSONE-3DGlobe-Navigator/6.0' }
-      });
-      
-      if (!response.ok) {
-        // Se a API falhar (limite de requisição, rede etc), tenta uma busca de correspondência parcial local secundária
-        const partialLocal = LOCAL_GEO_DB.find(place => 
-          place.names.some(name => {
-            const normName = name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-            return normalizedQuery.split(/\s+/).some(word => word.length > 2 && normName.includes(word));
-          })
-        );
-        if (partialLocal) {
-          triggerSatelliteFocus(partialLocal.lat, partialLocal.lng, partialLocal.displayName);
-          return;
+      // 3. Provedor 1: OpenMeteo Geocoding API (Sem limite de taxa, ultra-rápido para cidades e países)
+      const formattedQuery = encodeURIComponent(textToSearch);
+      try {
+        const omRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${formattedQuery}&count=1&language=pt`);
+        if (omRes.ok) {
+          const omData = await omRes.json();
+          if (omData.results && omData.results.length > 0) {
+            const res = omData.results[0];
+            const nameParts = [res.name, res.admin1, res.country].filter(Boolean);
+            const label = nameParts.slice(0, 2).join(', ');
+            triggerSatelliteFocus(res.latitude, res.longitude, label);
+            return;
+          }
         }
-        throw new Error('Search server network error.');
+      } catch (err) {
+        console.warn('OpenMeteo geocode skipped:', err);
       }
-      
-      const data = await response.json();
-      if (data && data.length > 0) {
-        const place = data[0];
-        const lat = parseFloat(place.lat);
-        const lng = parseFloat(place.lon);
-        const displayName = place.display_name.split(',').slice(0, 3).join(',');
-        triggerSatelliteFocus(lat, lng, displayName);
-      } else {
-        // Se a API não retornar nada, tenta busca parcial local secundária como último recurso
-        const partialLocal = LOCAL_GEO_DB.find(place => 
-          place.names.some(name => {
-            const normName = name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-            return normalizedQuery.split(/\s+/).some(word => word.length > 2 && normName.includes(word));
-          })
-        );
-        if (partialLocal) {
-          triggerSatelliteFocus(partialLocal.lat, partialLocal.lng, partialLocal.displayName);
-        } else {
-          setNoResults(true);
-          setTimeout(() => setNoResults(false), 4000);
+
+      // 4. Provedor 2: Nominatim OpenStreetMap
+      try {
+        const nomRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${formattedQuery}&limit=1`, {
+          headers: { Accept: 'application/json', 'User-Agent': 'OSONE-3DGlobe-Navigator/6.0' }
+        });
+        if (nomRes.ok) {
+          const nomData = await nomRes.json();
+          if (nomData && nomData.length > 0) {
+            const place = nomData[0];
+            const lat = parseFloat(place.lat);
+            const lng = parseFloat(place.lon);
+            const displayName = place.display_name.split(',').slice(0, 3).join(',');
+            triggerSatelliteFocus(lat, lng, displayName);
+            return;
+          }
         }
+      } catch (err) {
+        console.warn('Nominatim geocode skipped:', err);
       }
-    } catch (error) {
-      console.error('Error during Nominatim geocode:', error);
-      // Tentativa de recuperação usando correspondência parcial local secundária em caso de erro de rede
+
+      // 5. Provedor 3: Photon Komoot
+      try {
+        const phRes = await fetch(`https://photon.komoot.io/api/?q=${formattedQuery}&limit=1`);
+        if (phRes.ok) {
+          const phData = await phRes.json();
+          if (phData.features && phData.features.length > 0) {
+            const feat = phData.features[0];
+            const [lng, lat] = feat.geometry.coordinates;
+            const props = feat.properties;
+            const label = [props.name, props.city || props.state, props.country].filter(Boolean).slice(0, 2).join(', ');
+            triggerSatelliteFocus(lat, lng, label || textToSearch);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Photon geocode skipped:', err);
+      }
+
+      // 6. Correspondência parcial no banco geográfico local como último recurso
       const partialLocal = LOCAL_GEO_DB.find(place => 
         place.names.some(name => {
           const normName = name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-          return normalizedQuery.split(/\s+/).some(word => word.length > 2 && normName.includes(word));
+          if (normName.length <= 3) return false;
+          return normalizedQuery.split(/\s+/).some(word => word.length > 3 && (normName === word || normName.startsWith(word)));
+        })
+      );
+      if (partialLocal) {
+        triggerSatelliteFocus(partialLocal.lat, partialLocal.lng, partialLocal.displayName);
+      } else {
+        setNoResults(true);
+        setTimeout(() => setNoResults(false), 4000);
+      }
+    } catch (error) {
+      console.error('Error during geocoding:', error);
+      const partialLocal = LOCAL_GEO_DB.find(place => 
+        place.names.some(name => {
+          const normName = name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+          if (normName.length <= 3) return false;
+          return normalizedQuery.split(/\s+/).some(word => word.length > 3 && (normName === word || normName.startsWith(word)));
         })
       );
       if (partialLocal) {
@@ -1074,8 +1287,9 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
 
   return (
     <div className="w-full flex-1 flex flex-col min-h-0 bg-zinc-950 font-sans border border-white/[0.05] md:rounded-2xl overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.6)]">
+      {/* Header */}
       <div className={cn(
-        "flex items-center justify-between px-4 border-b bg-zinc-900/40 backdrop-blur-md shrink-0 transition-all duration-700 ease-in-out",
+        "flex items-center justify-between px-4 border-b bg-zinc-900/40 backdrop-blur-md shrink-0 transition-all duration-700 ease-in-out z-20",
         isTraveling ? "max-h-0 py-0 opacity-0 border-b-transparent pointer-events-none overflow-hidden" : "max-h-24 py-3 border-b-white/[0.06]"
       )}>
         <div className="flex items-center gap-3">
@@ -1084,12 +1298,12 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
           </button>
           <div>
             <div className="flex items-center gap-1.5">
-              <span className="text-[8px] md:text-[9px] tracking-[0.3em] font-serif italic text-orange-400 font-bold uppercase">OSONE Holographic Core</span>
+              <span className="text-[8px] md:text-[9px] tracking-[0.3em] font-serif italic text-fuchsia-400 font-bold uppercase">SATELLITE VECTOR CORE</span>
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
             </div>
             <h2 className="text-sm md:text-md font-medium tracking-tight text-white flex items-center gap-1.5">
-              <Compass size={14} className="text-orange-400" />
-              <span>Globo Terrestre - Mapa OS</span>
+              <Compass size={14} className="text-fuchsia-400" />
+              <span>Navegador Geográfico OSONE</span>
             </h2>
           </div>
         </div>
@@ -1097,24 +1311,42 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
         <div className="hidden sm:flex items-center gap-4 bg-black/40 px-3.5 py-1.5 rounded-xl border border-white/5 font-mono text-[9px] text-zinc-400">
           <div>
             <span className="text-zinc-600 block text-[7px] uppercase tracking-wider font-bold">LATITUDE</span>
-            <span className="text-orange-300 font-bold">{currentCoords.lat.toFixed(4)}°</span>
+            <span className="text-fuchsia-300 font-bold">{currentCoords.lat.toFixed(4)}°</span>
           </div>
           <div className="w-[1px] h-5 bg-white/5" />
           <div>
             <span className="text-zinc-600 block text-[7px] uppercase tracking-wider font-bold">LONGITUDE</span>
-            <span className="text-orange-300 font-bold">{currentCoords.lng.toFixed(4)}°</span>
+            <span className="text-fuchsia-300 font-bold">{currentCoords.lng.toFixed(4)}°</span>
           </div>
         </div>
 
-        <button onClick={() => setMobileMenuOpen(prev => !prev)} className="md:hidden flex items-center gap-1 px-3 py-1.5 rounded-xl bg-orange-500/10 hover:bg-orange-500/20 active:scale-95 transition-all text-[11px] text-orange-300 font-medium font-sans border border-orange-500/20 shadow-lg" title="Alternar Painel de Controle">
-          {mobileMenuOpen ? <Check size={12} className="text-orange-400" /> : <Search size={12} className="text-orange-400" />}
-          <span>{mobileMenuOpen ? 'Ver Globo' : 'Controles'}</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              if (activeViewMode === 'map2d') {
+                setActiveViewMode('globe');
+              } else {
+                setActiveViewMode('map2d');
+              }
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-fuchsia-500/10 hover:bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/30 text-xs font-bold transition-all active:scale-95"
+            title="Alternar entre Globo 3D e Mapa 2D"
+          >
+            <Globe size={13} className="text-fuchsia-400" />
+            <span className="hidden sm:inline">{activeViewMode === 'map2d' ? 'Ver Globo 3D' : 'Ver Mapa 2D'}</span>
+          </button>
+
+          <button onClick={() => setMobileMenuOpen(prev => !prev)} className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-orange-500/10 hover:bg-orange-500/20 active:scale-95 transition-all text-[11px] text-orange-300 font-medium font-sans border border-orange-500/20 shadow-lg" title="Alternar Painel de Busca">
+            {mobileMenuOpen ? <Check size={12} className="text-orange-400" /> : <Search size={12} className="text-orange-400" />}
+            <span>{mobileMenuOpen ? 'Fechar' : 'Procurar'}</span>
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 w-full flex flex-col md:flex-row min-h-0 relative">
+        {/* Drawer / Controls Side Panel */}
         <div className={cn(
-          'w-full md:w-80 border-b md:border-b-0 md:border-r border-white/[0.05] bg-zinc-950/90 backdrop-blur shrink-0 overflow-y-auto flex flex-col transition-all duration-700 ease-in-out',
+          'w-full md:w-80 border-b md:border-b-0 md:border-r border-white/[0.05] bg-zinc-950/95 backdrop-blur shrink-0 overflow-y-auto flex flex-col transition-all duration-700 ease-in-out z-20',
           (mobileMenuOpen && !isTraveling) ? 'flex h-[60vh] max-h-[60vh]' : 'hidden md:flex md:h-full',
           isTraveling ? 'md:w-0 md:opacity-0 md:pointer-events-none border-r-transparent overflow-hidden' : ''
         )}>
@@ -1126,10 +1358,10 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={handleKeyPress}
                 placeholder="Pesquisar cidade, país ou endereço..."
-                className="w-full h-10 bg-zinc-900 border border-white/5 hover:border-white/10 focus:border-orange-500/40 focus:ring-1 focus:ring-orange-500/20 text-xs text-white rounded-xl pl-9 pr-10 outline-none transition-all placeholder:text-zinc-500"
+                className="w-full h-10 bg-zinc-900 border border-white/5 hover:border-white/10 focus:border-fuchsia-500/40 focus:ring-1 focus:ring-fuchsia-500/20 text-xs text-white rounded-xl pl-9 pr-10 outline-none transition-all placeholder:text-zinc-500"
               />
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
-              <button onClick={() => handleAddressSearch()} disabled={isSearching} className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-orange-500/10 hover:bg-orange-500/20 active:scale-95 transition-all outline-none text-orange-400 rounded-lg">
+              <button onClick={() => handleAddressSearch()} disabled={isSearching} className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-fuchsia-500/10 hover:bg-fuchsia-500/20 active:scale-95 transition-all outline-none text-fuchsia-400 rounded-lg">
                 {isSearching ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
               </button>
             </div>
@@ -1144,7 +1376,7 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[9px] font-mono tracking-widest text-zinc-500 uppercase font-bold">Estações Globais</span>
-                <span className="text-[8px] px-1.5 py-0.5 bg-orange-500/5 text-orange-400 rounded-md border border-orange-500/10 font-bold">Presets</span>
+                <span className="text-[8px] px-1.5 py-0.5 bg-fuchsia-500/10 text-fuchsia-400 rounded-md border border-fuchsia-500/20 font-bold">Presets</span>
               </div>
               <div className="grid grid-cols-2 gap-1.5">
                 {PRESET_PLACES.map((place, idx) => (
@@ -1154,7 +1386,7 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
                     className={cn(
                       'p-2.5 rounded-xl border text-left transition-all relative group outline-none',
                       locationName.includes(place.name.split(',')[0])
-                        ? 'bg-orange-500/10 border-orange-500/30 text-orange-200 shadow-[inset_0_0_8px_rgba(249,115,22,0.15)]'
+                        ? 'bg-fuchsia-500/10 border-fuchsia-500/30 text-fuchsia-200 shadow-[inset_0_0_8px_rgba(217,70,239,0.15)]'
                         : 'bg-white/[0.02] border-white/5 hover:bg-white/5 hover:border-white/10 text-zinc-400 hover:text-white'
                     )}
                   >
@@ -1166,27 +1398,23 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
             </div>
 
             <div>
-              <span className="text-[9px] font-mono tracking-widest text-zinc-500 uppercase font-bold block mb-2">Esquemas de Cor</span>
-              <div className="grid grid-cols-2 gap-1.5">
+              <span className="text-[9px] font-mono tracking-widest text-zinc-500 uppercase font-bold block mb-2">Fonte de Imagem 2D</span>
+              <div className="grid grid-cols-3 gap-1.5">
                 {[
-                  { id: 'slate', name: 'Nébula Carbono', icon: MapIcon, desc: 'Foco cibernético escuro' },
-                  { id: 'satellite', name: 'Órbita Satélite', icon: Layers, desc: 'Cores de radar espacial' },
-                  { id: 'warm', name: 'Pulsar Áureo', icon: Navigation, desc: 'Geográfico simplificado' },
-                  { id: 'terrain', name: 'Estação Topo', icon: Compass, desc: 'Neon turquesa relevo' }
+                  { id: 'satellite', name: 'Satélite HD', icon: Layers },
+                  { id: 'street', name: 'Mapa Ruas', icon: MapIcon },
+                  { id: 'terrain', name: 'Relevo Topo', icon: Compass }
                 ].map((style) => (
                   <button
                     key={style.id}
-                    onClick={() => setMapStyle(style.id as any)}
+                    onClick={() => setSatProvider(style.id as any)}
                     className={cn(
-                      'p-2 rounded-xl text-left border flex items-start gap-2 transition-all outline-none',
-                      mapStyle === style.id ? 'bg-orange-500/10 border-orange-500/30 text-orange-200' : 'bg-white/[0.01] border-white/5 hover:bg-white/[0.03] text-zinc-500 hover:text-zinc-300'
+                      'p-2 rounded-xl text-center border flex flex-col items-center justify-center transition-all outline-none',
+                      satProvider === style.id ? 'bg-fuchsia-500/15 border-fuchsia-500/40 text-fuchsia-200' : 'bg-white/[0.01] border-white/5 hover:bg-white/[0.03] text-zinc-500 hover:text-zinc-300'
                     )}
                   >
-                    <style.icon size={13} className={cn('mt-0.5', mapStyle === style.id ? 'text-orange-400' : '')} />
-                    <div className="min-w-0">
-                      <span className="text-[9px] font-bold block leading-tight">{style.name}</span>
-                      <span className="text-[7.5px] opacity-40 truncate block leading-tight">{style.desc}</span>
-                    </div>
+                    <style.icon size={13} className={cn('mb-1', satProvider === style.id ? 'text-fuchsia-400' : 'text-zinc-500')} />
+                    <span className="text-[9px] font-bold block leading-tight">{style.name}</span>
                   </button>
                 ))}
               </div>
@@ -1205,7 +1433,10 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
                 ].map((mode) => (
                   <button
                     key={mode.id}
-                    onClick={() => setOrbitMode(mode.id as any)}
+                    onClick={() => {
+                      setOrbitMode(mode.id as any);
+                      setActiveViewMode('globe');
+                    }}
                     className={cn(
                       'p-2 rounded-xl text-center border flex flex-col items-center justify-center transition-all outline-none',
                       orbitMode === mode.id ? 'bg-orange-500/15 border-orange-500/40 text-orange-200 shadow-[0_0_15px_rgba(249,115,22,0.15)]' : 'bg-white/[0.01] border-white/5 hover:bg-white/[0.03] text-zinc-500 hover:text-zinc-300'
@@ -1271,50 +1502,50 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
                     ))}
                   </div>
 
-                      {triangulatedPoint && (
-                        <div className="p-2 border border-emerald-950 bg-emerald-950/10 rounded-xl space-y-2">
-                          <div className="flex items-center justify-between text-[8px] font-mono">
-                            <span className="text-emerald-400 uppercase font-extrabold tracking-wider">Interceptação Sintonizada</span>
-                            <span className="text-zinc-600 bg-zinc-900 px-1 py-0.5 rounded">GPS 3D Solver</span>
-                          </div>
-                          <div className="font-mono text-[8.5px] text-zinc-300 flex items-center justify-between">
-                            <span>Lat: {triangulatedPoint.lat.toFixed(4)}°</span>
-                            <span>Lng: {triangulatedPoint.lng.toFixed(4)}°</span>
-                          </div>
-                          <div className="grid grid-cols-2 gap-1.5">
-                            <button onClick={() => triggerSatelliteFocus(triangulatedPoint.lat, triangulatedPoint.lng, 'Alvo de Intercepção Sintonizado')} className="w-full py-1.5 bg-emerald-500/20 hover:bg-emerald-500/35 border border-emerald-500/30 hover:border-emerald-500/50 text-emerald-300 text-[8.5px] font-bold rounded-lg transition-all active:scale-95 outline-none flex items-center justify-center gap-1">
-                              <Compass size={10} className="text-emerald-400 animate-spin" style={{ animationDuration: '6s' }} />
-                              <span>Ir ao Alvo</span>
-                            </button>
-                            <button onClick={() => disperseEmitters(currentCoords.lat, currentCoords.lng)} className="w-full py-1.5 bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 text-zinc-300 text-[8.5px] font-bold rounded-lg transition-all active:scale-95 outline-none flex items-center justify-center gap-1">
-                              <RotateCw size={10} className="text-zinc-500" />
-                              <span>Dispersar</span>
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="text-center py-2.5 px-2 bg-black/10 border border-white/[0.02] rounded-xl">
-                      <p className="text-[8.5px] text-zinc-500 leading-normal">
-                        Simule 3 antenas repetidoras em órbita de cobertura e calcule seu ponto de convergência com traçado de raios curvados sobre o globo 3D.
-                      </p>
-                      <button onClick={toggleTriangulation} className="mt-2 px-2.5 py-1 bg-orange-500/10 hover:bg-orange-500/15 text-orange-300 border border-orange-500/20 text-[8.5px] font-bold rounded-lg transition-all active:scale-95 outline-none">
-                        Ativar Trilateração
-                      </button>
+                  {triangulatedPoint && (
+                    <div className="p-2 border border-emerald-950 bg-emerald-950/10 rounded-xl space-y-2">
+                      <div className="flex items-center justify-between text-[8px] font-mono">
+                        <span className="text-emerald-400 uppercase font-extrabold tracking-wider">Interceptação Sintonizada</span>
+                        <span className="text-zinc-600 bg-zinc-900 px-1 py-0.5 rounded">GPS 3D Solver</span>
+                      </div>
+                      <div className="font-mono text-[8.5px] text-zinc-300 flex items-center justify-between">
+                        <span>Lat: {triangulatedPoint.lat.toFixed(4)}°</span>
+                        <span>Lng: {triangulatedPoint.lng.toFixed(4)}°</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <button onClick={() => triggerSatelliteFocus(triangulatedPoint.lat, triangulatedPoint.lng, 'Alvo de Intercepção Sintonizado')} className="w-full py-1.5 bg-emerald-500/20 hover:bg-emerald-500/35 border border-emerald-500/30 hover:border-emerald-500/50 text-emerald-300 text-[8.5px] font-bold rounded-lg transition-all active:scale-95 outline-none flex items-center justify-center gap-1">
+                          <Compass size={10} className="text-emerald-400 animate-spin" style={{ animationDuration: '6s' }} />
+                          <span>Ir ao Alvo</span>
+                        </button>
+                        <button onClick={() => disperseEmitters(currentCoords.lat, currentCoords.lng)} className="w-full py-1.5 bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 text-zinc-300 text-[8.5px] font-bold rounded-lg transition-all active:scale-95 outline-none flex items-center justify-center gap-1">
+                          <RotateCw size={10} className="text-zinc-500" />
+                          <span>Dispersar</span>
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
-    
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-[9px] font-mono tracking-widest text-zinc-500 uppercase font-bold">Rastro de Navegação</span>
-                    <History size={10} className="text-zinc-600" />
-                  </div>
-                  <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                    {searchHistory.map((hist, idx) => (
-                      <button key={idx} onClick={() => triggerSatelliteFocus(hist.lat, hist.lng, hist.name)} className="w-full text-left p-2 rounded-lg bg-white/[0.01] hover:bg-white/[0.03] border border-white/5 hover:border-white/10 transition-all flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 bg-orange-500/20 group-hover:bg-orange-500 rounded-full shrink-0" />
+              ) : (
+                <div className="text-center py-2.5 px-2 bg-black/10 border border-white/[0.02] rounded-xl">
+                  <p className="text-[8.5px] text-zinc-500 leading-normal">
+                    Simule 3 antenas repetidoras em órbita de cobertura e calcule seu ponto de convergência com traçado de raios curvados sobre o globo 3D.
+                  </p>
+                  <button onClick={toggleTriangulation} className="mt-2 px-2.5 py-1 bg-orange-500/10 hover:bg-orange-500/15 text-orange-300 border border-orange-500/20 text-[8.5px] font-bold rounded-lg transition-all active:scale-95 outline-none">
+                    Ativar Trilateração
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[9px] font-mono tracking-widest text-zinc-500 uppercase font-bold">Rastro de Navegação</span>
+                <History size={10} className="text-zinc-600" />
+              </div>
+              <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                {searchHistory.map((hist, idx) => (
+                  <button key={idx} onClick={() => triggerSatelliteFocus(hist.lat, hist.lng, hist.name)} className="w-full text-left p-2 rounded-lg bg-white/[0.01] hover:bg-white/[0.03] border border-white/5 hover:border-white/10 transition-all flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 bg-fuchsia-500/30 group-hover:bg-fuchsia-500 rounded-full shrink-0" />
                     <div className="flex-1 min-w-0">
                       <span className="text-[9px] text-zinc-300 truncate block font-medium">{hist.name}</span>
                       <span className="text-[7.5px] text-zinc-600 font-mono block mt-0.5">{hist.lat.toFixed(3)}, {hist.lng.toFixed(3)} • {hist.time}</span>
@@ -1324,52 +1555,11 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
               </div>
             </div>
           </div>
-
-          <div className="md:hidden p-3 bg-zinc-900 border-t border-white/5 shrink-0 mt-auto flex flex-col gap-2">
-            {!satPanelOpen && (
-              <button
-                onClick={() => {
-                  setSatPanelOpen(true);
-                  setMobileMenuOpen(false);
-                }}
-                className="w-full h-10 bg-zinc-950 hover:bg-zinc-900 text-orange-400 font-bold rounded-xl text-xs active:scale-95 transition-all flex items-center justify-center gap-2 border border-orange-500/30"
-              >
-                <Globe size={14} className="animate-pulse" />
-                <span>Ver Satélite de {locationName.split(',')[0]}</span>
-              </button>
-            )}
-            <button onClick={() => setMobileMenuOpen(false)} className="w-full h-10 bg-orange-600 hover:bg-orange-500 text-white font-medium rounded-xl text-xs active:scale-95 transition-all flex items-center justify-center gap-2 shadow-lg">
-              <Check size={14} />
-              <span>Ver Globo Tridimensional</span>
-            </button>
-          </div>
-
-          <div className="hidden md:flex mt-auto p-4 border-t border-t-white/[0.04] bg-black/20 flex-col gap-3 shrink-0">
-            <div className="flex items-center gap-2 text-[9px] text-zinc-400">
-              <MapPin size={12} className="text-orange-400 shrink-0" />
-              <div className="min-w-0 flex-1">
-                <span className="text-zinc-600 block uppercase text-[7px] tracking-wider font-extrabold">Foco Alvo Geográfico</span>
-                <span className="truncate block text-white font-semibold">{locationName}</span>
-              </div>
-            </div>
-            
-            <button
-              onClick={() => setSatPanelOpen(true)}
-              disabled={satPanelOpen}
-              className={cn(
-                "w-full h-9 rounded-xl text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-all active:scale-95 outline-none cursor-pointer",
-                satPanelOpen
-                  ? "bg-zinc-900 text-zinc-500 border border-white/5 cursor-not-allowed"
-                  : "bg-orange-600 hover:bg-orange-500 text-white shadow-lg shadow-orange-600/10 border border-orange-500/20"
-              )}
-            >
-              <Globe size={12} className={cn("text-white", !satPanelOpen && "animate-pulse")} />
-              <span>{satPanelOpen ? "Satélite Ativo" : "Ver Satélite"}</span>
-            </button>
-          </div>
         </div>
 
-        <div className="flex-1 h-full relative bg-[#060608] overflow-hidden select-none cursor-grab active:cursor-grabbing">
+        {/* Main Viewport Container */}
+        <div className="flex-1 h-full relative bg-[#060608] overflow-hidden select-none">
+          {/* 1. 3D Globe View Canvas Container */}
           <div
             ref={mountRef}
             onClick={handleCanvasClick}
@@ -1380,162 +1570,129 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
             onTouchStart={handleTouchStart}
             onTouchMove={handleTouchMove}
             onTouchEnd={handleMouseUp}
-            className="w-full h-full block"
+            className={cn(
+              "absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing transition-all duration-500",
+              (activeViewMode === 'globe' || isGlobeNavigating)
+                ? "z-10 opacity-100 pointer-events-auto scale-100"
+                : "z-0 opacity-0 pointer-events-none scale-95"
+            )}
           />
 
-          {/* Lente de Zoom de Satélite de Alta Resolução */}
-          {!isTraveling && (satPanelOpen ? (
-            <div className="absolute top-4 left-4 z-[20] w-[calc(100%-32px)] max-w-[320px] sm:max-w-[350px] rounded-2xl border border-white/10 bg-zinc-950/95 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.7)] backdrop-blur-xl overflow-hidden flex flex-col font-sans transition-all duration-300">
-              {/* Header */}
-              <div className="flex items-center justify-between px-3.5 py-2.5 bg-black/40 border-b border-white/5">
-                <div className="flex items-center gap-2">
-                  <Globe size={13} className="text-orange-400 animate-pulse" />
-                  <span className="text-[10px] font-mono font-extrabold uppercase tracking-wider text-orange-200">Lente Óptica de Satélite</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[8px] font-mono px-1.5 py-0.5 bg-orange-500/10 text-orange-400 border border-orange-500/20 rounded-md font-bold uppercase tracking-wider">Zoom Ativo</span>
-                  <button 
-                    onClick={() => setSatPanelOpen(false)} 
-                    className="p-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 rounded-lg transition-all border border-red-500/20 cursor-pointer flex items-center justify-center active:scale-90"
-                    title="Fechar Lente de Satélite (Voltar ao Globo 3D)"
-                  >
-                    <X size={13} />
-                  </button>
-                </div>
-              </div>
-
-              {/* Satellite Live Map Feed Container */}
-              <div className="relative w-full h-[190px] bg-zinc-900 border-b border-white/5 overflow-hidden">
-                {/* Embedded Leaflet Map */}
-                <div ref={satMapContainerRef} className="w-full h-full" />
-
-                {/* Cyberpunk Scanning overlay */}
-                {isScanning && (
-                  <div className="absolute inset-0 z-[10] flex flex-col items-center justify-center bg-zinc-950 bg-opacity-95 backdrop-blur-sm transition-all duration-300">
-                    {/* Scanning Grid Line */}
-                    <div className="absolute top-0 left-0 w-full h-0.5 bg-orange-500 bg-opacity-80 shadow-[0_0_10px_#f97316] animate-scan-down" />
-                    <Loader2 size={18} className="text-orange-400 animate-spin mb-1.5" />
-                    <span className="text-[9px] font-mono uppercase tracking-widest text-orange-400 font-bold animate-pulse">TRAVANDO SINAL...</span>
-                    <span className="text-[7px] font-mono text-zinc-500 mt-1 uppercase tracking-wider">SAT: OSONE-G5-ACTV [98.4%]</span>
-                  </div>
-                )}
-
-                {/* Coordinate Crosshairs (Watermark overlay) */}
-                <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-[1px] bg-white/10 pointer-events-none z-[5]" />
-                <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-[1px] bg-white/10 pointer-events-none z-[5]" />
-                <div className="absolute top-2 left-2 z-[5] bg-black/70 backdrop-blur px-1.5 py-0.5 rounded text-[7px] font-mono text-zinc-400 uppercase tracking-widest pointer-events-none border border-white/5">
-                  HD_FEED_LIVE
-                </div>
-              </div>
-
-              {/* Controls inside the viewfinder */}
-              <div className="p-3 bg-zinc-950/65 space-y-3">
-                {/* Coordinate details */}
-                <div className="flex items-center justify-between text-[8.5px] font-mono text-zinc-400 bg-black/40 px-2 py-1.5 rounded-xl border border-white/5">
-                  <span className="truncate max-w-[130px] font-bold" title={locationName}>📍 {locationName}</span>
-                  <span className="text-orange-300 font-bold font-mono">[LAT: {currentCoords.lat.toFixed(4)}° | LNG: {currentCoords.lng.toFixed(4)}°]</span>
-                </div>
-
-                {/* Satellite Zoom Slider & Source Picker */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-[8px] font-mono text-zinc-400">
-                    <span className="font-bold">Aproximação da Lente (Zoom: {satZoom}x)</span>
-                    <span className="text-zinc-600">Max 19x</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button 
-                      onClick={() => setSatZoom(prev => Math.max(3, prev - 1))} 
-                      className="p-1 rounded bg-white/5 hover:bg-white/10 border border-white/5 text-zinc-400 hover:text-white active:scale-95 transition-all cursor-pointer"
-                      title="Diminuir zoom do satélite"
-                    >
-                      <Minus size={10} />
-                    </button>
-                    <input
-                      type="range"
-                      min="3"
-                      max="19"
-                      step="1"
-                      value={satZoom}
-                      onChange={(e) => setSatZoom(parseInt(e.target.value))}
-                      className="flex-1 accent-orange-500 h-1 rounded bg-zinc-800 cursor-pointer outline-none"
-                    />
-                    <button 
-                      onClick={() => setSatZoom(prev => Math.min(19, prev + 1))} 
-                      className="p-1 rounded bg-white/5 hover:bg-white/10 border border-white/5 text-zinc-400 hover:text-white active:scale-95 transition-all cursor-pointer"
-                      title="Aumentar zoom do satélite"
-                    >
-                      <Plus size={10} />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Provider switcher */}
-                <div className="flex items-center justify-between gap-1.5 pt-0.5">
-                  <span className="text-[8px] font-mono text-zinc-500 uppercase tracking-wider font-bold">Fonte de Imagem:</span>
-                  <div className="flex rounded-lg bg-black/50 p-0.5 border border-white/5">
-                    <button
-                      onClick={() => setSatProvider('satellite')}
-                      className={cn(
-                        "px-2 py-1 text-[8px] font-bold font-mono rounded-md transition-all active:scale-95 cursor-pointer",
-                        satProvider === 'satellite' ? "bg-orange-500/20 text-orange-300 border border-orange-500/20" : "text-zinc-500 hover:text-zinc-300"
-                      )}
-                    >
-                      Satélite
-                    </button>
-                    <button
-                      onClick={() => setSatProvider('street')}
-                      className={cn(
-                        "px-2 py-1 text-[8px] font-bold font-mono rounded-md transition-all active:scale-95 cursor-pointer",
-                        satProvider === 'street' ? "bg-orange-500/20 text-orange-300 border border-orange-500/20" : "text-zinc-500 hover:text-zinc-300"
-                      )}
-                    >
-                      Mapa de Ruas
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <button
-              onClick={() => setSatPanelOpen(true)}
-              className="absolute top-4 left-4 z-[20] flex items-center gap-2 px-3.5 py-2.5 rounded-xl border border-orange-500/30 bg-zinc-950/95 shadow-2xl hover:bg-zinc-900 active:scale-95 transition-all outline-none cursor-pointer"
-              title="Abrir Lente de Satélite Zoom"
-            >
-              <Globe size={13} className="text-orange-400 animate-pulse" />
-              <span className="text-[10px] font-mono font-extrabold uppercase tracking-wider text-orange-300">Lente de Satélite (Zoom)</span>
-              <Eye size={12} className="text-zinc-400 ml-1" />
-            </button>
-          ))}
-
-          {isGlobeLoading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-[#060608] z-[30]">
-              <div className="flex flex-col items-center gap-2 text-orange-400">
-                <Loader2 size={22} className="animate-spin" />
-                <span className="text-[9px] font-mono uppercase tracking-widest text-zinc-500">Renderizando globo...</span>
+          {/* Globe Orbit Navigation Laser Overlay */}
+          {isGlobeNavigating && (
+            <div className="absolute inset-0 z-[30] flex flex-col items-center justify-center bg-black/50 backdrop-blur-xs pointer-events-none transition-all duration-300">
+              <div className="absolute top-0 left-0 w-full h-0.5 bg-fuchsia-500 shadow-[0_0_15px_#d946ef] animate-scan-down" />
+              <div className="p-4 rounded-2xl bg-zinc-950/90 border border-fuchsia-500/30 shadow-[0_0_30px_rgba(217,70,239,0.2)] flex flex-col items-center gap-2 max-w-xs text-center font-mono">
+                <Loader2 size={24} className="text-fuchsia-400 animate-spin" />
+                <span className="text-[10px] font-extrabold uppercase tracking-widest text-fuchsia-300 animate-pulse">
+                  REDIRECIONANDO ÓRBITA SATELLITE
+                </span>
+                <span className="text-[9px] text-zinc-400 truncate max-w-[200px]">
+                  Navegando até: <strong className="text-white">{locationName}</strong>
+                </span>
+                <span className="text-[8px] text-fuchsia-400/80">
+                  [{currentCoords.lat.toFixed(4)}°, {currentCoords.lng.toFixed(4)}°]
+                </span>
               </div>
             </div>
           )}
 
+          {/* 2. Fullscreen 2D Satellite Map Container */}
+          <div
+            ref={fullMapContainerRef}
+            className={cn(
+              "absolute inset-0 w-full h-full transition-all duration-500",
+              (activeViewMode === 'map2d' && !isGlobeNavigating)
+                ? "z-10 opacity-100 pointer-events-auto"
+                : "z-0 opacity-0 pointer-events-none"
+            )}
+          />
+
+          {/* Floating Card Overlay matching previous design in Screenshot */}
+          {activeViewMode === 'map2d' && !isGlobeNavigating && (
+            <div className="absolute top-4 left-4 z-[25] max-w-[320px] sm:max-w-[400px] p-3.5 rounded-2xl bg-zinc-950/85 backdrop-blur-md border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.8)] flex flex-col gap-1.5 font-sans animate-in fade-in slide-in-from-top-2 duration-300 pointer-events-auto">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-fuchsia-500/20 border border-fuchsia-500/30 text-fuchsia-400">
+                  <Compass size={14} className="animate-spin-slow" />
+                </div>
+                <span className="text-[10px] font-mono font-extrabold uppercase tracking-widest text-fuchsia-300">
+                  VARREDURA DE CÂMERA 2D ATIVA
+                </span>
+              </div>
+              <h3 className="text-xs md:text-sm font-bold text-white truncate leading-tight" title={locationName}>
+                {locationName}
+              </h3>
+              <div className="flex items-center justify-between text-[10px] font-mono text-zinc-400 pt-1 border-t border-white/5">
+                <span>Grid: {currentCoords.lat.toFixed(4)}°, {currentCoords.lng.toFixed(4)}°</span>
+                <span className="text-emerald-400 font-bold flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  SINAL SINTONIZADO
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Globe Loading State */}
+          {isGlobeLoading && activeViewMode === 'globe' && (
+            <div className="absolute inset-0 flex items-center justify-center bg-[#060608] z-[30]">
+              <div className="flex flex-col items-center gap-2 text-fuchsia-400">
+                <Loader2 size={22} className="animate-spin" />
+                <span className="text-[9px] font-mono uppercase tracking-widest text-zinc-500">Renderizando globo tridimensional...</span>
+              </div>
+            </div>
+          )}
+
+          {/* Floating Controls for 2D/3D View */}
           <div className={cn(
-            "absolute bottom-6 right-6 z-[20] flex flex-col gap-1.5 transition-all duration-500",
+            "absolute bottom-6 right-6 z-[25] flex flex-col gap-1.5 transition-all duration-500",
             isTraveling ? "opacity-0 translate-y-4 pointer-events-none" : "opacity-100 translate-y-0"
           )}>
-            <button onClick={zoomIn} className="w-10 h-10 rounded-xl bg-zinc-950/95 hover:bg-zinc-900 border border-white/10 hover:border-white/20 text-white flex items-center justify-center shadow-2xl active:scale-95 transition-all outline-none" title="Aproximar Globo">
+            <button
+              onClick={() => {
+                if (activeViewMode === 'map2d') {
+                  setSatZoom(prev => Math.min(19, prev + 1));
+                } else {
+                  zoomIn();
+                }
+              }}
+              className="w-10 h-10 rounded-xl bg-zinc-950/90 hover:bg-zinc-900 border border-white/10 hover:border-white/20 text-white flex items-center justify-center shadow-2xl active:scale-95 transition-all outline-none"
+              title="Aproximar Visão"
+            >
               <Plus size={16} />
             </button>
-            <button onClick={zoomOut} className="w-10 h-10 rounded-xl bg-zinc-950/95 hover:bg-zinc-900 border border-white/10 hover:border-white/20 text-white flex items-center justify-center shadow-2xl active:scale-95 transition-all outline-none" title="Afastar Globo">
+            <button
+              onClick={() => {
+                if (activeViewMode === 'map2d') {
+                  setSatZoom(prev => Math.max(3, prev - 1));
+                } else {
+                  zoomOut();
+                }
+              }}
+              className="w-10 h-10 rounded-xl bg-zinc-950/90 hover:bg-zinc-900 border border-white/10 hover:border-white/20 text-white flex items-center justify-center shadow-2xl active:scale-95 transition-all outline-none"
+              title="Afastar Visão"
+            >
               <Minus size={16} />
             </button>
-            <button onClick={() => setFocalCoords({ lat: currentCoords.lat, lng: currentCoords.lng })} className="w-10 h-10 rounded-xl bg-zinc-950/95 hover:bg-zinc-900 border border-white/10 hover:border-white/20 text-white flex items-center justify-center shadow-2xl active:scale-95 transition-all outline-none" title="Centralizar Foco">
-              <Navigation size={15} className="rotate-45" />
+            <button
+              onClick={() => {
+                if (activeViewMode === 'map2d') {
+                  setActiveViewMode('globe');
+                } else {
+                  triggerSatelliteFocus(currentCoords.lat, currentCoords.lng, locationName);
+                }
+              }}
+              className="w-10 h-10 rounded-xl bg-fuchsia-500/20 hover:bg-fuchsia-500/30 border border-fuchsia-500/40 text-fuchsia-300 flex items-center justify-center shadow-2xl active:scale-95 transition-all outline-none"
+              title={activeViewMode === 'map2d' ? "Alternar para Globo 3D" : "Centralizar e ver em Mapa 2D"}
+            >
+              <Globe size={16} className="animate-pulse" />
             </button>
           </div>
 
           <div className={cn(
-            "absolute top-4 right-4 z-[20] bg-black/60 backdrop-blur border border-white/5 px-2.5 py-1 rounded-lg text-[8px] font-mono text-zinc-500 pointer-events-none transition-all duration-500",
+            "absolute top-4 right-4 z-[20] bg-black/60 backdrop-blur border border-white/5 px-2.5 py-1 rounded-lg text-[8px] font-mono text-zinc-500 pointer-events-none transition-all duration-500 hidden sm:block",
             isTraveling ? "opacity-0 -translate-y-4" : "opacity-100 translate-y-0"
           )}>
-            🖱️ Clique e arraste para orbitar • Clique em qualquer ponto do globo para fixar coordenadas
+            {activeViewMode === 'globe' ? '🖱️ Clique e arraste para orbitar o globo' : '🗺️ Arraste para explorar o mapa de satélite'}
           </div>
         </div>
       </div>

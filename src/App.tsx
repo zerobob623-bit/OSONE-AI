@@ -2341,6 +2341,7 @@ DIRETRIZ DE SENTIMENTO E PERSONALIDADE DINÂMICA ("HER"):
       
       setMapSearchQuery(query);
       setWorkspaceMode('map');
+      window.dispatchEvent(new CustomEvent('osone-navigate-map', { detail: { location: query } }));
       addNotification(`🗺️ Aberto no Mapa OSONE: ${query}`, "success");
       return true;
     }
@@ -8016,6 +8017,7 @@ tools: tools
             const loc = (call.args as any).location;
             setMapSearchQuery(loc);
             setWorkspaceMode('map');
+            window.dispatchEvent(new CustomEvent('osone-navigate-map', { detail: { location: loc } }));
             setChatHistory(prev => [...prev, { 
               id: Math.random().toString(36).substr(2, 9), 
               role: 'assistant' as const, 
@@ -9886,6 +9888,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     const loc = (call.args as any).location;
                     setMapSearchQuery(loc);
                     setWorkspaceMode('map');
+                    window.dispatchEvent(new CustomEvent('osone-navigate-map', { detail: { location: loc } }));
                     addNotification(`Mapa sintonizado em ${loc}`, "success");
                     responses.push({
                       name: call.name,
