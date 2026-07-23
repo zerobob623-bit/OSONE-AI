@@ -533,6 +533,60 @@ export const SettingsModal = ({
                         Este é o modelo generativo multimídia mais avançado do ecossistema Gemini para criação e edição de imagens de alta fidelidade e resolução.
                       </p>
                     </div>
+
+                    {/* Google Custom Search Section */}
+                    <div className="mt-5 border-t border-white/5 pt-4 space-y-4">
+                      <div className="flex items-center gap-2">
+                        <Key size={12} className="text-purple-400" />
+                        <label className="block text-[9px] uppercase tracking-[0.2em] text-her-muted font-bold">Google Custom Search API</label>
+                      </div>
+                      <p className="text-[10px] text-her-muted/60 leading-relaxed font-sans">
+                        Configure o Custom Search para habilitar buscas na web em tempo real localmente sem depender exclusivamente da pesquisa geradora padrão do Gemini.
+                      </p>
+                      <div className="space-y-3">
+                        <div>
+                          <label className="block text-[9px] uppercase tracking-wider text-her-muted/60 mb-1.5 font-bold">Developer Key</label>
+                          <input 
+                            type="password"
+                            value={keys.googleCustomSearchApiKey || ''}
+                            onChange={(e) => setKeys({ ...keys, googleCustomSearchApiKey: e.target.value })}
+                            className="w-full bg-white/[0.02] border border-white/[0.05] rounded-2xl px-5 py-3 focus:outline-none focus:border-purple-500/30 transition-all text-xs font-mono text-white placeholder:text-her-muted/20"
+                            placeholder="Ex: AIzaSyD..."
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] uppercase tracking-wider text-her-muted/60 mb-1.5 font-bold">Search Engine ID (CX)</label>
+                          <input 
+                            type="text"
+                            value={keys.googleCustomSearchCx || ''}
+                            onChange={(e) => setKeys({ ...keys, googleCustomSearchCx: e.target.value })}
+                            className="w-full bg-white/[0.02] border border-white/[0.05] rounded-2xl px-5 py-3 focus:outline-none focus:border-purple-500/30 transition-all text-xs font-mono text-white placeholder:text-her-muted/20"
+                            placeholder="Ex: d18bde89..."
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Tavily Search Section */}
+                    <div className="mt-5 border-t border-white/5 pt-4 space-y-4">
+                      <div className="flex items-center gap-2">
+                        <Key size={12} className="text-cyan-400" />
+                        <label className="block text-[9px] uppercase tracking-[0.2em] text-her-muted font-bold">Tavily Search Agent Web API</label>
+                      </div>
+                      <p className="text-[10px] text-her-muted/60 leading-relaxed font-sans">
+                        Habilite o Tavily Search para respostas dinâmicas focadas em agentes de IA. Perfeito para pesquisas técnicas rápidas e busca em tempo real.
+                      </p>
+                      <div>
+                        <label className="block text-[9px] uppercase tracking-wider text-her-muted/60 mb-1.5 font-bold">Tavily API Key (Opcional)</label>
+                        <input 
+                          type="password"
+                          value={keys.tavilyApiKey || ''}
+                          onChange={(e) => setKeys({ ...keys, tavilyApiKey: e.target.value })}
+                          className="w-full bg-white/[0.02] border border-white/[0.05] rounded-2xl px-5 py-3 focus:outline-none focus:border-cyan-500/30 transition-all text-xs font-mono text-white placeholder:text-her-muted/20"
+                          placeholder="Ex: tvly-..."
+                        />
+                      </div>
+                    </div>
                   </motion.div>
                 )}
 

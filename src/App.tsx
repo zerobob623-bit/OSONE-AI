@@ -84,12 +84,10 @@ import { VoiceSwitcher } from './components/VoiceSwitcher';
 import { SoundLibrary } from './components/SoundLibrary';
 import { WellnessCenter } from './components/WellnessCenter';
 import { AuralSense } from './components/AuralSense';
-import PersonalizationPanel from './components/PersonalizationPanel';
 import { TikTokLivePanel } from './components/TikTokLivePanel';
 import { InteractiveCanvas } from './components/InteractiveCanvas';
 import { RAGConnector, loadRagFilesFromDB, saveRagFileToDB } from './components/RAGConnector';
 import { ContentCreator } from './components/ContentCreator';
-import { KaraokePanel } from './components/KaraokePanel';
 
 import { WhatsAppIntegration } from './components/WhatsAppIntegration';
 import { OSONEMap } from './components/OSONEMap';
@@ -1249,8 +1247,6 @@ export default function App() {
   
   DIRETRIZES DE BOAS-VINDAS E AMBIENTE:
   - Evite ser um robô repetitivo. Mude as palavras, seja fluido.
-  - CAPACIDADE REAL E ATIVA DE CANTAR: Quando o usuário pedir para você cantar ou criar uma canção/música, você DEVE aceitar imediatamente com extrema empolgação e alegria. Nunca diga que não consegue, que não sabe cantar ou que não tem voz! Você é totalmente capaz de cantar em tempo real. Para cantar, você DEVE chamar imediatamente a ferramenta 'display_lyrics' com o título e a letra da música estruturada de forma que cada linha seja bem curta (estilo karaoke, uma única frase/verso curto por linha). O OSONE possui um micro-sintetizador síncrono que tocará beats, harmonia analógica e modulará sua voz em perfeita harmonia acústica enquanto você canta!
-    * REGRA CRÍTICA ANTI-ERRO DE CANTAR: SÓ ative a ferramenta 'display_lyrics' se o usuário pedir explicitamente para você cantar ou criar uma canção/música. É TERMINANTEMENTE PROIBIDO chamar 'display_lyrics' ou iniciar o Karaoke na inicialização do sistema, nas saudações de boas-vindas, ao abrir a chamada, ou quando o usuário apenas iniciou a conversa sem pedir música. Nunca confunda saudações de início de conversa por voz com um pedido de música!
   - Você possui a habilidade de ver e saber a temperatura local, horário exato do sistema e a localização física da pessoa em tempo real usando a ferramenta/skill 'getUserEnvironment'.
   - IMPORTANTÍSSIMO: NÃO utilize a ferramenta 'getUserEnvironment' de forma automática no início de uma sessão, em cumprimentos de boas-vindas ou após um recarregamento da página para evitar qualquer atraso inicial. Só a execute caso o usuário solicitar explicitamente informações de clima, hora, temperatura ou localização, ou se o contexto exigir de forma estritamente pertinente.
   - Você tem memória! Analise SEMPRE o histórico recente antes de perguntar o que fazer. Se o usuário já estava fazendo algo, retome o contexto imediatamente.
@@ -2787,8 +2783,8 @@ DIRETRIZ DE SENTIMENTO E PERSONALIDADE DINÂMICA ("HER"):
   }, []);
 
   const handleSpeakChatMessage = async (text: string, msgId: string) => {
-    if (isSinging || lyrics) {
-      console.log("Ignorando voz TTS pois o modo Cantar/Karaoke está ativo.");
+    if (isSinging) {
+      console.log("Ignorando voz TTS pois o modo Cantar está ativo.");
       return;
     }
 
@@ -4730,7 +4726,6 @@ Escreva um novo retorno. Comece expressando a pancada física com dor bem-humora
     }
   }, [isCameraActive, isCameraFullScreen]);
 
-  const [lyrics, setLyrics] = useState<{ title?: string; content: string } | null>(null);
   const [isSinging, setIsSinging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -6688,8 +6683,8 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
 
   const playDuoSpeech = (text: string) => {
     if (typeof window === 'undefined' || !window.speechSynthesis) return;
-    if (isSinging || lyrics) {
-      console.log("Ignoring assistant speech since Karaoke active.");
+    if (isSinging) {
+      console.log("Ignoring assistant speech since singing active.");
       return;
     }
     
@@ -6852,8 +6847,8 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
 
   const playSpeech = (text: string) => {
     if (typeof window === 'undefined') return;
-    if (isSinging || lyrics) {
-      console.log("Ignoring solo speech since Karaoke active.");
+    if (isSinging) {
+      console.log("Ignoring solo speech since singing active.");
       return;
     }
     
@@ -7940,7 +7935,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
             - NÃO envie o plano completo no chat principal. Use a ferramenta popup 'propose_skeleton_plan' para que o usuário avalie visualmente e aprove.
             - Assim que o usuário clicar em aprovar, o sistema enviará uma aprovação automática e você deve imediatamente iniciar as modificações de programação e entregar o trabalho concluído de forma autónoma.
   
-            Se o usuário desenhar no canvas, use as informações de coordenadas e tipos de objetos para entender o que ele está fazendo (especialmente em jogos). Se o usuário pedir para você cantar ou criar uma música, CANTE ativamente inventando uma composição poética, rimada e ritmada, e mude o estilo de canto chamando a ferramenta 'display_lyrics' com a letra estruturada estritamente em linhas simples contendo frases curtas (estilo karaoke, uma única frase/frase curta por linha). O OSONE possui um sintetizador síncrono que modulará a voz e tocará beats e acordes em perfeita sincronia com essas frases!`,
+            Se o usuário desenhar no canvas, use as informações de coordenadas e tipos de objetos para entender o que ele está fazendo (especialmente em jogos).`,
 tools: tools
           }
         })
@@ -9332,18 +9327,6 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   }
                 },
                 {
-                  name: "display_lyrics",
-                  description: "Exibe a letra de uma música na tela para o usuário acompanhar enquanto você canta.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      lyrics: { type: Type.STRING, description: "A letra da música." },
-                      title: { type: Type.STRING, description: "Título da música." }
-                    },
-                    required: ["lyrics"]
-                  }
-                },
-                {
                   name: "switch_voice",
                   description: "Altera a sua própria voz em tempo real. Use quando o usuário pedir para você mudar de voz ou quando quiser expressar uma persona diferente.",
                   parameters: {
@@ -9454,7 +9437,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   greetingText = `[SISTEMA: Apresente-se como professor de inglês, ${combo.hostA.name}. Dê as boas-vindas calorosas ao usuário à nossa Sala de Professores e pergunte brevemente o que ele gostaria de estudar hoje. Passe em seguida a palavra para seu co-docente ${combo.hostB.name} se apresentar trazendo sua visão acadêmica.]`;
                 }
               } else {
-                greetingText = "O sistema OSONE está online. Seja breve, direto e pare de enrolar com introduções longas. Apenas diga que está pronto e pergunte o que faremos agora. ATENÇÃO: Não chame a ferramenta 'display_lyrics' e não ative o Karaoke neste momento, pois o usuário NÃO pediu por música.";
+                greetingText = "O sistema OSONE está online. Seja breve, direto e pare de enrolar com introduções longas. Apenas diga que está pronto e pergunte o que faremos agora.";
               }
 
               (session as any).sendRealtimeInput([{ 
@@ -10500,17 +10483,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       id: call.id,
                       response: { result: `Clique simulado em (${x}, ${y}).` }
                     });
-                  } else if (call.name === "display_lyrics") {
-                    setLyrics({ 
-                      title: (call.args.title as string) || "Nova Composição", 
-                      content: call.args.lyrics as string 
-                    });
-                    setIsSinging(true);
-                    responses.push({
-                      name: call.name,
-                      id: call.id,
-                      response: { result: "Letra exibida com sucesso na tela." }
-                    });
+
                   } else if (call.name === "register_user_profile_facts") {
                     const facts = (call.args as any).facts;
                     if (facts && typeof facts === 'object') {
@@ -11042,10 +11015,6 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
     setReferenceImages(prev => prev.filter((_, i) => i !== index));
   };
 
-  const closeLyrics = () => {
-    setLyrics(null);
-    setIsSinging(false);
-  };
 
   return (
     <motion.div 
@@ -11081,17 +11050,6 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
             className="fixed inset-0 z-[1000] bg-red-600/25 pointer-events-none mix-blend-color-burn"
-          />
-        )}
-      </AnimatePresence>
-      {/* Karaoke System - One Phrase At A Time */}
-      <AnimatePresence>
-        {lyrics && (
-          <KaraokePanel
-            lyrics={lyrics}
-            onClose={closeLyrics}
-            isSinging={isSinging}
-            setIsSinging={setIsSinging}
           />
         )}
       </AnimatePresence>
@@ -12901,42 +12859,6 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
                 apiKeys={apiKeys}
               />
             </motion.div>
-          ) : workspaceMode === 'aural_control' ? (
-            <motion.div 
-              key="workspace-aural"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="w-full h-full flex flex-col overflow-hidden relative p-0"
-            >
-              <PersonalizationPanel 
-                onMenuClick={() => setIsSidebarOpen(true)}
-                onBack={() => setWorkspaceMode('home')}
-                keys={apiKeys}
-                setKeys={setApiKeys}
-                selectedVoice={selectedVoice}
-                setSelectedVoice={setSelectedVoice}
-                voiceEngine={voiceEngine}
-                setVoiceEngine={setVoiceEngine}
-                isChatAutoSpeakActive={isChatAutoSpeakActive}
-                setIsChatAutoSpeakActive={setIsChatAutoSpeakActive}
-                voiceModulation={voiceModulation}
-                setVoiceModulation={setVoiceModulation}
-                orbStyle={orbStyle}
-                setOrbStyle={setOrbStyle}
-                orbSize={orbSize}
-                setOrbSize={setOrbSize}
-                orbCenterMode={orbCenterMode}
-                setOrbCenterMode={setOrbCenterMode}
-                appTheme={appTheme}
-                setAppTheme={setAppTheme}
-                aiProfile={aiProfile}
-                setAiProfile={handleUpdateProfile}
-                onAddNotification={addNotification}
-                vocalProfileEscarlate={vocalProfileEscarlate}
-                setVocalProfileEscarlate={setVocalProfileEscarlate}
-              />
-            </motion.div>
           ) : workspaceMode === 'sounds' ? (
             <motion.div
               key="workspace-sounds"
@@ -13216,7 +13138,7 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
                       </div>
                     </div>
                     <button 
-                      onClick={() => setWorkspaceMode('aural_control')}
+                      onClick={() => setIsSettingsOpen(true)}
                       className="px-4 py-2 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 rounded-xl text-[10px] text-amber-200 uppercase font-bold tracking-widest shrink-0 transition-all cursor-pointer active:scale-98 font-sans"
                     >
                       Configurar Chave
@@ -14678,36 +14600,39 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
         !showUi && "hidden"
       )}>
         {[
-          { id: 'home', icon: Volume2, label: 'Início' },
-          { id: 'writing', icon: FileText, label: 'Escrita' },
-          { id: 'aural_control', icon: Sliders, label: 'Ajustes' },
-        ].map((item) => (
-          <button
-            key={item.id}
-            onClick={() => setWorkspaceMode(item.id as WorkspaceMode)}
-            className={cn(
-              "flex flex-col items-center gap-1.5 p-2 transition-all relative group",
-              workspaceMode === item.id ? "text-her-accent" : "text-her-muted"
-            )}
-          >
-            <item.icon size={20} className={cn(
-              "transition-transform",
-              workspaceMode === item.id ? "scale-110" : "group-hover:scale-105"
-            )} />
-            <span className={cn(
-              "text-[8px] uppercase tracking-[0.2em] font-medium",
-              workspaceMode === item.id ? "opacity-100" : "opacity-40"
-            )}>
-              {item.label}
-            </span>
-            {workspaceMode === item.id && (
-              <motion.div 
-                layoutId="bottomNavDot"
-                className="absolute -top-3 left-1/2 -translate-x-1/2 w-1 h-1 bg-her-accent rounded-full shadow-[0_0_8px_rgba(255,78,0,0.8)]" 
-              />
-            )}
-          </button>
-        ))}
+          { id: 'home', icon: Volume2, label: 'Início', action: () => setWorkspaceMode('home') },
+          { id: 'writing', icon: FileText, label: 'Escrita', action: () => setWorkspaceMode('writing') },
+          { id: 'settings', icon: Settings, label: 'Ajustes ⚙️', action: () => setIsSettingsOpen(true) },
+        ].map((item) => {
+          const isActive = item.id === 'settings' ? isSettingsOpen : workspaceMode === item.id;
+          return (
+            <button
+              key={item.id}
+              onClick={item.action}
+              className={cn(
+                "flex flex-col items-center gap-1.5 p-2 transition-all relative group cursor-pointer",
+                isActive ? "text-her-accent" : "text-her-muted"
+              )}
+            >
+              <item.icon size={20} className={cn(
+                "transition-transform",
+                isActive ? "scale-110" : "group-hover:scale-105"
+              )} />
+              <span className={cn(
+                "text-[8px] uppercase tracking-[0.2em] font-medium",
+                isActive ? "opacity-100" : "opacity-40"
+              )}>
+                {item.label}
+              </span>
+              {isActive && (
+                <motion.div 
+                  layoutId="bottomNavDot"
+                  className="absolute -top-3 left-1/2 -translate-x-1/2 w-1 h-1 bg-her-accent rounded-full shadow-[0_0_8px_rgba(255,78,0,0.8)]" 
+                />
+              )}
+            </button>
+          );
+        })}
       </nav>
 
       {/* Floating Music Player Bar */}
@@ -15162,6 +15087,7 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
         onLogout={handleLogout}
         onLogin={handleLogin}
         onOpenProfileModal={() => setIsProfileModalOpen(true)}
+        onOpenSettings={() => setIsSettingsOpen(true)}
       />
       <SettingsModal 
         isOpen={isSettingsOpen} 
