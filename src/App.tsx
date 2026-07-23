@@ -962,11 +962,15 @@ export default function App() {
       }
     };
 
-    fetchTiktokState();
-    interval = setInterval(fetchTiktokState, 3000); // Poll TikTok events every 3 seconds
+    if (workspaceMode === 'tiktok' || tiktokState?.status === 'connected') {
+      fetchTiktokState();
+      interval = setInterval(fetchTiktokState, 3000); // Poll TikTok events every 3 seconds
+    }
 
-    return () => clearInterval(interval);
-  }, [tiktokUser, tiktokSessionId, tiktokTargetIdc, isLiveNarratorActive, liveNarratorVoice]);
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [tiktokUser, tiktokSessionId, tiktokTargetIdc, isLiveNarratorActive, liveNarratorVoice, workspaceMode, tiktokState?.status]);
 
   const handleTiktokConnect = async (simulate = false) => {
     setTiktokLoading(true);
@@ -5477,6 +5481,8 @@ ${isBad
         const historyLen = 25;
         let lastClapTime = 0;
 
+        let timerId: any = null;
+
         const loop = () => {
           if (stopped) return;
           analyser!.getByteFrequencyData(dataArray);
@@ -5523,7 +5529,7 @@ ${isBad
             }, 1500);
           }
 
-          animId = requestAnimationFrame(loop);
+          timerId = setTimeout(loop, 100);
         };
 
         loop();
@@ -9493,18 +9499,21 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
               // Real-time Video Stream
               let lastFrameTime = 0;
               const FRAME_INTERVAL = 1000;
+              let offscreenCanvas: HTMLCanvasElement | null = null;
 
               const streamFrames = (timestamp: number) => {
                 if (liveSessionRef.current && liveVideoRef.current && isCameraActiveRef.current) {
                   if (timestamp - lastFrameTime >= FRAME_INTERVAL) {
                     lastFrameTime = timestamp;
-                    const canvas = document.createElement('canvas');
-                    canvas.width = 480; 
-                    canvas.height = 360;
-                    const ctx = canvas.getContext('2d');
+                    if (!offscreenCanvas) {
+                      offscreenCanvas = document.createElement('canvas');
+                      offscreenCanvas.width = 480; 
+                      offscreenCanvas.height = 360;
+                    }
+                    const ctx = offscreenCanvas.getContext('2d');
                     if (ctx) {
-                      ctx.drawImage(liveVideoRef.current, 0, 0, canvas.width, canvas.height);
-                      const base64Data = canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
+                      ctx.drawImage(liveVideoRef.current, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+                      const base64Data = offscreenCanvas.toDataURL('image/jpeg', 0.6).split(',')[1];
                       try {
                         liveSessionRef.current.sendRealtimeInput({
                           video: { data: base64Data, mimeType: 'image/jpeg' }
@@ -9516,8 +9525,8 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   }
                   liveAnimationFrameRef.current = requestAnimationFrame(streamFrames);
                 } else if (liveSessionRef.current) {
-                   // Keep loop alive but don't send frames, so we react to isCameraActiveRef.current changes
-                   liveAnimationFrameRef.current = requestAnimationFrame(streamFrames);
+                   // When camera inactive, check again in 500ms instead of running 60fps RAF loop
+                   liveAnimationFrameRef.current = setTimeout(() => streamFrames(performance.now()), 500) as any;
                 }
               };
               
@@ -14373,14 +14382,7 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
                             <MessageSquare size={14} />
                           </button>
                           
-                          <button 
-                            onClick={() => setIsPersonaSwitcherOpen(true)}
-                            className="w-9 h-9 rounded-full bg-white/[0.03] text-her-muted hover:bg-white/[0.05] border border-white/[0.05] flex items-center justify-center transition-all hover:text-her-accent"
-                            title="Modos de Personalidade"
-                          >
-                            <UserIcon size={14} />
-                          </button>
-                          
+
 
 
                           <button 
