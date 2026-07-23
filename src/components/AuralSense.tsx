@@ -70,6 +70,8 @@ export function AuralSense({ onBack, onMenuClick, keys }: { onBack?: () => void,
     setVibrationScore(0);
   };
 
+  const lastStateUpdateRef = useRef<number>(0);
+
   const analyze = () => {
     if (!analyserRef.current || !canvasRef.current) return;
     
@@ -94,31 +96,36 @@ export function AuralSense({ onBack, onMenuClick, keys }: { onBack?: () => void,
       }
     }
     
-    let maxVolume = -1;
-    let peakIndex = -1;
-    for (let i = 0; i < bufferLength; i++) {
-        if (dataArray[i] > maxVolume) {
-            maxVolume = dataArray[i];
-            peakIndex = i;
-        }
-    }
+    // Throttle heavy state updates & custom events to 10 FPS (every 100ms)
+    const now = Date.now();
+    if (now - lastStateUpdateRef.current >= 100) {
+      lastStateUpdateRef.current = now;
+      let maxVolume = -1;
+      let peakIndex = -1;
+      for (let i = 0; i < bufferLength; i++) {
+          if (dataArray[i] > maxVolume) {
+              maxVolume = dataArray[i];
+              peakIndex = i;
+          }
+      }
 
-    if (maxVolume > 40 && audioContextRef.current) {
-        const sampleRate = audioContextRef.current.sampleRate;
-        const crystalFreq = Math.round(peakIndex * (sampleRate / 2) / bufferLength);
-        setFrequency(crystalFreq);
-        const score = (crystalFreq - 440) / 10;
-        setVibrationScore(Math.max(-100, Math.min(100, score)));
+      if (maxVolume > 40 && audioContextRef.current) {
+          const sampleRate = audioContextRef.current.sampleRate;
+          const crystalFreq = Math.round(peakIndex * (sampleRate / 2) / bufferLength);
+          setFrequency(crystalFreq);
+          const score = (crystalFreq - 440) / 10;
+          setVibrationScore(Math.max(-100, Math.min(100, score)));
 
-        if (Math.abs(score) > 10) {
-            const event = new CustomEvent('osone_aural_update', { 
-                detail: { frequency: crystalFreq, vibration: score > 0 ? 'positive' : 'dense', intensity: maxVolume } 
-            });
-            window.dispatchEvent(event);
-        }
-    } else {
-        setFrequency(0);
-        setVibrationScore(v => v * 0.95);
+          if (Math.abs(score) > 10) {
+              const event = new CustomEvent('osone_aural_update', { 
+                  detail: { frequency: crystalFreq, vibration: score > 0 ? 'positive' : 'dense', intensity: maxVolume } 
+              });
+              window.dispatchEvent(event);
+          }
+      } else {
+          setFrequency(0);
+          setVibrationScore(v => v * 0.95);
+      }
     }
     
     animationRef.current = requestAnimationFrame(analyze);

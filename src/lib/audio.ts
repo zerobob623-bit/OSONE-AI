@@ -128,16 +128,25 @@ export class AudioPlayer {
 
   private startLevelMonitoring() {
     if (this.animFrameId !== null) return;
+    let lastDispatch = 0;
     const monitor = () => {
-      if (this.activeSources.size > 0 && this.analyserNode) {
-        const dataArray = new Uint8Array(this.analyserNode.frequencyBinCount);
-        this.analyserNode.getByteFrequencyData(dataArray);
-        let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) {
-          sum += dataArray[i];
+      if (this.activeSources.size === 0) {
+        this.stopLevelMonitoring();
+        return;
+      }
+      if (this.analyserNode) {
+        const now = Date.now();
+        if (now - lastDispatch >= 33) { // 30 FPS
+          lastDispatch = now;
+          const dataArray = new Uint8Array(this.analyserNode.frequencyBinCount);
+          this.analyserNode.getByteFrequencyData(dataArray);
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) {
+            sum += dataArray[i];
+          }
+          const level = sum / (dataArray.length * 255);
+          window.dispatchEvent(new CustomEvent('osone_assistant_voice', { detail: { level } }));
         }
-        const level = sum / (dataArray.length * 255);
-        window.dispatchEvent(new CustomEvent('osone_assistant_voice', { detail: { level } }));
       }
       this.animFrameId = requestAnimationFrame(monitor);
     };
