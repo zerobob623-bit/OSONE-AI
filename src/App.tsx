@@ -704,7 +704,7 @@ const getFriendlyModeName = (mode: WorkspaceMode): string => {
   }
 };
 
-// Queue player for handling dynamic chunk-by-chunk playback of base64 MP3 chunks from ElevenLabs
+// Queue player for handling dynamic chunk-by-chunk playback of base64 audio chunks from ElevenLabs
 class ElevenLabsQueuePlayer {
   private audioCtx: AudioContext | null = null;
   private nextPlayTime: number = 0;
@@ -713,87 +713,120 @@ class ElevenLabsQueuePlayer {
   private onStateChange: (speaking: boolean) => void;
   private activeSources: any[] = [];
   public onQueueDrained: (() => void) | null = null;
+  public isStreamFinished: boolean = false;
 
   constructor(onStateChange: (speaking: boolean) => void) {
     this.onStateChange = onStateChange;
   }
 
-  private initAudio() {
-    if (!this.audioCtx) {
+  public resetStreamState() {
+    this.isStreamFinished = false;
+  }
+
+  public markStreamFinished() {
+    this.isStreamFinished = true;
+    if (!this.isPlaying && this.activeSources.length === 0 && this.queue.length === 0) {
+      if (this.onQueueDrained) {
+        this.onQueueDrained();
+      }
+    }
+  }
+
+  private async initAudio() {
+    if (!this.audioCtx || this.audioCtx.state === 'closed') {
       this.audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
     }
     if (this.audioCtx.state === 'suspended') {
-      this.audioCtx.resume();
+      try {
+        await this.audioCtx.resume();
+      } catch (_) {}
     }
   }
 
   public async addChunk(base64Data: string) {
-    this.initAudio();
+    await this.initAudio();
     if (!this.audioCtx) return;
 
     try {
       const binaryString = window.atob(base64Data);
       const len = binaryString.length;
+      if (len === 0) return;
+
       const bytes = new Uint8Array(len);
       for (let i = 0; i < len; i++) {
         bytes[i] = binaryString.charCodeAt(i);
       }
-      const arrayBuffer = bytes.buffer;
 
-      // decodeAudioData can be picky about partial chunks, catch decode failures gracefully
-      const audioBuffer = await this.audioCtx.decodeAudioData(arrayBuffer);
-      this.queue.push(audioBuffer);
-      this.processQueue();
+      let audioBuffer: AudioBuffer | null = null;
+
+      // Primary: Raw 24kHz Int16 PCM (2 bytes per sample, 1 channel)
+      if (len % 2 === 0) {
+        try {
+          const int16Array = new Int16Array(bytes.buffer);
+          const float32Array = new Float32Array(int16Array.length);
+          for (let i = 0; i < int16Array.length; i++) {
+            float32Array[i] = int16Array[i] / 32768.0;
+          }
+          audioBuffer = this.audioCtx.createBuffer(1, float32Array.length, 24000);
+          audioBuffer.getChannelData(0).set(float32Array);
+        } catch (_) {}
+      }
+
+      // Fallback: Web Audio decodeAudioData for MP3/WAV
+      if (!audioBuffer) {
+        try {
+          audioBuffer = await this.audioCtx.decodeAudioData(bytes.buffer.slice(0));
+        } catch (_) {}
+      }
+
+      if (audioBuffer) {
+        this.queue.push(audioBuffer);
+        this.processQueue();
+      }
     } catch (e) {
-      console.warn("Soft warning: failed to decode an individual audio chunk (usually expected for boundary bytes):", e);
+      console.warn("Soft warning: failed to decode an individual audio chunk:", e);
     }
   }
 
   private processQueue() {
     if (!this.audioCtx) return;
-    if (this.isPlaying) return;
-
-    if (this.queue.length === 0) {
-      this.onStateChange(false);
-      if (this.onQueueDrained) {
-        this.onQueueDrained();
-      }
-      return;
-    }
-
-    this.isPlaying = true;
-    this.onStateChange(true);
-    
-    const chunk = this.queue.shift();
-    if (!chunk) {
-      this.isPlaying = false;
-      this.onStateChange(false);
-      return;
-    }
-
-    const source = this.audioCtx.createBufferSource();
-    source.buffer = chunk;
-    source.connect(this.audioCtx.destination);
-    this.activeSources.push(source);
 
     const currentTime = this.audioCtx.currentTime;
     if (this.nextPlayTime < currentTime) {
       this.nextPlayTime = currentTime;
     }
 
-    source.start(this.nextPlayTime);
-    this.nextPlayTime += chunk.duration;
+    while (this.queue.length > 0) {
+      const chunk = this.queue.shift();
+      if (!chunk) break;
 
-    source.onended = () => {
-      this.activeSources = this.activeSources.filter(s => s !== source);
-      this.isPlaying = false;
-      this.processQueue();
-    };
+      const source = this.audioCtx.createBufferSource();
+      source.buffer = chunk;
+      source.connect(this.audioCtx.destination);
+      this.activeSources.push(source);
+
+      source.start(this.nextPlayTime);
+      this.nextPlayTime += chunk.duration;
+      this.isPlaying = true;
+      this.onStateChange(true);
+
+      source.onended = () => {
+        this.activeSources = this.activeSources.filter(s => s !== source);
+        if (this.activeSources.length === 0) {
+          this.isPlaying = false;
+          this.onStateChange(false);
+          if (this.isStreamFinished && this.onQueueDrained) {
+            this.onQueueDrained();
+          }
+        }
+      };
+    }
   }
 
   public stop() {
     this.queue = [];
     this.isPlaying = false;
+    this.isStreamFinished = false;
     this.nextPlayTime = 0;
     
     this.activeSources.forEach(s => {
@@ -5654,10 +5687,16 @@ ${isBad
 
       ws.onopen = () => {
         console.log("ElevenLabs Proxy WS connected for single-play text speech");
+        if (elevenLabsQueuePlayerRef.current) {
+          elevenLabsQueuePlayerRef.current.resetStreamState();
+        }
         // Send the complete phrase chunk
         ws.send(JSON.stringify({ text: text }));
         // Immediately flush to signal end of stream
         ws.send(JSON.stringify({ text: "", flush: true }));
+        if (elevenLabsQueuePlayerRef.current) {
+          elevenLabsQueuePlayerRef.current.markStreamFinished();
+        }
       };
 
       ws.onmessage = async (event) => {
@@ -5731,6 +5770,7 @@ ${isBad
 
   const startListeningElevenLabs = () => {
     if (!isElevenLabsLiveActiveRef.current) return;
+    if (elevenLabsStateRef.current !== 'listening') return;
     
     // Sempre desliga e nula qualquer escuta anterior para criar uma instância 100% nova sem travar ou suspender
     if (elevenLabsRecognitionRef.current) {
@@ -5825,6 +5865,10 @@ ${isBad
       clearTimeout(elevenLabsSilenceTimeoutRef.current);
       elevenLabsSilenceTimeoutRef.current = null;
     }
+
+    if (elevenLabsStateRef.current !== 'listening') {
+      return;
+    }
     
     const finalText = accumulatedTranscriptRef.current.trim();
     accumulatedTranscriptRef.current = "";
@@ -5909,7 +5953,7 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt();
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const voiceId = getActiveElevenLabsVoiceId();
       const modelId = apiKeys.elevenLabsModel || 'eleven_flash_v2_5';
-      const apiKeyParam = apiKeys.elevenLabsApiKey ? `&apiKey=${apiKeys.elevenLabsApiKey}` : '';
+      const apiKeyParam = apiKeys.elevenLabsApiKey ? `&apiKey=${encodeURIComponent(apiKeys.elevenLabsApiKey)}` : '';
       const stability = apiKeys.elevenLabsStability ?? 0.5;
       const similarityBoost = apiKeys.elevenLabsSimilarityBoost ?? 0.75;
 
@@ -5917,12 +5961,35 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt();
       elWs = new WebSocket(wsUrl);
       elevenLabsWsRef.current = elWs;
 
+      let hasReceivedAudio = false;
+      const wsSendQueue: string[] = [];
+
+      const safeSendToWs = (payload: object) => {
+        const str = JSON.stringify(payload);
+        if (elWs && elWs.readyState === WebSocket.OPEN) {
+          elWs.send(str);
+        } else if (elWs && (elWs.readyState === WebSocket.CONNECTING || !elWs.readyState)) {
+          wsSendQueue.push(str);
+        }
+      };
+
+      elWs.onopen = () => {
+        console.log("ElevenLabs Client WS connected. Flushing queued chunks:", wsSendQueue.length);
+        while (wsSendQueue.length > 0) {
+          const item = wsSendQueue.shift();
+          if (item && elWs && elWs.readyState === WebSocket.OPEN) {
+            elWs.send(item);
+          }
+        }
+      };
+
       // Set up the queue player
       if (!elevenLabsQueuePlayerRef.current) {
         elevenLabsQueuePlayerRef.current = new ElevenLabsQueuePlayer((speaking) => {
           setIsSpeaking(speaking);
         });
       }
+      elevenLabsQueuePlayerRef.current.resetStreamState();
 
       elevenLabsQueuePlayerRef.current.onQueueDrained = () => {
         setIsSpeaking(false);
@@ -5942,9 +6009,11 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt();
           const parsed = JSON.parse(event.data);
           if (parsed.error) {
             console.error("ElevenLabs WS proxy response error:", parsed.error);
+            addNotification(`Erro ElevenLabs: ${parsed.error}`, "error");
             return;
           }
           if (parsed.audio) {
+            hasReceivedAudio = true;
             elevenLabsQueuePlayerRef.current?.addChunk(parsed.audio);
           }
         } catch (e) {
@@ -5952,11 +6021,13 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt();
         }
       };
 
+      elWs.onerror = (err) => {
+        console.error("ElevenLabs WS client error:", err);
+      };
+
       // Start the heartbeat/keep-alive to send " " every 10 seconds
       heartbeat = setInterval(() => {
-        if (elWs && elWs.readyState === WebSocket.OPEN) {
-          elWs.send(JSON.stringify({ text: " " }));
-        }
+        safeSendToWs({ text: " " });
       }, 10000);
 
       // Create empty assistant message container
@@ -6020,10 +6091,8 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt();
                   // Update subtitle/voice transcript
                   setVoiceTranscript(accumulatedReply);
 
-                  // Stream text chunk into ElevenLabs WebSocket proxy!
-                  if (elWs && elWs.readyState === WebSocket.OPEN) {
-                    elWs.send(JSON.stringify({ text: chunkText }));
-                  }
+                  // Stream text chunk into ElevenLabs WebSocket proxy safely!
+                  safeSendToWs({ text: chunkText });
                 }
               } catch (e) {
                 console.error("Error parsing SSE line:", e);
@@ -6039,9 +6108,18 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt();
       }
 
       // 3. Send final flush chunk to ElevenLabs to complete audio synthesis
-      if (elWs && elWs.readyState === WebSocket.OPEN) {
-        elWs.send(JSON.stringify({ text: "", flush: true }));
+      safeSendToWs({ text: "", flush: true });
+      if (elevenLabsQueuePlayerRef.current) {
+        elevenLabsQueuePlayerRef.current.markStreamFinished();
       }
+
+      // Fallback check: Se o WebSocket da ElevenLabs não enviou nenhum áudio e a resposta já terminou, toca via REST TTS
+      setTimeout(() => {
+        if (!hasReceivedAudio && accumulatedReply && isElevenLabsLiveActiveRef.current) {
+          console.warn("ElevenLabs WS não gerou chunks de áudio. Executando fallback via REST TTS...");
+          playElevenLabsSpeech(accumulatedReply);
+        }
+      }, 1200);
 
     } catch (err) {
       console.error("Erro no processamento Gemini ElevenLabs Live Stream:", err);
