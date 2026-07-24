@@ -88,7 +88,7 @@ export const Sidebar = ({ isOpen, onClose, mode, setMode, user, onLogout, onLogi
                   )}
                 >
                   <Code2 size={18} className="text-cyan-400" />
-                  <span>Código & Repositório</span>
+                  <span>OSONE CODE</span>
                 </button>
 
                 <button 

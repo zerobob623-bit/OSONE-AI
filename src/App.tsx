@@ -689,7 +689,7 @@ const getFriendlyModeName = (mode: WorkspaceMode): string => {
   switch (mode) {
     case 'home': return 'Início / Painel Central';
     case 'writing': return 'Escrita / Estúdio de Texto';
-    case 'code': return 'Código & Repositório';
+    case 'code': return 'OSONE CODE (Swarm Harness)';
     case 'canvas': return 'Quadro Interativo / Desenho';
     case 'wellness': return 'Wellness & Style Lab';
     case 'local_control': return 'Automação IoT & Smart Home';
@@ -13417,13 +13417,13 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
                     "flex flex-col items-center justify-center py-2 z-50 w-full transition-all duration-500",
                     orbCenterMode
                       ? (chatHistory.length > 0 || isChatExpanded)
-                        ? "relative shrink-0 flex flex-col items-center justify-center transform scale-90 md:scale-100 origin-center pointer-events-auto py-4 mt-8 md:mt-12"
-                        : "relative flex-1 flex flex-col items-center justify-center transform scale-95 md:scale-105 origin-center pointer-events-auto pt-12 md:pt-20 pb-6 my-auto"
+                        ? "relative shrink-0 flex flex-col items-center justify-center transform scale-85 md:scale-95 origin-center pointer-events-auto py-4 mt-16 md:mt-24"
+                        : "relative flex-1 flex flex-col items-center justify-center transform scale-90 md:scale-100 origin-center pointer-events-auto pt-24 md:pt-32 pb-8 my-auto"
                       : ((liveState.status === 'connected' || isElevenLabsLiveActive) && !isChatExpanded)
-                        ? "relative flex-1 scale-100 md:scale-105 pt-12 md:pt-20 pb-6 my-auto" // Shifted down for active voice
+                        ? "relative flex-1 scale-90 md:scale-100 pt-24 md:pt-32 pb-8 my-auto mt-6" 
                         : (chatHistory.length > 0 || isChatExpanded)
-                          ? "relative shrink-0 pt-10 md:pt-16 pb-2 mt-6 transform scale-75 opacity-90 animate-cloud-wave pointer-events-auto" 
-                          : "relative flex-1 flex flex-col items-center justify-center transform scale-95 md:scale-105 origin-center pointer-events-auto pt-12 md:pt-20 pb-6 my-auto"
+                          ? "relative shrink-0 pt-16 md:pt-24 pb-2 mt-12 transform scale-75 opacity-90 animate-cloud-wave pointer-events-auto" 
+                          : "relative flex-1 flex flex-col items-center justify-center transform scale-90 md:scale-100 origin-center pointer-events-auto pt-24 md:pt-32 pb-8 my-auto"
                   )}
                 >
                   {voicePageIndex === 1 ? (
