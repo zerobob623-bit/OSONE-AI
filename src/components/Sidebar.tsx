@@ -130,6 +130,17 @@ export const Sidebar = ({ isOpen, onClose, mode, setMode, user, onLogout, onLogi
                 </button>
 
                 <button 
+                  onClick={() => { setMode('smarthome'); onClose(); }}
+                  className={cn(
+                    "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm",
+                    mode === 'smarthome' || mode === 'local_control' ? "bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.15)]" : "hover:bg-white/[0.02] text-her-ink/60"
+                  )}
+                >
+                  <Zap size={18} className="text-cyan-400 animate-pulse" />
+                  <span>Automação & Smart Home</span>
+                </button>
+
+                <button 
                   onClick={() => { setMode('whatsapp'); onClose(); }}
                   className={cn(
                     "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm",
