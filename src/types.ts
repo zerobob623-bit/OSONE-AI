@@ -40,7 +40,54 @@ export interface ApiKeys {
 export type OrbStyle = 'classic' | 'superintelligence' | 'neural' | 'shadow' | 'wave' | 'jarvis' | 'smoke';
 export type AppTheme = 'her' | 'cyberpunk' | 'monochrome' | 'nature';
 
-export type WorkspaceMode = 'home' | 'writing' | 'code' | 'sounds' | 'canvas' | 'wellness' | 'local_control' | 'whatsapp' | 'map' | 'rag' | 'creator' | 'tiktok' | 'sentinel' | 'sensus_evolution' | 'memory_book';
+export type WorkspaceMode = 'home' | 'writing' | 'code' | 'sounds' | 'canvas' | 'wellness' | 'local_control' | 'whatsapp' | 'map' | 'rag' | 'creator' | 'tiktok' | 'sentinel' | 'sensus_evolution' | 'memory_book' | 'smarthome';
+
+export interface SmartDevice {
+  id: string;
+  name: string;
+  category: 'light' | 'plug' | 'switch' | 'thermostat' | 'lock' | 'sensor' | 'tv' | 'fan';
+  platform: 'tuya' | 'hue' | 'smartthings' | 'custom';
+  state: boolean;
+  value?: number; // brightness, temp, level
+  color?: string;
+  room?: string;
+  online: boolean;
+  lastUpdated: number;
+}
+
+export interface SmartHomeConfig {
+  tuya: {
+    enabled: boolean;
+    clientId: string;
+    clientSecret: string;
+    region: 'us' | 'eu' | 'cn' | 'in';
+    userToken?: string;
+    linkedAccountEmail?: string;
+  };
+  hue: {
+    enabled: boolean;
+    bridgeIp?: string;
+    accessToken?: string;
+    username?: string;
+  };
+  smartthings: {
+    enabled: boolean;
+    personalAccessToken?: string;
+    locationId?: string;
+  };
+}
+
+export interface SmartRoutine {
+  id: string;
+  name: string;
+  icon: string;
+  actions: {
+    deviceId: string;
+    targetState: boolean;
+    targetValue?: number;
+    targetColor?: string;
+  }[];
+}
 
 export interface CodeRepositoryFile {
   id: string;

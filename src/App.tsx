@@ -89,6 +89,7 @@ import { TikTokLivePanel } from './components/TikTokLivePanel';
 import { InteractiveCanvas } from './components/InteractiveCanvas';
 import { RAGConnector, loadRagFilesFromDB, saveRagFileToDB } from './components/RAGConnector';
 import { ContentCreator } from './components/ContentCreator';
+import { SmartHomeConnect } from './components/SmartHomeConnect';
 
 import { WhatsAppIntegration } from './components/WhatsAppIntegration';
 import { OSONEMap } from './components/OSONEMap';
@@ -691,7 +692,8 @@ const getFriendlyModeName = (mode: WorkspaceMode): string => {
     case 'code': return 'Código & Repositório';
     case 'canvas': return 'Quadro Interativo / Desenho';
     case 'wellness': return 'Wellness & Style Lab';
-    case 'local_control': return 'Ajustes de Voz & Perfil';
+    case 'local_control': return 'Automação IoT & Smart Home';
+    case 'smarthome': return 'Automação IoT & Smart Home (Tuya/Hue)';
     case 'sounds': return 'Biblioteca de Sons';
     case 'whatsapp': return 'Gerenciador WhatsApp';
     case 'map': return 'Mapa OS';
@@ -7762,6 +7764,42 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
         }
       });
 
+      functionDeclarations.push({
+        name: "control_smart_device",
+        description: "Liga, desliga ou ajusta dispositivos inteligentes Tuya (Smart Life), Philips Hue ou Samsung SmartThings (lâmpada, tomada, ar condicionado, fechadura, etc.).",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            deviceName: { type: Type.STRING, description: "Nome ou cômodo do dispositivo (ex: 'tomada da sala', 'lâmpada do quarto', 'ar condicionado')." },
+            action: { type: Type.STRING, description: "Ação a executar: 'turn_on', 'turn_off', 'toggle', 'set_value', 'set_color'." },
+            value: { type: Type.NUMBER, description: "Valor opcional de brilho, temperatura ou velocidade (0-100)." },
+            color: { type: Type.STRING, description: "Cor hex ou nome da cor em português para lâmpadas RGB." }
+          },
+          required: ["deviceName", "action"]
+        }
+      });
+
+      functionDeclarations.push({
+        name: "get_connected_devices",
+        description: "Retorna a lista de todos os dispositivos inteligentes conectados (Tuya, Philips Hue, SmartThings) e seus estados atuais.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {}
+        }
+      });
+
+      functionDeclarations.push({
+        name: "run_smart_routine",
+        description: "Dispara uma rotina/cena inteligente configurada no OSONE (ex: 'Modo Cinema', 'Boa Noite', 'Modo Foco').",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            routineName: { type: Type.STRING, description: "Nome da rotina a ser executada." }
+          },
+          required: ["routineName"]
+        }
+      });
+
       if (isGoogleSearchActive) {
         functionDeclarations.push({
           name: "google_search",
@@ -8560,6 +8598,114 @@ tools: tools
               role: 'assistant' as const, 
               content: `Propus o plano técnico de programação **"${title}"** no popup para sua análise. Por favor, confira e aprove para eu iniciar o trabalho automaticamente.` 
             }]);
+          } else if (call.name === 'control_smart_device') {
+            const { deviceName, action, value, color } = call.args as any;
+            let resultMsg = "";
+            try {
+              const saved = localStorage.getItem('osone_smarthome_devices');
+              let devices = saved ? JSON.parse(saved) : [];
+              const term = (deviceName || '').toLowerCase();
+              let updatedCount = 0;
+              let targetName = "";
+
+              devices = devices.map((d: any) => {
+                if (d.name.toLowerCase().includes(term) || (d.room && d.room.toLowerCase().includes(term))) {
+                  updatedCount++;
+                  targetName = d.name;
+                  let nextState = d.state;
+                  if (action === 'turn_on') nextState = true;
+                  else if (action === 'turn_off') nextState = false;
+                  else if (action === 'toggle') nextState = !d.state;
+                  return {
+                    ...d,
+                    state: nextState,
+                    value: value !== undefined ? value : d.value,
+                    color: color || d.color,
+                    lastUpdated: Date.now()
+                  };
+                }
+                return d;
+              });
+
+              localStorage.setItem('osone_smarthome_devices', JSON.stringify(devices));
+              window.dispatchEvent(new Event('osone_smarthome_updated'));
+
+              if (updatedCount > 0) {
+                resultMsg = `⚡ Dispositivo **${targetName}** ${action === 'turn_off' ? 'DESLIGADO' : 'LIGADO'} com sucesso via nuvem!`;
+                addNotification(resultMsg, 'success');
+              } else {
+                resultMsg = `⚠️ Nenhum dispositivo encontrado correspondente a "${deviceName}".`;
+              }
+            } catch (err: any) {
+              resultMsg = `Erro ao controlar dispositivo: ${err.message}`;
+            }
+
+            setChatHistory(prev => [...prev, {
+              id: Math.random().toString(36).substr(2, 9),
+              role: 'assistant' as const,
+              content: resultMsg
+            }]);
+          } else if (call.name === 'get_connected_devices') {
+            let listText = "⚡ **Dispositivos Inteligentes Conectados no OSONE (Tuya/Hue/SmartThings):**\n\n";
+            try {
+              const saved = localStorage.getItem('osone_smarthome_devices');
+              const devices = saved ? JSON.parse(saved) : [];
+              if (devices.length > 0) {
+                devices.forEach((d: any) => {
+                  listText += `- **${d.name}** (${d.room || 'Sem cômodo'}) — [Plataforma: ${d.platform.toUpperCase()}] — Estado: **${d.state ? 'LIGADO' : 'DESLIGADO'}**${d.value ? ` (Nível: ${d.value}%)` : ''}\n`;
+                });
+              } else {
+                listText += "_Nenhum dispositivo conectado ainda._\n";
+              }
+            } catch (e) {
+              listText += "Erro ao carregar lista de dispositivos.";
+            }
+
+            setChatHistory(prev => [...prev, {
+              id: Math.random().toString(36).substr(2, 9),
+              role: 'assistant' as const,
+              content: listText
+            }]);
+          } else if (call.name === 'run_smart_routine') {
+            const { routineName } = call.args as any;
+            let resultMsg = "";
+            try {
+              const savedR = localStorage.getItem('osone_smarthome_routines');
+              const routines = savedR ? JSON.parse(savedR) : [];
+              const match = routines.find((r: any) => r.name.toLowerCase().includes((routineName || '').toLowerCase()));
+
+              if (match) {
+                const savedD = localStorage.getItem('osone_smarthome_devices');
+                let devices = savedD ? JSON.parse(savedD) : [];
+                devices = devices.map((dev: any) => {
+                  const act = match.actions.find((a: any) => a.deviceId === dev.id);
+                  if (act) {
+                    return {
+                      ...dev,
+                      state: act.targetState,
+                      value: act.targetValue !== undefined ? act.targetValue : dev.value,
+                      color: act.targetColor || dev.color,
+                      lastUpdated: Date.now()
+                    };
+                  }
+                  return dev;
+                });
+                localStorage.setItem('osone_smarthome_devices', JSON.stringify(devices));
+                window.dispatchEvent(new Event('osone_smarthome_updated'));
+                resultMsg = `✨ Rotina **"${match.name}"** executada com sucesso! Todos os dispositivos da cena foram ajustados.`;
+                addNotification(resultMsg, 'success');
+              } else {
+                resultMsg = `⚠️ Rotina "${routineName}" não encontrada nas rotinas salvas.`;
+              }
+            } catch (err: any) {
+              resultMsg = `Erro ao executar rotina: ${err.message}`;
+            }
+
+            setChatHistory(prev => [...prev, {
+              id: Math.random().toString(36).substr(2, 9),
+              role: 'assistant' as const,
+              content: resultMsg
+            }]);
           } else if (call.name === 'draw_on_canvas') {
             const { objects, clearFirst } = call.args as any;
             if (clearFirst) {
@@ -9263,6 +9409,39 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   }
                 },
                 {
+                  name: "control_smart_device",
+                  description: "Liga, desliga ou ajusta dispositivos inteligentes Tuya (Smart Life), Philips Hue ou Samsung SmartThings (lâmpada, tomada, ar condicionado, fechadura, etc.).",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      deviceName: { type: Type.STRING, description: "Nome ou cômodo do dispositivo (ex: 'tomada da sala', 'lâmpada do quarto', 'ar condicionado')." },
+                      action: { type: Type.STRING, description: "Ação a executar: 'turn_on', 'turn_off', 'toggle', 'set_value', 'set_color'." },
+                      value: { type: Type.NUMBER, description: "Valor opcional de brilho, temperatura ou velocidade (0-100)." },
+                      color: { type: Type.STRING, description: "Cor hex ou nome da cor em português para lâmpadas RGB." }
+                    },
+                    required: ["deviceName", "action"]
+                  }
+                },
+                {
+                  name: "get_connected_devices",
+                  description: "Retorna a lista de todos os dispositivos inteligentes conectados (Tuya, Philips Hue, SmartThings) e seus estados atuais.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {}
+                  }
+                },
+                {
+                  name: "run_smart_routine",
+                  description: "Dispara uma rotina/cena inteligente configurada no OSONE (ex: 'Modo Cinema', 'Boa Noite', 'Modo Foco').",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      routineName: { type: Type.STRING, description: "Nome da rotina a ser executada." }
+                    },
+                    required: ["routineName"]
+                  }
+                },
+                {
                   name: "export_to_excel",
                   description: "Gera um arquivo Excel (.xlsx) para o usuário baixar a partir de dados estruturados em formato JSON, a partir da edição ou criação que o usuário pedir. Use para tabelas, planilhas, relatórios baseados em grade.",
                   parameters: {
@@ -9859,6 +10038,108 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       name: call.name,
                       id: call.id,
                       response: { result: "Plano proposto ao usuário. Aguarde aprovação humana no popup." }
+                    });
+                  } else if (call.name === "control_smart_device") {
+                    const { deviceName, action, value, color } = call.args as any;
+                    let resultMsg = "";
+                    try {
+                      const saved = localStorage.getItem('osone_smarthome_devices');
+                      let devices = saved ? JSON.parse(saved) : [];
+                      const term = (deviceName || '').toLowerCase();
+                      let updatedCount = 0;
+                      let targetName = "";
+
+                      devices = devices.map((d: any) => {
+                        if (d.name.toLowerCase().includes(term) || (d.room && d.room.toLowerCase().includes(term))) {
+                          updatedCount++;
+                          targetName = d.name;
+                          let nextState = d.state;
+                          if (action === 'turn_on') nextState = true;
+                          else if (action === 'turn_off') nextState = false;
+                          else if (action === 'toggle') nextState = !d.state;
+                          return {
+                            ...d,
+                            state: nextState,
+                            value: value !== undefined ? value : d.value,
+                            color: color || d.color,
+                            lastUpdated: Date.now()
+                          };
+                        }
+                        return d;
+                      });
+
+                      localStorage.setItem('osone_smarthome_devices', JSON.stringify(devices));
+                      window.dispatchEvent(new Event('osone_smarthome_updated'));
+
+                      if (updatedCount > 0) {
+                        resultMsg = `Dispositivo ${targetName} foi ${action === 'turn_off' ? 'desligado' : 'ligado'} com sucesso via nuvem!`;
+                        addNotification(resultMsg, 'success');
+                      } else {
+                        resultMsg = `Nenhum dispositivo encontrado correspondente a "${deviceName}".`;
+                      }
+                    } catch (err: any) {
+                      resultMsg = `Erro ao controlar dispositivo: ${err.message}`;
+                    }
+
+                    responses.push({
+                      name: call.name,
+                      id: call.id,
+                      response: { result: resultMsg }
+                    });
+                  } else if (call.name === "get_connected_devices") {
+                    let listResult = "";
+                    try {
+                      const saved = localStorage.getItem('osone_smarthome_devices');
+                      const devices = saved ? JSON.parse(saved) : [];
+                      listResult = JSON.stringify(devices);
+                    } catch (e) {
+                      listResult = "Erro ao buscar dispositivos.";
+                    }
+
+                    responses.push({
+                      name: call.name,
+                      id: call.id,
+                      response: { result: listResult }
+                    });
+                  } else if (call.name === "run_smart_routine") {
+                    const { routineName } = call.args as any;
+                    let resultMsg = "";
+                    try {
+                      const savedR = localStorage.getItem('osone_smarthome_routines');
+                      const routines = savedR ? JSON.parse(savedR) : [];
+                      const match = routines.find((r: any) => r.name.toLowerCase().includes((routineName || '').toLowerCase()));
+
+                      if (match) {
+                        const savedD = localStorage.getItem('osone_smarthome_devices');
+                        let devices = savedD ? JSON.parse(savedD) : [];
+                        devices = devices.map((dev: any) => {
+                          const act = match.actions.find((a: any) => a.deviceId === dev.id);
+                          if (act) {
+                            return {
+                              ...dev,
+                              state: act.targetState,
+                              value: act.targetValue !== undefined ? act.targetValue : dev.value,
+                              color: act.targetColor || dev.color,
+                              lastUpdated: Date.now()
+                            };
+                          }
+                          return dev;
+                        });
+                        localStorage.setItem('osone_smarthome_devices', JSON.stringify(devices));
+                        window.dispatchEvent(new Event('osone_smarthome_updated'));
+                        resultMsg = `Rotina "${match.name}" executada com sucesso! Todos os dispositivos da cena foram acionados.`;
+                        addNotification(resultMsg, 'success');
+                      } else {
+                        resultMsg = `Rotina "${routineName}" não encontrada.`;
+                      }
+                    } catch (err: any) {
+                      resultMsg = `Erro ao executar rotina: ${err.message}`;
+                    }
+
+                    responses.push({
+                      name: call.name,
+                      id: call.id,
+                      response: { result: resultMsg }
                     });
                   } else if (call.name === "add_diary_entry") {
                     const { content, mood } = call.args as any;
@@ -13015,6 +13296,19 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
                   className="flex-1 w-full h-full min-h-0 text-left"
                 />
               </div>
+            </motion.div>
+          ) : workspaceMode === 'smarthome' || workspaceMode === 'local_control' ? (
+            <motion.div
+              key="workspace-smarthome"
+              initial={{ opacity: 0, scale: 0.985 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.985 }}
+              className="w-full flex-1 flex flex-col min-h-0"
+            >
+              <SmartHomeConnect 
+                onClose={() => setWorkspaceMode('home')}
+                onNotification={addNotification}
+              />
             </motion.div>
           ) : workspaceMode === 'memory_book' ? (
             <motion.div
