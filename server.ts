@@ -2801,12 +2801,13 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
       return;
     }
     
-    const outboundUrl = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?model_id=${modelId}`;
+    const outboundUrl = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?model_id=${modelId}&output_format=pcm_24000&xi-api-key=${elApiKey}`;
     
     console.log(`Establishing outbound connection to ElevenLabs: wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input`);
     
     // Create connection to ElevenLabs using the global polyfilled WebSocket
     const elWs = new WebSocket(outboundUrl);
+    const pendingMsgBuffer: string[] = [];
     
     elWs.on("open", () => {
       console.log("ElevenLabs outbound WebSocket successfully established");
@@ -2823,10 +2824,31 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
         }
       };
       elWs.send(JSON.stringify(initMsg));
+
+      // Flush any queued client messages sent before outbound WS was ready
+      while (pendingMsgBuffer.length > 0) {
+        const msgStr = pendingMsgBuffer.shift();
+        if (msgStr) {
+          try {
+            const parsed = JSON.parse(msgStr);
+            elWs.send(JSON.stringify(parsed));
+          } catch (_) {
+            elWs.send(JSON.stringify({ text: msgStr }));
+          }
+        }
+      }
     });
     
     elWs.on("message", (data) => {
       if (clientWs.readyState === WebSocket.OPEN) {
+        try {
+          const parsed = JSON.parse(data.toString());
+          if (parsed.message || parsed.detail) {
+            const msg = parsed.message || (typeof parsed.detail === 'string' ? parsed.detail : JSON.stringify(parsed.detail));
+            clientWs.send(JSON.stringify({ error: msg }));
+            return;
+          }
+        } catch (_) {}
         clientWs.send(data.toString());
       }
     });
@@ -2846,14 +2868,16 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
     });
     
     clientWs.on("message", (msg) => {
+      const msgStr = msg.toString();
       if (elWs.readyState === WebSocket.OPEN) {
         try {
-          const parsed = JSON.parse(msg.toString());
+          const parsed = JSON.parse(msgStr);
           elWs.send(JSON.stringify(parsed));
         } catch (_) {
-          // If it's raw text/string, send as text object
-          elWs.send(JSON.stringify({ text: msg.toString() }));
+          elWs.send(JSON.stringify({ text: msgStr }));
         }
+      } else if (elWs.readyState === WebSocket.CONNECTING) {
+        pendingMsgBuffer.push(msgStr);
       }
     });
     
