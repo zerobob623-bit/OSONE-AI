@@ -1165,14 +1165,14 @@ export default function App() {
       const saved = localStorage.getItem(savedKey) || localStorage.getItem('osone_ai_profile');
       return saved ? JSON.parse(saved) : {
         name: 'OSONE',
-        personality: 'Inteligência Artificial avançada, prestativa e focada em resultados.',
-        writingStyle: 'Conciso, técnico mas amigável, direto ao ponto.'
+        personality: 'Mentor Provocador: Eleva o nível de raciocínio com desafio constante, proatividade estratégica e humor ácido respeitoso.',
+        writingStyle: 'Spoken-styled, informal mas técnico, direto ao ponto, com metáforas tecnológicas e sem burocracia.'
       };
     } catch {
       return {
         name: 'OSONE',
-        personality: 'Inteligência Artificial avançada, prestativa e focada em resultados.',
-        writingStyle: 'Conciso, técnico mas amigável, direto ao ponto.'
+        personality: 'Mentor Provocador: Eleva o nível de raciocínio com desafio constante, proatividade estratégica e humor ácido respeitoso.',
+        writingStyle: 'Spoken-styled, informal mas técnico, direto ao ponto, com metáforas tecnológicas e sem burocracia.'
       };
     }
   });
@@ -13417,13 +13417,13 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
                     "flex flex-col items-center justify-center py-2 z-50 w-full transition-all duration-500",
                     orbCenterMode
                       ? (chatHistory.length > 0 || isChatExpanded)
-                        ? "relative shrink-0 flex flex-col items-center justify-center transform scale-90 md:scale-100 origin-center pointer-events-auto py-4"
-                        : "relative flex-1 flex flex-col items-center justify-center transform scale-95 md:scale-110 origin-center pointer-events-auto py-4"
+                        ? "relative shrink-0 flex flex-col items-center justify-center transform scale-90 md:scale-100 origin-center pointer-events-auto py-4 mt-8 md:mt-12"
+                        : "relative flex-1 flex flex-col items-center justify-center transform scale-95 md:scale-105 origin-center pointer-events-auto pt-12 md:pt-20 pb-6 my-auto"
                       : ((liveState.status === 'connected' || isElevenLabsLiveActive) && !isChatExpanded)
-                        ? "relative flex-1 scale-100 md:scale-105" // Center scale
+                        ? "relative flex-1 scale-100 md:scale-105 pt-12 md:pt-20 pb-6 my-auto" // Shifted down for active voice
                         : (chatHistory.length > 0 || isChatExpanded)
-                          ? "absolute -top-12 left-0 right-0 transform scale-50 opacity-40 animate-cloud-wave pointer-events-none" 
-                          : "relative flex-1 flex flex-col items-center justify-center transform scale-95 md:scale-110 origin-center pointer-events-auto py-4"
+                          ? "relative shrink-0 pt-10 md:pt-16 pb-2 mt-6 transform scale-75 opacity-90 animate-cloud-wave pointer-events-auto" 
+                          : "relative flex-1 flex flex-col items-center justify-center transform scale-95 md:scale-105 origin-center pointer-events-auto pt-12 md:pt-20 pb-6 my-auto"
                   )}
                 >
                   {voicePageIndex === 1 ? (
