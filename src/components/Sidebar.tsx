@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Volume2, FileText, Folder, Music, Gamepad2, Zap, Activity, LogOut, User, Cpu, Puzzle, MessageSquare, Sliders, Compass, Database, Video, Radio, Eye, Heart, BookOpen, Settings } from 'lucide-react';
+import { X, Volume2, FileText, Code2, Folder, Music, Gamepad2, Zap, Activity, LogOut, User, Cpu, Puzzle, MessageSquare, Sliders, Compass, Database, Video, Radio, Eye, Heart, BookOpen, Settings } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { WorkspaceMode } from '../types';
 
@@ -78,6 +78,17 @@ export const Sidebar = ({ isOpen, onClose, mode, setMode, user, onLogout, onLogi
                 >
                   <FileText size={18} />
                   <span>Escrita</span>
+                </button>
+
+                <button 
+                  onClick={() => { setMode('code'); onClose(); }}
+                  className={cn(
+                    "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm",
+                    mode === 'code' ? "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.12)]" : "hover:bg-white/[0.02] text-her-ink/60"
+                  )}
+                >
+                  <Code2 size={18} className="text-cyan-400" />
+                  <span>Código & Repositório</span>
                 </button>
 
                 <button 

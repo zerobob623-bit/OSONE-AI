@@ -40,7 +40,16 @@ export interface ApiKeys {
 export type OrbStyle = 'classic' | 'superintelligence' | 'neural' | 'shadow' | 'wave' | 'jarvis' | 'smoke';
 export type AppTheme = 'her' | 'cyberpunk' | 'monochrome' | 'nature';
 
-export type WorkspaceMode = 'home' | 'writing' | 'sounds' | 'canvas' | 'wellness' | 'local_control' | 'whatsapp' | 'map' | 'rag' | 'creator' | 'tiktok' | 'sentinel' | 'sensus_evolution' | 'memory_book';
+export type WorkspaceMode = 'home' | 'writing' | 'code' | 'sounds' | 'canvas' | 'wellness' | 'local_control' | 'whatsapp' | 'map' | 'rag' | 'creator' | 'tiktok' | 'sentinel' | 'sensus_evolution' | 'memory_book';
+
+export interface CodeRepositoryFile {
+  id: string;
+  name: string;
+  language: string;
+  content: string;
+  updatedAt: number;
+  isMain?: boolean;
+}
 
 export interface MemoryBookEntry {
   id: string;
