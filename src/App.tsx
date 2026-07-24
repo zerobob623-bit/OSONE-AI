@@ -80,6 +80,7 @@ import { ProfileModal } from './components/ProfileModal';
 import { IntimateMissionModal } from './components/IntimateMissionModal';
 import { AiDossierModal } from './components/AiDossierModal';
 import { CodePreview } from './components/CodePreview';
+import { CodeWorkspace } from './components/CodeWorkspace';
 import { VoiceSwitcher } from './components/VoiceSwitcher';
 import { SoundLibrary } from './components/SoundLibrary';
 import { WellnessCenter } from './components/WellnessCenter';
@@ -686,10 +687,11 @@ const playNeuralSummonSound = () => {
 const getFriendlyModeName = (mode: WorkspaceMode): string => {
   switch (mode) {
     case 'home': return 'Início / Painel Central';
-    case 'writing': return 'Escrita / Editor de Estudos';
+    case 'writing': return 'Escrita / Estúdio de Texto';
+    case 'code': return 'Código & Repositório';
     case 'canvas': return 'Quadro Interativo / Desenho';
     case 'wellness': return 'Wellness & Style Lab';
-    case 'aural_control': return 'Ajustes de Voz & Perfil';
+    case 'local_control': return 'Ajustes de Voz & Perfil';
     case 'sounds': return 'Biblioteca de Sons';
     case 'whatsapp': return 'Gerenciador WhatsApp';
     case 'map': return 'Mapa OS';
@@ -6457,6 +6459,65 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
     }
   };
 
+  const handleCodeWorkspacePrompt = async (promptText: string) => {
+    const effectiveApiKey = apiKeys.gemini || '';
+    if (!promptText.trim()) return;
+
+    setIsGenerating(true);
+    try {
+      let repoFiles: any[] = [];
+      try {
+        const saved = localStorage.getItem('osone_code_repository_files');
+        if (saved) repoFiles = JSON.parse(saved);
+      } catch (e) {}
+
+      const activeFile = (repoFiles && repoFiles.length > 0) ? repoFiles[0] : null;
+      const currentCode = activeFile ? activeFile.content : '';
+
+      const systemInstruction = "Você é o arquiteto de software de elite do OSONE Studio. Sua missão é gerar ou refatorar código completo e totalmente funcional (HTML5, CSS, JS, React, Tailwind, Python ou similar). IMPORTANTE: Retorne APENAS o código fonte cru modificado/gerado, sem explicações externas, sem introduções e sem marcadores de texto fora do código.";
+
+      const contentsText = currentCode.length > 20
+        ? `CÓDIGO FONTE ATUAL NO REPOSITÓRIO:\n\n${currentCode}\n\nINSTRUÇÕES DO USUÁRIO PARA ALTERAÇÃO/CRIAÇÃO:\n${promptText}`
+        : promptText;
+
+      const response = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientApiKey: effectiveApiKey,
+          model: apiKeys.geminiModel || "gemini-3.5-flash",
+          prompt: contentsText,
+          systemInstruction
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error("Falha na comunicação com a API");
+      }
+
+      const data = await response.json();
+      let text = data.text;
+      if (text) {
+        if (text.startsWith("```")) {
+          text = text.replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '').trim();
+        }
+
+        if (repoFiles && repoFiles.length > 0) {
+          repoFiles[0].content = text;
+          repoFiles[0].updatedAt = Date.now();
+          localStorage.setItem('osone_code_repository_files', JSON.stringify(repoFiles));
+          window.dispatchEvent(new Event('osone_repository_updated'));
+        }
+        addNotification("Código gerado e atualizado no Repositório do OSONE!", "success");
+      }
+    } catch (error: any) {
+      console.error("Erro na geração do Repositório de Código:", error);
+      addNotification(`Erro ao gerar código: ${error.message || "Verifique sua chave de API."}`, "error");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   const handleAnalyzeCode = async (codeToAnalyze = workspaceText) => {
     const effectiveApiKey = apiKeys.gemini || '';
     if (!codeToAnalyze.trim() || isAnalyzingCode) return;
@@ -12194,149 +12255,6 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
                         </div>
                       )}
 
-                      {/* --- HUNTER AGENTIC STATUS BANNER & DOUBT PANEL --- */}
-                      <AnimatePresence>
-                        {hunterStatus !== 'idle' && (
-                          <motion.div
-                            initial={{ opacity: 0, y: -10, scale: 0.98 }}
-                            animate={{ opacity: 1, y: 0, scale: 1 }}
-                            exit={{ opacity: 0, y: -10, scale: 0.98 }}
-                            className={cn(
-                              "w-full mb-3 rounded-2xl p-3.5 border backdrop-blur-2xl transition-all shadow-2xl text-left z-20 relative",
-                              writingWidthMode === 'compact' ? "max-w-[650px]" :
-                              writingWidthMode === 'classic' ? "max-w-[850px]" : "max-w-full",
-                              hunterStatus === 'analyzing' ? "bg-emerald-950/90 border-emerald-500/50 text-emerald-100 shadow-emerald-950/50" :
-                              hunterStatus === 'doubt' ? "bg-amber-950/90 border-amber-500/60 text-amber-100 shadow-amber-950/60 ring-1 ring-amber-500/40" :
-                              hunterStatus === 'success' ? "bg-emerald-950/90 border-emerald-500/60 text-emerald-100 shadow-emerald-950/50" :
-                              "bg-red-950/90 border-red-500/50 text-red-100"
-                            )}
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="flex items-start gap-3 w-full">
-                                <div className={cn(
-                                  "w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border mt-0.5",
-                                  hunterStatus === 'analyzing' ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40 animate-pulse" :
-                                  hunterStatus === 'doubt' ? "bg-amber-500/20 text-amber-300 border-amber-500/40 animate-bounce" :
-                                  "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
-                                )}>
-                                  <BowAndArrowIcon size={18} className={hunterStatus === 'analyzing' ? "animate-spin" : ""} />
-                                </div>
-
-                                <div className="flex flex-col flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
-                                      🏹 HUNTER — EXAMINADOR AGÊNTICO DE CÓDIGO
-                                    </span>
-                                    <span className={cn(
-                                      "px-2 py-0.5 rounded text-[9px] font-mono uppercase font-bold tracking-wider",
-                                      hunterStatus === 'analyzing' ? "bg-emerald-500/20 text-emerald-300 animate-pulse" :
-                                      hunterStatus === 'doubt' ? "bg-amber-500/30 text-amber-300 border border-amber-500/40" :
-                                      "bg-emerald-500/30 text-emerald-300 border border-emerald-500/40"
-                                    )}>
-                                      {hunterStatus === 'analyzing' ? 'Caçando Inconsistências...' :
-                                       hunterStatus === 'doubt' ? 'Dúvida Agêntica Detectada' : '100% Verfeito e Alinhado'}
-                                    </span>
-                                  </div>
-
-                                  {hunterOriginalPrompt && (
-                                    <p className="text-[10px] text-white/50 font-mono mt-0.5 truncate max-w-full">
-                                      Comando examinado: &quot;{hunterOriginalPrompt}&quot;
-                                    </p>
-                                  )}
-
-                                  {hunterStatus === 'analyzing' && (
-                                    <p className="text-xs text-emerald-200/90 mt-1.5 font-medium flex items-center gap-2">
-                                      <Loader2 size={13} className="animate-spin text-emerald-400 shrink-0" />
-                                      Analisando o código e garantindo que atenda 100% ao pedido do usuário sem faltar nada...
-                                    </p>
-                                  )}
-
-                                  {hunterStatus === 'doubt' && (
-                                    <div className="mt-2 flex flex-col gap-2.5 w-full">
-                                      <div className="p-3 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-100 text-xs leading-relaxed shadow-inner">
-                                        <strong className="text-amber-400 font-bold block mb-1 text-[11px] uppercase tracking-wide">
-                                          ❓ Dúvida Impeditiva do Hunter:
-                                        </strong>
-                                        {hunterDoubt}
-                                      </div>
-
-                                      <div className="text-[11px] text-amber-200/80 italic flex items-center gap-1.5">
-                                        <Sparkles size={12} className="text-amber-400 shrink-0 animate-pulse" />
-                                        <span>
-                                          {liveState.status === 'connected' 
-                                            ? "O Gemini Live está pronto para falar com você por voz para esclarecer esta dúvida do Hunter." 
-                                            : "A dúvida foi repassada ao modelo Gemini Live. Você pode falar por voz ou responder digitando abaixo:"}
-                                        </span>
-                                      </div>
-
-                                      <div className="flex items-center gap-2 mt-1 w-full flex-wrap sm:flex-nowrap">
-                                        <input
-                                          type="text"
-                                          value={hunterDoubtInput}
-                                          onChange={(e) => setHunterDoubtInput(e.target.value)}
-                                          onKeyDown={(e) => {
-                                            if (e.key === 'Enter' && hunterDoubtInput.trim()) {
-                                              const clarification = hunterDoubtInput.trim();
-                                              setHunterDoubtInput('');
-                                              runHunterAnalysis(clarification);
-                                            }
-                                          }}
-                                          placeholder="Digitar esclarecimento para o Hunter..."
-                                          className="flex-1 bg-black/60 border border-amber-500/40 rounded-xl px-3 py-2 text-xs text-white placeholder:text-amber-200/40 focus:outline-none focus:border-amber-400 min-w-[200px]"
-                                        />
-                                        <button
-                                          onClick={() => {
-                                            if (hunterDoubtInput.trim()) {
-                                              const clarification = hunterDoubtInput.trim();
-                                              setHunterDoubtInput('');
-                                              runHunterAnalysis(clarification);
-                                            }
-                                          }}
-                                          className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs transition-all shrink-0 cursor-pointer shadow-md active:scale-95"
-                                        >
-                                          Enviar ao Hunter
-                                        </button>
-
-                                        {liveState.status !== 'connected' && (
-                                          <button
-                                            onClick={() => {
-                                              startLiveSession();
-                                              addNotification("Gemini Live ativado! Diga o esclarecimento por voz para o Hunter.", "info");
-                                            }}
-                                            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition-all shrink-0 flex items-center gap-1.5 cursor-pointer shadow-md active:scale-95"
-                                          >
-                                            <Mic size={13} />
-                                            <span>Falar por Voz</span>
-                                          </button>
-                                        )}
-                                      </div>
-                                    </div>
-                                  )}
-
-                                  {hunterStatus === 'success' && hunterReport && (
-                                    <div className="mt-1.5 text-xs text-emerald-200 leading-relaxed font-sans bg-emerald-900/30 border border-emerald-500/30 rounded-xl p-2.5">
-                                      {hunterReport}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-
-                              <button
-                                onClick={() => {
-                                  setHunterStatus('idle');
-                                  setHunterDoubt(null);
-                                  setHunterReport(null);
-                                }}
-                                className="p-1 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-colors cursor-pointer shrink-0"
-                                title="Fechar relatório do Hunter"
-                              >
-                                <X size={14} />
-                              </button>
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-
                       <div className={cn(
                         "w-full flex items-center bg-black/95 backdrop-blur-3xl border border-white/10 rounded-2xl p-1 shadow-2xl transition-all duration-300",
                         writingWidthMode === 'compact' ? "max-w-[650px]" :
@@ -12377,22 +12295,6 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
                           title="Enviar comando de geração"
                         >
                           {isGenerating ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
-                        </button>
-
-                        {/* BOTÃO HUNTER - Caçador Agêntico Verde com Arco e Flecha */}
-                        <button 
-                          onClick={() => runHunterAnalysis()}
-                          disabled={isHunterAnalyzing || !workspaceText.trim()}
-                          className={cn(
-                            "px-3.5 py-2 rounded-xl transition-all shrink-0 font-mono font-bold text-xs flex items-center gap-1.5 shadow-lg active:scale-95 cursor-pointer border ml-1.5",
-                            isHunterAnalyzing 
-                              ? "bg-emerald-950/90 text-emerald-400 border-emerald-500/50 animate-pulse" 
-                              : "bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white border-emerald-400/40 shadow-emerald-950/60 hover:shadow-emerald-500/30"
-                          )}
-                          title="Hunter: Examinador Agêntico. Examina o comando e garante que o código atenda 100% sem faltar nada!"
-                        >
-                          <BowAndArrowIcon size={15} className={isHunterAnalyzing ? "animate-spin text-emerald-300" : "text-emerald-100"} />
-                          <span className="tracking-wider">HUNTER</span>
                         </button>
                       </div>
                     </div>
@@ -12438,25 +12340,9 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
                         </AnimatePresence>
                       </div>
 
-                      {/* --- FLOATING PROJECT DOCK & HUNTER TRIGGER --- */}
+                      {/* --- FLOATING PROJECT DOCK --- */}
                       <div className="absolute right-4 top-4 z-[45] flex flex-col items-end gap-2">
                         <div className="flex items-center gap-2">
-                          {/* Botão HUNTER Agêntico Flutuante */}
-                          <button
-                            onClick={() => runHunterAnalysis()}
-                            disabled={isHunterAnalyzing || !workspaceText.trim()}
-                            className={cn(
-                              "px-3.5 py-2 rounded-2xl border text-xs font-mono font-bold flex items-center gap-1.5 shadow-xl hover:scale-105 active:scale-95 transition-all backdrop-blur-md cursor-pointer",
-                              isHunterAnalyzing 
-                                ? "bg-emerald-950/90 text-emerald-400 border-emerald-500/50 animate-pulse" 
-                                : "bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white border-emerald-400/40 shadow-emerald-950/80"
-                            )}
-                            title="Hunter: Exame Agêntico. Examina o código contra o pedido original para garantir 100% de conformidade."
-                          >
-                            <BowAndArrowIcon size={14} className={isHunterAnalyzing ? "animate-spin text-emerald-300" : "text-emerald-100"} />
-                            <span>HUNTER</span>
-                          </button>
-
                           {/* Interactive floating trigger button */}
                           <button
                             onClick={() => setIsProjectsDockOpen(!isProjectsDockOpen)}
@@ -12835,6 +12721,23 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
 
                 {/* O painel de visualização lateral split foi retirado para focar no fluxo imersivo contínuo e espaçoso de escrita */}
               </div>
+            </motion.div>
+          ) : workspaceMode === 'code' ? (
+            <motion.div 
+              key="workspace-code"
+              initial={{ opacity: 0, scale: 0.995 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.995 }}
+              transition={{ duration: 0.2 }}
+              className="w-full flex-1 flex flex-col min-h-0 overflow-hidden"
+            >
+              <CodeWorkspace 
+                onClose={() => setWorkspaceMode('home')}
+                onGenerateCodeRequest={handleCodeWorkspacePrompt}
+                onStartLiveVoice={() => startLiveSession()}
+                apiKeys={apiKeys}
+                isGenerating={isGenerating}
+              />
             </motion.div>
           ) : workspaceMode === 'canvas' ? (
             <div key="workspace-canvas" className="flex-1 w-full flex flex-col min-h-0">
