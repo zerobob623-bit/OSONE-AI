@@ -726,9 +726,13 @@ class ElevenLabsQueuePlayer {
   public markStreamFinished() {
     this.isStreamFinished = true;
     if (!this.isPlaying && this.activeSources.length === 0 && this.queue.length === 0) {
-      if (this.onQueueDrained) {
-        this.onQueueDrained();
-      }
+      setTimeout(() => {
+        if (!this.isPlaying && this.activeSources.length === 0 && this.queue.length === 0) {
+          if (this.onQueueDrained) {
+            this.onQueueDrained();
+          }
+        }
+      }, 350);
     }
   }
 
@@ -812,12 +816,16 @@ class ElevenLabsQueuePlayer {
 
       source.onended = () => {
         this.activeSources = this.activeSources.filter(s => s !== source);
-        if (this.activeSources.length === 0) {
-          this.isPlaying = false;
-          this.onStateChange(false);
-          if (this.isStreamFinished && this.onQueueDrained) {
-            this.onQueueDrained();
-          }
+        if (this.activeSources.length === 0 && this.queue.length === 0) {
+          setTimeout(() => {
+            if (this.activeSources.length === 0 && this.queue.length === 0) {
+              this.isPlaying = false;
+              this.onStateChange(false);
+              if (this.isStreamFinished && this.onQueueDrained) {
+                this.onQueueDrained();
+              }
+            }
+          }, 350);
         }
       };
     }
@@ -5694,9 +5702,6 @@ ${isBad
         ws.send(JSON.stringify({ text: text }));
         // Immediately flush to signal end of stream
         ws.send(JSON.stringify({ text: "", flush: true }));
-        if (elevenLabsQueuePlayerRef.current) {
-          elevenLabsQueuePlayerRef.current.markStreamFinished();
-        }
       };
 
       ws.onmessage = async (event) => {
@@ -5712,6 +5717,9 @@ ${isBad
             // Add chunk to player queue
             elevenLabsQueuePlayerRef.current?.addChunk(parsed.audio);
           }
+          if (parsed.isFinal || parsed.is_final) {
+            elevenLabsQueuePlayerRef.current?.markStreamFinished();
+          }
         } catch (e) {
           console.error("Error processing websocket message:", e);
         }
@@ -5723,6 +5731,7 @@ ${isBad
 
       ws.onclose = () => {
         console.log("ElevenLabs Proxy WS closed for single-play text speech");
+        elevenLabsQueuePlayerRef.current?.markStreamFinished();
       };
 
       // Set up the drainage handler to transition state back when speaking finishes
@@ -6016,6 +6025,9 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt();
             hasReceivedAudio = true;
             elevenLabsQueuePlayerRef.current?.addChunk(parsed.audio);
           }
+          if (parsed.isFinal || parsed.is_final) {
+            elevenLabsQueuePlayerRef.current?.markStreamFinished();
+          }
         } catch (e) {
           console.error("Error reading streaming audio chunk:", e);
         }
@@ -6023,6 +6035,11 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt();
 
       elWs.onerror = (err) => {
         console.error("ElevenLabs WS client error:", err);
+      };
+
+      elWs.onclose = () => {
+        console.log("ElevenLabs WS client closed.");
+        elevenLabsQueuePlayerRef.current?.markStreamFinished();
       };
 
       // Start the heartbeat/keep-alive to send " " every 10 seconds
@@ -6109,9 +6126,6 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt();
 
       // 3. Send final flush chunk to ElevenLabs to complete audio synthesis
       safeSendToWs({ text: "", flush: true });
-      if (elevenLabsQueuePlayerRef.current) {
-        elevenLabsQueuePlayerRef.current.markStreamFinished();
-      }
 
       // Fallback check: Se o WebSocket da ElevenLabs não enviou nenhum áudio e a resposta já terminou, toca via REST TTS
       setTimeout(() => {
@@ -13494,13 +13508,13 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
                   className={cn(
                     "flex flex-col items-center justify-center py-2 z-50 w-full transition-all duration-500",
                     orbCenterMode
-                      ? (chatHistory.length > 0 || isChatExpanded)
-                        ? "relative shrink-0 flex flex-col items-center justify-center transform scale-85 md:scale-95 origin-center pointer-events-auto py-4 mt-16 md:mt-24"
+                      ? isChatExpanded
+                        ? "relative shrink-0 flex flex-col items-center justify-center transform scale-65 md:scale-75 origin-center pointer-events-auto py-1 mt-1"
                         : "relative flex-1 flex flex-col items-center justify-center transform scale-90 md:scale-100 origin-center pointer-events-auto pt-24 md:pt-32 pb-8 my-auto"
                       : ((liveState.status === 'connected' || isElevenLabsLiveActive) && !isChatExpanded)
                         ? "relative flex-1 scale-90 md:scale-100 pt-24 md:pt-32 pb-8 my-auto mt-6" 
-                        : (chatHistory.length > 0 || isChatExpanded)
-                          ? "relative shrink-0 pt-16 md:pt-24 pb-2 mt-12 transform scale-75 opacity-90 animate-cloud-wave pointer-events-auto" 
+                        : isChatExpanded
+                          ? "relative shrink-0 pt-2 pb-1 mt-0 transform scale-55 md:scale-65 opacity-85 pointer-events-auto transition-all duration-500" 
                           : "relative flex-1 flex flex-col items-center justify-center transform scale-90 md:scale-100 origin-center pointer-events-auto pt-24 md:pt-32 pb-8 my-auto"
                   )}
                 >
@@ -13508,7 +13522,7 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
                     /* DEDICATED ELEVENLABS INTERFACE */
                     <div className={cn(
                       "w-full flex flex-col items-center justify-center text-center max-w-xl mx-auto space-y-5 px-6 pointer-events-auto transition-all duration-500",
-                      (!orbCenterMode && (chatHistory.length > 0 || isChatExpanded)) ? "scale-[0.8] opacity-80" : ""
+                      (!orbCenterMode && isChatExpanded) ? "scale-[0.8] opacity-80" : ""
                     )}>
                       {/* Page Title & Status */}
                       {(chatHistory.length === 0 && !isChatExpanded) && (
@@ -13878,12 +13892,12 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
 
                 {/* Chat History - Integrated into screen */}
                 <div className={cn(
-                  "flex-1 transition-all duration-700 w-full min-h-0 pt-12 translate-z-0",
-                  (!isChatExpanded || !showUi) ? "opacity-0 pointer-events-none scale-95" : "opacity-100",
-                  "flex flex-col overflow-hidden h-full"
+                  "flex-1 transition-all duration-500 w-full min-h-0 pt-0 translate-z-0",
+                  (!isChatExpanded || !showUi) ? "opacity-0 pointer-events-none scale-95 hidden" : "opacity-100 flex",
+                  "flex flex-col overflow-hidden h-full max-w-4xl mx-auto px-2 md:px-4"
                 )}>
                   {/* Chat Content Panel */}
-                  <div className="flex-1 h-full flex flex-col overflow-hidden relative">
+                  <div className="flex-1 h-full flex flex-col overflow-hidden relative bg-zinc-950/80 border border-white/10 backdrop-blur-2xl rounded-3xl p-3 md:p-5 shadow-2xl shadow-black/90">
                     {/* Chat History Drawer / Overlay */}
                     <AnimatePresence>
                       {isSessionsOpen && (
