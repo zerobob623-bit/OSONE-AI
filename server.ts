@@ -3,6 +3,7 @@ import http from "http";
 import path from "path";
 import fs from "fs";
 import os from "os";
+import dns from "dns";
 import { WebSocketServer, WebSocket } from "ws";
 import { GoogleGenAI, Modality } from "@google/genai";
 import { createServer as createViteServer } from "vite";
@@ -2353,6 +2354,64 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
     }
   });
 
+  // Helper to validate and block SSRF attempts (private IPs, loopback, link-local, cloud metadata, non-HTTP schemes)
+  const isPrivateIp = (ip: string): boolean => {
+    if (!ip) return true;
+    const cleanIp = ip.toLowerCase().trim();
+    if (cleanIp === "::1" || cleanIp === "0:0:0:0:0:0:0:1" || cleanIp === "0.0.0.0") return true;
+    const ipMatch = cleanIp.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (ipMatch) {
+      const p1 = parseInt(ipMatch[1], 10);
+      const p2 = parseInt(ipMatch[2], 10);
+      if (p1 === 10 || p1 === 127 || p1 === 0) return true;
+      if (p1 === 172 && p2 >= 16 && p2 <= 31) return true;
+      if (p1 === 192 && p2 === 168) return true;
+      if (p1 === 169 && p2 === 254) return true; // Cloud metadata (169.254.169.254)
+    }
+    if (cleanIp.startsWith("fe80:") || cleanIp.startsWith("fc00:") || cleanIp.startsWith("fd00:")) {
+      return true;
+    }
+    return false;
+  };
+
+  const resolveAndCheckPrivateUrl = async (urlString: string): Promise<boolean> => {
+    try {
+      const parsed = new URL(urlString);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return true;
+      }
+      const hostname = parsed.hostname.toLowerCase();
+      if (
+        hostname === 'localhost' ||
+        hostname === '127.0.0.1' ||
+        hostname === '::1' ||
+        hostname === '0.0.0.0' ||
+        hostname.endsWith('.local') ||
+        hostname.endsWith('.internal')
+      ) {
+        return true;
+      }
+
+      if (isPrivateIp(hostname)) {
+        return true;
+      }
+
+      // Resolve hostname via DNS to prevent DNS rebinding attacks
+      const addresses = await dns.promises.lookup(hostname, { all: true }).catch(() => []);
+      if (!addresses || addresses.length === 0) {
+        return true; // Reject unresolvable hostnames for safety
+      }
+      for (const addr of addresses) {
+        if (isPrivateIp(addr.address)) {
+          return true;
+        }
+      }
+      return false;
+    } catch (_) {
+      return true;
+    }
+  };
+
   // POST endpoint for high-speed server-side webpage text scraping & parsing
   app.post("/api/scrape", async (req, res) => {
     try {
@@ -2361,11 +2420,20 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
         return res.status(400).json({ error: "O parâmetro 'url' é obrigatório." });
       }
 
+      if (await resolveAndCheckPrivateUrl(url)) {
+        return res.status(403).json({ error: "Acesso a URLs privadas, locais ou não permitidas é bloqueado por segurança." });
+      }
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
       const response = await fetch(url, {
+        signal: controller.signal,
         headers: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
       });
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         return res.status(400).json({ error: `Falha ao acessar o site: status ${response.status}` });
@@ -2401,7 +2469,7 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
       return res.json({ text: cleanText });
     } catch (err: any) {
       console.error("Erro ao analisar página no servidor:", err);
-      return res.status(500).json({ error: "Erro de raspagem: " + err.message });
+      return res.status(500).json({ error: "Erro de raspagem: " + (err.name === 'AbortError' ? 'Tempo de conexão esgotado (timeout)' : err.message) });
     }
   });
 
@@ -2788,102 +2856,128 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
     
     const voiceId = searchParams.get("voiceId") || "21m00Tcm4TlvDq8ikWAM"; // default Rachel
     const modelId = searchParams.get("modelId") || "eleven_flash_v2_5";
-    const clientElApiKey = searchParams.get("apiKey") || "";
+    const clientElApiKeyFromUrl = searchParams.get("apiKey") || "";
     const stability = parseFloat(searchParams.get("stability") || "0.5");
     const similarityBoost = parseFloat(searchParams.get("similarityBoost") || "0.75");
     
-    const elApiKey = clientElApiKey || process.env.ELEVENLABS_API_KEY || "";
-    
-    if (!elApiKey) {
-      console.error("ElevenLabs API Key not configured on server or client.");
-      clientWs.send(JSON.stringify({ error: "Chave API ElevenLabs não configurada." }));
-      clientWs.close();
-      return;
-    }
-    
-    const outboundUrl = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?model_id=${modelId}&output_format=pcm_24000&xi-api-key=${elApiKey}`;
-    
-    console.log(`Establishing outbound connection to ElevenLabs: wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input`);
-    
-    // Create connection to ElevenLabs using the global polyfilled WebSocket
-    const elWs = new WebSocket(outboundUrl);
+    let elApiKey = clientElApiKeyFromUrl || process.env.ELEVENLABS_API_KEY || "";
+    let elWs: WebSocket | null = null;
     const pendingMsgBuffer: string[] = [];
-    
-    elWs.on("open", () => {
-      console.log("ElevenLabs outbound WebSocket successfully established");
-      // Send initial settings and authentication
-      const initMsg = {
-        text: " ",
-        xi_api_key: elApiKey,
-        voice_settings: {
-          stability: stability,
-          similarity_boost: similarityBoost
-        },
-        generation_config: {
-          chunk_length_schedule: [120, 160, 250, 290]
-        }
-      };
-      elWs.send(JSON.stringify(initMsg));
 
-      // Flush any queued client messages sent before outbound WS was ready
-      while (pendingMsgBuffer.length > 0) {
-        const msgStr = pendingMsgBuffer.shift();
-        if (msgStr) {
+    const initOutboundWs = (keyToUse: string) => {
+      const outboundUrl = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?model_id=${modelId}&output_format=pcm_24000`;
+      
+      console.log(`Establishing outbound connection to ElevenLabs: wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input`);
+      
+      const ws = new WebSocket(outboundUrl);
+      elWs = ws;
+
+      ws.on("open", () => {
+        console.log("ElevenLabs outbound WebSocket successfully established");
+        // Send initial settings and authentication
+        const initMsg = {
+          text: " ",
+          xi_api_key: keyToUse,
+          voice_settings: {
+            stability: stability,
+            similarity_boost: similarityBoost
+          },
+          generation_config: {
+            chunk_length_schedule: [120, 160, 250, 290]
+          }
+        };
+        ws.send(JSON.stringify(initMsg));
+
+        // Flush any queued client messages sent before outbound WS was ready
+        while (pendingMsgBuffer.length > 0) {
+          const msgStr = pendingMsgBuffer.shift();
+          if (msgStr) {
+            try {
+              const parsed = JSON.parse(msgStr);
+              if (parsed.text !== undefined || parsed.flush !== undefined) {
+                const payloadToSend = { text: parsed.text ?? "", ...(parsed.flush !== undefined && { flush: parsed.flush }) };
+                ws.send(JSON.stringify(payloadToSend));
+              }
+            } catch (_) {
+              ws.send(JSON.stringify({ text: msgStr }));
+            }
+          }
+        }
+      });
+
+      ws.on("message", (data) => {
+        if (clientWs.readyState === WebSocket.OPEN) {
           try {
-            const parsed = JSON.parse(msgStr);
-            elWs.send(JSON.stringify(parsed));
+            const parsed = JSON.parse(data.toString());
+            if (parsed.message || parsed.detail) {
+              const msg = parsed.message || (typeof parsed.detail === 'string' ? parsed.detail : JSON.stringify(parsed.detail));
+              clientWs.send(JSON.stringify({ error: msg }));
+              return;
+            }
+          } catch (_) {}
+          clientWs.send(data.toString());
+        }
+      });
+
+      ws.on("error", (err) => {
+        console.error("ElevenLabs outbound WS error:", err);
+        if (clientWs.readyState === WebSocket.OPEN) {
+          clientWs.send(JSON.stringify({ error: `ElevenLabs Error: ${err.message}` }));
+        }
+      });
+
+      ws.on("close", (code, reason) => {
+        console.log(`ElevenLabs outbound WS closed. Code: ${code}, Reason: ${reason}`);
+        if (clientWs.readyState === WebSocket.OPEN) {
+          clientWs.close();
+        }
+      });
+    };
+
+    if (elApiKey) {
+      initOutboundWs(elApiKey);
+    }
+
+    clientWs.on("message", (msg) => {
+      const msgStr = msg.toString();
+      let parsed: any = null;
+      try {
+        parsed = JSON.parse(msgStr);
+      } catch (_) {}
+
+      if (!elWs) {
+        // Try to extract key from message payload
+        const keyFromMsg = parsed?.apiKey || parsed?.xi_api_key;
+        if (keyFromMsg) {
+          elApiKey = keyFromMsg;
+          initOutboundWs(elApiKey);
+        } else {
+          console.error("ElevenLabs API Key not provided in query URL or message payload.");
+          clientWs.send(JSON.stringify({ error: "Chave API ElevenLabs não configurada." }));
+          clientWs.close();
+          return;
+        }
+      }
+
+      if (elWs) {
+        if (elWs.readyState === WebSocket.OPEN) {
+          try {
+            const payloadToSend: { text: string; flush?: boolean } = parsed ? { text: parsed.text ?? "", ...(parsed.flush !== undefined && { flush: parsed.flush }) } : { text: msgStr };
+            if (payloadToSend.text !== "" || payloadToSend.flush !== undefined) {
+              elWs.send(JSON.stringify(payloadToSend));
+            }
           } catch (_) {
             elWs.send(JSON.stringify({ text: msgStr }));
           }
+        } else if (elWs.readyState === WebSocket.CONNECTING) {
+          pendingMsgBuffer.push(msgStr);
         }
       }
     });
-    
-    elWs.on("message", (data) => {
-      if (clientWs.readyState === WebSocket.OPEN) {
-        try {
-          const parsed = JSON.parse(data.toString());
-          if (parsed.message || parsed.detail) {
-            const msg = parsed.message || (typeof parsed.detail === 'string' ? parsed.detail : JSON.stringify(parsed.detail));
-            clientWs.send(JSON.stringify({ error: msg }));
-            return;
-          }
-        } catch (_) {}
-        clientWs.send(data.toString());
-      }
-    });
-    
-    elWs.on("error", (err) => {
-      console.error("ElevenLabs outbound WS error:", err);
-      if (clientWs.readyState === WebSocket.OPEN) {
-        clientWs.send(JSON.stringify({ error: `ElevenLabs Error: ${err.message}` }));
-      }
-    });
-    
-    elWs.on("close", (code, reason) => {
-      console.log(`ElevenLabs outbound WS closed. Code: ${code}, Reason: ${reason}`);
-      if (clientWs.readyState === WebSocket.OPEN) {
-        clientWs.close();
-      }
-    });
-    
-    clientWs.on("message", (msg) => {
-      const msgStr = msg.toString();
-      if (elWs.readyState === WebSocket.OPEN) {
-        try {
-          const parsed = JSON.parse(msgStr);
-          elWs.send(JSON.stringify(parsed));
-        } catch (_) {
-          elWs.send(JSON.stringify({ text: msgStr }));
-        }
-      } else if (elWs.readyState === WebSocket.CONNECTING) {
-        pendingMsgBuffer.push(msgStr);
-      }
-    });
-    
+
     clientWs.on("error", (err) => {
       console.error("ElevenLabs Proxy client WS error:", err);
-      if (elWs.readyState === WebSocket.OPEN) {
+      if (elWs && elWs.readyState === WebSocket.OPEN) {
         elWs.close();
       }
     });
