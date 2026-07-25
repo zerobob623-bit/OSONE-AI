@@ -60,7 +60,8 @@ import {
   Palette,
   Heart,
   Youtube,
-  ExternalLink
+  ExternalLink,
+  Layers
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI, Modality, Type } from "@google/genai";
@@ -179,99 +180,217 @@ const extractTextFromPdf = async (file: File): Promise<string> => {
     console.error('Erro ao ler PDF:', error);
     return `[Erro ao extrair conteúdo do PDF: ${file.name}]`;
   }
-};
-
-// Cybernetic glowing robotic hand from the OSONE HUD
+}// Cybernetic biometric hologram hand with hex-grid wireframe, Fresnel rim shader, fingertip scan targets, bloom aura & particle wrist dissolution
 const CyberneticHandIcon = ({ className = "w-8 h-8" }: { className?: string }) => {
   return (
     <svg 
-      viewBox="0 0 100 100" 
+      viewBox="0 0 120 120" 
       fill="none" 
       xmlns="http://www.w3.org/2000/svg" 
       className={className}
     >
       <defs>
-        {/* Glow & Gradient Defs */}
-        <filter id="emerald-glow" x="-20%" y="-20%" width="140%" height="140%">
-          <feGaussianBlur stdDeviation="3.5" result="blur" />
+        {/* UnrealBloomPass Multi-Stage Bloom Filter */}
+        <filter id="hologram-unreal-bloom" x="-50%" y="-50%" width="200%" height="200%">
+          {/* Stage 1: Sharp Glow */}
+          <feGaussianBlur in="SourceGraphic" stdDeviation="1.2" result="blur1" />
+          {/* Stage 2: Medium Aura */}
+          <feGaussianBlur in="SourceGraphic" stdDeviation="3.5" result="blur2" />
+          {/* Stage 3: Intense Outer Bloom leakage */}
+          <feGaussianBlur in="SourceGraphic" stdDeviation="8.0" result="blur3" />
           <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="blur" />
+            <feMergeNode in="blur3" />
+            <feMergeNode in="blur2" />
+            <feMergeNode in="blur1" />
             <feMergeNode in="SourceGraphic" />
           </feMerge>
         </filter>
-        <linearGradient id="cyber-green-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#34d399" />
-          <stop offset="50%" stopColor="#10b981" />
-          <stop offset="100%" stopColor="#047857" />
+
+        {/* Strong Rim Light Glow */}
+        <filter id="fresnel-rim-bloom" x="-40%" y="-40%" width="180%" height="180%">
+          <feGaussianBlur stdDeviation="3" result="blur" />
+          <feComponentTransfer in="blur" result="boost">
+            <feFuncA type="linear" slope="2" />
+          </feComponentTransfer>
+          <feMerge>
+            <feMergeNode in="boost" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+
+        {/* Biometric Hexagonal Wireframe Pattern */}
+        <pattern id="hex-grid-pattern" width="6" height="10.392" patternUnits="userSpaceOnUse">
+          <path
+            d="M3,0 L6,1.732 L6,5.196 L3,6.928 L0,5.196 L0,1.732 Z M3,10.392 L6,8.66 L6,5.196 L3,6.928 L0,5.196 L0,8.66 Z"
+            fill="none"
+            stroke="#10b981"
+            strokeWidth="0.35"
+            strokeOpacity="0.45"
+          />
+        </pattern>
+
+        {/* Fresnel Shader - Center Dark Translucent, Edges Neon Glowing */}
+        <radialGradient id="fresnel-shader-grad" cx="58%" cy="58%" r="55%">
+          <stop offset="0%" stopColor="#02140d" stopOpacity="0.35" />
+          <stop offset="45%" stopColor="#063824" stopOpacity="0.65" />
+          <stop offset="80%" stopColor="#059669" stopOpacity="0.85" />
+          <stop offset="100%" stopColor="#34d399" stopOpacity="1" />
+        </radialGradient>
+
+        {/* Wrist Dissolution Gradient Mask */}
+        <linearGradient id="wrist-dissolve-fade" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stopColor="#ffffff" stopOpacity="1" />
+          <stop offset="70%" stopColor="#ffffff" stopOpacity="0.8" />
+          <stop offset="90%" stopColor="#ffffff" stopOpacity="0.2" />
+          <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
         </linearGradient>
+
+        <mask id="wrist-mask">
+          <rect x="0" y="0" width="120" height="120" fill="url(#wrist-dissolve-fade)" />
+        </mask>
+
+        {/* Scanning Target Glow */}
+        <radialGradient id="scan-target-glow" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stopColor="#6ee7b7" stopOpacity="1" />
+          <stop offset="40%" stopColor="#10b981" stopOpacity="0.8" />
+          <stop offset="100%" stopColor="#047857" stopOpacity="0" />
+        </radialGradient>
       </defs>
 
-      {/* Glow shadow and base structure representation */}
-      <g filter="url(#emerald-glow)">
-        {/* Low-poly shaded body polygons (varying opacities to build simulated 3D depth) */}
-        {/* Wrist/Forearm base cuff */}
-        <polygon points="45,85 62,80 72,88 52,94" fill="#047857" fillOpacity="0.4" stroke="#10b981" strokeWidth="0.5" />
-        <polygon points="45,85 62,80 65,72 48,76" fill="#10b981" fillOpacity="0.2" stroke="#10b981" strokeWidth="0.5" />
-        <polygon points="62,80 72,88 78,79 65,72" fill="#065f46" fillOpacity="0.3" stroke="#10b981" strokeWidth="0.5" />
+      {/* Main Holographic Container with Bloom */}
+      <g filter="url(#hologram-unreal-bloom)">
+        {/* Outer Aura / Fresnel Edge Glow Ambient */}
+        <path
+          d="M38,102 C35,92 36,82 40,72 C34,68 24,62 16,52 C12,46 12,38 18,34 C24,30 30,34 35,42 C38,46 41,50 46,18 C45,12 51,8 56,10 C61,12 60,18 58,10 C57,4 64,2 69,5 C74,8 72,14 72,14 C72,8 78,6 83,9 C87,12 85,18 84,26 C85,21 90,20 94,23 C97,26 95,31 93,40 C91,48 89,58 88,74 C88,85 84,95 80,104"
+          fill="none"
+          stroke="#34d399"
+          strokeWidth="3.5"
+          strokeOpacity="0.3"
+          filter="url(#fresnel-rim-bloom)"
+        />
 
-        {/* Outer Palm */}
-        <polygon points="48,76 65,72 68,58 52,62" fill="#059669" fillOpacity="0.25" stroke="#10b981" strokeWidth="0.5" />
-        <polygon points="65,72 78,79 84,65 68,58" fill="#10b981" fillOpacity="0.15" stroke="#10b981" strokeWidth="0.5" />
+        {/* Masked Hand Body with Wrist Dissolve */}
+        <g mask="url(#wrist-mask)">
+          {/* Base Holographic Body with Fresnel Shader */}
+          <path
+            d="M38,102 C35,92 36,82 40,72 C34,68 24,62 16,52 C12,46 12,38 18,34 C24,30 30,34 35,42 C38,46 41,50 46,18 C45,12 51,8 56,10 C61,12 60,18 58,10 C57,4 64,2 69,5 C74,8 72,14 72,14 C72,8 78,6 83,9 C87,12 85,18 84,26 C85,21 90,20 94,23 C97,26 95,31 93,40 C91,48 89,58 88,74 C88,85 84,95 80,104 Z"
+            fill="url(#fresnel-shader-grad)"
+            stroke="#10b981"
+            strokeWidth="0.8"
+            strokeOpacity="0.8"
+          />
+
+          {/* Hexagonal Biometric Wireframe Overlay */}
+          <path
+            d="M38,102 C35,92 36,82 40,72 C34,68 24,62 16,52 C12,46 12,38 18,34 C24,30 30,34 35,42 C38,46 41,50 46,18 C45,12 51,8 56,10 C61,12 60,18 58,10 C57,4 64,2 69,5 C74,8 72,14 72,14 C72,8 78,6 83,9 C87,12 85,18 84,26 C85,21 90,20 94,23 C97,26 95,31 93,40 C91,48 89,58 88,74 C88,85 84,95 80,104 Z"
+            fill="url(#hex-grid-pattern)"
+            opacity="0.85"
+          />
+
+          {/* Internal Anatomical Skeleton & Biometric Contours */}
+          <g stroke="#34d399" strokeWidth="0.5" opacity="0.6" fill="none">
+            {/* Phalanx Contours */}
+            <path d="M22,46 C26,44 30,48 34,52" />
+            <path d="M48,36 C52,35 55,36 57,37" />
+            <path d="M47,24 C50,23 53,24 55,25" />
+            <path d="M60,32 C63,31 66,32 69,33" />
+            <path d="M59,18 C62,17 65,18 67,19" />
+            <path d="M72,34 C75,33 78,34 81,35" />
+            <path d="M72,21 C75,20 78,21 81,22" />
+            <path d="M84,42 C86,41 89,42 91,43" />
+            <path d="M84,30 C86,29 89,30 91,31" />
+
+            {/* Major Palm Biometric Lines */}
+            <path d="M42,75 C52,70 65,74 78,80" strokeWidth="0.7" opacity="0.7" />
+            <path d="M46,62 C56,58 66,64 74,70" strokeWidth="0.7" opacity="0.7" />
+            <path d="M40,90 C50,86 60,88 72,92" strokeWidth="0.5" opacity="0.5" />
+          </g>
+
+          {/* Strong Fresnel Rim Contour (Highlight Brightness at Borders) */}
+          <path
+            d="M38,102 C35,92 36,82 40,72 C34,68 24,62 16,52 C12,46 12,38 18,34 C24,30 30,34 35,42 M46,18 C45,12 51,8 56,10 M58,10 C57,4 64,2 69,5 M72,14 C72,8 78,6 83,9 M84,26 C85,21 90,20 94,23 C97,26 95,31 93,40 C91,48 89,58 88,74 M88,74 C88,85 84,95 80,104"
+            fill="none"
+            stroke="#a7f3d0"
+            strokeWidth="1.2"
+            strokeLinecap="round"
+          />
+        </g>
+
+        {/* === BIOMETRIC SCANNING TARGET NODES (Pontos Circulares Brilhantes) === */}
         
-        {/* Thumb segment & base */}
-        <polygon points="48,76 52,62 38,64 34,74" fill="#10b981" fillOpacity="0.3" stroke="#10b981" strokeWidth="0.5" />
-        <polygon points="34,74 24,70 20,60 38,64" fill="#059669" fillOpacity="0.2" stroke="#10b981" strokeWidth="0.5" />
-        <polygon points="20,60 10,54 13,44 24,49" fill="#34d399" fillOpacity="0.15" stroke="#10b981" strokeWidth="0.5" strokeLinejoin="round" />
+        {/* 1. Palm Center Scanning Target */}
+        <g transform="translate(60, 72)">
+          <circle cx="0" cy="0" r="9" fill="none" stroke="#34d399" strokeWidth="0.5" strokeDasharray="2 1.5" opacity="0.8" />
+          <circle cx="0" cy="0" r="6" fill="none" stroke="#10b981" strokeWidth="0.6" opacity="0.9" />
+          <circle cx="0" cy="0" r="3" fill="url(#scan-target-glow)" />
+          <circle cx="0" cy="0" r="1.2" fill="#ffffff" />
+          <line x1="-11" y1="0" x2="-7" y2="0" stroke="#34d399" strokeWidth="0.6" />
+          <line x1="7" y1="0" x2="11" y2="0" stroke="#34d399" strokeWidth="0.6" />
+          <line x1="0" y1="-11" x2="0" y2="-7" stroke="#34d399" strokeWidth="0.6" />
+          <line x1="0" y1="7" x2="0" y2="11" stroke="#34d399" strokeWidth="0.6" />
+        </g>
 
-        {/* Index finger - Low Poly Segments */}
-        <polygon points="52,62 48,46 36,49 38,64" fill="#10b981" fillOpacity="0.2" stroke="#10b981" strokeWidth="0.5" />
-        <polygon points="48,46 44,30 32,34 36,49" fill="#059669" fillOpacity="0.25" stroke="#10b981" strokeWidth="0.5" />
-        <polygon points="44,30 40,16 30,19 32,34" fill="#34d399" fillOpacity="0.3" stroke="#10b981" strokeWidth="0.5" />
-        
-        {/* Middle finger - Low Poly Segments */}
-        <polygon points="52,62 68,58 64,42 48,46" fill="#059669" fillOpacity="0.15" stroke="#10b981" strokeWidth="0.5" />
-        <polygon points="48,46 64,42 60,26 44,30" fill="#10b981" fillOpacity="0.2" stroke="#10b981" strokeWidth="0.5" />
-        <polygon points="44,30 60,26 56,10 40,14" fill="#34d399" fillOpacity="0.35" stroke="#10b981" strokeWidth="0.5" strokeLinejoin="round" />
+        {/* 2. Fingertip Scanning Nodes */}
+        {/* Thumb Tip Target */}
+        <g transform="translate(16, 38)">
+          <circle cx="0" cy="0" r="4" fill="none" stroke="#34d399" strokeWidth="0.5" />
+          <circle cx="0" cy="0" r="2.2" fill="url(#scan-target-glow)" />
+          <circle cx="0" cy="0" r="0.9" fill="#ffffff" />
+        </g>
 
-        {/* Ring finger - Low Poly Segments */}
-        <polygon points="68,58 78,54 74,38 64,42" fill="#047857" fillOpacity="0.25" stroke="#10b981" strokeWidth="0.5" />
-        <polygon points="64,42 74,38 70,22 60,26" fill="#10b981" fillOpacity="0.2" stroke="#10b981" strokeWidth="0.5" />
-        <polygon points="60,26 70,22 66,8 56,12" fill="#34d399" fillOpacity="0.3" stroke="#10b981" strokeWidth="0.5" />
+        {/* Index Tip Target */}
+        <g transform="translate(51, 10)">
+          <circle cx="0" cy="0" r="4" fill="none" stroke="#34d399" strokeWidth="0.5" />
+          <circle cx="0" cy="0" r="2.2" fill="url(#scan-target-glow)" />
+          <circle cx="0" cy="0" r="0.9" fill="#ffffff" />
+        </g>
 
-        {/* Pinky finger - Low Poly Segments */}
-        <polygon points="78,54 84,50 80,34 74,38" fill="#10b981" fillOpacity="0.1" stroke="#10b981" strokeWidth="0.5" />
-        <polygon points="74,38 80,34 76,18 70,22" fill="#059669" fillOpacity="0.15" stroke="#10b981" strokeWidth="0.5" />
-        <polygon points="70,22 76,18 72,4 66,8" fill="#34d399" fillOpacity="0.25" stroke="#10b981" strokeWidth="0.5" strokeLinejoin="round" />
+        {/* Middle Tip Target */}
+        <g transform="translate(63, 4)">
+          <circle cx="0" cy="0" r="4" fill="none" stroke="#34d399" strokeWidth="0.5" />
+          <circle cx="0" cy="0" r="2.2" fill="url(#scan-target-glow)" />
+          <circle cx="0" cy="0" r="0.9" fill="#ffffff" />
+        </g>
 
-        {/* Facet Highlights (Outer glow lines) */}
-        <path d="M48,76 L52,62 M65,72 L68,58 M38,64 L52,62 L48,46 M48,46 L64,42 L60,26 L44,30 Z" stroke="#34d399" strokeWidth="0.8" opacity="0.9" />
-        <path d="M44,30 L60,26 M64,42 L74,38 L70,22 L60,26 Z" stroke="#34d399" strokeWidth="0.8" opacity="0.9" />
+        {/* Ring Tip Target */}
+        <g transform="translate(77, 8)">
+          <circle cx="0" cy="0" r="4" fill="none" stroke="#34d399" strokeWidth="0.5" />
+          <circle cx="0" cy="0" r="2.2" fill="url(#scan-target-glow)" />
+          <circle cx="0" cy="0" r="0.9" fill="#ffffff" />
+        </g>
 
-        {/* Joint dots/nodes to give a futuristic data telemetry overlay */}
-        <circle cx="48" cy="76" r="1.2" fill="#a7f3d0" />
-        <circle cx="65" cy="72" r="1.2" fill="#a7f3d0" />
-        <circle cx="68" cy="58" r="1.2" fill="#a7f3d0" />
-        <circle cx="52" cy="62" r="1.2" fill="#a7f3d0" />
-        <circle cx="34" cy="74" r="1.2" fill="#a7f3d0" />
-        <circle cx="20" cy="60" r="1.2" fill="#a7f3d0" />
-        <circle cx="10" cy="54" r="1.2" fill="#a7f3d0" />
-        
-        <circle cx="48" cy="46" r="1.2" fill="#a7f3d0" />
-        <circle cx="44" cy="30" r="1.2" fill="#a7f3d0" />
-        <circle cx="40" cy="16" r="1.2" fill="#a7f3d0" />
-        
-        <circle cx="64" cy="42" r="1.2" fill="#a7f3d0" />
-        <circle cx="60" cy="26" r="1.2" fill="#a7f3d0" />
-        <circle cx="56" cy="10" r="1.2" fill="#a7f3d0" />
-        
-        <circle cx="74" cy="38" r="1.2" fill="#a7f3d0" />
-        <circle cx="70" cy="22" r="1.2" fill="#a7f3d0" />
-        <circle cx="66" cy="8" r="1.2" fill="#a7f3d0" />
+        {/* Pinky Tip Target */}
+        <g transform="translate(89, 22)">
+          <circle cx="0" cy="0" r="4" fill="none" stroke="#34d399" strokeWidth="0.5" />
+          <circle cx="0" cy="0" r="2.2" fill="url(#scan-target-glow)" />
+          <circle cx="0" cy="0" r="0.9" fill="#ffffff" />
+        </g>
 
-        <circle cx="80" cy="34" r="1.2" fill="#a7f3d0" />
-        <circle cx="76" cy="18" r="1.2" fill="#a7f3d0" />
-        <circle cx="72" cy="4" r="1.2" fill="#a7f3d0" />
+        {/* === WRIST DISSOLVING DATA PARTICLES (Materialização a partir de dados) === */}
+        <g fill="#34d399" opacity="0.9">
+          {/* Floating Data Pixels & Hex Fragments around base */}
+          <rect x="34" y="98" width="1.5" height="1.5" rx="0.3" opacity="0.9" />
+          <rect x="39" y="104" width="2" height="2" rx="0.4" opacity="0.7" />
+          <rect x="44" y="96" width="1.2" height="1.2" rx="0.2" opacity="0.8" />
+          <rect x="48" y="108" width="2" height="2" rx="0.5" opacity="0.5" />
+          <rect x="52" y="102" width="1.5" height="1.5" rx="0.3" opacity="0.85" />
+          <rect x="57" y="112" width="1.8" height="1.8" rx="0.4" opacity="0.4" />
+          <rect x="61" y="99" width="2" height="2" rx="0.5" opacity="0.9" />
+          <rect x="66" y="106" width="1.2" height="1.2" rx="0.2" opacity="0.6" />
+          <rect x="71" y="114" width="2.2" height="2.2" rx="0.5" opacity="0.3" />
+          <rect x="75" y="101" width="1.6" height="1.6" rx="0.4" opacity="0.8" />
+          <rect x="80" y="107" width="1.8" height="1.8" rx="0.4" opacity="0.5" />
+          <rect x="84" y="95" width="1.2" height="1.2" rx="0.2" opacity="0.7" />
+
+          {/* Micro Particles dispersed downwards */}
+          <circle cx="36" cy="108" r="0.8" opacity="0.6" fill="#a7f3d0" />
+          <circle cx="42" cy="112" r="1.1" opacity="0.5" fill="#a7f3d0" />
+          <circle cx="50" cy="116" r="0.9" opacity="0.3" fill="#6ee7b7" />
+          <circle cx="58" cy="118" r="1.2" opacity="0.2" fill="#34d399" />
+          <circle cx="68" cy="111" r="0.8" opacity="0.4" fill="#a7f3d0" />
+          <circle cx="78" cy="115" r="1.0" opacity="0.3" fill="#6ee7b7" />
+          <circle cx="83" cy="103" r="0.7" opacity="0.6" fill="#a7f3d0" />
+        </g>
       </g>
     </svg>
   );
@@ -1633,6 +1752,17 @@ export default function App() {
   });
   const [isVoiceSwitcherOpen, setIsVoiceSwitcherOpen] = useState(false);
   const [youtubeVideoPopup, setYoutubeVideoPopup] = useState<{ isOpen: boolean; videoId: string; title: string } | null>(null);
+  const [isYoutubeMinimized, setIsYoutubeMinimized] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (youtubeVideoPopup && youtubeVideoPopup.isOpen) {
+      setIsYoutubeMinimized(false);
+      const timer = setTimeout(() => {
+        setIsYoutubeMinimized(true);
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [youtubeVideoPopup]);
   const [isChatExpanded, setIsChatExpanded] = useState(false);
   const [isConfirmingOptimize, setIsConfirmingOptimize] = useState(false);
   const [isConfirmingClear, setIsConfirmingClear] = useState(false);
@@ -4726,6 +4856,8 @@ Escreva um novo retorno. Comece expressando a pancada física com dor bem-humora
 
   const [isModelSearching, setIsModelSearching] = useState(false);
   const [searchPopups, setSearchPopups] = useState<SearchPopupItem[]>([]);
+  const [isSearchDeckMinimized, setIsSearchDeckMinimized] = useState<boolean>(true);
+  const searchDeckTimerRef = useRef<any>(null);
   const [voiceTranscript, setVoiceTranscript] = useState('');
   const [isSpeaking, setIsSpeaking] = useState(false);
   const isSpeakingRef = useRef(false);
@@ -4822,12 +4954,14 @@ Escreva um novo retorno. Comece expressando a pancada física com dor bem-humora
       id,
       timestamp: new Date().toLocaleTimeString('pt-BR')
     };
-    setSearchPopups(prev => [newPopup, ...prev].slice(0, 6));
+    setSearchPopups(prev => [newPopup, ...prev].slice(0, 8));
+    setIsSearchDeckMinimized(false);
 
-    // Auto-remove after 10 seconds
-    setTimeout(() => {
-      setSearchPopups(prev => prev.filter(p => p.id !== id));
-    }, 10000);
+    // Minimize into deck after 2.5 seconds automatically
+    if (searchDeckTimerRef.current) clearTimeout(searchDeckTimerRef.current);
+    searchDeckTimerRef.current = setTimeout(() => {
+      setIsSearchDeckMinimized(true);
+    }, 2500);
   };
 
   const processGroundingToPopups = (grounding: any, queryText: string) => {
@@ -15055,207 +15189,298 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
         )}
       </AnimatePresence>
 
-      {/* Google Search Screen Prints & Biometrics Popups Tray */}
-      <div className="fixed bottom-24 right-5 md:right-10 z-[80] flex flex-col gap-4 pointer-events-none max-w-sm w-full">
-        <AnimatePresence>
-          {searchPopups.map((popup, idx) => {
-            const isDanger = popup.classification === 'danger';
-            const isStar = popup.classification === 'star';
-            
-            return (
-              <motion.div
-                key={popup.id}
-                initial={{ opacity: 0, x: 100, y: 50, scale: 0.9 }}
-                animate={{ opacity: 1, x: 0, y: 0, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.8, x: 50 }}
-                transition={{ type: "spring", stiffness: 300, damping: 25 }}
-                drag
-                dragConstraints={{ left: -400, right: 100, top: -400, bottom: 200 }}
-                className={cn(
-                  "pointer-events-auto w-[340px] bg-black/95 hover:bg-black border rounded-xl overflow-hidden shadow-2xl transition-shadow duration-300 select-none cursor-move",
-                  isDanger ? "border-red-500/40 shadow-red-500/10" :
-                  isStar ? "border-emerald-500/40 shadow-emerald-500/10" :
-                  "border-sky-500/30 shadow-sky-500/5 hover:shadow-sky-500/10"
-                )}
-                style={{ zIndex: 100 + idx }}
+      {/* Google Search Screen Prints & Biometrics Popups Tray - Baralho Mode */}
+      <AnimatePresence>
+        {searchPopups.length > 0 && (
+          isSearchDeckMinimized ? (
+            /* BARALHO MINIMIZADO - Compacto, tamanho do botão de tapa (w-16 h-16 / w-20 h-20) */
+            <motion.div
+              key="search-deck-minimized"
+              initial={{ opacity: 0, scale: 0.5, y: 30 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.5, y: 30 }}
+              transition={{ type: "spring", stiffness: 350, damping: 25 }}
+              className="fixed bottom-24 right-4 md:right-8 z-[85] pointer-events-auto flex items-center justify-center"
+            >
+              <div 
+                onClick={() => setIsSearchDeckMinimized(false)}
+                className="relative w-16 h-16 md:w-20 md:h-20 cursor-pointer group select-none"
+                title={`Baralho de Pesquisas (${searchPopups.length} matéria${searchPopups.length > 1 ? 's' : ''}) - Clique para expandir`}
               >
-                {/* Simulated Web Browser Tab Bar */}
-                <div className={cn(
-                  "px-3 py-2 border-b flex items-center justify-between",
-                  isDanger ? "bg-red-950/20 border-red-500/10 text-red-100" :
-                  isStar ? "bg-emerald-950/20 border-emerald-500/10 text-emerald-100" :
-                  "bg-zinc-900/60 border-white/5 text-zinc-300"
-                )}>
-                  <div className="flex items-center gap-1.5 font-mono">
-                    <div className="flex items-center gap-1 mr-1.5 shrink-0">
-                      <span className="w-2.5 h-2.5 rounded-full bg-red-500/80 cursor-pointer" onClick={() => setSearchPopups(prev => prev.filter(p => p.id !== popup.id))} />
-                      <span className="w-2.5 h-2.5 rounded-full bg-yellow-500/80" />
-                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/80" />
-                    </div>
-                    {popup.faviconUrl && (
-                      <img src={popup.faviconUrl} className="w-3.5 h-3.5 rounded object-contain shrink-0" alt="" referrerPolicy="no-referrer" />
-                    )}
-                    <span className="text-[10px] font-bold tracking-tight truncate max-w-[130px]">
-                      {popup.isPortrait ? "RECON-X BIOMETRIC" : (popup.title || "Captura de Tela")}
-                    </span>
+                {/* Visual Stack Cards behind */}
+                <div className="absolute inset-0 bg-sky-950/80 border border-sky-500/40 rounded-2xl transform -rotate-6 translate-x-[-4px] translate-y-[-2px] shadow-md transition-transform group-hover:-rotate-12" />
+                <div className="absolute inset-0 bg-emerald-950/80 border border-emerald-500/40 rounded-2xl transform rotate-6 translate-x-[4px] translate-y-[2px] shadow-md transition-transform group-hover:rotate-12" />
+                
+                {/* Main Top Card */}
+                <div className="relative w-full h-full bg-zinc-950/95 border border-sky-400/60 rounded-2xl flex flex-col items-center justify-center p-2 shadow-[0_10px_35px_rgba(0,0,0,0.9)] group-hover:scale-105 transition-all duration-300">
+                  <Layers size={22} className="text-sky-400 animate-pulse group-hover:scale-110 transition-transform" />
+                  <span className="text-[8px] md:text-[9px] font-mono font-bold text-zinc-300 uppercase mt-1 tracking-tighter">
+                    Baralho
+                  </span>
+                  {/* Badge Counter */}
+                  <span className="absolute -top-2 -left-2 bg-gradient-to-r from-sky-500 to-emerald-500 text-black text-[9px] font-mono font-black px-2 py-0.5 rounded-full shadow-lg border border-white/20">
+                    {searchPopups.length}
+                  </span>
+                </div>
+
+                {/* Close Button [x] on the deck */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSearchPopups([]);
+                  }}
+                  className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-red-600 hover:bg-red-500 text-white flex items-center justify-center shadow-lg border border-red-400 z-30 cursor-pointer transition-transform hover:scale-110"
+                  title="Fechar Baralho de Pesquisas"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            </motion.div>
+          ) : (
+            /* BARALHO EXPANDIDO - Painel para escolher a matéria ou minimizar/fechar */
+            <motion.div
+              key="search-deck-expanded"
+              initial={{ opacity: 0, scale: 0.9, y: 30 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.8, y: 30 }}
+              transition={{ type: "spring", stiffness: 300, damping: 25 }}
+              className="fixed bottom-20 right-4 md:right-8 z-[85] max-w-sm sm:max-w-md w-full flex flex-col gap-3 pointer-events-auto max-h-[75vh]"
+            >
+              {/* Header Bar do Baralho */}
+              <div className="bg-zinc-950/95 border border-sky-500/40 backdrop-blur-2xl p-3 rounded-2xl shadow-2xl flex items-center justify-between">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="p-1.5 rounded-xl bg-sky-500/20 text-sky-400 border border-sky-500/30 shrink-0">
+                    <Layers size={18} className="animate-pulse" />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[8.5px] font-mono text-white/30">{popup.timestamp}</span>
-                    <button
-                      onClick={() => setSearchPopups(prev => prev.filter(p => p.id !== popup.id))}
-                      className="text-white/40 hover:text-white hover:bg-white/5 p-1 rounded transition-all"
-                    >
-                      <X size={12} />
-                    </button>
+                  <div className="min-w-0">
+                    <span className="text-[9px] font-mono font-bold uppercase tracking-widest text-sky-400 block">
+                      OSONE SEARCH • DECK
+                    </span>
+                    <h3 className="text-xs font-bold text-white font-mono truncate">
+                      BARALHO ({searchPopups.length} {searchPopups.length === 1 ? 'MATÉRIA' : 'MATÉRIAS'})
+                    </h3>
                   </div>
                 </div>
 
-                {/* Simulated Chrome Address Bar */}
-                {!popup.isPortrait && popup.url && (
-                  <div className="px-3 py-1.5 bg-zinc-950 border-b border-white/5 flex items-center gap-1.5">
-                    <Globe size={11} className="text-zinc-500 shrink-0" />
-                    <div className="bg-white/[0.03] hover:bg-white/[0.06] border border-white/5 rounded px-2 py-0.5 text-[8.5px] font-mono text-zinc-400 truncate flex-1 leading-none select-text cursor-text">
-                      {popup.url}
-                    </div>
-                  </div>
-                )}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    onClick={() => setIsSearchDeckMinimized(true)}
+                    className="p-1.5 px-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-zinc-300 hover:text-white rounded-xl transition-all cursor-pointer flex items-center gap-1 text-xs font-mono"
+                    title="Minimizar em Baralho"
+                  >
+                    <Minimize size={14} />
+                    <span className="text-[10px] hidden sm:inline font-sans font-medium">Minimizar</span>
+                  </button>
+                  <button
+                    onClick={() => setSearchPopups([])}
+                    className="p-1.5 text-zinc-400 hover:text-white hover:bg-red-500/20 hover:border-red-500/40 border border-transparent rounded-xl transition-all cursor-pointer"
+                    title="Fechar Todo o Baralho"
+                  >
+                    <X size={17} />
+                  </button>
+                </div>
+              </div>
 
-                {/* Main Capture Visual Box */}
-                <div className="relative aspect-[16/10] overflow-hidden bg-zinc-900 group/capture">
-                  {popup.imageUrl ? (
-                    <img 
-                      src={popup.imageUrl} 
-                      className="w-full h-full object-cover transition-transform duration-700 group-hover/capture:scale-110" 
-                      alt="Captura de tela"
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center bg-zinc-950">
-                      <Globe size={24} className="text-zinc-700 animate-pulse" />
-                    </div>
-                  )}
+              {/* Lista de Matérias no Baralho */}
+              <div className="overflow-y-auto space-y-3 pr-1 max-h-[60vh] custom-scrollbar">
+                {searchPopups.map((popup) => {
+                  const isDanger = popup.classification === 'danger';
+                  const isStar = popup.classification === 'star';
 
-                  <div className={cn(
-                    "absolute inset-0 pointer-events-none bg-gradient-to-b opacity-25",
-                    isDanger ? "from-red-500/0 via-red-500/20 to-red-500/0" : "from-sky-500/0 via-sky-500/20 to-sky-500/0"
-                  )} />
-                  <motion.div 
-                    className={cn(
-                      "absolute left-0 right-0 h-0.5 opacity-60 shadow-lg z-10",
-                      isDanger ? "bg-red-500 shadow-red-500" :
-                      isStar ? "bg-emerald-500 shadow-emerald-500" :
-                      "bg-sky-400 shadow-sky-400"
-                    )}
-                    animate={{ top: ["0%", "100%", "0%"] }}
-                    transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-                  />
-
-                  {popup.isPortrait && (
-                    <div className="absolute inset-0 p-4 flex flex-col justify-between bg-black/60 backdrop-blur-[1px]">
-                      <div className="absolute top-2 left-2 w-3 h-3 border-t-2 border-l-2 border-cyan-400" />
-                      <div className="absolute top-2 right-2 w-3 h-3 border-t-2 border-r-2 border-cyan-400" />
-                      <div className="absolute bottom-2 left-2 w-3 h-3 border-b-2 border-l-2 border-cyan-400" />
-                      <div className="absolute bottom-2 right-2 w-3 h-3 border-b-2 border-r-2 border-cyan-400" />
-
-                      <div className="flex gap-2.5 items-center bg-black/80 backdrop-blur-md p-1.5 rounded-lg border border-white/10 shadow-lg">
-                        {popup.avatarUrl && (
-                          <img src={popup.avatarUrl} className="w-10 h-10 rounded-md object-cover border border-cyan-400/50 block" alt="" referrerPolicy="no-referrer" />
-                        )}
-                        <div className="min-w-0">
-                          <p className="text-[9px] font-mono text-cyan-400 font-extrabold tracking-wider uppercase leading-none mb-1">RECON DETECTADO</p>
-                          <p className="text-[9px] font-sans font-bold text-white max-w-[170px] truncate leading-tight">{popup.title.replace("IDENTIDADE ATIVA: ", "").replace("ALERTA DE CONTRAVANÇÃO: ", "")}</p>
+                  return (
+                    <motion.div
+                      key={popup.id}
+                      initial={{ opacity: 0, y: 15 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.9 }}
+                      className={cn(
+                        "w-full bg-black/95 hover:bg-black border rounded-xl overflow-hidden shadow-2xl transition-all duration-300 select-none",
+                        isDanger ? "border-red-500/40 shadow-red-500/10" :
+                        isStar ? "border-emerald-500/40 shadow-emerald-500/10" :
+                        "border-sky-500/30 shadow-sky-500/5 hover:shadow-sky-500/10"
+                      )}
+                    >
+                      {/* Simulated Web Browser Tab Bar */}
+                      <div className={cn(
+                        "px-3 py-2 border-b flex items-center justify-between",
+                        isDanger ? "bg-red-950/20 border-red-500/10 text-red-100" :
+                        isStar ? "bg-emerald-950/20 border-emerald-500/10 text-emerald-100" :
+                        "bg-zinc-900/60 border-white/5 text-zinc-300"
+                      )}>
+                        <div className="flex items-center gap-1.5 font-mono min-w-0">
+                          <div className="flex items-center gap-1 mr-1.5 shrink-0">
+                            <span className="w-2.5 h-2.5 rounded-full bg-red-500/80 cursor-pointer" onClick={() => setSearchPopups(prev => prev.filter(p => p.id !== popup.id))} />
+                            <span className="w-2.5 h-2.5 rounded-full bg-yellow-500/80" />
+                            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/80" />
+                          </div>
+                          {popup.faviconUrl && (
+                            <img src={popup.faviconUrl} className="w-3.5 h-3.5 rounded object-contain shrink-0" alt="" referrerPolicy="no-referrer" />
+                          )}
+                          <span className="text-[10px] font-bold tracking-tight truncate max-w-[160px]">
+                            {popup.isPortrait ? "RECON-X BIOMETRIC" : (popup.title || "Captura de Tela")}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-[8.5px] font-mono text-white/30">{popup.timestamp}</span>
+                          <button
+                            onClick={() => setSearchPopups(prev => prev.filter(p => p.id !== popup.id))}
+                            className="text-white/40 hover:text-white hover:bg-white/5 p-1 rounded transition-all cursor-pointer"
+                            title="Remover esta matéria"
+                          >
+                            <X size={12} />
+                          </button>
                         </div>
                       </div>
 
-                      <div className="flex flex-col gap-1.5 mt-auto">
-                        {popup.socialGrade && (
-                          <div className="flex items-center justify-between bg-black/90 p-1.5 rounded border border-white/5 font-mono text-[8.5px]">
-                            <span className="text-zinc-400 font-medium">🛡️ TAXA SOCIAL:</span>
-                            <span className="text-cyan-400 font-black glow-cyan">{popup.socialGrade}</span>
+                      {/* Simulated Chrome Address Bar */}
+                      {!popup.isPortrait && popup.url && (
+                        <div className="px-3 py-1.5 bg-zinc-950 border-b border-white/5 flex items-center gap-1.5">
+                          <Globe size={11} className="text-zinc-500 shrink-0" />
+                          <div className="bg-white/[0.03] hover:bg-white/[0.06] border border-white/5 rounded px-2 py-0.5 text-[8.5px] font-mono text-zinc-400 truncate flex-1 leading-none select-text cursor-text">
+                            {popup.url}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Main Capture Visual Box */}
+                      <div className="relative aspect-[16/10] overflow-hidden bg-zinc-900 group/capture">
+                        {popup.imageUrl ? (
+                          <img 
+                            src={popup.imageUrl} 
+                            className="w-full h-full object-cover transition-transform duration-700 group-hover/capture:scale-110" 
+                            alt="Captura de tela"
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center bg-zinc-950">
+                            <Globe size={24} className="text-zinc-700 animate-pulse" />
                           </div>
                         )}
 
-                        {isDanger && popup.dangerLevel && (
-                          <div className="bg-red-500/10 border border-red-500/20 p-1.5 rounded font-mono text-[8.5px] text-red-400">
-                            <div className="flex items-center justify-between mb-1 font-bold">
-                              <span>🚨 TAXA PERICULOSIDADE:</span>
-                              <span>{popup.dangerLevel * 10}%</span>
+                        <div className={cn(
+                          "absolute inset-0 pointer-events-none bg-gradient-to-b opacity-25",
+                          isDanger ? "from-red-500/0 via-red-500/20 to-red-500/0" : "from-sky-500/0 via-sky-500/20 to-sky-500/0"
+                        )} />
+                        <motion.div 
+                          className={cn(
+                            "absolute left-0 right-0 h-0.5 opacity-60 shadow-lg z-10",
+                            isDanger ? "bg-red-500 shadow-red-500" :
+                            isStar ? "bg-emerald-500 shadow-emerald-500" :
+                            "bg-sky-400 shadow-sky-400"
+                          )}
+                          animate={{ top: ["0%", "100%", "0%"] }}
+                          transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+                        />
+
+                        {popup.isPortrait && (
+                          <div className="absolute inset-0 p-4 flex flex-col justify-between bg-black/60 backdrop-blur-[1px]">
+                            <div className="absolute top-2 left-2 w-3 h-3 border-t-2 border-l-2 border-cyan-400" />
+                            <div className="absolute top-2 right-2 w-3 h-3 border-t-2 border-r-2 border-cyan-400" />
+                            <div className="absolute bottom-2 left-2 w-3 h-3 border-b-2 border-l-2 border-cyan-400" />
+                            <div className="absolute bottom-2 right-2 w-3 h-3 border-b-2 border-r-2 border-cyan-400" />
+
+                            <div className="flex gap-2.5 items-center bg-black/80 backdrop-blur-md p-1.5 rounded-lg border border-white/10 shadow-lg">
+                              {popup.avatarUrl && (
+                                <img src={popup.avatarUrl} className="w-10 h-10 rounded-md object-cover border border-cyan-400/50 block" alt="" referrerPolicy="no-referrer" />
+                              )}
+                              <div className="min-w-0">
+                                <p className="text-[9px] font-mono text-cyan-400 font-extrabold tracking-wider uppercase leading-none mb-1">RECON DETECTADO</p>
+                                <p className="text-[9px] font-sans font-bold text-white max-w-[170px] truncate leading-tight">{popup.title.replace("IDENTIDADE ATIVA: ", "").replace("ALERTA DE CONTRAVANÇÃO: ", "")}</p>
+                              </div>
                             </div>
-                            <div className="w-full bg-zinc-900 rounded-full h-1 overflow-hidden">
-                              <div className="bg-red-500 h-full rounded-full" style={{ width: `${popup.dangerLevel * 10}%` }} />
+
+                            <div className="flex flex-col gap-1.5 mt-auto">
+                              {popup.socialGrade && (
+                                <div className="flex items-center justify-between bg-black/90 p-1.5 rounded border border-white/5 font-mono text-[8.5px]">
+                                  <span className="text-zinc-400 font-medium">🛡️ TAXA SOCIAL:</span>
+                                  <span className="text-cyan-400 font-black glow-cyan">{popup.socialGrade}</span>
+                                </div>
+                              )}
+
+                              {isDanger && popup.dangerLevel && (
+                                <div className="bg-red-500/10 border border-red-500/20 p-1.5 rounded font-mono text-[8.5px] text-red-400">
+                                  <div className="flex items-center justify-between mb-1 font-bold">
+                                    <span>🚨 TAXA PERICULOSIDADE:</span>
+                                    <span>{popup.dangerLevel * 10}%</span>
+                                  </div>
+                                  <div className="w-full bg-zinc-900 rounded-full h-1 overflow-hidden">
+                                    <div className="bg-red-500 h-full rounded-full" style={{ width: `${popup.dangerLevel * 10}%` }} />
+                                  </div>
+                                </div>
+                              )}
+
+                              {isStar && popup.starsCount && (
+                                <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/20 p-1.5 rounded font-mono text-[8.5px] text-emerald-400">
+                                  <span className="font-bold">⭐ RECOMENDAÇÃO:</span>
+                                  <span className="flex">
+                                    {Array.from({ length: popup.starsCount }).map((_, i) => (
+                                      <Sparkles key={i} size={8} className="text-emerald-400 animate-pulse ml-0.5" />
+                                    ))}
+                                  </span>
+                                </div>
+                              )}
                             </div>
                           </div>
                         )}
 
-                        {isStar && popup.starsCount && (
-                          <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/20 p-1.5 rounded font-mono text-[8.5px] text-emerald-400">
-                            <span className="font-bold">⭐ RECOMENDAÇÃO:</span>
-                            <span className="flex">
-                              {Array.from({ length: popup.starsCount }).map((_, i) => (
-                                <Sparkles key={i} size={8} className="text-emerald-400 animate-pulse ml-0.5" />
-                              ))}
-                            </span>
+                        {!popup.isPortrait && (
+                          <div className="absolute top-2.5 left-2.5 px-1.5 py-0.5 bg-black/80 rounded border border-white/5 text-[7px] font-mono uppercase tracking-widest text-zinc-400 flex items-center gap-1 backdrop-blur-sm">
+                            <Sparkles size={8} className="text-sky-400" />
+                            Captura Real
                           </div>
                         )}
                       </div>
-                    </div>
-                  )}
 
-                  {!popup.isPortrait && (
-                    <div className="absolute top-2.5 left-2.5 px-1.5 py-0.5 bg-black/80 rounded border border-white/5 text-[7px] font-mono uppercase tracking-widest text-zinc-400 flex items-center gap-1 backdrop-blur-sm">
-                      <Sparkles size={8} className="text-sky-400" />
-                      Captura Real
-                    </div>
-                  )}
-                </div>
+                      <div className="p-3 text-left">
+                        <p className="text-[10px] font-mono uppercase font-bold text-zinc-400 mb-1 tracking-wider line-clamp-1">
+                          {popup.query ? `Q: "${popup.query}"` : "Grounding OSONE"}
+                        </p>
+                        <p className="text-[11px] text-zinc-200 font-sans leading-relaxed line-clamp-3 select-text">
+                          {popup.snippet}
+                        </p>
+                      </div>
 
-                <div className="p-3 text-left">
-                  <p className="text-[10px] font-mono uppercase font-bold text-zinc-400 mb-1 tracking-wider line-clamp-1">
-                    {popup.query ? `Q: "${popup.query}"` : "Grounding OSONE"}
-                  </p>
-                  <p className="text-[11px] text-zinc-200 font-sans leading-relaxed line-clamp-3 select-text">
-                    {popup.snippet}
-                  </p>
-                </div>
-
-                <div className="p-2 bg-zinc-900/40 border-t border-white/5 flex gap-2">
-                  {popup.url && (
-                    <button
-                      onClick={() => {
-                        const handledInternally = tryOpenInInternalMap(popup.url!, popup.title);
-                        if (!handledInternally) {
-                          window.open(popup.url, '_blank');
-                        }
-                      }}
-                      className="flex-1 py-1 px-2.5 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/20 hover:border-sky-500/30 text-sky-400 text-[10px] font-sans font-medium rounded-lg flex items-center justify-center gap-1.5 transition-all"
-                    >
-                      <Globe size={11} />
-                      Acessar Fonte
-                    </button>
-                  )}
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(`${popup.title}\n\n${popup.snippet}${popup.url ? `\n\nLink: ${popup.url}` : ''}`);
-                      addNotification("Detalhes copiados!", "success");
-                    }}
-                    className="py-1 px-2.5 bg-white/5 hover:bg-white/10 border border-white/5 text-zinc-300 hover:text-white text-[10px] font-sans font-medium rounded-lg flex items-center justify-center gap-1.5 transition-all"
-                    title="Copiar Relatório"
-                  >
-                    <Copy size={11} />
-                    Copiar
-                  </button>
-                  <button
-                    onClick={() => setSearchPopups(prev => prev.filter(p => p.id !== popup.id))}
-                    className="py-1 px-2 hover:bg-white/5 border border-transparent hover:border-white/5 text-zinc-500 hover:text-white text-[10px] font-sans font-medium rounded-lg transition-all"
-                  >
-                    Fechar
-                  </button>
-                </div>
-              </motion.div>
-            );
-          })}
-        </AnimatePresence>
-      </div>
+                      <div className="p-2 bg-zinc-900/40 border-t border-white/5 flex gap-2">
+                        {popup.url && (
+                          <button
+                            onClick={() => {
+                              const handledInternally = tryOpenInInternalMap(popup.url!, popup.title);
+                              if (!handledInternally) {
+                                window.open(popup.url, '_blank');
+                              }
+                            }}
+                            className="flex-1 py-1 px-2.5 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/20 hover:border-sky-500/30 text-sky-400 text-[10px] font-sans font-medium rounded-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                          >
+                            <Globe size={11} />
+                            Acessar Fonte
+                          </button>
+                        )}
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(`${popup.title}\n\n${popup.snippet}${popup.url ? `\n\nLink: ${popup.url}` : ''}`);
+                            addNotification("Detalhes copiados!", "success");
+                          }}
+                          className="py-1 px-2.5 bg-white/5 hover:bg-white/10 border border-white/5 text-zinc-300 hover:text-white text-[10px] font-sans font-medium rounded-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                          title="Copiar Relatório"
+                        >
+                          <Copy size={11} />
+                          Copiar
+                        </button>
+                        <button
+                          onClick={() => setSearchPopups(prev => prev.filter(p => p.id !== popup.id))}
+                          className="py-1 px-2 hover:bg-white/5 border border-transparent hover:border-white/5 text-zinc-500 hover:text-white text-[10px] font-sans font-medium rounded-lg transition-all cursor-pointer"
+                        >
+                          Remover
+                        </button>
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            </motion.div>
+          )
+        )}
+      </AnimatePresence>
 
       {/* Botão de Restauração para Interface quando em Modo Imersivo (Voz Livre) */}
       <AnimatePresence>
@@ -15558,48 +15783,83 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
             initial={{ opacity: 0, scale: 0.9, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.9, y: 20 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-md"
-            onClick={() => setYoutubeVideoPopup(null)}
+            className={cn(
+              "fixed inset-0 z-[100] transition-all duration-500 flex",
+              isYoutubeMinimized 
+                ? "pointer-events-none items-end justify-end p-3 sm:p-5 bg-black/0" 
+                : "pointer-events-auto items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-md"
+            )}
+            onClick={() => {
+              if (!isYoutubeMinimized) {
+                setIsYoutubeMinimized(true);
+              }
+            }}
           >
             <div 
-              className="relative w-full max-w-4xl bg-zinc-950 border border-red-500/40 rounded-2xl shadow-[0_0_80px_rgba(239,68,68,0.25)] overflow-hidden flex flex-col group"
+              className={cn(
+                "relative bg-zinc-950 border rounded-2xl overflow-hidden flex flex-col group pointer-events-auto transition-all duration-500 ease-out",
+                isYoutubeMinimized
+                  ? "w-72 sm:w-80 md:w-96 border-red-500/50 shadow-[0_10px_40px_rgba(0,0,0,0.85)] ring-1 ring-red-500/30"
+                  : "w-full max-w-4xl border-red-500/40 shadow-[0_0_80px_rgba(239,68,68,0.25)]"
+              )}
               onClick={(e) => e.stopPropagation()}
             >
               {/* Header */}
-              <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-red-950/60 via-zinc-900 to-zinc-950 border-b border-red-500/20">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="p-2 rounded-xl bg-red-600/20 border border-red-500/30 text-red-400 shrink-0 shadow-inner">
-                    <Youtube size={20} className="animate-pulse" />
+              <div className="flex items-center justify-between px-3.5 py-2.5 bg-gradient-to-r from-red-950/80 via-zinc-900 to-zinc-950 border-b border-red-500/20">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="p-1.5 rounded-xl bg-red-600/20 border border-red-500/30 text-red-400 shrink-0 shadow-inner">
+                    <Youtube size={18} className="animate-pulse" />
                   </div>
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-red-400 bg-red-500/10 px-2 py-0.5 rounded border border-red-500/20">
-                        POP-UP YOUTUBE • HANDS-FREE
-                      </span>
-                    </div>
-                    <h3 className="text-sm font-bold text-white truncate font-sans mt-0.5">
+                    {!isYoutubeMinimized && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9px] font-mono font-bold uppercase tracking-widest text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded border border-red-500/20">
+                          POP-UP YOUTUBE • HANDS-FREE
+                        </span>
+                      </div>
+                    )}
+                    <h3 className={cn("font-bold text-white truncate font-sans", isYoutubeMinimized ? "text-xs" : "text-sm mt-0.5")}>
                       {youtubeVideoPopup.title || "Homem de Ferro (Iron Man) - Videoclipe Oficial"}
                     </h3>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {isYoutubeMinimized ? (
+                    <button
+                      onClick={() => setIsYoutubeMinimized(false)}
+                      className="p-1.5 text-zinc-300 hover:text-white hover:bg-white/10 rounded-xl transition-all cursor-pointer flex items-center gap-1 text-xs font-mono bg-white/5 border border-white/10 shadow-sm"
+                      title="Expandir Pop-up (Tamanho Normal)"
+                    >
+                      <Maximize size={14} />
+                      <span className="hidden sm:inline font-sans">Expandir</span>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setIsYoutubeMinimized(true)}
+                      className="p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-xl transition-all cursor-pointer flex items-center gap-1 text-xs font-mono"
+                      title="Minimizar Pop-up"
+                    >
+                      <Minimize size={15} />
+                      <span className="hidden sm:inline font-sans">Minimizar</span>
+                    </button>
+                  )}
+
                   <a 
                     href={`https://www.youtube.com/watch?v=${youtubeVideoPopup.videoId}`} 
                     target="_blank" 
                     rel="noopener noreferrer"
-                    className="p-2 text-zinc-400 hover:text-white hover:bg-white/10 rounded-xl transition-all text-xs font-mono flex items-center gap-1.5"
+                    className="p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-xl transition-all text-xs font-mono flex items-center gap-1"
                     title="Abrir no YouTube"
                   >
                     <ExternalLink size={15} />
-                    <span className="hidden sm:inline">YouTube</span>
                   </a>
                   <button
                     onClick={() => setYoutubeVideoPopup(null)}
-                    className="p-2 text-zinc-400 hover:text-white hover:bg-red-500/20 hover:border-red-500/40 border border-transparent rounded-xl transition-all cursor-pointer"
+                    className="p-1.5 text-zinc-400 hover:text-white hover:bg-red-500/20 hover:border-red-500/40 border border-transparent rounded-xl transition-all cursor-pointer"
                     title="Fechar Pop-up"
                   >
-                    <X size={18} />
+                    <X size={17} />
                   </button>
                 </div>
               </div>
@@ -15616,17 +15876,28 @@ Instruções imediatas obrigatórias para você (IA de Voz/Chat):
               </div>
 
               {/* Footer info bar */}
-              <div className="px-4 py-2.5 bg-zinc-950 border-t border-white/5 flex items-center justify-between text-xs text-zinc-400 font-mono">
-                <div className="flex items-center gap-2">
+              <div className="px-3 py-1.5 bg-zinc-950 border-t border-white/5 flex items-center justify-between text-[11px] text-zinc-400 font-mono">
+                <div className="flex items-center gap-1.5 min-w-0">
                   <span className="w-2 h-2 rounded-full bg-red-500 animate-ping shrink-0" />
-                  <span className="truncate">Ativado via Palma no Hands-free • Reprodutor OSONE YouTube</span>
+                  <span className="truncate">
+                    {isYoutubeMinimized ? "Miniaturizado no canto" : "Ativado via OSONE YouTube • Minimiza em 2s"}
+                  </span>
                 </div>
-                <button
-                  onClick={() => setYoutubeVideoPopup(null)}
-                  className="text-[11px] text-zinc-400 hover:text-red-400 transition-colors font-semibold uppercase tracking-wider shrink-0 cursor-pointer ml-2"
-                >
-                  Fechar Pop-up
-                </button>
+                {isYoutubeMinimized ? (
+                  <button
+                    onClick={() => setIsYoutubeMinimized(false)}
+                    className="text-[10px] text-red-400 hover:text-red-300 transition-colors font-bold uppercase tracking-wider shrink-0 cursor-pointer ml-2"
+                  >
+                    Expandir
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setIsYoutubeMinimized(true)}
+                    className="text-[10px] text-zinc-400 hover:text-white transition-colors font-semibold uppercase tracking-wider shrink-0 cursor-pointer ml-2"
+                  >
+                    Minimizar
+                  </button>
+                )}
               </div>
             </div>
           </motion.div>
