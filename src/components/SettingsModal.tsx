@@ -380,6 +380,17 @@ export const SettingsModal = ({
                     exit={{ opacity: 0, x: 10 }}
                     className="space-y-6"
                   >
+                    {/* Security & Storage Notice */}
+                    <div className="p-4 bg-amber-500/5 border border-amber-500/15 rounded-2xl flex items-start gap-3">
+                      <AlertCircle size={16} className="text-amber-400 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400 block">Aviso de Segurança & Privacidade</span>
+                        <p className="text-[10px] text-her-muted/80 leading-relaxed font-light">
+                          Suas chaves de API são armazenadas estritamente de forma local no seu navegador (<code className="text-amber-300 font-mono">localStorage</code>) e enviadas via TLS/HTTPS criptografado. Para sua segurança, nunca compartilhe sua tela em transmissões públicas com as chaves abertas.
+                        </p>
+                      </div>
+                    </div>
+
                     <div>
                       <div className="flex items-center gap-2 mb-3">
                         <Key size={12} className="text-her-accent" />
