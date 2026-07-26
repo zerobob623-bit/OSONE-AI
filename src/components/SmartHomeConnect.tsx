@@ -384,6 +384,19 @@ if __name__ == "__main__":
         </div>
       </div>
 
+      {/* Demonstration Sandbox Notice Banner */}
+      <div className="bg-amber-500/10 border-b border-amber-500/20 px-6 py-2.5 flex items-center justify-between text-amber-300 text-xs font-medium shrink-0 z-20">
+        <div className="flex items-center gap-2">
+          <AlertCircle size={15} className="text-amber-400 shrink-0" />
+          <span>
+            <strong>AMBIENTE DE DEMONSTRAÇÃO / SANDBOX:</strong> Os dispositivos e integrações abaixo são simulados localmente (<code className="font-mono text-amber-200">localStorage</code>). Nenhuma ação afeta dispositivos físicos reais.
+          </span>
+        </div>
+        <span className="text-[10px] font-mono uppercase bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/30 shrink-0">
+          Modo Simulação
+        </span>
+      </div>
+
       {/* Main Body Content */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar max-w-7xl mx-auto w-full">
         

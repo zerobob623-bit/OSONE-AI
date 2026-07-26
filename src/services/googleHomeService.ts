@@ -17,23 +17,12 @@ export const googleHomeService = {
       return { success: false, message: "Project ID e Access Token são obrigatórios.", code: 'MISSING_FIELDS' };
     }
 
-    // Simulação de delay de rede
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise(resolve => setTimeout(resolve, 800));
 
-    // Simulação de token bloqueado por segurança (se for muito curto ou específico)
-    if (keys.googleHomeToken === '123456') {
-      return { 
-        success: false, 
-        message: "Acesso bloqueado por múltiplas tentativas falhas. Aguarde 5 minutos ou renove o token no Google Cloud Console.",
-        code: 'SECURITY_BLOCK'
-      };
-    }
-
-    if (keys.googleHomeToken.length < 5) {
-      return { success: false, message: "Token de acesso muito curto. O token OAuth2 do Google geralmente possui mais de 40 caracteres.", code: 'INVALID_TOKEN' };
-    }
-
-    return { success: true, message: "Sincronização com Google Home concluída com sucesso. 3 dispositivos detectados." };
+    return { 
+      success: true, 
+      message: "🧪 [MODO DEMONSTRAÇÃO] Credenciais cadastradas no ambiente local — nenhuma verificação com a nuvem do Google foi realizada. Nenhum dispositivo físico é controlado." 
+    };
   },
 
   /**

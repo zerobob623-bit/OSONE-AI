@@ -826,8 +826,8 @@ const getFriendlyModeName = (mode: WorkspaceMode): string => {
     case 'code': return 'OSONE CODE (Swarm Harness)';
     case 'canvas': return 'Quadro Interativo / Desenho';
     case 'wellness': return 'Wellness & Style Lab';
-    case 'local_control': return 'Automação IoT & Smart Home';
-    case 'smarthome': return 'Automação IoT & Smart Home (Tuya/Hue)';
+    case 'local_control': return 'Automação IoT (Sandbox Local)';
+    case 'smarthome': return 'Automação IoT — Modo Demonstração (Tuya/Hue)';
     case 'sounds': return 'Biblioteca de Sons';
     case 'whatsapp': return 'Gerenciador WhatsApp';
     case 'map': return 'Mapa OS';
@@ -1462,6 +1462,10 @@ export default function App() {
   DIRETRIZ CRÍTICA DE MAPA E LOCALIZAÇÕES (MAPA OS):
   - Quando o usuário mencionar qualquer local, endereço, coordenadas, cidade ou país (ex: "mostre São Paulo no mapa", "me leve até Tóquio", "onde fica Londres"), ou pedir para abrir o mapa em alguma localidade, você DEVE acionar imediatamente a ferramenta 'open_map_workspace' passando a localização indicada.
   - É EXPRESSAMENTE PROIBIDO fazer pesquisas na internet ou usar 'openUrl' para links externos do Google Maps ou OpenStreetMap para estes casos. Você deve se concentrar INTEGRALMENTE no ambiente do Mapa OS integrado.
+
+  DIRETRIZ CRÍTICA DE TRANSPARÊNCIA - AUTOMAÇÃO IOT & SMART HOME:
+  - O sistema de Smart Home (Tuya/Hue/SmartThings) é um AMBIENTE DE DEMONSTRAÇÃO LOCAL SIMULADO (Sandbox). Nenhum comando control_smart_device, run_smart_routine ou get_connected_devices controla hardware físico real.
+  - SEMPRE que executar ou relatar uma dessas ações ao usuário (em texto ou por voz), deixe explicitamente claro que a ação ocorreu no ambiente simulado local. NUNCA diga "via nuvem", "conectado ao seu dispositivo físico real" ou frases que sugiram controle físico genuíno.
 
   MODULAÇÃO DE VOZ:
   - IMPORTANTE: Não altere seus parâmetros de voz (pitch/rate) a menos que o usuário peça explicitamente ou a situação seja DRAMATICAMENTE necessária para um efeito criativo (ex: contar uma história de terror ou imitar um robô). NÃO troque de voz em diálogos comuns.
@@ -8831,7 +8835,11 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
               window.dispatchEvent(new Event('osone_smarthome_updated'));
 
               if (updatedCount > 0) {
-                resultMsg = `⚡ Dispositivo **${targetName}** ${action === 'turn_off' ? 'DESLIGADO' : 'LIGADO'} com sucesso via nuvem!`;
+                const actionLabel = action === 'turn_off' ? 'DESLIGADO' 
+                  : action === 'set_color' ? `cor ajustada para ${color || 'selecionada'}` 
+                  : action === 'set_value' ? `nível ajustado para ${value}%` 
+                  : 'LIGADO';
+                resultMsg = `🧪 [SIMULADO] Dispositivo **${targetName}** ${actionLabel} no ambiente de demonstração local. Nenhum dispositivo físico foi alterado.`;
                 addNotification(resultMsg, 'success');
               } else {
                 resultMsg = `⚠️ Nenhum dispositivo encontrado correspondente a "${deviceName}".`;
@@ -10310,7 +10318,11 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       window.dispatchEvent(new Event('osone_smarthome_updated'));
 
                       if (updatedCount > 0) {
-                        resultMsg = `Dispositivo ${targetName} foi ${action === 'turn_off' ? 'desligado' : 'ligado'} com sucesso via nuvem!`;
+                        const actionLabel = action === 'turn_off' ? 'desligado' 
+                          : action === 'set_color' ? `cor ajustada para ${color || 'selecionada'}` 
+                          : action === 'set_value' ? `nível ajustado para ${value}%` 
+                          : 'ligado';
+                        resultMsg = `[SIMULADO NO AMBIENTE LOCAL] Dispositivo ${targetName} teve o estado alterado (${actionLabel}) apenas no ambiente de demonstração local. Nenhum dispositivo físico foi alterado.`;
                         addNotification(resultMsg, 'success');
                       } else {
                         resultMsg = `Nenhum dispositivo encontrado correspondente a "${deviceName}".`;
@@ -11654,7 +11666,9 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
   return (
     <motion.div 
       onPanEnd={(e, info) => {
-        // Only trigger on mobile/touch if needed, but onPan covers it
+        // Only trigger gesture when on the initial home interface
+        if (workspaceMode !== 'home') return;
+
         // info.offset.x > 100 is left-to-right (Open Sidebar)
         // info.offset.x < -100 is right-to-left (Open Settings)
         // We also check for horizontal dominance to avoid triggering on scroll
