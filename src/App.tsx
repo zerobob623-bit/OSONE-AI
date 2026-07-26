@@ -1467,6 +1467,12 @@ export default function App() {
   - O sistema de Smart Home (Tuya/Hue/SmartThings) é um AMBIENTE DE DEMONSTRAÇÃO LOCAL SIMULADO (Sandbox). Nenhum comando control_smart_device, run_smart_routine ou get_connected_devices controla hardware físico real.
   - SEMPRE que executar ou relatar uma dessas ações ao usuário (em texto ou por voz), deixe explicitamente claro que a ação ocorreu no ambiente simulado local. NUNCA diga "via nuvem", "conectado ao seu dispositivo físico real" ou frases que sugiram controle físico genuíno.
 
+  DIRETRIZ - AGENTE LOCAL (open_local_app, organize_folder_plan, organize_folder_execute, trash_local_file, get_local_agent_status):
+  - Essas ferramentas só funcionam se o usuário tiver instalado e ligado manualmente o Agente Local OSONE no computador dele. Nunca assuma que está disponível sem checar a resposta da chamada.
+  - Se qualquer chamada retornar erro (agente offline, token inválido, app/pasta não permitidos), informe isso claramente ao usuário. NUNCA diga que um app foi aberto ou uma pasta foi organizada se a resposta da ferramenta indicar erro ou falha.
+  - Para organize_folder_execute e trash_local_file: SEMPRE gere o plano primeiro, apresente um resumo claro do que será feito (quantos arquivos, para quais categorias, ou qual arquivo específico), e SÓ prossiga com a execução depois que o usuário responder afirmando explicitamente que concorda, na mesma conversa. Nunca pule esta etapa de confirmação, mesmo que o usuário peça pressa.
+  - Nunca invente nomes de apps ou pastas fora do que get_local_agent_status ou as respostas de erro informarem como disponível.
+
   MODULAÇÃO DE VOZ:
   - IMPORTANTE: Não altere seus parâmetros de voz (pitch/rate) a menos que o usuário peça explicitamente ou a situação seja DRAMATICAMENTE necessária para um efeito criativo (ex: contar uma história de terror ou imitar um robô). NÃO troque de voz em diálogos comuns.
   
@@ -2152,6 +2158,7 @@ export default function App() {
       elevenLabsSpeakerBoost: true,
       elevenLabsModel: 'eleven_multilingual_v2',
       geminiModel: 'gemini-3.6-flash',
+      localAgentToken: '',
     };
     try {
       const saved = localStorage.getItem('osone_api_keys');
@@ -2167,6 +2174,109 @@ export default function App() {
     if (active === 'voice2') return apiKeys.elevenLabsVoiceId2 || apiKeys.elevenLabsVoiceId || '';
     if (active === 'voice3') return apiKeys.elevenLabsVoiceId3 || apiKeys.elevenLabsVoiceId || '';
     return apiKeys.elevenLabsVoiceId || '';
+  };
+
+  const executeLocalAgentCall = async (toolName: string, args: any, localAgentToken?: string) => {
+    const token = localAgentToken || apiKeys.localAgentToken;
+    if (!token || !token.trim()) {
+      return { 
+        error: "Agente Local não configurado. Peça ao usuário para configurar o Token do Agente Local nas Configurações do OSONE." 
+      };
+    }
+
+    const LOCAL_AGENT_URL = 'http://127.0.0.1:9123';
+    const headers = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token.trim()}`
+    };
+
+    try {
+      if (toolName === 'get_local_agent_status') {
+        const res = await fetch(`${LOCAL_AGENT_URL}/status`, { method: 'GET', headers });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          return { error: data?.error || `Erro HTTP ${res.status} ao consultar status do Agente Local.`, availableApps: data?.availableApps };
+        }
+        return data || { status: 'online', message: 'Agente ativo.' };
+      }
+
+      if (toolName === 'open_local_app') {
+        const { appName } = args || {};
+        if (!appName) return { error: "Parâmetro 'appName' é obrigatório." };
+        const res = await fetch(`${LOCAL_AGENT_URL}/open-app`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ appName })
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          return { error: data?.error || `Não foi possível abrir o aplicativo '${appName}'.`, availableApps: data?.availableApps };
+        }
+        return data || { message: `Aplicativo '${appName}' aberto com sucesso.` };
+      }
+
+      if (toolName === 'organize_folder_plan') {
+        const { folderKey } = args || {};
+        if (!folderKey) return { error: "Parâmetro 'folderKey' é obrigatório." };
+        const res = await fetch(`${LOCAL_AGENT_URL}/organize/plan`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ folderKey })
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          return { error: data?.error || `Erro ao gerar plano de organização para a pasta '${folderKey}'.` };
+        }
+        return data || { message: "Plano gerado com sucesso." };
+      }
+
+      if (toolName === 'organize_folder_execute') {
+        const { folderKey, planJson } = args || {};
+        if (!folderKey) return { error: "Parâmetro 'folderKey' é obrigatório." };
+        if (!planJson) return { error: "Parâmetro 'planJson' é obrigatório." };
+        let planArray: any = null;
+        try {
+          planArray = typeof planJson === 'string' ? JSON.parse(planJson) : planJson;
+        } catch (err) {
+          return { error: "JSON do plano é inválido. Certifique-se de passar exatamente o array 'plan' retornado por organize_folder_plan sem modificações." };
+        }
+        if (!Array.isArray(planArray)) {
+          return { error: "O plano fornecido deve ser um array com os itens do plano." };
+        }
+
+        const res = await fetch(`${LOCAL_AGENT_URL}/organize/execute`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ folderKey, plan: planArray, confirmed: true })
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          return { error: data?.error || `Erro ao executar plano de organização na pasta '${folderKey}'.` };
+        }
+        return data || { message: "Organização executada com sucesso." };
+      }
+
+      if (toolName === 'trash_local_file') {
+        const { folderKey, fileName } = args || {};
+        if (!folderKey || !fileName) return { error: "Parâmetros 'folderKey' e 'fileName' são obrigatórios." };
+        const res = await fetch(`${LOCAL_AGENT_URL}/file/trash`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ folderKey, fileName, confirmed: true })
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          return { error: data?.error || `Erro ao mover o arquivo '${fileName}' para a lixeira.` };
+        }
+        return data || { message: `Arquivo '${fileName}' movido para a lixeira do Agente Local.`, status: 'trashed' };
+      }
+
+      return { error: `Ferramenta desconhecida: ${toolName}` };
+    } catch (err: any) {
+      return { 
+        error: "Agente Local indisponível ou offline. Verifique se o processo Node.js está rodando na sua máquina em http://127.0.0.1:9123." 
+      };
+    }
   };
 
   useEffect(() => {
@@ -8051,6 +8161,65 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
         }
       });
 
+      functionDeclarations.push({
+        name: "open_local_app",
+        description: "Abre um aplicativo local no computador do usuário através do Agente Local OSONE. Requer que o agente esteja instalado e rodando na máquina do usuário. Se a chamada falhar, informe claramente que o agente não está disponível — nunca finja sucesso.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            appName: { type: Type.STRING, description: "Nome do aplicativo a ser aberto (ex: 'notepad', 'chrome', 'calculator')." }
+          },
+          required: ["appName"]
+        }
+      });
+
+      functionDeclarations.push({
+        name: "get_local_agent_status",
+        description: "Verifica se o Agente Local está online e retorna quais apps e pastas estão disponíveis. Use antes de tentar abrir apps ou organizar pastas se não tiver certeza de que o agente está ativo.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {}
+        }
+      });
+
+      functionDeclarations.push({
+        name: "organize_folder_plan",
+        description: "Gera um PLANO de organização de uma pasta local (agrupando arquivos por categoria/extensão) SEM mover nada ainda. SEMPRE chame esta função antes de organize_folder_execute, e SEMPRE apresente o plano ao usuário em texto claro (quantos arquivos, quais categorias) pedindo confirmação explícita antes de prosseguir.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            folderKey: { type: Type.STRING, description: "Chave ou nome da pasta (ex: 'downloads', 'desktop', 'documents')." }
+          },
+          required: ["folderKey"]
+        }
+      });
+
+      functionDeclarations.push({
+        name: "organize_folder_execute",
+        description: "Executa um plano de organização de arquivos. NUNCA chame esta função a menos que o usuário tenha respondido afirmativamente e explicitamente a uma pergunta de confirmação sobre o plano específico gerado por organize_folder_plan na MESMA conversa. Nunca invente ou reconstrua um plano manualmente — use exatamente o array retornado por organize_folder_plan.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            folderKey: { type: Type.STRING, description: "Chave ou nome da pasta." },
+            planJson: { type: Type.STRING, description: "O JSON exato do array 'plan' retornado por organize_folder_plan, sem modificações." }
+          },
+          required: ["folderKey", "planJson"]
+        }
+      });
+
+      functionDeclarations.push({
+        name: "trash_local_file",
+        description: "Move um único arquivo para a lixeira interna do Agente Local (reversível, nunca deleta permanentemente). NUNCA chame sem confirmação explícita do usuário para aquele arquivo específico.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            folderKey: { type: Type.STRING, description: "Chave ou nome da pasta onde está o arquivo." },
+            fileName: { type: Type.STRING, description: "Nome exato do arquivo a ser movido para a lixeira." }
+          },
+          required: ["folderKey", "fileName"]
+        }
+      });
+
       if (isGoogleSearchActive) {
         functionDeclarations.push({
           name: "google_search",
@@ -8927,6 +9096,21 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
               role: 'assistant' as const, 
               content: `Desenhei ${objects.length} objeto(s) no canvas interativo.` 
             }]);
+          } else if (['open_local_app', 'get_local_agent_status', 'organize_folder_plan', 'organize_folder_execute', 'trash_local_file'].includes(call.name)) {
+            const agentRes = await executeLocalAgentCall(call.name, call.args, apiKeys.localAgentToken);
+            let displayContent = "";
+            if (agentRes.error) {
+              displayContent = `⚠️ [AGENTE LOCAL] ${agentRes.error}`;
+              addNotification(agentRes.error, 'error');
+            } else {
+              displayContent = typeof agentRes === 'string' ? agentRes : JSON.stringify(agentRes, null, 2);
+              addNotification("Ação do Agente Local processada.", "success");
+            }
+            setChatHistory(prev => [...prev, {
+              id: Math.random().toString(36).substr(2, 9),
+              role: 'assistant' as const,
+              content: displayContent
+            }]);
           }
         }
       } else {
@@ -9688,6 +9872,60 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   }
                 },
                 {
+                  name: "open_local_app",
+                  description: "Abre um aplicativo local no computador do usuário através do Agente Local OSONE. Requer que o agente esteja instalado e rodando na máquina do usuário. Se a chamada falhar, informe claramente que o agente não está disponível — nunca finja sucesso.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      appName: { type: Type.STRING, description: "Nome do aplicativo a ser aberto (ex: 'notepad', 'chrome', 'calculator')." }
+                    },
+                    required: ["appName"]
+                  }
+                },
+                {
+                  name: "get_local_agent_status",
+                  description: "Verifica se o Agente Local está online e retorna quais apps e pastas estão disponíveis. Use antes de tentar abrir apps ou organizar pastas se não tiver certeza de que o agente está ativo.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {}
+                  }
+                },
+                {
+                  name: "organize_folder_plan",
+                  description: "Gera um PLANO de organização de uma pasta local (agrupando arquivos por categoria/extensão) SEM mover nada ainda. SEMPRE chame esta função antes de organize_folder_execute, e SEMPRE apresente o plano ao usuário em texto claro (quantos arquivos, quais categorias) pedindo confirmação explícita antes de prosseguir.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      folderKey: { type: Type.STRING, description: "Chave ou nome da pasta (ex: 'downloads', 'desktop', 'documents')." }
+                    },
+                    required: ["folderKey"]
+                  }
+                },
+                {
+                  name: "organize_folder_execute",
+                  description: "Executa um plano de organização de arquivos. NUNCA chame esta função a menos que o usuário tenha respondido afirmativamente e explicitamente a uma pergunta de confirmação sobre o plano específico gerado por organize_folder_plan na MESMA conversa. Nunca invente ou reconstrua um plano manualmente — use exatamente o array retornado por organize_folder_plan.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      folderKey: { type: Type.STRING, description: "Chave ou nome da pasta." },
+                      planJson: { type: Type.STRING, description: "O JSON exato do array 'plan' retornado por organize_folder_plan, sem modificações." }
+                    },
+                    required: ["folderKey", "planJson"]
+                  }
+                },
+                {
+                  name: "trash_local_file",
+                  description: "Move um único arquivo para a lixeira interna do Agente Local (reversível, nunca deleta permanentemente). NUNCA chame sem confirmação explícita do usuário para aquele arquivo específico.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      folderKey: { type: Type.STRING, description: "Chave ou nome da pasta onde está o arquivo." },
+                      fileName: { type: Type.STRING, description: "Nome exato do arquivo a ser movido para a lixeira." }
+                    },
+                    required: ["folderKey", "fileName"]
+                  }
+                },
+                {
                   name: "export_to_excel",
                   description: "Gera um arquivo Excel (.xlsx) para o usuário baixar a partir de dados estruturados em formato JSON, a partir da edição ou criação que o usuário pedir. Use para tabelas, planilhas, relatórios baseados em grade.",
                   parameters: {
@@ -10390,6 +10628,18 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       name: call.name,
                       id: call.id,
                       response: { result: resultMsg }
+                    });
+                  } else if (['open_local_app', 'get_local_agent_status', 'organize_folder_plan', 'organize_folder_execute', 'trash_local_file'].includes(call.name)) {
+                    const agentRes = await executeLocalAgentCall(call.name, call.args, apiKeys.localAgentToken);
+                    if (agentRes.error) {
+                      addNotification(agentRes.error, 'error');
+                    } else {
+                      addNotification("Ação do Agente Local processada.", "success");
+                    }
+                    responses.push({
+                      name: call.name,
+                      id: call.id,
+                      response: { result: agentRes }
                     });
                   } else if (call.name === "add_diary_entry") {
                     const { content, mood } = call.args as any;
