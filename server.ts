@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from "express";
 import http from "http";
 import path from "path";
@@ -11,8 +12,17 @@ import dotenv from "dotenv";
 import pkgWhatsapp from "whatsapp-web.js";
 const { Client: WWebClient, LocalAuth: WWebLocalAuth } = pkgWhatsapp;
 import QRCode from "qrcode";
+import { 
+  checkTuyaConfig, 
+  logTuyaStartupCheck,
+  getTuyaDevices, 
+  getDeviceStatus, 
+  getDeviceDetail, 
+  sendDeviceCommand 
+} from "./src/tuyaService";
 
 dotenv.config();
+logTuyaStartupCheck();
 
 // ALWAYS polyfill global WebSocket for Node.js environments.
 // This ensures @google/genai uses the complete 'ws' implementation rather than Node 22's
@@ -2492,6 +2502,86 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
     } catch (err: any) {
       console.error("Erro ao ler documento de sistema:", err);
       return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ====== TUYA CLOUD OPENAPI INTEGRATION ENDPOINTS ======
+  function isTuyaLockCategory(category: string): boolean {
+    if (!category) return false;
+    const cat = String(category).toLowerCase().trim();
+    const lockCategories = ['ms', 'jtmspro', 'mk', 'jdms', 'lck', 'lock', 'fechadura'];
+    if (lockCategories.includes(cat)) return true;
+    if (cat.includes('lock') || cat.includes('fechadura') || cat.includes('door') || cat.includes('latch')) return true;
+    return false;
+  }
+
+  app.get("/api/tuya/status", (req, res) => {
+    try {
+      const status = checkTuyaConfig();
+      res.json(status);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Erro ao verificar status da Tuya API" });
+    }
+  });
+
+  app.get("/api/tuya/devices", async (req, res) => {
+    try {
+      const devices = await getTuyaDevices();
+      res.json({ devices: devices || [] });
+    } catch (err: any) {
+      console.error("Erro no GET /api/tuya/devices:", err);
+      res.status(500).json({ error: err.message || "Erro ao listar dispositivos Tuya." });
+    }
+  });
+
+  app.get("/api/tuya/device/:deviceId/status", async (req, res) => {
+    try {
+      const { deviceId } = req.params;
+      const deviceIdRegex = /^[a-zA-Z0-9_-]+$/;
+      if (!deviceId || !deviceIdRegex.test(deviceId)) {
+        return res.status(400).json({ error: "ID de dispositivo inválido (deve conter apenas caracteres alfanuméricos, hífen e underline)." });
+      }
+      const status = await getDeviceStatus(deviceId);
+      res.json({ status: status || [] });
+    } catch (err: any) {
+      console.error(`Erro no GET /api/tuya/device/${req.params.deviceId}/status:`, err);
+      res.status(500).json({ error: err.message || "Erro ao consultar status do dispositivo Tuya." });
+    }
+  });
+
+  app.post("/api/tuya/command", async (req, res) => {
+    try {
+      const { deviceId, commands, confirmed } = req.body || {};
+      const deviceIdRegex = /^[a-zA-Z0-9_-]+$/;
+      if (!deviceId || typeof deviceId !== 'string' || !deviceIdRegex.test(deviceId)) {
+        return res.status(400).json({ error: "ID de dispositivo inválido." });
+      }
+      if (!commands || !Array.isArray(commands) || commands.length === 0) {
+        return res.status(400).json({ error: "Parâmetro 'commands' deve ser um array de comandos não vazio." });
+      }
+
+      // Consulta detalhe do dispositivo para verificar se é fechadura/trava
+      let detail: any = null;
+      try {
+        detail = await getDeviceDetail(deviceId);
+      } catch (e) {
+        // Se falhar a busca do detalhe, prossegue, mas valida a categoria se retornada
+      }
+
+      const category = detail?.category || "";
+      const isLock = isTuyaLockCategory(category);
+
+      if (isLock && confirmed !== true) {
+        return res.status(400).json({
+          error: "Confirmação explícita obrigatória para dispositivos de categoria fechadura"
+        });
+      }
+
+      const result = await sendDeviceCommand(deviceId, commands);
+      res.json({ success: true, result, deviceDetail: detail });
+    } catch (err: any) {
+      console.error("Erro no POST /api/tuya/command:", err);
+      res.status(500).json({ error: err.message || "Erro ao enviar comando para o dispositivo Tuya." });
     }
   });
 
