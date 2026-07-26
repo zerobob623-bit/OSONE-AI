@@ -84,6 +84,38 @@ export const SettingsModal = ({
   const [localAgentStatus, setLocalAgentStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [localAgentMessage, setLocalAgentMessage] = useState('');
 
+  // Tuya Cloud Integration Verification States
+  const [tuyaStatus, setTuyaStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const [tuyaMessage, setTuyaMessage] = useState('');
+  const [tuyaDetails, setTuyaDetails] = useState<{ configured: boolean; env: Record<string, boolean> } | null>(null);
+
+  const handleTestTuya = async () => {
+    setTuyaStatus('testing');
+    setTuyaMessage('Consultando variáveis do servidor (/api/tuya/status)...');
+    try {
+      const res = await fetch('/api/tuya/status');
+      const data = await res.json().catch(() => null);
+      if (res.ok && data) {
+        setTuyaDetails(data);
+        if (data.configured) {
+          setTuyaStatus('success');
+          setTuyaMessage('Backend 100% configurado com a Tuya OpenAPI! Chaves do servidor ativas para hardware físico.');
+          if (onAddNotification) onAddNotification('Integração Tuya Cloud verificada com sucesso!', 'success');
+        } else {
+          setTuyaStatus('error');
+          setTuyaMessage('Variáveis de ambiente da Tuya incompletas no servidor (.env).');
+          if (onAddNotification) onAddNotification('Configuração da Tuya incompleta no servidor.', 'error');
+        }
+      } else {
+        setTuyaStatus('error');
+        setTuyaMessage(data?.error || 'Erro ao consultar rota do servidor Tuya.');
+      }
+    } catch (err: any) {
+      setTuyaStatus('error');
+      setTuyaMessage('Erro de rede ao verificar status da Tuya no servidor.');
+    }
+  };
+
   const handleTestLocalAgent = async () => {
     const token = keys.localAgentToken || '';
     if (!token.trim()) {
@@ -1461,6 +1493,88 @@ export const SettingsModal = ({
                           Se o login persistir bloqueado, limpe o token acima e gere um novo.
                         </li>
                       </ul>
+                    </div>
+
+                    {/* TUYA CLOUD OPENAPI INTEGRATION CARD */}
+                    <div className="p-6 bg-amber-500/5 border border-amber-500/20 rounded-[2rem] space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="p-3 bg-amber-500/10 rounded-2xl text-amber-400">
+                            <Cpu size={22} />
+                          </div>
+                          <div>
+                            <h3 className="text-sm font-bold text-white">Tuya Cloud IoT Platform</h3>
+                            <p className="text-[10px] text-amber-400/80 uppercase tracking-widest font-mono">Hardware Físico Real</p>
+                          </div>
+                        </div>
+                        <span className={cn(
+                          "px-2.5 py-1 rounded-full text-[9px] uppercase tracking-wider font-bold border",
+                          tuyaStatus === 'success' ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" :
+                          tuyaStatus === 'error' ? "bg-red-500/10 text-red-400 border-red-500/20" :
+                          "bg-amber-500/10 text-amber-300 border-amber-500/20"
+                        )}>
+                          {tuyaStatus === 'success' ? "Configurado" : tuyaStatus === 'error' ? "Pendente" : "Segurança Backend"}
+                        </span>
+                      </div>
+
+                      <p className="text-xs text-her-muted leading-relaxed font-light">
+                        A integração com a Tuya é mantida com segurança total no backend. O client secret e tokens vivem apenas nas variáveis de ambiente do servidor (<code className="font-mono text-amber-300">process.env</code>).
+                      </p>
+
+                      <button
+                        type="button"
+                        onClick={handleTestTuya}
+                        disabled={tuyaStatus === 'testing'}
+                        className={cn(
+                          "w-full py-3 rounded-2xl text-[10px] uppercase tracking-[0.2em] font-bold transition-all flex items-center justify-center gap-2 cursor-pointer",
+                          tuyaStatus === 'testing' ? "bg-white/5 text-her-muted" :
+                          tuyaStatus === 'success' ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30" :
+                          tuyaStatus === 'error' ? "bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25" :
+                          "bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30"
+                        )}
+                      >
+                        {tuyaStatus === 'testing' ? (
+                          <>
+                            <Loader2 size={14} className="animate-spin" />
+                            Verificando Backend...
+                          </>
+                        ) : (
+                          <>
+                            <Activity size={14} />
+                            Verificar Configuração Tuya
+                          </>
+                        )}
+                      </button>
+
+                      {tuyaStatus !== 'idle' && (
+                        <div className={cn(
+                          "p-4 rounded-2xl text-xs space-y-2 border",
+                          tuyaStatus === 'success' ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20" :
+                          tuyaStatus === 'error' ? "bg-red-500/10 text-red-300 border-red-500/20" :
+                          "bg-white/5 text-her-muted border-white/10"
+                        )}>
+                          <p className="font-medium text-[11px] flex items-center gap-2">
+                            {tuyaStatus === 'success' ? <CheckCircle2 size={14} className="text-emerald-400" /> : <AlertCircle size={14} className="text-amber-400" />}
+                            {tuyaMessage}
+                          </p>
+                          {tuyaDetails?.env && (
+                            <div className="grid grid-cols-2 gap-2 text-[10px] font-mono pt-2 border-t border-white/10">
+                              <span className="flex items-center gap-1.5">
+                                {tuyaDetails.env.clientId ? '✅' : '❌'} TUYA_CLIENT_ID
+                              </span>
+                              <span className="flex items-center gap-1.5">
+                                {tuyaDetails.env.clientSecret ? '✅' : '❌'} TUYA_CLIENT_SECRET
+                              </span>
+                              <span className="flex items-center gap-1.5">
+                                {tuyaDetails.env.baseUrl ? '✅' : '❌'} TUYA_BASE_URL
+                              </span>
+                              <span className="flex items-center gap-1.5">
+                                {tuyaDetails.env.userUid ? '✅' : '❌'} TUYA_USER_UID
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </motion.div>
                 )}

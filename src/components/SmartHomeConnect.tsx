@@ -123,6 +123,18 @@ export const SmartHomeConnect: React.FC<{
 }> = ({ onClose, onNotification }) => {
   const [activeTab, setActiveTab] = useState<'devices' | 'clouds' | 'routines' | 'pc_organizer'>('devices');
   const [selectedRoom, setSelectedRoom] = useState<string>('Todos');
+  const [isTuyaRealConfigured, setIsTuyaRealConfigured] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/tuya/status')
+      .then(r => r.json())
+      .then(data => {
+        if (data && data.configured) {
+          setIsTuyaRealConfigured(true);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const [devices, setDevices] = useState<SmartDevice[]>(() => {
     try {
@@ -384,16 +396,34 @@ if __name__ == "__main__":
         </div>
       </div>
 
-      {/* Demonstration Sandbox Notice Banner */}
-      <div className="bg-amber-500/10 border-b border-amber-500/20 px-6 py-2.5 flex items-center justify-between text-amber-300 text-xs font-medium shrink-0 z-20">
+      {/* Notice Banner - Tuya Cloud Real vs Sandbox */}
+      <div className={cn(
+        "border-b px-6 py-2.5 flex items-center justify-between text-xs font-medium shrink-0 z-20 transition-colors",
+        isTuyaRealConfigured 
+          ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-300" 
+          : "bg-amber-500/10 border-amber-500/20 text-amber-300"
+      )}>
         <div className="flex items-center gap-2">
-          <AlertCircle size={15} className="text-amber-400 shrink-0" />
+          {isTuyaRealConfigured ? (
+            <ShieldCheck size={15} className="text-emerald-400 shrink-0" />
+          ) : (
+            <AlertCircle size={15} className="text-amber-400 shrink-0" />
+          )}
           <span>
-            <strong>AMBIENTE DE DEMONSTRAÇÃO / SANDBOX:</strong> Os dispositivos e integrações abaixo são simulados localmente (<code className="font-mono text-amber-200">localStorage</code>). Nenhuma ação afeta dispositivos físicos reais.
+            {isTuyaRealConfigured ? (
+              <><strong>INTEGRAÇÃO TUYA CLOUD REAL ATIVA:</strong> O servidor backend está autenticado com a Tuya OpenAPI. Os comandos do Gemini e voz operam sobre hardware físico real. Para fechaduras, o sistema solicita confirmação no painel.</>
+            ) : (
+              <><strong>MODO DEMONSTRAÇÃO / SANDBOX:</strong> Dispositivos simulados no storage local. Para controlar hardware físico real, configure as variáveis da Tuya em Ajustes.</>
+            )}
           </span>
         </div>
-        <span className="text-[10px] font-mono uppercase bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/30 shrink-0">
-          Modo Simulação
+        <span className={cn(
+          "text-[10px] font-mono uppercase px-2 py-0.5 rounded border shrink-0 font-bold",
+          isTuyaRealConfigured 
+            ? "bg-emerald-500/20 border-emerald-500/30 text-emerald-300" 
+            : "bg-amber-500/20 border-amber-500/30 text-amber-300"
+        )}>
+          {isTuyaRealConfigured ? "Tuya Hardware Real" : "Modo Simulação"}
         </span>
       </div>
 
