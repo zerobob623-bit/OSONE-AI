@@ -148,7 +148,7 @@ export const Sidebar = ({ isOpen, onClose, mode, setMode, user, onLogout, onLogi
                   )}
                 >
                   <MessageSquare size={18} />
-                  <span>WhatsApp Evolution</span>
+                  <span>WhatsApp Copilot</span>
                 </button>
 
                 <button 

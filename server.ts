@@ -493,11 +493,8 @@ Comentário de @${user}: "${text}"`;
     currentTikTokUser = "";
   }
 
-  // ====== WHATSAPP EVOLUTION INTEGRATION STATE ======
+  // ====== WHATSAPP CONFIG & LOGS STATE ======
   let whatsappConfig = {
-    apiUrl: "https://demo.evolution-api.com",
-    apiKey: "",
-    instanceName: "osone_assistant",
     enabled: false,
     geminiApiKey: ""
   };
@@ -749,11 +746,8 @@ Você está atendendo o usuário pelo WhatsApp em nome do proprietário deste di
   });
 
   app.post("/api/whatsapp/config", (req, res) => {
-    const { apiUrl, apiKey, instanceName, enabled, geminiApiKey } = req.body;
+    const { enabled, geminiApiKey } = req.body;
     
-    if (apiUrl !== undefined) whatsappConfig.apiUrl = apiUrl;
-    if (apiKey !== undefined) whatsappConfig.apiKey = apiKey;
-    if (instanceName !== undefined) whatsappConfig.instanceName = instanceName;
     if (enabled !== undefined) whatsappConfig.enabled = enabled;
     if (geminiApiKey !== undefined) whatsappConfig.geminiApiKey = geminiApiKey;
 
@@ -762,7 +756,7 @@ Você está atendendo o usuário pelo WhatsApp em nome do proprietário deste di
       timestamp: Date.now(),
       type: "info",
       sender: "Sistema",
-      message: `Configurações salvas: Chatbot ${whatsappConfig.enabled ? "Ativado" : "Desativado"}. Instância: ${whatsappConfig.instanceName}`
+      message: `Configurações salvas: Chatbot ${whatsappConfig.enabled ? "Ativado" : "Desativado"}.`
     });
     
     res.json({ status: "success", config: whatsappConfig });
@@ -875,70 +869,115 @@ Nome do interlocutor: ${cleanSender}`;
     }
   });
 
-  // Proxy requests server-side to bypass CORS block / Failed to fetch
-  app.post("/api/whatsapp/proxy", async (req, res) => {
-    let targetUrl = "";
-    try {
-      const { endpoint, method, headers, body } = req.body;
-      if (!endpoint) {
-        return res.status(400).json({ error: "Nenhum endpoint especificado para o proxy." });
-      }
+  // Send Outbound Message via WhatsApp Web Puppeteer (client.sendMessage)
+  app.post("/api/whatsapp/send-message", async (req, res) => {
+    const rawNumber = req.body.number || req.body.to || "";
+    const messageText = req.body.message || req.body.text || "";
 
-      targetUrl = endpoint;
-      if (!endpoint.startsWith("http")) {
-        const cleanApiUrl = whatsappConfig.apiUrl?.endsWith('/') ? whatsappConfig.apiUrl.slice(0, -1) : whatsappConfig.apiUrl;
-        if (!cleanApiUrl) {
-          return res.status(400).json({ error: "A URL da API Evolution não está configurada." });
-        }
-        targetUrl = `${cleanApiUrl}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
-      }
+    console.log(`[WhatsApp Send] Chamada recebida para enviar mensagem. Destino: '${rawNumber}', Tamanho: ${messageText?.length || 0} chars`);
 
-      const fetchOptions: any = {
-        method: method || "GET",
-        headers: {
-          "Content-Type": "application/json",
-          ...headers,
-        },
-      };
+    whatsappLogs.unshift({
+      id: Math.random().toString(36).substring(2, 11),
+      timestamp: Date.now(),
+      type: "info",
+      sender: "Sistema / Envio",
+      message: `Iniciando tentativa de envio para '${rawNumber}'...`
+    });
+    if (whatsappLogs.length > 100) whatsappLogs.pop();
 
-      if (body && (method === "POST" || method === "PUT" || method === "PATCH")) {
-        fetchOptions.body = typeof body === "string" ? body : JSON.stringify(body);
-      }
-
-      // Adiciona apikey se configurado no servidor, caso não enviado
-      if (whatsappConfig.apiKey && !fetchOptions.headers["apikey"]) {
-        fetchOptions.headers["apikey"] = whatsappConfig.apiKey;
-      }
-
-      const response = await fetch(targetUrl, fetchOptions);
-      const contentType = response.headers.get("content-type");
-      
-      let responseBody;
-      if (contentType && contentType.includes("application/json")) {
-        responseBody = await response.json();
-      } else {
-        responseBody = await response.text();
-      }
-
-      res.status(response.status).send(responseBody);
-    } catch (e: any) {
-      const isOffline = e.message?.includes("ENOTFOUND") || 
-                        e.message?.includes("fetch failed") || 
-                        e.code === "ENOTFOUND" || 
-                        e.code === "ECONNREFUSED" || 
-                        e.code === "EAI_AGAIN";
-                        
-      if (isOffline) {
-        console.log("[WhatsApp Proxy Info] Evolution API URL está offline ou inacessível no momento:", targetUrl);
-      } else {
-        console.log("[WhatsApp Proxy Warning] Ocorreu um erro no encaminhamento:", e.message || e);
-      }
-      
-      res.status(isOffline ? 503 : 500).json({ 
-        error: "Evolution API offline ou endereço inacessível.", 
-        isOffline: true,
-        details: e.message || "Erro desconhecido"
+    if (!rawNumber || !messageText) {
+      const errorMsg = "Número de telefone e mensagem são obrigatórios.";
+      console.error("[WhatsApp Send] Falha na validação:", errorMsg);
+      whatsappLogs.unshift({
+        id: Math.random().toString(36).substring(2, 11),
+        timestamp: Date.now(),
+        type: "error",
+        sender: "Sistema / Envio",
+        message: `Falha na validação: ${errorMsg}`
       });
+      if (whatsappLogs.length > 100) whatsappLogs.pop();
+      return res.status(400).json({ status: "error", error: errorMsg });
+    }
+
+    if (!wwebjsClient || wwebjsStatus !== "conectado") {
+      const errorMsg = `Sessão do WhatsApp não está pronta/conectada (Status atual: ${wwebjsStatus}). Conecte via QR Code primeiro no painel.`;
+      console.error("[WhatsApp Send] Erro de prontidão do client:", errorMsg);
+      whatsappLogs.unshift({
+        id: Math.random().toString(36).substring(2, 11),
+        timestamp: Date.now(),
+        type: "error",
+        sender: "Sistema / Envio",
+        message: `Falha ao enviar: ${errorMsg}`
+      });
+      if (whatsappLogs.length > 100) whatsappLogs.pop();
+      return res.status(400).json({ status: "error", error: errorMsg });
+    }
+
+    try {
+      const cleanDigits = rawNumber.replace(/\D/g, "");
+      if (!cleanDigits || cleanDigits.length < 8) {
+        throw new Error(`Número de telefone inválido: '${rawNumber}' (${cleanDigits.length} dígitos)`);
+      }
+
+      let formattedJid = cleanDigits.endsWith("@c.us") || cleanDigits.endsWith("@g.us")
+        ? cleanDigits
+        : `${cleanDigits}@c.us`;
+
+      // Resolver JID oficial via getNumberId se disponível
+      try {
+        const numberId = await wwebjsClient.getNumberId(cleanDigits);
+        if (numberId?._serialized) {
+          formattedJid = numberId._serialized;
+        }
+      } catch (e) {
+        console.log("[WhatsApp Send] getNumberId info (usando JID padrão):", formattedJid);
+      }
+
+      console.log(`[WhatsApp Send] Executando wwebjsClient.sendMessage() para ${formattedJid}...`);
+
+      whatsappLogs.unshift({
+        id: Math.random().toString(36).substring(2, 11),
+        timestamp: Date.now(),
+        type: "info",
+        sender: "WhatsApp Web",
+        message: `Disparando mensagem para ${formattedJid} via WhatsApp Web Puppeteer...`
+      });
+      if (whatsappLogs.length > 100) whatsappLogs.pop();
+
+      const sentResult = await wwebjsClient.sendMessage(formattedJid, messageText);
+      const msgId = sentResult?.id?._serialized || sentResult?.id || "ok";
+
+      console.log(`[WhatsApp Send] Mensagem enviada com sucesso! ID: ${msgId}`);
+
+      whatsappLogs.unshift({
+        id: Math.random().toString(36).substring(2, 11),
+        timestamp: Date.now(),
+        type: "sent",
+        sender: `Para: ${cleanDigits}`,
+        message: messageText
+      });
+      if (whatsappLogs.length > 100) whatsappLogs.pop();
+
+      return res.json({
+        status: "success",
+        message: "Mensagem enviada com sucesso via WhatsApp Web!",
+        messageId: msgId,
+        to: formattedJid
+      });
+    } catch (sendErr: any) {
+      const errMsg = sendErr?.message || String(sendErr);
+      console.error("[WhatsApp Send] Erro durante wwebjsClient.sendMessage():", sendErr);
+
+      whatsappLogs.unshift({
+        id: Math.random().toString(36).substring(2, 11),
+        timestamp: Date.now(),
+        type: "error",
+        sender: `Para: ${rawNumber}`,
+        message: `Erro ao enviar mensagem: ${errMsg}`
+      });
+      if (whatsappLogs.length > 100) whatsappLogs.pop();
+
+      return res.status(500).json({ status: "error", error: errMsg });
     }
   });
 
@@ -1160,139 +1199,9 @@ Retorne SOMENTE o objeto JSON conforme o esquema.
     }
   });
 
-  // Webhook Receiver from Evolution API (e.g. listening to messages.upsert)
-  app.post("/api/whatsapp/webhook", async (req, res) => {
-    try {
-      const body = req.body;
-      const eventType = body.event || body.type;
-
-      // Log webhook ping or payload received
-      console.log("Evolution API Webhook received:", eventType || "ping/raw");
-
-      // Verify if it's indeed message creation
-      if (eventType && eventType !== "messages.upsert" && eventType !== "values.upsert" && eventType !== "messages.create") {
-         return res.json({ status: "ignored", reason: "Unmanaged webhook event types: " + eventType });
-      }
-
-      const data = body.data;
-      if (!data) {
-        return res.json({ status: "ignored", reason: "No data payload inside webhook" });
-      }
-
-      // Evitar loop infinito do bot respondendo a si mesmo
-      const fromMe = data.key?.fromMe;
-      if (fromMe === true) {
-        return res.json({ status: "ignored", reason: "Self message (fromMe: true)" });
-      }
-
-      const remoteJid = data.key?.remoteJid;
-      const senderName = data.pushName || "Usuário WhatsApp";
-      const originalMessage = data.message;
-      
-      // Extract clean textual incoming string
-      const text = originalMessage?.conversation || 
-                   originalMessage?.extendedTextMessage?.text || 
-                   originalMessage?.imageMessage?.caption || 
-                   body.text || "";
-
-      if (!text || !remoteJid) {
-        return res.json({ status: "ignored", reason: "Missing remoteJid or content text" });
-      }
-
-      // Check if Chatbot autoresponder is enabled
-      if (!whatsappConfig.enabled) {
-        whatsappLogs.unshift({
-          id: Math.random().toString(36).substring(2, 11),
-          timestamp: Date.now(),
-          type: "received",
-          sender: `${senderName} (${remoteJid})`,
-          message: text,
-          response: "[Auto-resposta inativa no painel]"
-        });
-        if (whatsappLogs.length > 100) whatsappLogs.pop();
-        return res.json({ status: "ignored", reason: "Autoresponder is disabled" });
-      }
-
-      const geminiApiKeyToUse = whatsappConfig.geminiApiKey || getSecretGeminiKey();
-      if (!geminiApiKeyToUse) {
-        whatsappLogs.unshift({
-          id: Math.random().toString(36).substring(2, 11),
-          timestamp: Date.now(),
-          type: "error",
-          sender: "Sistema",
-          message: `Mensagem de ${senderName} recebida, mas a chave API do Gemini não foi encontrada no OSONE.`
-        });
-        if (whatsappLogs.length > 100) whatsappLogs.pop();
-        return res.json({ status: "error", error: "Gemini API key is not configured" });
-      }
-
-      // Use modern GoogleGenAI SDK to speak with Gemini 3.5-flash-lite (forcing Developer API over Vertex AI)
-      const ai = new GoogleGenAI({ apiKey: geminiApiKeyToUse, vertexai: false });
-      const systemPrompt = `Você é o OSONE G5, o cérebro eletrônico central de inteligência artificial de elite, hiperfocado em ajudar o usuário com uma clareza deslumbrante, respostas estruturadas, elegantes e um toque futurista e polido.
-Você está atendendo o usuário pelo WhatsApp em nome do proprietário deste dispositivo OSONE. Responda diretamente e com muita inteligência, clareza, formatação impecável de parágrafos breves e emojis adequados.
-Nome do interlocutor: ${senderName}`;
-
-      const gResult = await generateContentWithFallback(ai, {
-        model: "gemini-3.5-flash-lite",
-        contents: text,
-        config: {
-          systemInstruction: systemPrompt
-        }
-      });
-      
-      const replyText = gResult.text || "Ops! Meu cérebro digital oscilou, por favor tente novamente.";
-
-      // Dispatch to Evolution API
-      const cleanApiUrl = whatsappConfig.apiUrl.endsWith('/') ? whatsappConfig.apiUrl.slice(0, -1) : whatsappConfig.apiUrl;
-      const sendUrl = `${cleanApiUrl}/message/sendText/${whatsappConfig.instanceName}`;
-      
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json"
-      };
-      if (whatsappConfig.apiKey) {
-        headers["apikey"] = whatsappConfig.apiKey;
-      }
-
-      const response = await fetch(sendUrl, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          number: remoteJid,
-          text: replyText,
-          textMessage: {
-            text: replyText
-          }
-        })
-      });
-
-      if (!response.ok) {
-        const errVal = await response.text();
-        throw new Error(`Evolution API HTTP ${response.status}: ${errVal}`);
-      }
-
-      whatsappLogs.unshift({
-        id: Math.random().toString(36).substring(2, 11),
-        timestamp: Date.now(),
-        type: "sent",
-        sender: `${senderName} (${remoteJid})`,
-        message: text,
-        response: replyText
-      });
-      if (whatsappLogs.length > 100) whatsappLogs.pop();
-
-      return res.json({ status: "success", senderName, replied: true });
-    } catch (e: any) {
-      console.error("Critical error inside WhatsApp webhook receiver:", e);
-      whatsappLogs.unshift({
-        id: Math.random().toString(36).substring(2, 11),
-        timestamp: Date.now(),
-        type: "error",
-        sender: "Webhook OSONE",
-        message: `Falha ao processar mensagem recebida: ${e?.message || e}`
-      });
-      if (whatsappLogs.length > 100) whatsappLogs.pop();
-      return res.status(500).json({ status: "error", error: e?.message || e });
-    }
+  // Legacy Webhook route (Evolution API fully removed - active driver is whatsapp-web.js)
+  app.post("/api/whatsapp/webhook", (req, res) => {
+    res.json({ status: "deprecated", message: "Integração Evolution API foi removida. A integração ativa é whatsapp-web.js local." });
   });
 
   // Helper to construct a standard WAV container header for raw 16-bit Mono PCM streams
