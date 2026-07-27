@@ -20,6 +20,7 @@ import {
   getDeviceDetail, 
   sendDeviceCommand 
 } from "./src/tuyaService";
+import { agentRouter } from "./src/localAgentService";
 
 dotenv.config();
 logTuyaStartupCheck();
@@ -102,6 +103,10 @@ async function startServer() {
 
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
+  // Rotas do Agente Local Unificado no Servidor Express Principal
+  app.use("/api/agent", agentRouter);
+  app.use("/agent", agentRouter);
 
   // Middleware to intercept all outgoing JSON and string responses and sanitize potential leaks of API keys
   app.use((req, res, next) => {

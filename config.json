@@ -1,0 +1,32 @@
+{
+  "port": 3000,
+  "token": "osone-local-agent-secret-token",
+  "allowedOrigin": "*",
+  "apps": {
+    "spotify": {
+      "win32": "start spotify:",
+      "linux": "spotify"
+    },
+    "vscode": {
+      "win32": "code",
+      "linux": "code"
+    },
+    "filemanager": {
+      "win32": "explorer",
+      "linux": "xdg-open ."
+    },
+    "terminal": {
+      "win32": "start cmd",
+      "linux": "gnome-terminal"
+    },
+    "browser": {
+      "win32": "start https://google.com",
+      "linux": "xdg-open https://google.com"
+    }
+  },
+  "allowedFolders": {
+    "downloads": "~/Downloads",
+    "desktop": "~/Desktop",
+    "documents": "~/Documents"
+  }
+}

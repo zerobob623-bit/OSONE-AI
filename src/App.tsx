@@ -2178,14 +2178,14 @@ export default function App() {
   };
 
   const executeLocalAgentCall = async (toolName: string, args: any, localAgentToken?: string, isVoiceSession: boolean = false): Promise<any> => {
-    const token = localAgentToken || apiKeys.localAgentToken;
+    const token = localAgentToken || apiKeys.localAgentToken || "osone-local-agent-secret-token";
     if (!token || !token.trim()) {
       return { 
         error: "Agente Local não configurado. Peça ao usuário para configurar o Token do Agente Local nas Configurações do OSONE." 
       };
     }
 
-    const LOCAL_AGENT_URL = 'http://127.0.0.1:9123';
+    const LOCAL_AGENT_URL = '/api/agent';
     const headers = {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${token.trim()}`
@@ -2382,7 +2382,7 @@ export default function App() {
       return { error: `Ferramenta desconhecida: ${toolName}` };
     } catch (err: any) {
       return { 
-        error: "Agente Local indisponível ou offline. Verifique se o processo Node.js está rodando na sua máquina em http://127.0.0.1:9123." 
+        error: "Agente Local unificado indisponível ou offline no servidor (/api/agent)." 
       };
     }
   };
