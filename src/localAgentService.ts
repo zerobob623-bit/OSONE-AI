@@ -31,7 +31,7 @@ export interface LocalAgentConfig {
   port: number;
   token: string;
   allowedOrigin: string;
-  apps: Record<string, { win32?: string; linux?: string }>;
+  apps: Record<string, { win32?: string; linux?: string; processName?: { win32?: string; linux?: string } }>;
   allowedFolders: Record<string, string>;
 }
 
@@ -42,23 +42,43 @@ export let CONFIG: LocalAgentConfig = {
   apps: {
     spotify: {
       win32: 'start spotify:',
-      linux: 'spotify'
+      linux: 'spotify',
+      processName: {
+        win32: 'Spotify.exe',
+        linux: 'spotify'
+      }
     },
     vscode: {
       win32: 'code',
-      linux: 'code'
+      linux: 'code',
+      processName: {
+        win32: 'Code.exe',
+        linux: 'code'
+      }
     },
     filemanager: {
       win32: 'explorer',
-      linux: 'xdg-open .'
+      linux: 'xdg-open .',
+      processName: {
+        win32: 'explorer.exe',
+        linux: 'nautilus'
+      }
     },
     terminal: {
       win32: 'start cmd',
-      linux: 'gnome-terminal'
+      linux: 'gnome-terminal',
+      processName: {
+        win32: 'cmd.exe',
+        linux: 'gnome-terminal'
+      }
     },
     browser: {
       win32: 'start https://google.com',
-      linux: 'xdg-open https://google.com'
+      linux: 'xdg-open https://google.com',
+      processName: {
+        win32: 'chrome.exe',
+        linux: 'chrome'
+      }
     }
   },
   allowedFolders: {
@@ -501,6 +521,149 @@ const handleFileTrash = (req: Request, res: Response) => {
 };
 
 /**
+ * POST /close-app - Fecha um aplicativo local autorizado na allowlist
+ */
+const handleCloseApp = (req: Request, res: Response) => {
+  const appId = (req.body?.appId || req.body?.appName || '').toString().trim();
+
+  if (!appId) {
+    return res.status(400).json({
+      error: 'ID/nome do aplicativo (appId) é obrigatório.',
+      availableApps: Object.keys(CONFIG.apps || {})
+    });
+  }
+
+  const appEntry = CONFIG.apps[appId];
+  if (!appEntry) {
+    logAudit('WARN', 'APP_CLOSE_REJECTED', `Aplicativo '${appId}' não está na allowlist`, { appId });
+    return res.status(400).json({
+      error: `Aplicativo '${appId}' não existe na allowlist do config.json.`,
+      availableApps: Object.keys(CONFIG.apps || {})
+    });
+  }
+
+  const platformKey = process.platform === 'win32' ? 'win32' : 'linux';
+  const processName = appEntry.processName?.[platformKey] || (platformKey === 'win32' ? `${appId}.exe` : appId);
+
+  const command = platformKey === 'win32' 
+    ? `taskkill /IM ${processName} /F` 
+    : `pkill -f ${processName}`;
+
+  exec(command, (error, stdout, stderr) => {
+    if (error) {
+      logAudit('ERROR', 'APP_CLOSE_FAILED', `Falha ao fechar app '${appId}' (Processo: ${processName}): ${error.message}`, { command, processName });
+    } else {
+      logAudit('INFO', 'APP_CLOSE_SUCCESS', `Aplicativo '${appId}' fechado com sucesso (Processo: ${processName})`, { command, processName });
+    }
+  });
+
+  return res.status(200).json({
+    message: `Comando enviado para fechar '${appId}'.`,
+    appId,
+    processName,
+    platform: platformKey
+  });
+};
+
+/**
+ * POST /create-folder - Cria uma subpasta dentro de uma das pastas autorizadas em allowedFolders
+ */
+const handleCreateFolder = (req: Request, res: Response) => {
+  try {
+    const { parentFolder, folderName } = req.body || {};
+
+    if (!parentFolder || typeof parentFolder !== 'string') {
+      return res.status(400).json({ error: 'Pasta pai (parentFolder) é obrigatória.' });
+    }
+
+    if (!folderName || typeof folderName !== 'string') {
+      return res.status(400).json({ error: 'Nome da pasta (folderName) é obrigatório.' });
+    }
+
+    // Validação estrita do Jail e permissão da pasta base
+    const { targetPath: safeFolderPath } = resolveSafePath(parentFolder, folderName);
+
+    if (!fs.existsSync(safeFolderPath)) {
+      fs.mkdirSync(safeFolderPath, { recursive: true });
+    }
+
+    logAudit('INFO', 'FOLDER_CREATED', `Pasta '${folderName}' criada com sucesso em '${parentFolder}'`, {
+      parentFolder,
+      folderName,
+      createdPath: safeFolderPath
+    });
+
+    return res.status(200).json({
+      message: `Pasta '${folderName}' criada com sucesso em '${parentFolder}'.`,
+      parentFolder,
+      folderName,
+      path: safeFolderPath
+    });
+
+  } catch (err: any) {
+    logAudit('ERROR', 'FOLDER_CREATE_FAILED', err.message);
+    return res.status(400).json({ error: err.message });
+  }
+};
+
+/**
+ * POST /write-file - Cria ou escreve um arquivo em uma pasta autorizada em allowedFolders
+ */
+const handleWriteFile = (req: Request, res: Response) => {
+  try {
+    const { folder, fileName, content } = req.body || {};
+
+    if (!folder || typeof folder !== 'string') {
+      return res.status(400).json({ error: 'Pasta (folder) é obrigatória.' });
+    }
+
+    if (!fileName || typeof fileName !== 'string') {
+      return res.status(400).json({ error: 'Nome do arquivo (fileName) é obrigatório.' });
+    }
+
+    const fileContent = content !== undefined && content !== null ? String(content) : '';
+
+    // Validação de Jail de diretório
+    const { targetPath: safeFilePath } = resolveSafePath(folder, fileName);
+
+    const fileExists = fs.existsSync(safeFilePath);
+
+    // Escrever arquivo
+    fs.writeFileSync(safeFilePath, fileContent, 'utf8');
+
+    if (fileExists) {
+      logAudit('WARN', 'FILE_OVERWRITTEN', `AÇÃO SENSÍVEL: Arquivo '${fileName}' foi sobrescrito em '${folder}'`, {
+        folder,
+        fileName,
+        path: safeFilePath,
+        contentLength: fileContent.length
+      });
+    } else {
+      logAudit('INFO', 'FILE_CREATED', `Arquivo '${fileName}' criado com sucesso em '${folder}'`, {
+        folder,
+        fileName,
+        path: safeFilePath,
+        contentLength: fileContent.length
+      });
+    }
+
+    return res.status(200).json({
+      message: fileExists
+        ? `Arquivo '${fileName}' sobrescrito com sucesso em '${folder}'.`
+        : `Arquivo '${fileName}' criado com sucesso em '${folder}'.`,
+      folder,
+      fileName,
+      overwritten: fileExists,
+      path: safeFilePath
+    });
+
+  } catch (err: any) {
+    logAudit('ERROR', 'WRITE_FILE_FAILED', err.message);
+    return res.status(400).json({ error: err.message });
+  }
+};
+
+/**
  * GET /audit/logs
  */
 const handleAuditLogs = (req: Request, res: Response) => {
@@ -522,6 +685,9 @@ const handleAuditLogs = (req: Request, res: Response) => {
 // Mapeamento das rotas no router
 agentRouter.get('/status', handleStatus);
 agentRouter.post('/open-app', handleOpenApp);
+agentRouter.post('/close-app', handleCloseApp);
+agentRouter.post('/create-folder', handleCreateFolder);
+agentRouter.post('/write-file', handleWriteFile);
 agentRouter.post('/organize/plan', handleOrganizePlan);
 agentRouter.post('/organize/execute', handleOrganizeExecute);
 agentRouter.post('/file/trash', handleFileTrash);

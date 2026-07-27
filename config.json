@@ -5,23 +5,43 @@
   "apps": {
     "spotify": {
       "win32": "start spotify:",
-      "linux": "spotify"
+      "linux": "spotify",
+      "processName": {
+        "win32": "Spotify.exe",
+        "linux": "spotify"
+      }
     },
     "vscode": {
       "win32": "code",
-      "linux": "code"
+      "linux": "code",
+      "processName": {
+        "win32": "Code.exe",
+        "linux": "code"
+      }
     },
     "filemanager": {
       "win32": "explorer",
-      "linux": "xdg-open ."
+      "linux": "xdg-open .",
+      "processName": {
+        "win32": "explorer.exe",
+        "linux": "nautilus"
+      }
     },
     "terminal": {
       "win32": "start cmd",
-      "linux": "gnome-terminal"
+      "linux": "gnome-terminal",
+      "processName": {
+        "win32": "cmd.exe",
+        "linux": "gnome-terminal"
+      }
     },
     "browser": {
       "win32": "start https://google.com",
-      "linux": "xdg-open https://google.com"
+      "linux": "xdg-open https://google.com",
+      "processName": {
+        "win32": "chrome.exe",
+        "linux": "chrome"
+      }
     }
   },
   "allowedFolders": {
