@@ -1468,7 +1468,7 @@ export default function App() {
   - O sistema de Smart Home (Tuya/Hue/SmartThings) é um AMBIENTE DE DEMONSTRAÇÃO LOCAL SIMULADO (Sandbox). Nenhum comando control_smart_device, run_smart_routine ou get_connected_devices controla hardware físico real.
   - SEMPRE que executar ou relatar uma dessas ações ao usuário (em texto ou por voz), deixe explicitamente claro que a ação ocorreu no ambiente simulado local. NUNCA diga "via nuvem", "conectado ao seu dispositivo físico real" ou frases que sugiram controle físico genuíno.
 
-  DIRETRIZ - AGENTE LOCAL (open_local_app, organize_folder_plan, organize_folder_execute, trash_local_file, get_local_agent_status):
+  DIRETRIZ - AGENTE LOCAL (open_local_app, fecharAplicativo, criarPasta, escreverArquivo, organize_folder_plan, organize_folder_execute, trash_local_file, get_local_agent_status):
   - Essas ferramentas só funcionam se o usuário tiver instalado e ligado manualmente o Agente Local OSONE no computador dele. Nunca assuma que está disponível sem checar a resposta da chamada.
   - Se qualquer chamada retornar erro (agente offline, token inválido, app/pasta não permitidos), informe isso claramente ao usuário. NUNCA diga que um app foi aberto ou uma pasta foi organizada se a resposta da ferramenta indicar erro ou falha.
   - Para organize_folder_execute e trash_local_file: SEMPRE gere o plano primeiro, apresente um resumo claro do que será feito (quantos arquivos, para quais categorias, ou qual arquivo específico), e SÓ prossiga com a execução depois que o usuário responder afirmando explicitamente que concorda, na mesma conversa. Nunca pule esta etapa de confirmação, mesmo que o usuário peça pressa.
@@ -2214,6 +2214,51 @@ export default function App() {
           return { error: data?.error || `Não foi possível abrir o aplicativo '${appName}'.`, availableApps: data?.availableApps };
         }
         return data || { message: `Aplicativo '${appName}' aberto com sucesso.` };
+      }
+
+      if (toolName === 'close_local_app' || toolName === 'fecharAplicativo' || toolName === 'close_app') {
+        const appId = args?.appId || args?.appName;
+        if (!appId) return { error: "Parâmetro 'appId' ou 'appName' é obrigatório." };
+        const res = await fetch(`${LOCAL_AGENT_URL}/close-app`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ appId })
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          return { error: data?.error || `Não foi possível fechar o aplicativo '${appId}'.`, availableApps: data?.availableApps };
+        }
+        return data || { message: `Comando enviado para fechar '${appId}'.` };
+      }
+
+      if (toolName === 'create_local_folder' || toolName === 'criarPasta' || toolName === 'create_folder') {
+        const { parentFolder, folderName } = args || {};
+        if (!parentFolder || !folderName) return { error: "Parâmetros 'parentFolder' e 'folderName' são obrigatórios." };
+        const res = await fetch(`${LOCAL_AGENT_URL}/create-folder`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ parentFolder, folderName })
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          return { error: data?.error || `Erro ao criar pasta '${folderName}' em '${parentFolder}'.` };
+        }
+        return data || { message: `Pasta '${folderName}' criada com sucesso em '${parentFolder}'.` };
+      }
+
+      if (toolName === 'write_local_file' || toolName === 'escreverArquivo' || toolName === 'write_file') {
+        const { folder, fileName, content } = args || {};
+        if (!folder || !fileName) return { error: "Parâmetros 'folder' e 'fileName' são obrigatórios." };
+        const res = await fetch(`${LOCAL_AGENT_URL}/write-file`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ folder, fileName, content: content ?? '' })
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          return { error: data?.error || `Erro ao escrever arquivo '${fileName}' na pasta '${folder}'.` };
+        }
+        return data || { message: `Arquivo '${fileName}' gravado com sucesso em '${folder}'.` };
       }
 
       if (toolName === 'organize_folder_plan') {
@@ -8278,9 +8323,48 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
         parameters: {
           type: Type.OBJECT,
           properties: {
-            appName: { type: Type.STRING, description: "Nome do aplicativo a ser aberto (ex: 'notepad', 'chrome', 'calculator')." }
+            appName: { type: Type.STRING, description: "Nome do aplicativo a ser aberto (ex: 'spotify', 'vscode', 'browser', 'terminal', 'filemanager')." }
           },
           required: ["appName"]
+        }
+      });
+
+      functionDeclarations.push({
+        name: "fecharAplicativo",
+        description: "Fecha um aplicativo local autorizado no computador do usuário através do Agente Local OSONE (ex: 'spotify', 'vscode', 'browser', 'terminal', 'filemanager').",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            appId: { type: Type.STRING, description: "ID/nome do aplicativo a ser fechado (ex: 'spotify', 'vscode', 'browser', 'terminal', 'filemanager')." }
+          },
+          required: ["appId"]
+        }
+      });
+
+      functionDeclarations.push({
+        name: "criarPasta",
+        description: "Cria uma nova subpasta dentro de uma das pastas autorizadas no computador do usuário (downloads, desktop, documents).",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            parentFolder: { type: Type.STRING, description: "Chave da pasta pai permitida (ex: 'downloads', 'desktop', 'documents')." },
+            folderName: { type: Type.STRING, description: "Nome da nova pasta a ser criada." }
+          },
+          required: ["parentFolder", "folderName"]
+        }
+      });
+
+      functionDeclarations.push({
+        name: "escreverArquivo",
+        description: "Cria ou escreve um arquivo de texto dentro de uma das pastas autorizadas no computador do usuário (downloads, desktop, documents).",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            folder: { type: Type.STRING, description: "Chave da pasta permitida (ex: 'downloads', 'desktop', 'documents')." },
+            fileName: { type: Type.STRING, description: "Nome exato do arquivo com extensão (ex: 'anotacoes.txt', 'relatorio.md')." },
+            content: { type: Type.STRING, description: "Conteúdo de texto a ser gravado no arquivo." }
+          },
+          required: ["folder", "fileName"]
         }
       });
 
@@ -9207,7 +9291,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
               role: 'assistant' as const, 
               content: `Desenhei ${objects.length} objeto(s) no canvas interativo.` 
             }]);
-          } else if (['open_local_app', 'get_local_agent_status', 'organize_folder_plan', 'organize_folder_execute', 'trash_local_file'].includes(call.name)) {
+          } else if (['open_local_app', 'close_local_app', 'fecharAplicativo', 'create_local_folder', 'criarPasta', 'write_local_file', 'escreverArquivo', 'get_local_agent_status', 'organize_folder_plan', 'organize_folder_execute', 'trash_local_file'].includes(call.name)) {
             const agentRes = await executeLocalAgentCall(call.name, call.args, apiKeys.localAgentToken, false);
             let displayContent = "";
             if (agentRes.error) {
@@ -9988,9 +10072,45 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   parameters: {
                     type: Type.OBJECT,
                     properties: {
-                      appName: { type: Type.STRING, description: "Nome do aplicativo a ser aberto (ex: 'notepad', 'chrome', 'calculator')." }
+                      appName: { type: Type.STRING, description: "Nome do aplicativo a ser aberto (ex: 'spotify', 'vscode', 'browser', 'terminal', 'filemanager')." }
                     },
                     required: ["appName"]
+                  }
+                },
+                {
+                  name: "fecharAplicativo",
+                  description: "Fecha um aplicativo local autorizado no computador do usuário através do Agente Local OSONE (ex: 'spotify', 'vscode', 'browser', 'terminal', 'filemanager').",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      appId: { type: Type.STRING, description: "ID/nome do aplicativo a ser fechado (ex: 'spotify', 'vscode', 'browser', 'terminal', 'filemanager')." }
+                    },
+                    required: ["appId"]
+                  }
+                },
+                {
+                  name: "criarPasta",
+                  description: "Cria uma nova subpasta dentro de uma das pastas autorizadas no computador do usuário (downloads, desktop, documents).",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      parentFolder: { type: Type.STRING, description: "Chave da pasta pai permitida (ex: 'downloads', 'desktop', 'documents')." },
+                      folderName: { type: Type.STRING, description: "Nome da nova pasta a ser criada." }
+                    },
+                    required: ["parentFolder", "folderName"]
+                  }
+                },
+                {
+                  name: "escreverArquivo",
+                  description: "Cria ou escreve um arquivo de texto dentro de uma das pastas autorizadas no computador do usuário (downloads, desktop, documents).",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      folder: { type: Type.STRING, description: "Chave da pasta permitida (ex: 'downloads', 'desktop', 'documents')." },
+                      fileName: { type: Type.STRING, description: "Nome exato do arquivo com extensão (ex: 'anotacoes.txt', 'relatorio.md')." },
+                      content: { type: Type.STRING, description: "Conteúdo de texto a ser gravado no arquivo." }
+                    },
+                    required: ["folder", "fileName"]
                   }
                 },
                 {
@@ -10740,7 +10860,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       id: call.id,
                       response: { result: resultMsg }
                     });
-                  } else if (['open_local_app', 'get_local_agent_status', 'organize_folder_plan', 'organize_folder_execute', 'trash_local_file'].includes(call.name)) {
+                  } else if (['open_local_app', 'close_local_app', 'fecharAplicativo', 'create_local_folder', 'criarPasta', 'write_local_file', 'escreverArquivo', 'get_local_agent_status', 'organize_folder_plan', 'organize_folder_execute', 'trash_local_file'].includes(call.name)) {
                     const agentRes = await executeLocalAgentCall(call.name, call.args, apiKeys.localAgentToken, true);
                     if (agentRes.error) {
                       addNotification(agentRes.error, 'error');
