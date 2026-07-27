@@ -613,36 +613,46 @@ const handleWriteFile = (req: Request, res: Response) => {
   try {
     const { folder, fileName, content } = req.body || {};
 
-    if (!folder || typeof folder !== 'string') {
-      return res.status(400).json({ error: 'Pasta (folder) é obrigatória.' });
+    if (!folder || typeof folder !== 'string' || !folder.trim()) {
+      return res.status(400).json({ error: 'O parâmetro folder é obrigatório.' });
     }
 
-    if (!fileName || typeof fileName !== 'string') {
-      return res.status(400).json({ error: 'Nome do arquivo (fileName) é obrigatório.' });
+    if (!fileName || typeof fileName !== 'string' || !fileName.trim()) {
+      return res.status(400).json({ error: 'O parâmetro fileName é obrigatório.' });
     }
 
-    const fileContent = content !== undefined && content !== null ? String(content) : '';
+    if (content === undefined || content === null) {
+      return res.status(400).json({ error: 'O parâmetro content é obrigatório.' });
+    }
 
-    // Validação de Jail de diretório
-    const { targetPath: safeFilePath } = resolveSafePath(folder, fileName);
+    // Validação de pasta autorizada em allowedFolders
+    if (!CONFIG.allowedFolders || !CONFIG.allowedFolders[folder]) {
+      logAudit('WARN', 'WRITE_FILE_REJECTED', `Pasta '${folder}' não está autorizada em allowedFolders.`, { folder, fileName });
+      return res.status(403).json({ error: `A pasta '${folder}' não está na lista de allowedFolders autorizadas.` });
+    }
 
-    const fileExists = fs.existsSync(safeFilePath);
+    const fileContent = String(content);
+
+    // Validação de Jail de diretório usando resolveSafePath()
+    const { targetPath: caminhoValidado } = resolveSafePath(folder, fileName);
+
+    const fileExists = fs.existsSync(caminhoValidado);
 
     // Escrever arquivo
-    fs.writeFileSync(safeFilePath, fileContent, 'utf8');
+    fs.writeFileSync(caminhoValidado, fileContent, 'utf8');
 
     if (fileExists) {
-      logAudit('WARN', 'FILE_OVERWRITTEN', `AÇÃO SENSÍVEL: Arquivo '${fileName}' foi sobrescrito em '${folder}'`, {
+      logAudit('WARN', 'FILE_OVERWRITE', `AÇÃO SENSÍVEL: Arquivo '${fileName}' foi sobrescrito em '${folder}'`, {
         folder,
         fileName,
-        path: safeFilePath,
+        path: caminhoValidado,
         contentLength: fileContent.length
       });
     } else {
-      logAudit('INFO', 'FILE_CREATED', `Arquivo '${fileName}' criado com sucesso em '${folder}'`, {
+      logAudit('INFO', 'FILE_CREATE', `Arquivo '${fileName}' criado com sucesso em '${folder}'`, {
         folder,
         fileName,
-        path: safeFilePath,
+        path: caminhoValidado,
         contentLength: fileContent.length
       });
     }
@@ -654,7 +664,7 @@ const handleWriteFile = (req: Request, res: Response) => {
       folder,
       fileName,
       overwritten: fileExists,
-      path: safeFilePath
+      path: caminhoValidado
     });
 
   } catch (err: any) {

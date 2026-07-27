@@ -218,9 +218,64 @@ export const CodeWorkspace: React.FC<{
     }
   }, [files]);
 
+  const applyCodeToRepository = (newContent: string, targetFileIdOrName?: string) => {
+    let updatedFiles: CodeRepositoryFile[] = [];
+    setFiles(prev => {
+      let targetFound = false;
+      updatedFiles = prev.map(f => {
+        const isTarget = targetFileIdOrName
+          ? (f.id === targetFileIdOrName || f.name.toLowerCase() === targetFileIdOrName.toLowerCase())
+          : (f.name.toLowerCase() === 'index.html' || f.id === 'main-app' || f.id === activeFileId);
+        if (isTarget && !targetFound) {
+          targetFound = true;
+          return { ...f, content: newContent, updatedAt: Date.now() };
+        }
+        return f;
+      });
+
+      if (!targetFound) {
+        if (updatedFiles.length > 0) {
+          updatedFiles[0] = { ...updatedFiles[0], content: newContent, updatedAt: Date.now() };
+        } else {
+          updatedFiles = [{
+            id: 'main-app',
+            name: 'index.html',
+            language: 'html',
+            isMain: true,
+            updatedAt: Date.now(),
+            content: newContent
+          }];
+        }
+      }
+
+      try {
+        localStorage.setItem('osone_code_repository_files', JSON.stringify(updatedFiles));
+      } catch (e) {
+        console.error("Erro ao salvar no localStorage:", e);
+      }
+
+      return updatedFiles;
+    });
+
+    setIsSaved(true);
+
+    const mainFile = updatedFiles.find(f => f.name.toLowerCase() === 'index.html' || f.id === 'main-app') || updatedFiles[0];
+    if (mainFile) {
+      setActiveFileId(mainFile.id);
+    }
+
+    window.dispatchEvent(new Event('osone_repository_updated'));
+  };
+
   const handleUpdateActiveContent = (newContent: string) => {
     setIsSaved(false);
-    setFiles(prev => prev.map(f => f.id === activeFileId ? { ...f, content: newContent, updatedAt: Date.now() } : f));
+    setFiles(prev => {
+      const updated = prev.map(f => f.id === activeFileId ? { ...f, content: newContent, updatedAt: Date.now() } : f);
+      try {
+        localStorage.setItem('osone_code_repository_files', JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
   };
 
   const handleCreateNewFile = () => {
@@ -411,8 +466,7 @@ ${currentCode}`;
         setHunterReport(finalSummary);
 
         if (parsed.correctedCode && parsed.correctedCode.trim().length > 0) {
-          handleUpdateActiveContent(parsed.correctedCode);
-          window.dispatchEvent(new Event('osone_repository_updated'));
+          applyCodeToRepository(parsed.correctedCode, 'index.html');
 
           // Abrir Preview Vivo e notificar
           setViewLayout('preview');
@@ -665,8 +719,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
       addSwarmLog('🚀 Cérebro Integrador', 'Aplicando o projeto aprovado no Repositório do OSONE CODE...', 'info');
 
       if (lastCode && lastCode.trim()) {
-        handleUpdateActiveContent(lastCode);
-        window.dispatchEvent(new Event('osone_repository_updated'));
+        applyCodeToRepository(lastCode, 'index.html');
       }
 
       setSwarmStatus('success');

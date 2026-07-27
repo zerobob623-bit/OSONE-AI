@@ -2804,6 +2804,45 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
     }
   });
 
+  // ====== SESSION HANDOFF STATE & ENDPOINTS (PC <-> MOBILE) ======
+  interface SessionHandoffState {
+    activeDevice: 'pc' | 'mobile';
+    conversationHistory: any[];
+  }
+
+  const globalHandoffState: SessionHandoffState = {
+    activeDevice: 'pc',
+    conversationHistory: []
+  };
+
+  app.get("/api/session/handoff", (req, res) => {
+    res.json(globalHandoffState);
+  });
+
+  app.post("/api/session/handoff", (req, res) => {
+    const { device, conversationHistory } = req.body || {};
+    if (device === 'pc' || device === 'mobile') {
+      globalHandoffState.activeDevice = device;
+    }
+    if (Array.isArray(conversationHistory)) {
+      globalHandoffState.conversationHistory = conversationHistory;
+    }
+
+    const broadcastPayload = JSON.stringify({
+      type: "session:handoff_state",
+      activeDevice: globalHandoffState.activeDevice,
+      conversationHistory: globalHandoffState.conversationHistory
+    });
+
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(broadcastPayload);
+      }
+    });
+
+    res.json({ success: true, ...globalHandoffState });
+  });
+
   // Handle upgrade event manually to route to the /api/live-ws or /api/elevenlabs-ws websocket bridge
   server.on("upgrade", (request, socket, head) => {
     try {
@@ -2861,10 +2900,48 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
 
     let bidiSession: any = null;
 
+    // Send initial handoff state to newly connected client
+    try {
+      clientWs.send(JSON.stringify({
+        type: "session:handoff_state",
+        activeDevice: globalHandoffState.activeDevice,
+        conversationHistory: globalHandoffState.conversationHistory
+      }));
+    } catch (_) {}
+
     clientWs.on("message", async (rawData) => {
       try {
         const message = JSON.parse(rawData.toString());
         
+        if (message.type === "session:handoff" || message.type === "session:handoff_request") {
+          if (message.device === 'pc' || message.device === 'mobile') {
+            globalHandoffState.activeDevice = message.device;
+          }
+          if (Array.isArray(message.conversationHistory)) {
+            globalHandoffState.conversationHistory = message.conversationHistory;
+          }
+          const broadcastPayload = JSON.stringify({
+            type: "session:handoff_state",
+            activeDevice: globalHandoffState.activeDevice,
+            conversationHistory: globalHandoffState.conversationHistory
+          });
+          wss.clients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN) {
+              client.send(broadcastPayload);
+            }
+          });
+          return;
+        }
+
+        if (message.type === "session:get_handoff_state") {
+          clientWs.send(JSON.stringify({
+            type: "session:handoff_state",
+            activeDevice: globalHandoffState.activeDevice,
+            conversationHistory: globalHandoffState.conversationHistory
+          }));
+          return;
+        }
+
         if (message.type === "setup") {
           const { model, config } = message;
           const targetModel = model || "gemini-3.1-flash-live-preview";

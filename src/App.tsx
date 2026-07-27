@@ -5177,6 +5177,107 @@ Escreva um novo retorno. Comece expressando a pancada física com dor bem-humora
     isVoiceOutputPausedRef.current = isVoiceOutputPaused;
   }, [isVoiceOutputPaused]);
 
+  // ====== HANDOFF SESSION STATE (PC <-> MOBILE) ======
+  const isMobileDevice = typeof window !== 'undefined' && (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768);
+  const currentDeviceType: 'pc' | 'mobile' = isMobileDevice ? 'mobile' : 'pc';
+  const [activeHandoffDevice, setActiveHandoffDevice] = useState<'pc' | 'mobile'>('pc');
+  const handoffWsRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    // Initial fetch of handoff state from server
+    fetch("/api/session/handoff")
+      .then(r => r.json())
+      .then(data => {
+        if (data?.activeDevice) {
+          setActiveHandoffDevice(data.activeDevice);
+        }
+      })
+      .catch(e => console.warn("Handoff initial sync error:", e));
+
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${protocol}//${window.location.host}/api/live-ws`;
+    let ws: WebSocket | null = null;
+
+    try {
+      ws = new WebSocket(wsUrl);
+      handoffWsRef.current = ws;
+
+      ws.onopen = () => {
+        try {
+          ws?.send(JSON.stringify({ type: "session:get_handoff_state" }));
+        } catch (_) {}
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const parsed = JSON.parse(event.data);
+          if (parsed.type === "session:handoff_state") {
+            if (parsed.activeDevice) {
+              setActiveHandoffDevice(parsed.activeDevice);
+            }
+            if (Array.isArray(parsed.conversationHistory) && parsed.conversationHistory.length > 0) {
+              setChatHistory(prev => {
+                if (parsed.conversationHistory.length >= prev.length) {
+                  return parsed.conversationHistory;
+                }
+                return prev;
+              });
+            }
+          }
+        } catch (_) {}
+      };
+    } catch (e) {
+      console.warn("Handoff WS connection error:", e);
+    }
+
+    return () => {
+      try { ws?.close(); } catch (_) {}
+    };
+  }, []);
+
+  // Automatically disconnect voice on inactive device when handoff occurs
+  useEffect(() => {
+    if (activeHandoffDevice !== currentDeviceType) {
+      if (liveState.status === 'connected' || isElevenLabsLiveActive) {
+        stopLiveSession();
+        addNotification(`Sessão de voz transferida para ${activeHandoffDevice === 'mobile' ? 'Celular' : 'PC'}. Microfone desativado neste dispositivo.`, "info");
+      }
+    }
+  }, [activeHandoffDevice, currentDeviceType]);
+
+  const handleDeviceHandoffToggle = async () => {
+    const targetDevice = activeHandoffDevice === 'pc' ? 'mobile' : 'pc';
+    setActiveHandoffDevice(targetDevice);
+
+    const historyToPass = chatHistoryRef.current || chatHistory;
+    const payload = {
+      type: "session:handoff",
+      device: targetDevice,
+      conversationHistory: historyToPass
+    };
+
+    if (handoffWsRef.current && handoffWsRef.current.readyState === WebSocket.OPEN) {
+      try {
+        handoffWsRef.current.send(JSON.stringify(payload));
+      } catch (_) {}
+    }
+
+    try {
+      await fetch("/api/session/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          device: targetDevice,
+          conversationHistory: historyToPass
+        })
+      });
+    } catch (e) {
+      console.warn("Handoff POST failed:", e);
+    }
+
+    addNotification(`Sessão transferida para ${targetDevice === 'mobile' ? 'Celular' : 'PC'}!`, "success");
+  };
+
   const [cameraFacingMode, setCameraFacingMode] = useState<'user' | 'environment'>('user');
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const liveVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -6068,6 +6169,10 @@ ${isBad
   };
 
   const startElevenLabsLiveSession = async () => {
+    if (activeHandoffDevice !== currentDeviceType) {
+      addNotification(`Sessão ativa no ${activeHandoffDevice === 'mobile' ? 'Celular' : 'PC'}. Transfira a sessão para usar o microfone aqui.`, "info");
+      return;
+    }
     // Para APENAS o Gemini Live, não reseta liveState ainda
     if (liveSessionRef.current) {
       try { liveSessionRef.current?.close?.(); } catch(_) {}
@@ -7027,12 +7132,24 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
           text = text.replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '').trim();
         }
 
-        if (repoFiles && repoFiles.length > 0) {
-          repoFiles[0].content = text;
-          repoFiles[0].updatedAt = Date.now();
-          localStorage.setItem('osone_code_repository_files', JSON.stringify(repoFiles));
-          window.dispatchEvent(new Event('osone_repository_updated'));
+        if (!Array.isArray(repoFiles) || repoFiles.length === 0) {
+          repoFiles = [{
+            id: 'main-app',
+            name: 'index.html',
+            language: 'html',
+            isMain: true,
+            updatedAt: Date.now(),
+            content: text
+          }];
+        } else {
+          const mainIdx = repoFiles.findIndex((f: any) => f.name?.toLowerCase() === 'index.html' || f.id === 'main-app' || f.isMain);
+          const targetIdx = mainIdx !== -1 ? mainIdx : 0;
+          repoFiles[targetIdx].content = text;
+          repoFiles[targetIdx].updatedAt = Date.now();
         }
+
+        localStorage.setItem('osone_code_repository_files', JSON.stringify(repoFiles));
+        window.dispatchEvent(new Event('osone_repository_updated'));
         addNotification("Código gerado e atualizado no Repositório do OSONE!", "success");
       }
     } catch (error: any) {
@@ -12282,6 +12399,36 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
               VOZ LIVRE
             </span>
           </button>
+
+          {/* BOTÃO DE HANDOFF MANUAL (PC <-> CELULAR) */}
+          <button
+            onClick={handleDeviceHandoffToggle}
+            className={cn(
+              "p-2 md:px-3 md:py-1.5 transition-all text-[10px] font-medium flex items-center gap-1.5 border rounded-full relative overflow-hidden ml-1",
+              activeHandoffDevice === currentDeviceType
+                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 shadow-[0_0_10px_rgba(16,185,129,0.15)]"
+                : "bg-amber-500/20 border-amber-500/40 text-amber-300 animate-pulse hover:bg-amber-500/30 shadow-[0_0_12px_rgba(245,158,11,0.25)]"
+            )}
+            title={activeHandoffDevice === currentDeviceType 
+              ? `Sessão ativa neste dispositivo. Clique para transferir.` 
+              : `Sessão ativa no ${activeHandoffDevice === 'mobile' ? 'Celular' : 'PC'}. Clique para transferir para este dispositivo.`}
+          >
+            {activeHandoffDevice === 'pc' ? (
+              <Smartphone size={13} className={activeHandoffDevice !== currentDeviceType ? "animate-bounce" : ""} />
+            ) : (
+              <Monitor size={13} className={activeHandoffDevice !== currentDeviceType ? "animate-bounce" : ""} />
+            )}
+            <span className="hidden sm:inline leading-none text-[9px] font-bold uppercase tracking-wider">
+              {activeHandoffDevice === 'pc' ? "Transferir para Celular" : "Transferir para PC"}
+            </span>
+          </button>
+
+          {activeHandoffDevice !== currentDeviceType && (
+            <span className="hidden lg:flex px-2 py-0.5 text-[9px] font-medium bg-amber-500/10 border border-amber-500/30 text-amber-400 rounded-full items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+              Sessão no {activeHandoffDevice === 'mobile' ? 'Celular' : 'PC'}
+            </span>
+          )}
           
           {showInstallButton && (
             <button 
