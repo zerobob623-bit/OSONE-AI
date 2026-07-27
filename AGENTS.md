@@ -35,6 +35,10 @@ Este é o protocolo universal que deve ser seguido antes de qualquer geração d
 - **ARQUIVO ÚNICO**: O OSONE não possui um sistema de pastas/arquivos real. Você deve escrever apenas UM arquivo bruto, inteiro e completo diretamente na aba de ESCRITA.
 - **SEM GESTÃO DE PASTAS**: Não tente organizar subpastas. Foque em entregar o código ou texto completo em um único bloco no workspace de escrita.
 
-## MEMÓRIA E CONTEXTO
-- **PERSISTÊNCIA**: Você possui memória via `localStorage`. Lembre-se que o histórico, dados de saúde e o conteúdo da aba Escrita persistem entre sessões.
-- **PRUNING**: Se o histórico de chat ficar muito longo ou o assunto mudar radicalmente, use `prune_chat_history` para manter o foco e economizar contexto.
+## PROTOCOLO DE PRESERVAÇÃO DE FUNCIONALIDADES E VERIFICAÇÃO (`FEATURES.md`)
+- **LEITURA OBRIGATÓRIA**: Antes de qualquer modificação de código, releia o arquivo `/FEATURES.md` na raiz do projeto para entender o mapa de recursos do sistema.
+- **EDIÇÕES CIRÚRGICAS**: Edite apenas os trechos estritamente relevantes à instrução atual do usuário. É EXPRESSAMENTE PROIBIDO sobrescrever ou apagar recursos existentes listados no `FEATURES.md` (como Agente Local, Gemini Live, Handoff PC<->Celular, jogos, mapas, etc.), a menos que o usuário peça explicitamente "remova" ou "substitua".
+- **AUTO-VERIFICAÇÃO PRÉ-ENTREGA**:
+  1. Execute a verificação de compilação/tipagem (`lint_applet` / `compile_applet`) para garantir zero erros antes de entregar a resposta.
+  2. Compare o código resultante com o `FEATURES.md` e confirme que todas as funções, rotas, componentes e módulos listados continuam presentes e funcionais. Se algo foi apagado sem pedido, restaure-o imediatamente antes de finalizar a resposta.
+  3. Sempre atualize o `FEATURES.md` caso a nova alteração tenha introduzido um recurso novo no projeto.
