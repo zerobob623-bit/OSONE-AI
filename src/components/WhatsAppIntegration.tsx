@@ -4,7 +4,8 @@ import { WhatsAppConnect } from './WhatsAppConnect';
 import { 
   MessageSquare, Settings, AlertCircle, CheckCircle, 
   RefreshCw, Play, Pause, Trash2, Cpu, Activity, Send, 
-  Check, AlertTriangle, ArrowRight, BookOpen, Smartphone, ShieldCheck
+  Check, AlertTriangle, ArrowRight, BookOpen, Smartphone, ShieldCheck,
+  Database, Globe, Save, History, FileText, Link as LinkIcon
 } from 'lucide-react';
 
 interface WhatsappLog {
@@ -21,6 +22,14 @@ interface WhatsAppConfig {
   geminiApiKey: string;
 }
 
+interface ChatMessage {
+  role: "user" | "assistant";
+  text: string;
+  timestamp: number;
+}
+
+type ConversationsMap = Record<string, ChatMessage[]>;
+
 export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: string }) {
   // Config state
   const [config, setConfig] = useState<WhatsAppConfig>({
@@ -32,7 +41,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
   const [isSaving, setIsSaving] = useState(false);
   const [logs, setLogs] = useState<WhatsappLog[]>([]);
   const [isRefreshingLogs, setIsRefreshingLogs] = useState(false);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'settings' | 'logs' | 'docs'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'knowledge' | 'settings' | 'logs' | 'docs'>('dashboard');
 
   // Manual Outbound Sending State (whatsapp-web.js)
   const [sendNumber, setSendNumber] = useState('');
@@ -42,9 +51,21 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
 
   // Simulated Chatbot incoming test state
   const [simulatedName, setSimulatedName] = useState('Larissa Souza');
-  const [simulatedMessage, setSimulatedMessage] = useState('Olá! Gostaria de entender como o assistente OSONE funciona.');
+  const [simulatedMessage, setSimulatedMessage] = useState('Olá! Quanto custa o produto e quais as formas de pagamento?');
   const [isSimulatingIncoming, setIsSimulatingIncoming] = useState(false);
   const [simulatedResult, setSimulatedResult] = useState<string | null>(null);
+
+  // Knowledge Base States
+  const [knowledgeBaseText, setKnowledgeBaseText] = useState('');
+  const [isSavingKb, setIsSavingKb] = useState(false);
+  const [kbSaveResult, setKbSaveResult] = useState<string | null>(null);
+  const [importUrl, setImportUrl] = useState('');
+  const [isImportingUrl, setIsImportingUrl] = useState(false);
+  const [importUrlResult, setImportUrlResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  // Conversations History State
+  const [conversations, setConversations] = useState<ConversationsMap>({});
+  const [selectedContactJid, setSelectedContactJid] = useState<string | null>(null);
 
   // Load backend configurations and logs
   const fetchConfig = async () => {
@@ -74,12 +95,41 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
     }
   };
 
+  const fetchKnowledgeBase = async () => {
+    try {
+      const res = await fetch('/api/whatsapp/knowledge-base');
+      if (res.ok) {
+        const data = await res.json();
+        setKnowledgeBaseText(data.content || '');
+      }
+    } catch (e) {
+      console.error("Erro ao carregar base de conhecimento:", e);
+    }
+  };
+
+  const fetchConversations = async () => {
+    try {
+      const res = await fetch('/api/whatsapp/conversations');
+      if (res.ok) {
+        const data = await res.json();
+        setConversations(data || {});
+      }
+    } catch (e) {
+      console.error("Erro ao carregar conversas:", e);
+    }
+  };
+
   useEffect(() => {
     fetchConfig();
     fetchLogs();
+    fetchKnowledgeBase();
+    fetchConversations();
 
-    // Constant auto-refresh for logs so user can see chatbot replies
-    const val = setInterval(fetchLogs, 4000);
+    // Constant auto-refresh for logs and conversations so user can see chatbot activity
+    const val = setInterval(() => {
+      fetchLogs();
+      fetchConversations();
+    }, 4000);
     return () => clearInterval(val);
   }, []);
 
@@ -101,6 +151,66 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
       console.error("Falha ao salvar configuração:", e);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleSaveKnowledgeBase = async () => {
+    setIsSavingKb(true);
+    setKbSaveResult(null);
+    try {
+      const res = await fetch('/api/whatsapp/knowledge-base', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: knowledgeBaseText })
+      });
+      if (res.ok) {
+        setKbSaveResult("Base de conhecimento salva com sucesso no servidor!");
+        fetchKnowledgeBase();
+      } else {
+        setKbSaveResult("Erro ao salvar a base de conhecimento.");
+      }
+    } catch (e: any) {
+      setKbSaveResult(`Falha ao salvar: ${e?.message || e}`);
+    } finally {
+      setIsSavingKb(false);
+    }
+  };
+
+  const handleImportUrl = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!importUrl) return;
+    setIsImportingUrl(true);
+    setImportUrlResult(null);
+
+    try {
+      const res = await fetch('/api/whatsapp/knowledge-base/import-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: importUrl })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.status === 'success') {
+        setKnowledgeBaseText(data.content);
+        setImportUrlResult({
+          success: true,
+          message: data.message || `Dados da URL importados com sucesso!`
+        });
+        setImportUrl('');
+        fetchKnowledgeBase();
+      } else {
+        setImportUrlResult({
+          success: false,
+          message: data.error || 'Falha ao extrair conteúdo da URL.'
+        });
+      }
+    } catch (err: any) {
+      setImportUrlResult({
+        success: false,
+        message: `Erro na comunicação: ${err?.message || err}`
+      });
+    } finally {
+      setIsImportingUrl(false);
     }
   };
 
@@ -243,7 +353,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
         </div>
 
         {/* Navigation Tabs */}
-        <div className="max-w-7xl mx-auto flex items-center gap-2 mt-8 border-b border-white/5 pb-1">
+        <div className="max-w-7xl mx-auto flex items-center gap-2 mt-8 border-b border-white/5 pb-1 flex-wrap">
           <button
             onClick={() => setActiveTab('dashboard')}
             className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
@@ -254,6 +364,18 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
           >
             <Cpu size={14} />
             Painel & Disparo
+          </button>
+
+          <button
+            onClick={() => setActiveTab('knowledge')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              activeTab === 'knowledge' 
+                ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30 shadow-lg' 
+                : 'text-zinc-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <Database size={14} />
+            Base de Conhecimento
           </button>
 
           <button
@@ -480,7 +602,188 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
           </div>
         )}
 
-        {/* TAB 2: CHATBOT SETTINGS */}
+        {/* TAB 2: BASE DE CONHECIMENTO */}
+        {activeTab === 'knowledge' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Left: Product Description & URL Scraper */}
+            <div className="lg:col-span-8 space-y-6">
+              {/* Product Info Card */}
+              <div className="p-6 bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl relative">
+                <div className="flex items-center justify-between mb-4 pb-3 border-b border-white/10">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-xl bg-orange-500/20 border border-orange-500/30 text-orange-400">
+                      <Database size={18} />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-white">Base de Conhecimento do Produto / Vendedor AI</h3>
+                      <p className="text-[11px] text-zinc-400">Escreva o contexto do produto (preço, benefícios, garantia) para o Vendedor AI consultar</p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] text-orange-400 font-mono bg-orange-500/10 px-2.5 py-1 rounded-full border border-orange-500/20">
+                    knowledge-base.json
+                  </span>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-300 mb-1.5 flex items-center justify-between">
+                      <span>Descrição Manual do Produto e Regras Comerciais</span>
+                      <span className="text-[10px] text-zinc-500 font-mono">{knowledgeBaseText.length} caracteres</span>
+                    </label>
+                    <textarea
+                      rows={12}
+                      value={knowledgeBaseText}
+                      onChange={(e) => setKnowledgeBaseText(e.target.value)}
+                      placeholder={`Exemplo de Estrutura:\n- PRODUTO: Mentoria OSONE G5 Automation\n- PREÇO: R$ 497,00 à vista ou 12x de R$ 49,70\n- BENEFÍCIOS: Atendimento 24h, inteligência artificial treinada no WhatsApp, dashboard de controle\n- GARANTIA: 7 dias incondicionais\n- LINK DE PAGAMENTO: https://pay.osone.app/mentoria`}
+                      className="w-full p-4 bg-white/5 border border-white/10 rounded-2xl text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-orange-500/50 font-mono leading-relaxed resize-none"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between pt-2">
+                    {kbSaveResult ? (
+                      <span className="text-xs text-emerald-400 font-medium flex items-center gap-1.5">
+                        <CheckCircle size={14} /> {kbSaveResult}
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-zinc-500">Salva no servidor e carregada em tempo real em todas as conversas.</span>
+                    )}
+
+                    <button
+                      onClick={handleSaveKnowledgeBase}
+                      disabled={isSavingKb}
+                      className="px-5 py-2.5 rounded-xl bg-orange-500 text-black font-bold text-xs hover:bg-orange-400 transition-all cursor-pointer flex items-center gap-2 shadow-lg shadow-orange-500/20 disabled:opacity-50"
+                    >
+                      {isSavingKb ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                      Salvar Base de Conhecimento
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* URL Importer Card */}
+              <div className="p-6 bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl">
+                <div className="flex items-center gap-2.5 mb-4 pb-3 border-b border-white/10">
+                  <div className="p-2 rounded-xl bg-sky-500/20 border border-sky-500/30 text-sky-400">
+                    <Globe size={18} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Importar Conteúdo de URL Externa</h3>
+                    <p className="text-[11px] text-zinc-400">Extrai o texto limpo da página usando cheerio e anexa à Base de Conhecimento</p>
+                  </div>
+                </div>
+
+                <form onSubmit={handleImportUrl} className="space-y-4">
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <div className="relative flex-1">
+                      <Globe size={16} className="absolute left-3.5 top-3 text-zinc-500" />
+                      <input
+                        type="url"
+                        placeholder="https://sualoja.com.br/produto-especifico"
+                        value={importUrl}
+                        onChange={(e) => setImportUrl(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-sky-500/50"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={isImportingUrl || !importUrl}
+                      className="px-5 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-black font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 shrink-0"
+                    >
+                      {isImportingUrl ? <RefreshCw size={14} className="animate-spin" /> : <LinkIcon size={14} />}
+                      Importar da URL
+                    </button>
+                  </div>
+
+                  {importUrlResult && (
+                    <div className={`p-3 rounded-xl border text-xs flex items-start gap-2 ${
+                      importUrlResult.success 
+                        ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' 
+                        : 'bg-red-500/10 border-red-500/30 text-red-300'
+                    }`}>
+                      {importUrlResult.success ? <CheckCircle size={16} className="shrink-0 mt-0.5" /> : <AlertCircle size={16} className="shrink-0 mt-0.5" />}
+                      <p>{importUrlResult.message}</p>
+                    </div>
+                  )}
+                </form>
+              </div>
+            </div>
+
+            {/* Right: Real Conversations History Viewer */}
+            <div className="lg:col-span-4 space-y-6">
+              <div className="p-6 bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl h-full flex flex-col">
+                <div className="flex items-center gap-2.5 mb-4 pb-3 border-b border-white/10">
+                  <div className="p-2 rounded-xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-400">
+                    <History size={18} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Histórico por Contato</h3>
+                    <p className="text-[11px] text-zinc-400">Últimas 20 mensagens por cliente</p>
+                  </div>
+                </div>
+
+                {Object.keys(conversations).length === 0 ? (
+                  <div className="text-center py-12 text-zinc-500 text-xs">
+                    Nenhuma conversa registrada ainda no <code className="text-orange-400 font-mono">conversations.json</code>.
+                  </div>
+                ) : (
+                  <div className="flex-1 flex flex-col gap-3 overflow-hidden">
+                    {/* Contact Selector */}
+                    <div className="flex items-center gap-2 overflow-x-auto pb-2 border-b border-white/5">
+                      {Object.keys(conversations).map((jidKey) => (
+                        <button
+                          key={jidKey}
+                          onClick={() => setSelectedContactJid(jidKey)}
+                          className={`px-3 py-1.5 rounded-xl text-[11px] font-mono whitespace-nowrap cursor-pointer transition-all ${
+                            selectedContactJid === jidKey || (!selectedContactJid && Object.keys(conversations)[0] === jidKey)
+                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold'
+                              : 'bg-white/5 text-zinc-400 hover:bg-white/10'
+                          }`}
+                        >
+                          +{jidKey} ({conversations[jidKey].length})
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Chat Messages Log for Selected Contact */}
+                    {(() => {
+                      const activeJid = selectedContactJid || Object.keys(conversations)[0];
+                      const activeMsgs = activeJid ? conversations[activeJid] || [] : [];
+
+                      return (
+                        <div className="flex-1 overflow-y-auto max-h-[450px] space-y-2.5 pr-1 mt-2">
+                          {activeMsgs.length === 0 ? (
+                            <p className="text-xs text-zinc-500 text-center py-4">Sem mensagens neste contato.</p>
+                          ) : (
+                            activeMsgs.map((msg, idx) => (
+                              <div
+                                key={idx}
+                                className={`p-3 rounded-2xl text-xs max-w-[90%] ${
+                                  msg.role === 'user'
+                                    ? 'bg-zinc-800 text-zinc-100 mr-auto border border-white/5'
+                                    : 'bg-orange-500/20 border border-orange-500/30 text-orange-100 ml-auto'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between text-[10px] font-bold text-zinc-400 mb-1 gap-2">
+                                  <span>{msg.role === 'user' ? '👤 Cliente' : '🤖 Vendedor AI'}</span>
+                                  <span className="font-mono text-zinc-500">
+                                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                </div>
+                                <p className="whitespace-pre-wrap">{msg.text}</p>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 3: CHATBOT SETTINGS */}
         {activeTab === 'settings' && (
           <div className="max-w-2xl mx-auto bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl p-6 md:p-8 shadow-2xl">
             <h3 className="text-base font-bold text-white mb-2 flex items-center gap-2">

@@ -12,6 +12,7 @@ import dotenv from "dotenv";
 import pkgWhatsapp from "whatsapp-web.js";
 const { Client: WWebClient, LocalAuth: WWebLocalAuth } = pkgWhatsapp;
 import QRCode from "qrcode";
+import * as cheerio from "cheerio";
 import { 
   checkTuyaConfig, 
   logTuyaStartupCheck,
@@ -528,6 +529,115 @@ Comentário de @${user}: "${text}"`;
     }
   ];
 
+  // ====== KNOWLEDGE BASE & CONVERSATIONS STATE & HELPERS ======
+  const KNOWLEDGE_BASE_PATH = path.join(process.cwd(), "knowledge-base.json");
+  const CONVERSATIONS_PATH = path.join(process.cwd(), "conversations.json");
+
+  function loadKnowledgeBase(): string {
+    try {
+      if (fs.existsSync(KNOWLEDGE_BASE_PATH)) {
+        const data = JSON.parse(fs.readFileSync(KNOWLEDGE_BASE_PATH, "utf-8"));
+        return data.content || "";
+      }
+    } catch (e) {
+      console.error("Erro ao ler knowledge-base.json:", e);
+    }
+    return "";
+  }
+
+  function saveKnowledgeBase(content: string): void {
+    try {
+      fs.writeFileSync(KNOWLEDGE_BASE_PATH, JSON.stringify({ content, updatedAt: Date.now() }, null, 2), "utf-8");
+    } catch (e) {
+      console.error("Erro ao salvar knowledge-base.json:", e);
+    }
+  }
+
+  interface ChatHistoryMessage {
+    role: "user" | "assistant";
+    text: string;
+    timestamp: number;
+  }
+
+  type ConversationsMap = Record<string, ChatHistoryMessage[]>;
+
+  function loadConversations(): ConversationsMap {
+    try {
+      if (fs.existsSync(CONVERSATIONS_PATH)) {
+        return JSON.parse(fs.readFileSync(CONVERSATIONS_PATH, "utf-8"));
+      }
+    } catch (e) {
+      console.error("Erro ao ler conversations.json:", e);
+    }
+    return {};
+  }
+
+  function saveConversations(map: ConversationsMap): void {
+    try {
+      fs.writeFileSync(CONVERSATIONS_PATH, JSON.stringify(map, null, 2), "utf-8");
+    } catch (e) {
+      console.error("Erro ao salvar conversations.json:", e);
+    }
+  }
+
+  let conversationsMap: ConversationsMap = loadConversations();
+
+  function getContactHistory(jid: string): ChatHistoryMessage[] {
+    const cleanKey = jid.replace(/[^0-9]/g, "");
+    return conversationsMap[cleanKey] || [];
+  }
+
+  function addMessageToHistory(jid: string, role: "user" | "assistant", text: string): ChatHistoryMessage[] {
+    const cleanKey = jid.replace(/[^0-9]/g, "");
+    if (!cleanKey) return [];
+
+    if (!conversationsMap[cleanKey]) {
+      conversationsMap[cleanKey] = [];
+    }
+
+    conversationsMap[cleanKey].push({
+      role,
+      text,
+      timestamp: Date.now()
+    });
+
+    // Limit to N=20 messages per contact
+    if (conversationsMap[cleanKey].length > 20) {
+      conversationsMap[cleanKey] = conversationsMap[cleanKey].slice(-20);
+    }
+
+    saveConversations(conversationsMap);
+    return conversationsMap[cleanKey];
+  }
+
+  function buildSalesPrompt(senderJid: string, senderName?: string): string {
+    const kbContent = loadKnowledgeBase();
+    const contactHistory = getContactHistory(senderJid);
+
+    let historyStr = "";
+    if (contactHistory.length > 0) {
+      historyStr = contactHistory
+        .map(m => `${m.role === "user" ? "Cliente" : "Vendedor AI"}: ${m.text}`)
+        .join("\n");
+    }
+
+    return `Você é um Vendedor de Elite e Consultor Comercial atuar pelo WhatsApp em nome da empresa.
+Seu objetivo é sanar dúvidas do cliente, apresentar soluções de forma altamente persuasiva, tirar dúvidas de preços e fechar vendas com tom humano, natural e acolhedor.
+
+=== BASE DE CONHECIMENTO DO PRODUTO E DA EMPRESA ===
+${kbContent || "Nenhuma informação adicional sobre produtos/preços foi cadastrada na base de conhecimento ainda."}
+===================================================
+
+HISTÓRICO RECENTE DAS ÚLTIMAS CONVERSAS COM ESTE CLIENTE (${senderName || senderJid}):
+${historyStr || "Esta é a primeira mensagem deste cliente."}
+
+DIRETRIZES RÍGIDAS DE ATENDIMENTO:
+1. Responda em estilo natural do WhatsApp: parágrafos curtos, linguagem leve, empática e objetiva. Use emojis com moderação.
+2. Utilize as informações da BASE DE CONHECIMENTO para responder sobre produtos, preços, benefícios, garantias e formas de pagamento.
+3. Não invente dados falsos ou preços que não estejam na Base de Conhecimento. Se o cliente perguntar algo indisponível na base, responda com cordialidade que vai consultar a equipe técnica e que responderá em instantes.
+4. Mantenha a continuidade exata em relação ao Histórico Recente de Conversas.`;
+  }
+
   // Helper function to initialize WhatsApp Web Client via Puppeteer
   const initializeWhatsAppWebClient = async () => {
     if (wwebjsClient) {
@@ -649,6 +759,9 @@ Comentário de @${user}: "${text}"`;
           const body = msg.body;
           if (!body) return;
 
+          // Always add received message to contact history
+          addMessageToHistory(sender, "user", body);
+
           whatsappLogs.unshift({
             id: Math.random().toString(36).substring(2, 11),
             timestamp: Date.now(),
@@ -661,8 +774,10 @@ Comentário de @${user}: "${text}"`;
           if (whatsappConfig.enabled) {
             const geminiApiKeyToUse = whatsappConfig.geminiApiKey || getSecretGeminiKey();
             const ai = new GoogleGenAI({ apiKey: geminiApiKeyToUse, vertexai: false });
-            const systemPrompt = `Você é o OSONE G5, o cérebro eletrônico central de inteligência artificial de elite, hiperfocado em ajudar o usuário com uma clareza deslumbrante, respostas estruturadas, elegantes e um toque futurista e polido.
-Você está atendendo o usuário pelo WhatsApp em nome do proprietário deste dispositivo OSONE. Responda diretamente e com muita inteligência, clareza, formatação impecável de parágrafos breves e emojis adequados.`;
+            
+            // Build Context-Rich Sales Prompt with Knowledge Base + History
+            const senderName = msg._data?.notifyName || sender;
+            const systemPrompt = buildSalesPrompt(sender, senderName);
 
             const gResult = await generateContentWithFallback(ai, {
               model: "gemini-3.5-flash-lite",
@@ -670,8 +785,15 @@ Você está atendendo o usuário pelo WhatsApp em nome do proprietário deste di
               config: { systemInstruction: systemPrompt }
             });
 
-            const replyText = gResult.text || "Olá! Recebi sua mensagem no OSONE.";
-            await msg.reply(replyText);
+            const replyText = gResult.text || "Olá! Agradeço sua mensagem. Como posso te ajudar com nossos produtos hoje?";
+            
+            // Send reply directly back to contact
+            const cleanDigits = sender.replace(/\D/g, "");
+            const formattedJid = sender.endsWith("@c.us") ? sender : `${cleanDigits}@c.us`;
+            await wwebjsClient.sendMessage(formattedJid, replyText);
+
+            // Add AI response to contact history
+            addMessageToHistory(sender, "assistant", replyText);
 
             whatsappLogs.unshift({
               id: Math.random().toString(36).substring(2, 11),
@@ -683,7 +805,7 @@ Você está atendendo o usuário pelo WhatsApp em nome do proprietário deste di
             if (whatsappLogs.length > 100) whatsappLogs.pop();
           }
         } catch (err: any) {
-          console.error("[WhatsApp] Erro no listener de mensagem:", err);
+          console.error("[WhatsApp] Erro no listener de mensagem com IA e Vendas:", err);
         }
       });
 
@@ -792,6 +914,99 @@ Você está atendendo o usuário pelo WhatsApp em nome do proprietário deste di
     res.json({ success: true, state: virtualConnectionState });
   });
 
+  // Knowledge Base & Conversations Endpoints
+  app.get("/api/whatsapp/knowledge-base", (req, res) => {
+    res.json({ content: loadKnowledgeBase() });
+  });
+
+  app.post("/api/whatsapp/knowledge-base", (req, res) => {
+    const { content } = req.body;
+    saveKnowledgeBase(content || "");
+    whatsappLogs.unshift({
+      id: Math.random().toString(36).substring(2, 11),
+      timestamp: Date.now(),
+      type: "info",
+      sender: "Base de Conhecimento",
+      message: `Base de conhecimento do produto atualizada (${(content || "").length} caracteres).`
+    });
+    if (whatsappLogs.length > 100) whatsappLogs.pop();
+
+    res.json({ status: "success", content: loadKnowledgeBase() });
+  });
+
+  app.post("/api/whatsapp/knowledge-base/import-url", async (req, res) => {
+    try {
+      const { url } = req.body;
+      if (!url || typeof url !== "string") {
+        return res.status(400).json({ error: "URL inválida ou ausente." });
+      }
+
+      let targetUrl = url.trim();
+      if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
+        targetUrl = `https://${targetUrl}`;
+      }
+
+      console.log(`[Knowledge Base] Extraindo dados da URL: ${targetUrl}...`);
+
+      const response = await fetch(targetUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+      });
+
+      if (!response.ok) {
+        return res.status(400).json({ error: `HTTP Error ${response.status}: Não foi possível carregar a página.` });
+      }
+
+      const html = await response.text();
+      const $ = cheerio.load(html);
+
+      // Remove script, style, header, footer, nav, buttons, SVG
+      $("script, style, noscript, nav, footer, header, svg, iframe, symbol, button").remove();
+
+      // Extract text content from body
+      const pageText = $("body")
+        .text()
+        .replace(/\s+/g, " ")
+        .replace(/\n+/g, "\n")
+        .trim();
+
+      if (!pageText || pageText.length < 20) {
+        return res.status(400).json({ error: "Não foi possível extrair texto visível relevante dessa URL." });
+      }
+
+      const existingKb = loadKnowledgeBase();
+      const pageTitle = $("title").text().trim() || targetUrl;
+      const addedSection = `\n\n--- INFORMAÇÕES IMPORTADAS DE: ${pageTitle} (${targetUrl}) ---\n${pageText.slice(0, 15000)}`;
+
+      const updatedKb = (existingKb + addedSection).trim();
+      saveKnowledgeBase(updatedKb);
+
+      whatsappLogs.unshift({
+        id: Math.random().toString(36).substring(2, 11),
+        timestamp: Date.now(),
+        type: "info",
+        sender: "Base de Conhecimento",
+        message: `Importado texto da URL '${targetUrl}' (${pageText.length} caracteres adicionados).`
+      });
+      if (whatsappLogs.length > 100) whatsappLogs.pop();
+
+      return res.json({
+        status: "success",
+        message: `Dados da URL importados com sucesso (${pageText.length} caracteres extraídos)!`,
+        content: updatedKb,
+        extractedLength: pageText.length
+      });
+    } catch (err: any) {
+      console.error("[Knowledge Base] Erro na importação por URL:", err);
+      return res.status(500).json({ error: `Erro ao importar URL: ${err?.message || err}` });
+    }
+  });
+
+  app.get("/api/whatsapp/conversations", (req, res) => {
+    res.json(conversationsMap);
+  });
+
   // Simulate an incoming WhatsApp message
   app.post("/api/whatsapp/simulate-incoming", async (req, res) => {
     try {
@@ -799,6 +1014,9 @@ Você está atendendo o usuário pelo WhatsApp em nome do proprietário deste di
       const cleanSender = senderName || "Visitante";
       const cleanJid = remoteJid || "5511999999999@s.whatsapp.net";
       const cleanText = text || "Olá!";
+
+      // Always add incoming message to history
+      addMessageToHistory(cleanJid, "user", cleanText);
 
       // Add incoming message to logs
       whatsappLogs.unshift({
@@ -838,9 +1056,7 @@ Você está atendendo o usuário pelo WhatsApp em nome do proprietário deste di
 
       // Use modern GoogleGenAI SDK to speak with Gemini 3.5-flash-lite
       const ai = new GoogleGenAI({ apiKey: geminiApiKeyToUse, vertexai: false });
-      const systemPrompt = `Você é o OSONE G5, o cérebro eletrônico central de inteligência artificial de elite, hiperfocado em ajudar o usuário com uma clareza deslumbrante, respostas estruturadas, elegantes e um toque futurista e polido.
-Você está atendendo o usuário pelo WhatsApp em nome do proprietário deste dispositivo OSONE. Responda diretamente e com muita inteligência, clareza, formatação impecável de parágrafos breves e emojis adequados.
-Nome do interlocutor: ${cleanSender}`;
+      const systemPrompt = buildSalesPrompt(cleanJid, cleanSender);
 
       const gResult = await generateContentWithFallback(ai, {
         model: "gemini-3.5-flash-lite",
@@ -850,7 +1066,10 @@ Nome do interlocutor: ${cleanSender}`;
         }
       });
       
-      const replyText = gResult.text || "Ops! Meu cérebro digital oscilou, por favor tente novamente.";
+      const replyText = gResult.text || "Ops! Não consegui gerar uma resposta no momento.";
+
+      // Add AI response to history
+      addMessageToHistory(cleanJid, "assistant", replyText);
 
       whatsappLogs.unshift({
         id: Math.random().toString(36).substring(2, 11),
@@ -938,6 +1157,9 @@ Nome do interlocutor: ${cleanSender}`;
       const msgId = sentResult?.id?._serialized || sentResult?.id || "ok";
 
       console.log(`[WhatsApp Send] Mensagem enviada com sucesso! ID: ${msgId}`);
+
+      // Add to contact history
+      addMessageToHistory(formattedJid, "assistant", messageText);
 
       whatsappLogs.unshift({
         id: Math.random().toString(36).substring(2, 11),
