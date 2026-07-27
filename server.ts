@@ -919,19 +919,9 @@ Nome do interlocutor: ${cleanSender}`;
         throw new Error(`Número de telefone inválido: '${rawNumber}' (${cleanDigits.length} dígitos)`);
       }
 
-      let formattedJid = cleanDigits.endsWith("@c.us") || cleanDigits.endsWith("@g.us")
-        ? cleanDigits
+      const formattedJid = rawNumber.endsWith("@c.us") || rawNumber.endsWith("@g.us")
+        ? rawNumber
         : `${cleanDigits}@c.us`;
-
-      // Resolver JID oficial via getNumberId se disponível
-      try {
-        const numberId = await wwebjsClient.getNumberId(cleanDigits);
-        if (numberId?._serialized) {
-          formattedJid = numberId._serialized;
-        }
-      } catch (e) {
-        console.log("[WhatsApp Send] getNumberId info (usando JID padrão):", formattedJid);
-      }
 
       console.log(`[WhatsApp Send] Executando wwebjsClient.sendMessage() para ${formattedJid}...`);
 
