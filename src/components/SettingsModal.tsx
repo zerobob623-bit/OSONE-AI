@@ -117,19 +117,13 @@ export const SettingsModal = ({
   };
 
   const handleTestLocalAgent = async () => {
-    const token = keys.localAgentToken || '';
-    if (!token.trim()) {
-      setLocalAgentStatus('error');
-      setLocalAgentMessage('Informe o Token do Agente Local antes de testar.');
-      if (onAddNotification) onAddNotification('Informe o Token do Agente Local.', 'error');
-      return;
-    }
+    const token = keys.localAgentToken || "osone-local-agent-secret-token";
 
     setLocalAgentStatus('testing');
-    setLocalAgentMessage('Conectando ao Agente Local (http://127.0.0.1:9123/status)...');
+    setLocalAgentMessage('Conectando ao Agente Local Unificado (/api/agent/status)...');
 
     try {
-      const res = await fetch('http://127.0.0.1:9123/status', {
+      const res = await fetch('/api/agent/status', {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token.trim()}`,
@@ -140,9 +134,9 @@ export const SettingsModal = ({
       const data = await res.json().catch(() => null);
       if (res.ok) {
         setLocalAgentStatus('success');
-        const msg = `Agente Local Ativo! ${data?.platform ? `Plataforma: ${data.platform}.` : ''} ${data?.availableApps ? `${data.availableApps.length} app(s) disponível(is).` : ''}`;
+        const msg = `Agente Local Ativo e Unificado no Servidor! ${data?.platform ? `Plataforma: ${data.platform}.` : ''} ${data?.availableApps ? `${data.availableApps.length} app(s) disponível(is).` : ''}`;
         setLocalAgentMessage(msg);
-        if (onAddNotification) onAddNotification('Conexão com o Agente Local estabelecida com sucesso!', 'success');
+        if (onAddNotification) onAddNotification('Conexão com o Agente Local estabelecida com sucesso no servidor!', 'success');
       } else {
         setLocalAgentStatus('error');
         const errMsg = data?.error || `Erro HTTP ${res.status} ao conectar ao Agente Local.`;
@@ -151,7 +145,7 @@ export const SettingsModal = ({
       }
     } catch (err: any) {
       setLocalAgentStatus('error');
-      const errMsg = 'Não foi possível conectar ao Agente Local em http://127.0.0.1:9123. Verifique se o processo está rodando na sua máquina.';
+      const errMsg = 'Não foi possível conectar ao Agente Local na rota /api/agent/status.';
       setLocalAgentMessage(errMsg);
       if (onAddNotification) onAddNotification(errMsg, 'error');
     }
@@ -682,11 +676,11 @@ export const SettingsModal = ({
                       <div className="flex items-center gap-2">
                         <Cpu size={14} className="text-emerald-400" />
                         <label className="block text-[9px] uppercase tracking-[0.2em] text-her-muted font-bold">
-                          Token do Agente Local (OSONE Local Agent)
+                          Token do Agente Local (OSONE Local Agent - Unificado)
                         </label>
                       </div>
                       <p className="text-[10px] text-her-muted/60 leading-relaxed font-sans">
-                        Cole aqui o token gerado pelo Agente Local ao rodar 'npm start' no seu computador. Esse recurso permite abrir aplicativos e organizar pastas locais. Requer o agente instalado e rodando separadamente.
+                        O Agente Local agora é integrado diretamente ao servidor principal do OSONE (<code className="font-mono text-emerald-400">/api/agent</code>). O token padrão pré-configurado é <code className="font-mono text-emerald-400">osone-local-agent-secret-token</code>. Você também pode acessar o painel completo na aba <strong>Automação</strong>.
                       </p>
                       <div className="space-y-3">
                         <div className="relative flex items-center">
@@ -1382,6 +1376,104 @@ export const SettingsModal = ({
                     exit={{ opacity: 0, x: 10 }}
                     className="space-y-8"
                   >
+                    {/* OSONE LOCAL AGENT (UNIFIED LOCAL AUTOMATION) CARD */}
+                    <div className="p-6 bg-emerald-500/5 border border-emerald-500/20 rounded-[2rem] space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="p-3 bg-emerald-500/10 rounded-2xl text-emerald-400">
+                            <Cpu size={22} />
+                          </div>
+                          <div>
+                            <h3 className="text-sm font-bold text-white">OSONE Local Agent</h3>
+                            <p className="text-[10px] text-emerald-400/80 uppercase tracking-widest font-mono">Automação de Sistema Operacional & Arquivos</p>
+                          </div>
+                        </div>
+                        <span className={cn(
+                          "px-2.5 py-1 rounded-full text-[9px] uppercase tracking-wider font-bold border",
+                          localAgentStatus === 'success' ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" :
+                          localAgentStatus === 'error' ? "bg-red-500/10 text-red-400 border-red-500/20" :
+                          "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
+                        )}>
+                          {localAgentStatus === 'success' ? "Online & Unificado" : localAgentStatus === 'error' ? "Pendente" : "Servidor Unificado (Porta 3000)"}
+                        </span>
+                      </div>
+
+                      <p className="text-xs text-her-muted leading-relaxed font-light">
+                        O Agente Local agora roda <strong>unificado</strong> dentro do próprio servidor principal do OSONE (porta 3000, rota <code className="font-mono text-emerald-400">/api/agent</code>). Ele permite abrir aplicativos locais (Spotify, VSCode, Terminal) e organizar arquivos locais com jail de segurança estrito.
+                      </p>
+
+                      <div className="space-y-3 pt-2">
+                        <div>
+                          <label className="block text-[9px] uppercase tracking-[0.2em] text-her-muted font-bold mb-1.5 pl-1">
+                            Token do Agente Local (Authorization Bearer)
+                          </label>
+                          <div className="relative flex items-center">
+                            <input 
+                              type={showLocalAgentToken ? "text" : "password"}
+                              value={keys.localAgentToken || ''}
+                              onChange={(e) => setKeys({ ...keys, localAgentToken: e.target.value })}
+                              className="w-full bg-white/[0.02] border border-white/[0.05] rounded-2xl px-5 py-3 pr-12 focus:outline-none focus:border-emerald-500/30 transition-all text-xs font-mono text-white placeholder:text-her-muted/20"
+                              placeholder="osone-local-agent-secret-token"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowLocalAgentToken(!showLocalAgentToken)}
+                              className="absolute right-3 p-1.5 text-her-muted/50 hover:text-white transition-colors cursor-pointer"
+                              title={showLocalAgentToken ? "Ocultar Token" : "Mostrar Token"}
+                            >
+                              {showLocalAgentToken ? <EyeOff size={16} /> : <Eye size={16} />}
+                            </button>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={handleTestLocalAgent}
+                          disabled={localAgentStatus === 'testing'}
+                          className={cn(
+                            "w-full py-3 rounded-2xl text-[10px] uppercase tracking-[0.15em] font-bold transition-all flex items-center justify-center gap-2 cursor-pointer",
+                            localAgentStatus === 'testing' ? "bg-white/5 text-her-muted cursor-wait" :
+                            localAgentStatus === 'success' ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30" :
+                            localAgentStatus === 'error' ? "bg-red-500/15 text-red-400 border border-red-500/30 hover:bg-red-500/25" :
+                            "bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30"
+                          )}
+                        >
+                          {localAgentStatus === 'testing' ? (
+                            <>
+                              <Loader2 size={13} className="animate-spin text-emerald-400" />
+                              Testando Conexão com /api/agent/status...
+                            </>
+                          ) : localAgentStatus === 'success' ? (
+                            <>
+                              <CheckCircle2 size={13} className="text-emerald-400" />
+                              Agente Local Online
+                            </>
+                          ) : (
+                            <>
+                              <Activity size={13} />
+                              Testar Conexão do Agente Local
+                            </>
+                          )}
+                        </button>
+
+                        {localAgentMessage && (
+                          <div className={cn(
+                            "px-4 py-3 rounded-2xl text-[11px] flex items-start gap-2 animate-in fade-in slide-in-from-top-1 border",
+                            localAgentStatus === 'success' ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20" :
+                            localAgentStatus === 'error' ? "bg-red-500/10 text-red-300 border-red-500/20" :
+                            "bg-white/5 text-her-muted border-white/10"
+                          )}>
+                            {localAgentStatus === 'success' ? (
+                              <CheckCircle2 size={14} className="text-emerald-400 shrink-0 mt-0.5" />
+                            ) : (
+                              <AlertCircle size={14} className="text-red-400 shrink-0 mt-0.5" />
+                            )}
+                            <span className="leading-relaxed font-medium">{localAgentMessage}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
                     <div className="p-6 bg-white/[0.03] border border-white/[0.05] rounded-[2rem] space-y-4">
                       <div className="flex items-center gap-4">
                         <div className="p-3 bg-her-accent/10 rounded-2xl">
