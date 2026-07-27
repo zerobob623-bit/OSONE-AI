@@ -35,7 +35,7 @@ Este documento registra todas as funcionalidades, rotas e módulos ativos no eco
 - **Canvas Interativo (`InteractiveCanvas.tsx`)**: Renderizador visual dinâmico.
 - **Lousa do Tutor / Educador (`TeacherWhiteboard.tsx`)**: Lousa interativa para explicações acadêmicas e mentoria.
 - **Central de Saúde e Bem-Estar (`WellnessCenter.tsx`)**: Acompanhamento de dados de saúde, metas e evolução do usuário.
-- **Integração WhatsApp (`WhatsAppConnect.tsx`, `WhatsAppIntegration.tsx`)**: Conexão e automação via WhatsApp.
+- **Integração WhatsApp Copilot (`WhatsAppConnect.tsx`, `WhatsAppIntegration.tsx`)**: Conexão nativa via `whatsapp-web.js` (Puppeteer local), auto-resposta inteligente com Gemini 3.5-flash-lite, e disparo de mensagens diretas (`POST /api/whatsapp/send-message`) com logs auditáveis de status em tempo real. Removido resquício da Evolution API.
 - **Casa Inteligente Tuya (`SmartHomeConnect.tsx`, `tuyaService.ts`)**: Controle de dispositivos IoT e automação residencial.
 - **Sentinela OSONE (`OSONESentinel.tsx`)**: Módulo de monitoramento contínuo e alertas de sistema.
 - **Visão Computacional OSONE Lens (`OSONELens.tsx`)**: Análise visual e entrada multimodal através da câmera.
