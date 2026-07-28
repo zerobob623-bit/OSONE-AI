@@ -9121,7 +9121,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
             setChatHistory(prev => [...prev, { 
               id: Math.random().toString(36).substr(2, 9), 
               role: 'assistant' as const, 
-              content: `Entendido. Alterei o espaço de trabalho para: ${mode === 'home' ? 'Início (aba fechada)' : mode === 'writing' ? 'Prosa e Escrita' : mode === 'code' ? 'OSONE CODE' : mode === 'canvas' ? 'Lousa Interativa' : mode === 'whatsapp' ? 'WhatsApp Copilot' : mode}.` 
+              content: `Entendido. Alterei o espaço de trabalho para: ${mode === 'home' ? 'Início (aba fechada)' : mode === 'writing' ? 'Prosa e Escrita' : mode === 'code' ? 'OSONE CODE' : mode === 'canvas' ? 'Lousa Interativa' : mode === 'whatsapp' ? 'OSONE ZAP' : mode}.` 
             }]);
           } else if (call.name === 'close_workspace_tab') {
             setWorkspaceMode('home');
@@ -11991,7 +11991,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         wellness: "Sintonizada! Estou com foco no seu Wellness & Style Lab. Vamos analisar seus dados de saúde, calcular calorias, IMC ou moldar recomendações esportivas inteligentes baseados no seu perfil?",
         aural_control: "Sintonizada! Estou atenta aos seus Ajustes de Voz & Perfil. Modifique meu motor neural, mude meu timbre, ajuste a modulação ou escolha uma nova personalidade para as minhas redes cognitivas.",
         sounds: "Sintonizada! Estou de olho na sua Biblioteca de Sons e Efeitos. Aqui você pode carregar novos arquivos locais, classificar trilhas e montar as suas músicas preferidas.",
-        whatsapp: "Sintonizada! Estou sintonizando suas interações no Gerenciador WhatsApp Copilot. Pronta para disparar mensagens ou responder seus contatos com inteligência de ponta.",
+        whatsapp: "Sintonizada! Estou sintonizando suas interações no OSONE ZAP. Pronta para disparar mensagens ou responder seus contatos com inteligência de ponta.",
         map: "Sintonizada! Estou atenta ao Mapa OS de satélite. Diga o nome de uma cidade ou localidade para eu traçar um dossiê geográfico completo com pontos históricos interessantes!",
         rag: "Sintonizada! Estou no painel de RAG e Conectividade de Arquivos do Computador. Lembra-se: tenho acesso total e integrado a todos os arquivos que você compartilhou aqui no IndexedDB. Posso carregar novos arquivos, ler dados, sincronizar ideias e salvá-los localmente em tempo real.",
         creator: "Sintonizada! Estou pronta no Estúdio Neural de Criação Viral. Defina o nicho e referências do canal do seu computador e eu irei pesquisar e raciocinar sobre 9 ideias incríveis, destacar as 3 melhores e criar um roteiro em 3 estágios dramáticos de retenção para o seu próximo vídeo viral!"

@@ -35,12 +35,12 @@ Este documento registra todas as funcionalidades, rotas e módulos ativos no eco
 - **Canvas Interativo (`InteractiveCanvas.tsx`)**: Renderizador visual dinâmico.
 - **Lousa do Tutor / Educador (`TeacherWhiteboard.tsx`)**: Lousa interativa para explicações acadêmicas e mentoria.
 - **Central de Saúde e Bem-Estar (`WellnessCenter.tsx`)**: Acompanhamento de dados de saúde, metas e evolução do usuário.
-- **Integração WhatsApp Copilot (`WhatsAppConnect.tsx`, `WhatsAppIntegration.tsx`)**: Conexão nativa via `whatsapp-web.js` (Puppeteer local), auto-resposta inteligente com Gemini 3.5-flash-lite, e disparo de mensagens diretas (`POST /api/whatsapp/send-message`) com validação estrita do objeto `pupPage` para sanar o erro `Cannot read properties of null (reading 'evaluate')`.
-  - **Barra de Abas Completa**: "Monitor Central", "Base de Conhecimento", "Lista de Contatos", "Ajustes de Gateway", "Histórico de Conversas" e "Documentação OSONE".
-  - **Base de Conhecimento RAG do Produto**: Inserção manual e salvamento em `knowledge-base.json`.
-  - **Importador de URL com Cheerio**: Extração de texto limpo de páginas para alimentar o vendedor de IA.
-  - **Lista de Contatos Gerenciável (`contacts.json`)**: Gerenciamento CRUD completo de contatos (nome, telefone, observações) com ações rápidas de disparo e consulta de histórico.
-  - **Histórico de Conversa por Contato**: Armazenamento em `conversations.json` limitando às últimas N=20 mensagens por cliente.
+- **Integração OSONE ZAP (`WhatsAppConnect.tsx`, `WhatsAppIntegration.tsx`)**: Conexão nativa via `whatsapp-web.js` (Puppeteer local), auto-resposta inteligente com Gemini 3.5-flash-lite, e disparo de mensagens diretas (`POST /api/whatsapp/send-message`) com validação estrita do objeto `pupPage`.
+  - **Barra de 5 Abas Estruturadas (Tema Emerald Green)**: "1. Conectar & Disparar", "2. Histórico de Mensagens", "3. Lista de Contatos", "4. Documentação & Base do Produto" e "5. Ajustes de IA".
+  - **Histórico Real de Conversas & Feed de Auditoria**: Leitura de mensagens enviadas e recebidas gravadas no servidor (`conversations.json`) lado a lado com o feed de logs e auditoria em tempo real (`logs`).
+  - **Agenda e Leitura de Contatos do WhatsApp (`GET /api/whatsapp/wa-contacts`, `POST /api/whatsapp/import-contacts`)**: Busca direta via `wwebjsClient.getContacts()` trazendo nome e número real da conta pareada, gravando em `contacts.json` com tag visual ("WhatsApp" vs "Manual") e atalho direto para disparo real e histórico.
+  - **Base de Conhecimento RAG do Produto & Extração de URL**: Campo para texto de conhecimento do produto/regras comerciais e importador de links via Cheerio (`POST /api/whatsapp/import-url`), armazenados em `knowledge-base.json`.
+  - **Integração 100% Real**: Sem simulador fictício ou testes simulados — apenas envio e auto-resposta real via WhatsApp Web.
 - **Casa Inteligente Tuya (`SmartHomeConnect.tsx`, `tuyaService.ts`)**: Controle de dispositivos IoT e automação residencial.
 - **Sentinela OSONE (`OSONESentinel.tsx`)**: Módulo de monitoramento contínuo e alertas de sistema.
 - **Visão Computacional OSONE Lens (`OSONELens.tsx`)**: Análise visual e entrada multimodal através da câmera.

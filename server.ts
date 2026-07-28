@@ -539,6 +539,7 @@ Comentário de @${user}: "${text}"`;
     name: string;
     phone: string;
     notes?: string;
+    source?: 'wa' | 'manual';
     createdAt: number;
   }
 
@@ -641,29 +642,60 @@ Comentário de @${user}: "${text}"`;
   function buildSalesPrompt(senderJid: string, senderName?: string): string {
     const kbContent = loadKnowledgeBase();
     const contactHistory = getContactHistory(senderJid);
+    const cleanDigits = senderJid.replace(/\D/g, "");
+
+    // Look up contact details in contacts.json
+    const allContacts = loadContacts();
+    const matchContact = allContacts.find(c => 
+      c.phone === cleanDigits || 
+      (cleanDigits.length >= 8 && c.phone.endsWith(cleanDigits)) || 
+      (c.phone.length >= 8 && cleanDigits.endsWith(c.phone))
+    );
+
+    let contactProfileStr = "";
+    if (matchContact) {
+      contactProfileStr = `
+=== PERFIL DO CONTATO REGISTRADO (CONHECIMENTO INDIVIDUAL) ===
+- Nome do Cliente: ${matchContact.name}
+- Telefone: +${matchContact.phone}
+- Observações / Anotações do Cliente: ${matchContact.notes || "Sem observações cadastradas"}
+- Origem: ${matchContact.source === 'wa' ? 'Contato do WhatsApp Sincronizado' : 'Cadastrado Manualmente'}
+==============================================================
+`;
+    } else if (senderName) {
+      contactProfileStr = `
+=== PERFIL DO CONTATO ===
+- Nome Detectado no WhatsApp: ${senderName}
+- Telefone: +${cleanDigits}
+=========================
+`;
+    }
 
     let historyStr = "";
     if (contactHistory.length > 0) {
       historyStr = contactHistory
-        .map(m => `${m.role === "user" ? "Cliente" : "Vendedor AI"}: ${m.text}`)
+        .map(m => `${m.role === "user" ? "Cliente" : "Vendedor AI OSONE ZAP"}: ${m.text}`)
         .join("\n");
     }
 
-    return `Você é um Vendedor de Elite e Consultor Comercial atuar pelo WhatsApp em nome da empresa.
+    const clientDisplayName = matchContact?.name || senderName || senderJid;
+
+    return `Você é um Vendedor de Elite e Consultor Comercial atuando no OSONE ZAP pelo WhatsApp em nome da empresa.
 Seu objetivo é sanar dúvidas do cliente, apresentar soluções de forma altamente persuasiva, tirar dúvidas de preços e fechar vendas com tom humano, natural e acolhedor.
 
 === BASE DE CONHECIMENTO DO PRODUTO E DA EMPRESA ===
 ${kbContent || "Nenhuma informação adicional sobre produtos/preços foi cadastrada na base de conhecimento ainda."}
 ===================================================
-
-HISTÓRICO RECENTE DAS ÚLTIMAS CONVERSAS COM ESTE CLIENTE (${senderName || senderJid}):
-${historyStr || "Esta é a primeira mensagem deste cliente."}
+${contactProfileStr}
+HISTÓRICO RECENTE DAS ÚLTIMAS CONVERSAS COM ESTE CLIENTE (${clientDisplayName}):
+${historyStr || "Esta é a primeira mensagem deste cliente no histórico registrado."}
 
 DIRETRIZES RÍGIDAS DE ATENDIMENTO:
 1. Responda em estilo natural do WhatsApp: parágrafos curtos, linguagem leve, empática e objetiva. Use emojis com moderação.
-2. Utilize as informações da BASE DE CONHECIMENTO para responder sobre produtos, preços, benefícios, garantias e formas de pagamento.
-3. Não invente dados falsos ou preços que não estejam na Base de Conhecimento. Se o cliente perguntar algo indisponível na base, responda com cordialidade que vai consultar a equipe técnica e que responderá em instantes.
-4. Mantenha a continuidade exata em relação ao Histórico Recente de Conversas.`;
+2. Tratamento Personalizado: Trate o cliente pelo nome (${clientDisplayName}), levando em consideração as observações sobre esta pessoa cadastradas na lista de contatos.
+3. Utilize as informações da BASE DE CONHECIMENTO para responder sobre produtos, preços, benefícios, garantias e formas de pagamento.
+4. Não invente dados falsos ou preços que não estejam na Base de Conhecimento. Se o cliente perguntar algo indisponível na base, responda com cordialidade que vai consultar a equipe técnica e que responderá em instantes.
+5. Mantenha a continuidade exata em relação ao Histórico Recente de Conversas. Se o cliente fizer uma pergunta de acompanhamento (ex: "E a segunda opção?", "Qual o valor daquele produto que mencionou?"), consulte o histórico acima para entender o contexto anterior antes de responder.`;
   }
 
   // Helper function to initialize WhatsApp Web Client via Puppeteer
@@ -679,6 +711,20 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     wwebjsQrRaw = "";
     wwebjsQrBase64 = "";
     wwebjsLastError = "";
+
+    // Clean up lingering Chromium lock files before start
+    try {
+      const sessionDir = path.join(process.cwd(), ".wwebjs_auth", "session-osone_copilot_session");
+      if (fs.existsSync(sessionDir)) {
+        const lockFiles = ["SingletonLock", "SingletonSocket", "SingletonCookie", "DevToolsActivePort"];
+        for (const file of lockFiles) {
+          const filePath = path.join(sessionDir, file);
+          if (fs.existsSync(filePath)) {
+            try { fs.unlinkSync(filePath); } catch (_) {}
+          }
+        }
+      }
+    } catch (_) {}
 
     try {
       wwebjsClient = new WWebClient({
@@ -890,6 +936,36 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     res.json({ status: "desconectado", message: "Sessão do WhatsApp encerrada." });
   });
 
+  app.post("/api/whatsapp/reset-session", async (req, res) => {
+    try {
+      if (wwebjsClient) {
+        try { await wwebjsClient.destroy(); } catch (_) {}
+        wwebjsClient = null;
+      }
+      wwebjsStatus = "desconectado";
+      virtualConnectionState = "DISCONNECTED";
+      wwebjsQrRaw = "";
+      wwebjsQrBase64 = "";
+      wwebjsPhoneInfo = {};
+      wwebjsLastError = "";
+
+      const authDir = path.join(process.cwd(), ".wwebjs_auth");
+      if (fs.existsSync(authDir)) {
+        try {
+          fs.rmSync(authDir, { recursive: true, force: true });
+        } catch (rmErr) {
+          console.log("[WhatsApp Reset] Aviso ao apagar pasta de sessão:", rmErr);
+        }
+      }
+
+      initializeWhatsAppWebClient();
+
+      return res.json({ status: "iniciando", message: "Sessão e travas do Puppeteer resetadas com sucesso. Novo QR Code será gerado!" });
+    } catch (err: any) {
+      return res.status(500).json({ error: `Erro ao resetar sessão: ${err?.message || err}` });
+    }
+  });
+
   // API Endpoints for WhatsApp Frontend configuration
   app.get("/api/whatsapp/config", (req, res) => {
     res.json(whatsappConfig);
@@ -1042,7 +1118,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
 
   app.post("/api/whatsapp/contacts", (req, res) => {
     try {
-      const { id, name, phone, notes } = req.body;
+      const { id, name, phone, notes, source } = req.body;
       if (!name || !phone) {
         return res.status(400).json({ error: "Nome e telefone são obrigatórios." });
       }
@@ -1061,7 +1137,8 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
           ...contacts[existingIndex],
           name: name.trim(),
           phone: cleanPhone,
-          notes: (notes || "").trim()
+          notes: (notes || "").trim(),
+          source: source || contacts[existingIndex].source || "manual"
         };
         savedContact = contacts[existingIndex];
       } else {
@@ -1070,6 +1147,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
           name: name.trim(),
           phone: cleanPhone,
           notes: (notes || "").trim(),
+          source: source || "manual",
           createdAt: Date.now()
         };
         contacts.unshift(savedContact);
@@ -1079,6 +1157,90 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       return res.json({ status: "success", contact: savedContact, contacts });
     } catch (err: any) {
       return res.status(500).json({ error: `Erro ao salvar contato: ${err?.message || err}` });
+    }
+  });
+
+  // Fetch Real Contacts from Connected WhatsApp Account (getContacts)
+  app.get("/api/whatsapp/wa-contacts", async (req, res) => {
+    try {
+      const hasPupPage = Boolean(wwebjsClient && (wwebjsClient as any).pupPage);
+      if (!wwebjsClient || wwebjsStatus !== "conectado" || !hasPupPage) {
+        return res.status(400).json({ 
+          error: "Sessão do WhatsApp não está conectada. Conecte primeiro no Monitor Central escaneando o QR Code." 
+        });
+      }
+
+      const rawContacts = await wwebjsClient.getContacts();
+      console.log(`[WhatsApp Contacts] ${rawContacts.length} contatos brutos obtidos via getContacts().`);
+
+      const formatted = rawContacts
+        .filter(c => !c.isGroup && (c.number || c.id?.user))
+        .map(c => {
+          const cleanPhone = (c.number || c.id?.user || "").replace(/\D/g, "");
+          const name = c.name || c.pushname || c.shortName || `Contato ${cleanPhone}`;
+          return {
+            name: name.trim(),
+            phone: cleanPhone,
+            source: "wa" as const
+          };
+        })
+        .filter(c => c.phone.length >= 8);
+
+      return res.json({ status: "success", count: formatted.length, contacts: formatted });
+    } catch (err: any) {
+      console.error("[WhatsApp Contacts] Erro ao obter contatos:", err);
+      return res.status(500).json({ error: `Erro ao obter contatos do WhatsApp: ${err?.message || err}` });
+    }
+  });
+
+  // Import WhatsApp Contacts into contacts.json avoiding duplicates
+  app.post("/api/whatsapp/import-contacts", (req, res) => {
+    try {
+      const { contactsToImport } = req.body;
+      if (!Array.isArray(contactsToImport)) {
+        return res.status(400).json({ error: "contactsToImport deve ser um array." });
+      }
+
+      const existingContacts = loadContacts();
+      let addedCount = 0;
+      let updatedCount = 0;
+
+      for (const item of contactsToImport) {
+        const cleanPhone = (item.phone || "").replace(/\D/g, "");
+        if (!cleanPhone || cleanPhone.length < 8) continue;
+
+        const existingIndex = existingContacts.findIndex(c => c.phone === cleanPhone);
+        if (existingIndex >= 0) {
+          // Update name if default or empty
+          const currentName = existingContacts[existingIndex].name;
+          if ((currentName.startsWith("Contato ") || !currentName) && item.name && !item.name.startsWith("Contato ")) {
+            existingContacts[existingIndex].name = item.name;
+          }
+          if (!existingContacts[existingIndex].source) {
+            existingContacts[existingIndex].source = "wa";
+          }
+          updatedCount++;
+        } else {
+          existingContacts.push({
+            id: Math.random().toString(36).substring(2, 11),
+            name: (item.name || `Contato ${cleanPhone}`).trim(),
+            phone: cleanPhone,
+            source: "wa",
+            createdAt: Date.now()
+          });
+          addedCount++;
+        }
+      }
+
+      saveContacts(existingContacts);
+      return res.json({ 
+        status: "success", 
+        addedCount, 
+        updatedCount, 
+        contacts: existingContacts 
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: `Erro ao importar contatos: ${err?.message || err}` });
     }
   });
 
