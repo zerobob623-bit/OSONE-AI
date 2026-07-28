@@ -72,12 +72,15 @@ async function startBackendServer() {
 }
 
 function createWindow() {
+  const iconPath = path.join(__dirname, '../build/icon.png');
+
   mainWindow = new BrowserWindow({
     width: 1380,
     height: 900,
     minWidth: 1024,
     minHeight: 700,
     title: "OSONE G5 - Sistema Operacional Neural",
+    icon: fs.existsSync(iconPath) ? iconPath : undefined,
     backgroundColor: "#0d0c0b",
     show: false,
     webPreferences: {
