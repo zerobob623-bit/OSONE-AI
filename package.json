@@ -9,7 +9,8 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "electron": "electron .",
-    "build:desktop": "npm run build && electron-builder --win --linux --mac",
+    "build:desktop": "npm run build && electron-builder --win --linux",
+    "build:mac": "npm run build && electron-builder --mac",
     "preview": "vite preview",
     "clean": "rm -rf dist dist-desktop",
     "lint": "tsc --noEmit"
