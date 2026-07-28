@@ -10,7 +10,6 @@
     "start": "node dist/server.cjs",
     "electron": "electron .",
     "build:desktop": "npm run build && electron-builder --win --linux",
-    "build:mac": "npm run build && electron-builder --mac",
     "preview": "vite preview",
     "clean": "rm -rf dist dist-desktop",
     "lint": "tsc --noEmit"
@@ -44,13 +43,6 @@
         "AppImage"
       ],
       "category": "Utility"
-    },
-    "mac": {
-      "target": [
-        "dmg"
-      ],
-      "identity": null,
-      "category": "public.app-category.productivity"
     }
   },
   "dependencies": {
