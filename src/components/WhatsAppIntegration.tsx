@@ -36,6 +36,7 @@ interface ContactItem {
   name: string;
   phone: string;
   notes?: string;
+  source?: 'wa' | 'manual';
   createdAt: number;
 }
 
@@ -50,19 +51,13 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
   const [isSaving, setIsSaving] = useState(false);
   const [logs, setLogs] = useState<WhatsappLog[]>([]);
   const [isRefreshingLogs, setIsRefreshingLogs] = useState(false);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'knowledge' | 'contacts' | 'settings' | 'logs' | 'docs'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'history' | 'contacts' | 'docs' | 'settings'>('dashboard');
 
   // Manual Outbound Sending State (whatsapp-web.js)
   const [sendNumber, setSendNumber] = useState('');
   const [sendMessageText, setSendMessageText] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ success: boolean; message: string; id?: string } | null>(null);
-
-  // Simulated Chatbot incoming test state
-  const [simulatedName, setSimulatedName] = useState('Larissa Souza');
-  const [simulatedMessage, setSimulatedMessage] = useState('Olá! Quanto custa o produto e quais as formas de pagamento?');
-  const [isSimulatingIncoming, setIsSimulatingIncoming] = useState(false);
-  const [simulatedResult, setSimulatedResult] = useState<string | null>(null);
 
   // Knowledge Base States
   const [knowledgeBaseText, setKnowledgeBaseText] = useState('');
@@ -85,6 +80,44 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
   const [isSavingContact, setIsSavingContact] = useState(false);
   const [contactStatusMsg, setContactStatusMsg] = useState<string | null>(null);
   const [contactSearch, setContactSearch] = useState('');
+  const [isImportingWa, setIsImportingWa] = useState(false);
+  const [importWaStatusMsg, setImportWaStatusMsg] = useState<string | null>(null);
+
+  const handleImportWaContacts = async () => {
+    setIsImportingWa(true);
+    setImportWaStatusMsg(null);
+    try {
+      const res = await fetch('/api/whatsapp/wa-contacts');
+      const data = await res.json();
+      if (!res.ok) {
+        setImportWaStatusMsg(`Erro: ${data.error || 'Não foi possível obter os contatos do WhatsApp.'}`);
+        return;
+      }
+
+      const waList = data.contacts || [];
+      if (waList.length === 0) {
+        setImportWaStatusMsg('Nenhum contato individual encontrado na conta conectada.');
+        return;
+      }
+
+      const importRes = await fetch('/api/whatsapp/import-contacts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactsToImport: waList })
+      });
+      const importData = await importRes.json();
+      if (importRes.ok) {
+        setContacts(importData.contacts || []);
+        setImportWaStatusMsg(`Sucesso! ${importData.addedCount} novos contatos do WhatsApp importados (${importData.updatedCount} já existiam).`);
+      } else {
+        setImportWaStatusMsg(`Erro ao salvar: ${importData.error || 'Falha ao salvar contatos.'}`);
+      }
+    } catch (err: any) {
+      setImportWaStatusMsg(`Erro: ${err?.message || err}`);
+    } finally {
+      setIsImportingWa(false);
+    }
+  };
 
   // Load backend configurations, logs, knowledge base, conversations and contacts
   const fetchConfig = async () => {
@@ -227,7 +260,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
   const handleSelectContactForHistory = (phone: string) => {
     const cleanKey = phone.replace(/\D/g, "");
     setSelectedContactJid(cleanKey);
-    setActiveTab('knowledge');
+    setActiveTab('history');
   };
 
   const handleSaveConfig = async (updatedConfig?: Partial<WhatsAppConfig>) => {
@@ -366,47 +399,10 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
     }
   };
 
-  // Simulate incoming test message
-  const handleSimulateIncoming = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!simulatedName || !simulatedMessage) return;
-    setIsSimulatingIncoming(true);
-    setSimulatedResult(null);
-
-    try {
-      const res = await fetch('/api/whatsapp/simulate-incoming', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          senderName: simulatedName,
-          text: simulatedMessage,
-          remoteJid: "5511999999999@s.whatsapp.net"
-        })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.status === 'success') {
-          setSimulatedResult(data.reply);
-          setSimulatedMessage('');
-          fetchLogs();
-        } else {
-          setSimulatedResult(`Aviso: ${data.reason || data.error || 'Chatbot desativado ou sem chave Gemini.'}`);
-        }
-      } else {
-        setSimulatedResult('Erro ao se conectar com o servidor OSONE.');
-      }
-    } catch (e: any) {
-      setSimulatedResult(`Erro: ${e?.message || e}`);
-    } finally {
-      setIsSimulatingIncoming(false);
-    }
-  };
-
   return (
     <div className="flex flex-col h-full bg-[#0a0a0c] text-white overflow-y-auto selection:bg-orange-500/30">
       {/* Header Banner */}
-      <div className="p-6 md:p-8 bg-gradient-to-r from-zinc-950 via-zinc-900 to-zinc-950 border-b border-white/10 relative overflow-hidden">
+      <div className="p-6 md:p-8 bg-gradient-to-r from-zinc-950 via-zinc-900 to-zinc-950 border-b border-white/10 relative overflow-hidden shrink-0">
         <div className="absolute top-0 right-0 w-96 h-96 bg-orange-500/10 rounded-full blur-3xl pointer-events-none" />
         
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
@@ -416,7 +412,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
             </div>
             <div>
               <div className="flex items-center gap-3">
-                <h1 className="text-2xl font-bold tracking-tight text-white">WhatsApp Copilot</h1>
+                <h1 className="text-2xl font-bold tracking-tight text-white">OSONE ZAP</h1>
                 <span className="text-[10px] uppercase tracking-widest px-2.5 py-1 rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30 font-bold">
                   puppeteer local
                 </span>
@@ -448,79 +444,69 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
             </button>
           </div>
         </div>
+      </div>
 
-        {/* Navigation Tabs */}
-        <div className="max-w-7xl mx-auto flex items-center gap-2 mt-8 border-b border-white/5 pb-1 flex-wrap">
+      {/* Sticky Navigation Tabs Header */}
+      <div className="sticky top-0 z-30 bg-[#0c0d10]/95 backdrop-blur-xl border-b border-white/10 shadow-2xl py-3 px-6 md:px-8">
+        <div className="max-w-7xl mx-auto flex items-center gap-2 overflow-x-auto custom-scrollbar pb-1">
           <button
             onClick={() => setActiveTab('dashboard')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
               activeTab === 'dashboard' 
-                ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30 shadow-lg' 
-                : 'text-zinc-400 hover:text-white hover:bg-white/5'
+                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-lg shadow-emerald-500/10' 
+                : 'text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent'
             }`}
           >
-            <Cpu size={14} />
-            Monitor Central
+            <Smartphone size={15} className="text-emerald-400" />
+            1. Conectar & Disparar
           </button>
 
           <button
-            onClick={() => setActiveTab('knowledge')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
-              activeTab === 'knowledge' 
-                ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30 shadow-lg' 
-                : 'text-zinc-400 hover:text-white hover:bg-white/5'
+            onClick={() => setActiveTab('history')}
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+              activeTab === 'history' 
+                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-lg shadow-emerald-500/10' 
+                : 'text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent'
             }`}
           >
-            <Database size={14} />
-            Base de Conhecimento
+            <History size={15} />
+            2. Histórico de Mensagens {logs.length > 0 && <span className="text-[10px] bg-emerald-500/30 px-1.5 py-0.5 rounded-full text-emerald-300 font-mono font-bold">{logs.length}</span>}
           </button>
 
           <button
             onClick={() => setActiveTab('contacts')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
               activeTab === 'contacts' 
-                ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30 shadow-lg' 
-                : 'text-zinc-400 hover:text-white hover:bg-white/5'
+                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-lg shadow-emerald-500/10' 
+                : 'text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent'
             }`}
           >
-            <Users size={14} />
-            Lista de Contatos {contacts.length > 0 && <span className="text-[10px] bg-orange-500/30 px-1.5 py-0.5 rounded-full text-orange-300 font-mono">{contacts.length}</span>}
-          </button>
-
-          <button
-            onClick={() => setActiveTab('settings')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
-              activeTab === 'settings' 
-                ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30 shadow-lg' 
-                : 'text-zinc-400 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <Settings size={14} />
-            Ajustes de Gateway
-          </button>
-
-          <button
-            onClick={() => setActiveTab('logs')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
-              activeTab === 'logs' 
-                ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30 shadow-lg' 
-                : 'text-zinc-400 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <Activity size={14} />
-            Histórico de Conversas ({logs.length})
+            <Users size={15} />
+            3. Lista de Contatos {contacts.length > 0 && <span className="text-[10px] bg-emerald-500/30 px-1.5 py-0.5 rounded-full text-emerald-300 font-mono font-bold">{contacts.length}</span>}
           </button>
 
           <button
             onClick={() => setActiveTab('docs')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
               activeTab === 'docs' 
-                ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30 shadow-lg' 
-                : 'text-zinc-400 hover:text-white hover:bg-white/5'
+                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-lg shadow-emerald-500/10' 
+                : 'text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent'
             }`}
           >
-            <BookOpen size={14} />
-            Documentação OSONE
+            <BookOpen size={15} />
+            4. Documentação & Base RAG
+          </button>
+
+          <button
+            onClick={() => setActiveTab('settings')}
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+              activeTab === 'settings' 
+                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-lg shadow-emerald-500/10' 
+                : 'text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent'
+            }`}
+          >
+            <Settings size={15} />
+            5. Ajustes de IA
           </button>
         </div>
       </div>
@@ -529,11 +515,27 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
       <div className="p-6 md:p-8 max-w-7xl mx-auto w-full flex-1">
         {/* TAB 1: DASHBOARD & SENDING */}
         {activeTab === 'dashboard' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Left Column: WhatsApp Connect Widget */}
-            <div className="lg:col-span-6">
-              <WhatsAppConnect />
+          <div className="space-y-6">
+            {/* Guide Info Banner */}
+            <div className="p-4 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 text-xs text-emerald-200 flex items-center justify-between gap-4 shadow-lg">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400 shrink-0 border border-emerald-500/30">
+                  <Smartphone size={20} />
+                </div>
+                <div>
+                  <span className="font-bold text-white text-sm block mb-0.5">Aba 1: Pareamento & Disparo Rápido</span>
+                  <p className="text-[11px] text-emerald-300/90 leading-relaxed">
+                    O QR Code abaixo pertence à <strong className="text-white">Aba 1 (Conectar & Disparar)</strong>. Para alternar para as outras funções (Histórico, Contatos, Base de Conhecimento RAG e Ajustes de IA), clique nos botões na <strong className="text-white">Barra de Abas Fixa</strong> no topo da página.
+                  </p>
+                </div>
+              </div>
             </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Left Column: WhatsApp Connect Widget */}
+              <div className="lg:col-span-6">
+                <WhatsAppConnect />
+              </div>
 
             {/* Right Column: Direct Message Sending Card & Simulator */}
             <div className="lg:col-span-6 flex flex-col gap-6">
@@ -541,12 +543,12 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
               <div className="p-6 bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl relative overflow-hidden">
                 <div className="flex items-center justify-between mb-4 pb-3 border-b border-white/10">
                   <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-xl bg-orange-500/20 border border-orange-500/30 text-orange-400">
+                    <div className="p-2 rounded-xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-400">
                       <Send size={16} />
                     </div>
                     <div>
-                      <h3 className="text-sm font-bold text-white">Disparo Direto de Mensagem</h3>
-                      <p className="text-[11px] text-zinc-400">Envia uma mensagem pelo WhatsApp Web sincronizado</p>
+                      <h3 className="text-sm font-bold text-white">Disparo Real de Mensagem</h3>
+                      <p className="text-[11px] text-zinc-400">Envia uma mensagem direta pelo WhatsApp Web conectado</p>
                     </div>
                   </div>
                 </div>
@@ -556,7 +558,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                   {contacts.length > 0 && (
                     <div>
                       <label className="block text-xs font-semibold text-zinc-300 mb-1.5 flex items-center justify-between">
-                        <span className="flex items-center gap-1.5 text-orange-400">
+                        <span className="flex items-center gap-1.5 text-emerald-400">
                           <Users size={12} /> Selecionar de Contatos Cadastrados
                         </span>
                         <span className="text-[10px] text-zinc-500">{contacts.length} contatos salvos</span>
@@ -565,7 +567,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                         onChange={(e) => {
                           if (e.target.value) setSendNumber(e.target.value);
                         }}
-                        className="w-full px-3.5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-orange-500/50"
+                        className="w-full px-3.5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500/50"
                       >
                         <option value="" className="bg-zinc-900 text-zinc-400">-- Escolha um contato ou digite abaixo --</option>
                         {contacts.map((c) => (
@@ -586,7 +588,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                       placeholder="Ex: 5511999999999"
                       value={sendNumber}
                       onChange={(e) => setSendNumber(e.target.value)}
-                      className="w-full px-3.5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-orange-500/50 transition-all font-mono"
+                      className="w-full px-3.5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500/50 transition-all font-mono"
                       required
                     />
                     <span className="text-[10px] text-zinc-500 mt-1 block">
@@ -599,11 +601,11 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                       Conteúdo da Mensagem
                     </label>
                     <textarea
-                      rows={3}
-                      placeholder="Escreva a mensagem a ser enviada..."
+                      rows={4}
+                      placeholder="Escreva a mensagem real a ser enviada..."
                       value={sendMessageText}
                       onChange={(e) => setSendMessageText(e.target.value)}
-                      className="w-full px-3.5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-orange-500/50 transition-all resize-none"
+                      className="w-full px-3.5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500/50 transition-all resize-none"
                       required
                     />
                   </div>
@@ -611,7 +613,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                   <button
                     type="submit"
                     disabled={isSending || !sendNumber || !sendMessageText}
-                    className="w-full py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-black font-bold text-xs shadow-lg shadow-orange-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                    className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-600 hover:to-green-600 text-black font-bold text-xs shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                   >
                     {isSending ? (
                       <>
@@ -621,7 +623,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                     ) : (
                       <>
                         <Send size={14} />
-                        <span>Enviar Mensagem pelo WhatsApp</span>
+                        <span>Enviar Mensagem Real pelo WhatsApp</span>
                       </>
                     )}
                   </button>
@@ -654,210 +656,35 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                   </motion.div>
                 )}
               </div>
-
-              {/* Chatbot Simulator Box */}
-              <div className="p-6 bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl">
-                <div className="flex items-center justify-between mb-4 pb-3 border-b border-white/10">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-400">
-                      <Cpu size={16} />
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-bold text-white">Simulador de Auto-resposta IA</h3>
-                      <p className="text-[11px] text-zinc-400">Teste as respostas do Gemini sem disparar mensagem real</p>
-                    </div>
-                  </div>
-                </div>
-
-                <form onSubmit={handleSimulateIncoming} className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
-                        Nome do Contato
-                      </label>
-                      <input
-                        type="text"
-                        value={simulatedName}
-                        onChange={(e) => setSimulatedName(e.target.value)}
-                        className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-amber-500/50"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
-                        Telefone Simulado
-                      </label>
-                      <input
-                        type="text"
-                        value="5511999999999"
-                        disabled
-                        className="w-full px-3 py-2 bg-white/5 border border-white/5 rounded-xl text-xs text-zinc-500 font-mono"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
-                      Mensagem de Entrada
-                    </label>
-                    <textarea
-                      rows={2}
-                      value={simulatedMessage}
-                      onChange={(e) => setSimulatedMessage(e.target.value)}
-                      className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-amber-500/50 resize-none"
-                    />
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={isSimulatingIncoming || !simulatedName || !simulatedMessage}
-                    className="w-full py-2 rounded-xl bg-white/10 hover:bg-white/15 text-white border border-white/10 font-bold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                  >
-                    {isSimulatingIncoming ? (
-                      <RefreshCw size={14} className="animate-spin text-amber-400" />
-                    ) : (
-                      <Play size={14} className="text-amber-400" />
-                    )}
-                    <span>Simular Entrada & Gerar Resposta Gemini</span>
-                  </button>
-                </form>
-
-                {simulatedResult && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 5 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="mt-4 p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-200"
-                  >
-                    <span className="font-bold text-amber-400 block mb-1">Resposta Gerada pelo OSONE:</span>
-                    <p className="whitespace-pre-wrap">{simulatedResult}</p>
-                  </motion.div>
-                )}
-              </div>
             </div>
           </div>
+        </div>
         )}
 
-        {/* TAB 2: BASE DE CONHECIMENTO */}
-        {activeTab === 'knowledge' && (
+        {/* TAB 2: HISTÓRICO DE MENSAGENS */}
+        {activeTab === 'history' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Left: Product Description & URL Scraper */}
-            <div className="lg:col-span-8 space-y-6">
-              {/* Product Info Card */}
-              <div className="p-6 bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl relative">
+            {/* Left Column: Chat History per Contact */}
+            <div className="lg:col-span-6 space-y-6">
+              <div className="p-6 bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl h-full flex flex-col">
                 <div className="flex items-center justify-between mb-4 pb-3 border-b border-white/10">
                   <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-xl bg-orange-500/20 border border-orange-500/30 text-orange-400">
-                      <Database size={18} />
+                    <div className="p-2 rounded-xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-400">
+                      <History size={18} />
                     </div>
                     <div>
-                      <h3 className="text-sm font-bold text-white">Base de Conhecimento do Produto / Vendedor AI</h3>
-                      <p className="text-[11px] text-zinc-400">Escreva o contexto do produto (preço, benefícios, garantia) para o Vendedor AI consultar</p>
+                      <h3 className="text-sm font-bold text-white">Histórico de Mensagens por Contato</h3>
+                      <p className="text-[11px] text-zinc-400">Mensagens enviadas e recebidas gravadas no servidor</p>
                     </div>
                   </div>
-                  <span className="text-[10px] text-orange-400 font-mono bg-orange-500/10 px-2.5 py-1 rounded-full border border-orange-500/20">
-                    knowledge-base.json
+                  <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">
+                    conversations.json
                   </span>
-                </div>
-
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-zinc-300 mb-1.5 flex items-center justify-between">
-                      <span>Descrição Manual do Produto e Regras Comerciais</span>
-                      <span className="text-[10px] text-zinc-500 font-mono">{knowledgeBaseText.length} caracteres</span>
-                    </label>
-                    <textarea
-                      rows={12}
-                      value={knowledgeBaseText}
-                      onChange={(e) => setKnowledgeBaseText(e.target.value)}
-                      placeholder={`Exemplo de Estrutura:\n- PRODUTO: Mentoria OSONE G5 Automation\n- PREÇO: R$ 497,00 à vista ou 12x de R$ 49,70\n- BENEFÍCIOS: Atendimento 24h, inteligência artificial treinada no WhatsApp, dashboard de controle\n- GARANTIA: 7 dias incondicionais\n- LINK DE PAGAMENTO: https://pay.osone.app/mentoria`}
-                      className="w-full p-4 bg-white/5 border border-white/10 rounded-2xl text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-orange-500/50 font-mono leading-relaxed resize-none"
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between pt-2">
-                    {kbSaveResult ? (
-                      <span className="text-xs text-emerald-400 font-medium flex items-center gap-1.5">
-                        <CheckCircle size={14} /> {kbSaveResult}
-                      </span>
-                    ) : (
-                      <span className="text-[11px] text-zinc-500">Salva no servidor e carregada em tempo real em todas as conversas.</span>
-                    )}
-
-                    <button
-                      onClick={handleSaveKnowledgeBase}
-                      disabled={isSavingKb}
-                      className="px-5 py-2.5 rounded-xl bg-orange-500 text-black font-bold text-xs hover:bg-orange-400 transition-all cursor-pointer flex items-center gap-2 shadow-lg shadow-orange-500/20 disabled:opacity-50"
-                    >
-                      {isSavingKb ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
-                      Salvar Base de Conhecimento
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* URL Importer Card */}
-              <div className="p-6 bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl">
-                <div className="flex items-center gap-2.5 mb-4 pb-3 border-b border-white/10">
-                  <div className="p-2 rounded-xl bg-sky-500/20 border border-sky-500/30 text-sky-400">
-                    <Globe size={18} />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-white">Importar Conteúdo de URL Externa</h3>
-                    <p className="text-[11px] text-zinc-400">Extrai o texto limpo da página usando cheerio e anexa à Base de Conhecimento</p>
-                  </div>
-                </div>
-
-                <form onSubmit={handleImportUrl} className="space-y-4">
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <div className="relative flex-1">
-                      <Globe size={16} className="absolute left-3.5 top-3 text-zinc-500" />
-                      <input
-                        type="url"
-                        placeholder="https://sualoja.com.br/produto-especifico"
-                        value={importUrl}
-                        onChange={(e) => setImportUrl(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-sky-500/50"
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      disabled={isImportingUrl || !importUrl}
-                      className="px-5 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-black font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 shrink-0"
-                    >
-                      {isImportingUrl ? <RefreshCw size={14} className="animate-spin" /> : <LinkIcon size={14} />}
-                      Importar da URL
-                    </button>
-                  </div>
-
-                  {importUrlResult && (
-                    <div className={`p-3 rounded-xl border text-xs flex items-start gap-2 ${
-                      importUrlResult.success 
-                        ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' 
-                        : 'bg-red-500/10 border-red-500/30 text-red-300'
-                    }`}>
-                      {importUrlResult.success ? <CheckCircle size={16} className="shrink-0 mt-0.5" /> : <AlertCircle size={16} className="shrink-0 mt-0.5" />}
-                      <p>{importUrlResult.message}</p>
-                    </div>
-                  )}
-                </form>
-              </div>
-            </div>
-
-            {/* Right: Real Conversations History Viewer */}
-            <div className="lg:col-span-4 space-y-6">
-              <div className="p-6 bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl h-full flex flex-col">
-                <div className="flex items-center gap-2.5 mb-4 pb-3 border-b border-white/10">
-                  <div className="p-2 rounded-xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-400">
-                    <History size={18} />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-white">Histórico por Contato</h3>
-                    <p className="text-[11px] text-zinc-400">Últimas 20 mensagens por cliente</p>
-                  </div>
                 </div>
 
                 {Object.keys(conversations).length === 0 ? (
                   <div className="text-center py-12 text-zinc-500 text-xs">
-                    Nenhuma conversa registrada ainda no <code className="text-orange-400 font-mono">conversations.json</code>.
+                    Nenhuma conversa registrada ainda. As conversas ativas no WhatsApp aparecerão aqui automaticamente.
                   </div>
                 ) : (
                   <div className="flex-1 flex flex-col gap-3 overflow-hidden">
@@ -884,21 +711,21 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                       const activeMsgs = activeJid ? conversations[activeJid] || [] : [];
 
                       return (
-                        <div className="flex-1 overflow-y-auto max-h-[450px] space-y-2.5 pr-1 mt-2">
+                        <div className="flex-1 overflow-y-auto max-h-[480px] space-y-2.5 pr-1 mt-2">
                           {activeMsgs.length === 0 ? (
                             <p className="text-xs text-zinc-500 text-center py-4">Sem mensagens neste contato.</p>
                           ) : (
                             activeMsgs.map((msg, idx) => (
                               <div
                                 key={idx}
-                                className={`p-3 rounded-2xl text-xs max-w-[90%] ${
+                                className={`p-3 rounded-2xl text-xs max-w-[85%] ${
                                   msg.role === 'user'
                                     ? 'bg-zinc-800 text-zinc-100 mr-auto border border-white/5'
-                                    : 'bg-orange-500/20 border border-orange-500/30 text-orange-100 ml-auto'
+                                    : 'bg-emerald-500/20 border border-emerald-500/30 text-emerald-100 ml-auto'
                                 }`}
                               >
                                 <div className="flex items-center justify-between text-[10px] font-bold text-zinc-400 mb-1 gap-2">
-                                  <span>{msg.role === 'user' ? '👤 Cliente' : '🤖 Vendedor AI'}</span>
+                                  <span>{msg.role === 'user' ? '👤 Cliente' : '🤖 Vendedor AI (OSONE)'}</span>
                                   <span className="font-mono text-zinc-500">
                                     {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                   </span>
@@ -914,6 +741,89 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                 )}
               </div>
             </div>
+
+            {/* Right Column: Real-time Event Feed */}
+            <div className="lg:col-span-6">
+              <div className="p-6 bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl h-full flex flex-col">
+                <div className="flex items-center justify-between mb-4 pb-3 border-b border-white/10">
+                  <div className="flex items-center gap-2.5">
+                    <Activity size={18} className="text-emerald-400 animate-pulse" />
+                    <div>
+                      <h3 className="text-sm font-bold text-white">Feed de Auditoria & Logs em Tempo Real</h3>
+                      <p className="text-[11px] text-zinc-400">Eventos de envio, recebimento e status Puppeteer</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={fetchLogs}
+                      className="px-2.5 py-1 bg-white/5 hover:bg-white/10 text-white rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      <RefreshCw size={11} className={isRefreshingLogs ? 'animate-spin' : ''} />
+                      Atualizar
+                    </button>
+                    <button
+                      onClick={handleClearLogs}
+                      className="px-2.5 py-1 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      <Trash2 size={11} />
+                      Limpar
+                    </button>
+                  </div>
+                </div>
+
+                {logs.length === 0 ? (
+                  <div className="text-center py-12 text-zinc-500 text-xs">
+                    Nenhum log de atividade registrado até o momento.
+                  </div>
+                ) : (
+                  <div className="space-y-2.5 max-h-[480px] overflow-y-auto pr-1 flex-1">
+                    {logs.map((log) => (
+                      <div
+                        key={log.id}
+                        className="p-3 bg-white/5 border border-white/5 rounded-2xl flex flex-col gap-1 text-xs hover:border-white/10 transition-colors"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            {log.type === 'sent' && (
+                              <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[9px] font-bold">
+                                ENVIADA
+                              </span>
+                            )}
+                            {log.type === 'received' && (
+                              <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[9px] font-bold">
+                                RECEBIDA
+                              </span>
+                            )}
+                            {log.type === 'info' && (
+                              <span className="px-2 py-0.5 rounded-md bg-blue-500/20 text-blue-400 border border-blue-500/30 text-[9px] font-bold">
+                                SISTEMA
+                              </span>
+                            )}
+                            {log.type === 'error' && (
+                              <span className="px-2 py-0.5 rounded-md bg-red-500/20 text-red-400 border border-red-500/30 text-[9px] font-bold">
+                                ERRO
+                              </span>
+                            )}
+                            <span className="font-semibold text-white">{log.sender}</span>
+                          </div>
+                          <span className="text-[10px] text-zinc-500 font-mono">
+                            {new Date(log.timestamp).toLocaleTimeString()}
+                          </span>
+                        </div>
+                        <p className="text-zinc-300 pl-1">{log.message}</p>
+                        {log.response && (
+                          <div className="mt-1 p-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-200 text-[11px]">
+                            <span className="font-bold text-emerald-400 block mb-0.5">Resposta Gerada:</span>
+                            {log.response}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
 
@@ -924,7 +834,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
             <div className="lg:col-span-4">
               <div className="p-6 bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl">
                 <div className="flex items-center gap-2.5 mb-4 pb-3 border-b border-white/10">
-                  <div className="p-2 rounded-xl bg-orange-500/20 border border-orange-500/30 text-orange-400">
+                  <div className="p-2 rounded-xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-400">
                     <UserPlus size={18} />
                   </div>
                   <div>
@@ -945,7 +855,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                       placeholder="Ex: Carlos Oliveira"
                       value={cName}
                       onChange={(e) => setCName(e.target.value)}
-                      className="w-full px-3.5 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-orange-500/50"
+                      className="w-full px-3.5 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500/50"
                       required
                     />
                   </div>
@@ -959,7 +869,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                       placeholder="Ex: 5511999998888"
                       value={cPhone}
                       onChange={(e) => setCPhone(e.target.value)}
-                      className="w-full px-3.5 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-orange-500/50 font-mono"
+                      className="w-full px-3.5 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500/50 font-mono"
                       required
                     />
                   </div>
@@ -973,13 +883,13 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                       placeholder="Ex: Cliente interessado no OSONE G5. Atendido dia 25/07."
                       value={cNotes}
                       onChange={(e) => setCNotes(e.target.value)}
-                      className="w-full px-3.5 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-orange-500/50 resize-none"
+                      className="w-full px-3.5 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500/50 resize-none"
                     />
                   </div>
 
                   {contactStatusMsg && (
-                    <div className="p-2.5 rounded-xl bg-orange-500/10 border border-orange-500/30 text-orange-300 text-xs flex items-center gap-2">
-                      <CheckCircle size={14} className="shrink-0" />
+                    <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
+                      <CheckCircle size={14} className="shrink-0 text-emerald-400" />
                       <p>{contactStatusMsg}</p>
                     </div>
                   )}
@@ -1002,7 +912,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                     <button
                       type="submit"
                       disabled={isSavingContact || !cName || !cPhone}
-                      className="flex-1 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-400 text-black font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg shadow-orange-500/20"
+                      className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-600 hover:to-green-600 text-black font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg shadow-emerald-500/20"
                     >
                       {isSavingContact ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
                       {editingContactId ? 'Atualizar Contato' : 'Salvar Contato'}
@@ -1017,31 +927,50 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
               <div className="p-6 bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 pb-3 border-b border-white/10">
                   <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-xl bg-orange-500/20 border border-orange-500/30 text-orange-400">
+                    <div className="p-2 rounded-xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-400">
                       <Users size={18} />
                     </div>
                     <div>
-                      <h3 className="text-sm font-bold text-white">Agenda e Contatos Persistentes</h3>
-                      <p className="text-[11px] text-zinc-400">Armazenados em <code className="text-orange-400 font-mono">contacts.json</code></p>
+                      <h3 className="text-sm font-bold text-white">Agenda de Contatos</h3>
+                      <p className="text-[11px] text-zinc-400">Armazenados com persistência em <code className="text-emerald-400 font-mono">contacts.json</code></p>
                     </div>
                   </div>
 
-                  {/* Search Bar */}
-                  <div className="relative w-full sm:w-64">
-                    <Search size={14} className="absolute left-3 top-2.5 text-zinc-500" />
-                    <input
-                      type="text"
-                      placeholder="Buscar por nome ou telefone..."
-                      value={contactSearch}
-                      onChange={(e) => setContactSearch(e.target.value)}
-                      className="w-full pl-9 pr-3 py-1.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-orange-500/50"
-                    />
+                  {/* Actions: Import Button + Search Bar */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={handleImportWaContacts}
+                      disabled={isImportingWa}
+                      className="px-3 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      title="Importar contatos salvos da conta do WhatsApp conectada"
+                    >
+                      <RefreshCw size={12} className={isImportingWa ? "animate-spin" : ""} />
+                      {isImportingWa ? "Sincronizando..." : "Ler Contatos do WhatsApp"}
+                    </button>
+
+                    <div className="relative w-full sm:w-52">
+                      <Search size={14} className="absolute left-3 top-2.5 text-zinc-500" />
+                      <input
+                        type="text"
+                        placeholder="Buscar nome ou fone..."
+                        value={contactSearch}
+                        onChange={(e) => setContactSearch(e.target.value)}
+                        className="w-full pl-9 pr-3 py-1.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500/50"
+                      />
+                    </div>
                   </div>
                 </div>
 
+                {importWaStatusMsg && (
+                  <div className="mb-4 p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
+                    <CheckCircle size={14} className="shrink-0 text-emerald-400" />
+                    <p>{importWaStatusMsg}</p>
+                  </div>
+                )}
+
                 {contacts.length === 0 ? (
                   <div className="text-center py-12 text-zinc-500 text-xs">
-                    Nenhum contato cadastrado ainda. Preencha o formulário ao lado para adicionar o primeiro cliente!
+                    Nenhum contato cadastrado ainda. Clique em "Ler Contatos do WhatsApp" acima ou adicione manualmente ao lado!
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1051,16 +980,27 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                         c.phone.includes(contactSearch)
                       )
                       .map((c) => (
-                        <div key={c.id} className="p-4 bg-white/5 border border-white/10 rounded-2xl hover:border-orange-500/30 transition-all flex flex-col justify-between gap-3">
+                        <div key={c.id} className="p-4 bg-white/5 border border-white/10 rounded-2xl hover:border-emerald-500/30 transition-all flex flex-col justify-between gap-3">
                           <div>
                             <div className="flex items-start justify-between gap-2 mb-1">
                               <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
-                                <UserCheck size={14} className="text-orange-400 shrink-0" />
+                                <UserCheck size={14} className="text-emerald-400 shrink-0" />
                                 {c.name}
                               </h4>
-                              <span className="text-[10px] text-zinc-500 font-mono">
-                                +{c.phone}
-                              </span>
+                              <div className="flex items-center gap-1.5">
+                                {c.source === 'wa' ? (
+                                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[9px] font-bold">
+                                    WhatsApp
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-300 border border-white/10 text-[9px] font-bold">
+                                    Manual
+                                  </span>
+                                )}
+                                <span className="text-[10px] text-zinc-400 font-mono">
+                                  +{c.phone}
+                                </span>
+                              </div>
                             </div>
                             {c.notes && (
                               <p className="text-[11px] text-zinc-400 mt-1 line-clamp-2 bg-black/30 p-2 rounded-xl border border-white/5">
@@ -1073,14 +1013,14 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                             <div className="flex items-center gap-1">
                               <button
                                 onClick={() => handleSelectContactForMessage(c.phone)}
-                                className="px-2.5 py-1 rounded-lg bg-orange-500/20 hover:bg-orange-500/30 text-orange-300 border border-orange-500/30 text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer"
-                                title="Mandar Mensagem"
+                                className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer"
+                                title="Mandar Mensagem Direta"
                               >
                                 <Send size={11} /> Disparar
                               </button>
                               <button
                                 onClick={() => handleSelectContactForHistory(c.phone)}
-                                className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer"
+                                className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-300 border border-white/10 text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer"
                                 title="Ver Histórico de Conversa"
                               >
                                 <History size={11} /> Histórico
@@ -1113,11 +1053,170 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
           </div>
         )}
 
-        {/* TAB 4: CHATBOT SETTINGS */}
+        {/* TAB 4: DOCUMENTAÇÃO & BASE DO PRODUTO */}
+        {activeTab === 'docs' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Left: Product Info Card & URL Importer */}
+            <div className="lg:col-span-7 space-y-6">
+              {/* Knowledge Base Editor */}
+              <div className="p-6 bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl relative">
+                <div className="flex items-center justify-between mb-4 pb-3 border-b border-white/10">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-400">
+                      <Database size={18} />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-white">Base de Conhecimento do Produto (Vendedor AI)</h3>
+                      <p className="text-[11px] text-zinc-400">Texto base e regras de produto que a IA usará ao responder clientes</p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">
+                    knowledge-base.json
+                  </span>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-300 mb-1.5 flex items-center justify-between">
+                      <span>Descrição do Produto, Preços & Links de Venda</span>
+                      <span className="text-[10px] text-zinc-500 font-mono">{knowledgeBaseText.length} carac</span>
+                    </label>
+                    <textarea
+                      rows={10}
+                      value={knowledgeBaseText}
+                      onChange={(e) => setKnowledgeBaseText(e.target.value)}
+                      placeholder={`Exemplo de Conteúdo para a IA:\n- NOME: OSONE G5 Automation\n- PREÇO: R$ 497,00 à vista\n- LINK DO PRODUTO: https://osone.app/produto-exemplo\n- DETALHES: Atendimento automático via WhatsApp Web, leitor de QR Code, histórico completo.`}
+                      className="w-full p-3.5 bg-white/5 border border-white/10 rounded-2xl text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-emerald-500/50 font-mono leading-relaxed resize-none"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between pt-1">
+                    {kbSaveResult ? (
+                      <span className="text-xs text-emerald-400 font-medium flex items-center gap-1.5">
+                        <CheckCircle size={14} /> {kbSaveResult}
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-zinc-500">Salvo no servidor e lido nas mensagens.</span>
+                    )}
+
+                    <button
+                      onClick={handleSaveKnowledgeBase}
+                      disabled={isSavingKb}
+                      className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-600 hover:to-green-600 text-black font-bold text-xs transition-all cursor-pointer flex items-center gap-2 shadow-lg shadow-emerald-500/20 disabled:opacity-50"
+                    >
+                      {isSavingKb ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                      Salvar Base de Texto
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* URL Web Scraping Importer Card */}
+              <div className="p-6 bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl">
+                <div className="flex items-center gap-2.5 mb-4 pb-3 border-b border-white/10">
+                  <div className="p-2 rounded-xl bg-sky-500/20 border border-sky-500/30 text-sky-400">
+                    <Globe size={18} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Importar Link da Página do Produto / Site</h3>
+                    <p className="text-[11px] text-zinc-400">Extrai o texto da página e anexa à base do vendedor AI</p>
+                  </div>
+                </div>
+
+                <form onSubmit={handleImportUrl} className="space-y-3">
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <div className="relative flex-1">
+                      <Globe size={16} className="absolute left-3.5 top-3 text-zinc-500" />
+                      <input
+                        type="url"
+                        placeholder="https://sualoja.com.br/meu-produto"
+                        value={importUrl}
+                        onChange={(e) => setImportUrl(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-sky-500/50 font-mono"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={isImportingUrl || !importUrl}
+                      className="px-5 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-black font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 shrink-0"
+                    >
+                      {isImportingUrl ? <RefreshCw size={14} className="animate-spin" /> : <LinkIcon size={14} />}
+                      Extrair Conteúdo do Link
+                    </button>
+                  </div>
+
+                  {importUrlResult && (
+                    <div className={`p-3 rounded-xl border text-xs flex items-start gap-2 ${
+                      importUrlResult.success 
+                        ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' 
+                        : 'bg-red-500/10 border-red-500/30 text-red-300'
+                    }`}>
+                      {importUrlResult.success ? <CheckCircle size={16} className="shrink-0 mt-0.5" /> : <AlertCircle size={16} className="shrink-0 mt-0.5" />}
+                      <p>{importUrlResult.message}</p>
+                    </div>
+                  )}
+                </form>
+              </div>
+            </div>
+
+            {/* Right: Technical Documentation Guide */}
+            <div className="lg:col-span-5">
+              <div className="p-6 bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl h-full flex flex-col justify-between space-y-4">
+                <div>
+                  <div className="flex items-center gap-2.5 mb-4 pb-3 border-b border-white/10">
+                    <div className="p-2 rounded-xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-400">
+                      <BookOpen size={18} />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-white">Documentação do OSONE ZAP</h3>
+                      <p className="text-[11px] text-zinc-400">Guia oficial da arquitetura e automação</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 text-xs">
+                    <div className="p-3.5 bg-white/5 rounded-2xl border border-white/10">
+                      <h4 className="font-bold text-emerald-400 mb-1 flex items-center gap-1.5">
+                        <CheckCircle size={13} /> 1. Conexão Real via Puppeteer
+                      </h4>
+                      <p className="text-zinc-400 text-[11px] leading-relaxed">
+                        O OSONE inicializa um navegador chromium com <code className="text-emerald-300 font-mono">whatsapp-web.js</code>. O QR Code gerado é capturado em tempo real e a sessão autenticada é mantida na pasta segura <code className="text-zinc-300 font-mono">.wwebjs_auth</code>.
+                      </p>
+                    </div>
+
+                    <div className="p-3.5 bg-white/5 rounded-2xl border border-white/10">
+                      <h4 className="font-bold text-emerald-400 mb-1 flex items-center gap-1.5">
+                        <CheckCircle size={13} /> 2. Leitura de Contatos e Mensagens
+                      </h4>
+                      <p className="text-zinc-400 text-[11px] leading-relaxed">
+                        A API sincroniza os contatos armazenados na agenda do WhatsApp e grava o histórico de envios e recebimentos diretamente no servidor local (<code className="text-zinc-300 font-mono">conversations.json</code>).
+                      </p>
+                    </div>
+
+                    <div className="p-3.5 bg-white/5 rounded-2xl border border-white/10">
+                      <h4 className="font-bold text-emerald-400 mb-1 flex items-center gap-1.5">
+                        <CheckCircle size={13} /> 3. Motor de Atendimento com Gemini AI
+                      </h4>
+                      <p className="text-zinc-400 text-[11px] leading-relaxed">
+                        Quando uma mensagem chega, o servidor consulta a Base de Conhecimento e utiliza o Gemini 3.5-flash-lite para responder o cliente instantaneamente.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl text-[11px] text-emerald-300 flex items-center justify-between">
+                  <span>Sistema OSONE ZAP v5.0 — Status: </span>
+                  <span className="font-bold font-mono text-emerald-400">100% OPERACIONAL</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 5: CHATBOT SETTINGS */}
         {activeTab === 'settings' && (
           <div className="max-w-2xl mx-auto bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl p-6 md:p-8 shadow-2xl">
             <h3 className="text-base font-bold text-white mb-2 flex items-center gap-2">
-              <Settings size={18} className="text-orange-400" />
+              <Settings size={18} className="text-emerald-400" />
               Configurações do Chatbot OSONE
             </h3>
             <p className="text-xs text-zinc-400 mb-6">
@@ -1137,7 +1236,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                 <button
                   onClick={() => handleSaveConfig({ enabled: !config.enabled })}
                   className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${
-                    config.enabled ? 'bg-orange-500' : 'bg-zinc-800'
+                    config.enabled ? 'bg-emerald-500' : 'bg-zinc-800'
                   }`}
                 >
                   <span
@@ -1158,7 +1257,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                   placeholder="AIzaSy..."
                   value={config.geminiApiKey}
                   onChange={(e) => setConfig({ ...config, geminiApiKey: e.target.value })}
-                  className="w-full px-3.5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-orange-500/50 font-mono"
+                  className="w-full px-3.5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500/50 font-mono"
                 />
                 <p className="text-[10px] text-zinc-500 mt-1">
                   Se deixado em branco, o sistema usará a chave de ambiente configurada no OSONE.
@@ -1169,136 +1268,11 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                 <button
                   onClick={() => handleSaveConfig()}
                   disabled={isSaving}
-                  className="px-6 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-black font-bold text-xs transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-600 hover:to-green-600 text-black font-bold text-xs transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
                 >
                   {isSaving ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
                   Salvar Ajustes
                 </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 3: LOGS FEED */}
-        {activeTab === 'logs' && (
-          <div className="bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl p-6 shadow-2xl">
-            <div className="flex items-center justify-between mb-6 pb-4 border-b border-white/10">
-              <div className="flex items-center gap-3">
-                <Activity size={20} className="text-orange-400 animate-pulse" />
-                <div>
-                  <h3 className="text-base font-bold text-white">Sinal e Logs em Tempo Real</h3>
-                  <p className="text-xs text-zinc-400">Histórico de mensagens enviadas, recebidas e eventos do Puppeteer</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={fetchLogs}
-                  className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-                >
-                  <RefreshCw size={12} className={isRefreshingLogs ? 'animate-spin' : ''} />
-                  Atualizar Feed
-                </button>
-
-                <button
-                  onClick={handleClearLogs}
-                  className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-                >
-                  <Trash2 size={12} />
-                  Limpar Logs
-                </button>
-              </div>
-            </div>
-
-            {logs.length === 0 ? (
-              <div className="text-center py-12 text-zinc-500 text-xs">
-                Nenhum log registrado até o momento.
-              </div>
-            ) : (
-              <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
-                {logs.map((log) => (
-                  <div
-                    key={log.id}
-                    className="p-3.5 bg-white/5 border border-white/5 rounded-2xl flex flex-col gap-1.5 text-xs hover:border-white/10 transition-colors"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        {log.type === 'sent' && (
-                          <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold">
-                            ENVIADA
-                          </span>
-                        )}
-                        {log.type === 'received' && (
-                          <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-bold">
-                            RECEBIDA
-                          </span>
-                        )}
-                        {log.type === 'info' && (
-                          <span className="px-2 py-0.5 rounded-md bg-blue-500/20 text-blue-400 border border-blue-500/30 text-[10px] font-bold">
-                            SISTEMA
-                          </span>
-                        )}
-                        {log.type === 'error' && (
-                          <span className="px-2 py-0.5 rounded-md bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] font-bold">
-                            ERRO
-                          </span>
-                        )}
-
-                        <span className="font-semibold text-white">{log.sender}</span>
-                      </div>
-
-                      <span className="text-[10px] text-zinc-500 font-mono">
-                        {new Date(log.timestamp).toLocaleTimeString()}
-                      </span>
-                    </div>
-
-                    <p className="text-zinc-300 pl-1">{log.message}</p>
-
-                    {log.response && (
-                      <div className="mt-1 p-2.5 bg-orange-500/10 border border-orange-500/20 rounded-xl text-orange-200 text-[11px]">
-                        <span className="font-bold text-orange-400 block mb-0.5">Resposta IA:</span>
-                        {log.response}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* TAB 4: DOCS */}
-        {activeTab === 'docs' && (
-          <div className="max-w-3xl mx-auto bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl p-6 md:p-8 shadow-2xl text-xs space-y-4">
-            <h3 className="text-base font-bold text-white flex items-center gap-2">
-              <BookOpen size={18} className="text-orange-400" />
-              Guia de Funcionamento do WhatsApp Copilot
-            </h3>
-
-            <p className="text-zinc-300 leading-relaxed">
-              O OSONE utiliza a biblioteca <code className="text-orange-400 font-mono">whatsapp-web.js</code> integrada ao navegador headless Puppeteer rodando no servidor local.
-            </p>
-
-            <div className="space-y-3 pt-2">
-              <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
-                <h4 className="font-bold text-white mb-1">1. Conectando pelo QR Code</h4>
-                <p className="text-zinc-400">
-                  Ao clicar em "Iniciar Conexão WhatsApp", o Puppeteer abre o WhatsApp Web em segundo plano e gera o QR Code na tela. Abra o WhatsApp no celular, escaneie e a sessão fica salva na pasta local <code className="text-zinc-300 font-mono">.wwebjs_auth</code>.
-                </p>
-              </div>
-
-              <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
-                <h4 className="font-bold text-white mb-1">2. Disparo de Mensagens</h4>
-                <p className="text-zinc-400">
-                  A aba "Painel & Disparo" permite enviar qualquer mensagem diretamente para números externos (ex: 5511999999999) usando a função nativa <code className="text-orange-400 font-mono">client.sendMessage()</code> com log detalhado de auditoria.
-                </p>
-              </div>
-
-              <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
-                <h4 className="font-bold text-white mb-1">3. Auto-resposta com Gemini</h4>
-                <p className="text-zinc-400">
-                  Quando o recurso estiver ativado em "Ajustes do Chatbot", qualquer mensagem privada recebida será respondida automaticamente pelo modelo Gemini 3.5-flash-lite do OSONE.
-                </p>
               </div>
             </div>
           </div>

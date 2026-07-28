@@ -94,6 +94,25 @@ export function WhatsAppConnect({ onStatusChange, className = '' }: WhatsAppConn
     }
   };
 
+  const handleResetSession = async () => {
+    setIsConnecting(true);
+    setErrorMsg(null);
+    try {
+      const res = await fetch('/api/whatsapp/reset-session', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setStatus(data.status || 'iniciando');
+      } else {
+        const errData = await res.json();
+        setErrorMsg(errData.error || 'Erro ao resetar sessão');
+      }
+    } catch (e: any) {
+      setErrorMsg(e.message || "Erro ao resetar sessão do WhatsApp");
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
   // Connect automatically on component mount
   useEffect(() => {
     handleConnect();
@@ -106,19 +125,19 @@ export function WhatsAppConnect({ onStatusChange, className = '' }: WhatsAppConn
   return (
     <div className={`p-6 bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl relative overflow-hidden shadow-2xl text-white ${className}`}>
       {/* Background Neural Glow Orb */}
-      <div className="absolute -top-24 -right-24 w-72 h-72 bg-gradient-to-br from-orange-500/20 via-amber-500/10 to-transparent rounded-full blur-3xl pointer-events-none animate-pulse" />
+      <div className="absolute -top-24 -right-24 w-72 h-72 bg-gradient-to-br from-emerald-500/20 via-green-500/10 to-transparent rounded-full blur-3xl pointer-events-none animate-pulse" />
 
       {/* Header */}
       <div className="flex items-center justify-between mb-6 border-b border-white/10 pb-4">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-orange-500/20 to-amber-500/10 border border-orange-500/30 flex items-center justify-center text-orange-400 shadow-lg shadow-orange-500/10">
+          <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-green-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shadow-lg shadow-emerald-500/10">
             <MessageSquare size={20} />
           </div>
           <div>
             <h3 className="text-base font-bold text-white flex items-center gap-2">
-              WhatsApp Copilot
-              <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30 font-semibold">
-                Local Session
+              OSONE ZAP
+              <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold">
+                Sessão Local
               </span>
             </h3>
             <p className="text-xs text-zinc-400">whatsapp-web.js via Puppeteer local</p>
@@ -320,13 +339,23 @@ export function WhatsAppConnect({ onStatusChange, className = '' }: WhatsAppConn
               {errorMsg || "Não foi possível inicializar o navegador Puppeteer local."}
             </p>
 
-            <button
-              onClick={handleConnect}
-              className="px-6 py-2.5 rounded-2xl bg-red-500 hover:bg-red-600 text-white font-bold text-xs shadow-lg transition-all flex items-center gap-2 cursor-pointer"
-            >
-              <RefreshCw size={14} />
-              Tentar Novamente
-            </button>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <button
+                onClick={handleConnect}
+                className="px-5 py-2.5 rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-white font-bold text-xs shadow-lg transition-all flex items-center gap-2 cursor-pointer border border-white/10"
+              >
+                <RefreshCw size={14} />
+                Tentar Novamente
+              </button>
+
+              <button
+                onClick={handleResetSession}
+                className="px-5 py-2.5 rounded-2xl bg-red-500 hover:bg-red-600 text-white font-bold text-xs shadow-lg transition-all flex items-center gap-2 cursor-pointer"
+              >
+                <Power size={14} />
+                Destravar Sessão & Gerar Novo QR Code
+              </button>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
