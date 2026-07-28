@@ -1,7 +1,13 @@
-const { app, BrowserWindow, shell } = require('electron');
-const path = require('path');
-const http = require('http');
-const fs = require('fs');
+import { app, BrowserWindow, shell } from 'electron';
+import path from 'path';
+import http from 'http';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const require = createRequire(import.meta.url);
 
 let mainWindow = null;
 const PORT = process.env.PORT || 3000;
