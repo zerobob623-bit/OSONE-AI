@@ -32,6 +32,9 @@ Este documento registra todas as funcionalidades, rotas e módulos ativos no eco
 ## 4. Modulos e Componentes do Ecossistema UI/UX
 - **Mapa OS (`OSONEMap.tsx`)**: Visualização cartográfica integrada com busca e navegação para qualquer localidade indicada.
 - **Workspace e Preview de Código (`CodeWorkspace.tsx`, `CodePreview.tsx`)**: Ambiente interativo para edição e execução de código.
+  - **Sistema de 5 Projetos Isolados ("Em qual projeto você quer codar?")**: Gerenciamento de até 5 projetos independentes ("Projeto 1" a "Projeto 5") com renomeação individual, onde cada projeto mantém seus próprios arquivos e estado isolados no localStorage (`osone_code_projects_v2`).
+  - **Botão "Desfazer" (Undo / Ctrl+Z)**: Histórico completo de snapshots de código que permite reverter edições, exclusões e adições de arquivos instantaneamente com botão no cabeçalho e atalho global Ctrl+Z.
+  - **Agentes Swarm & Hunter Agêntico**: Agentes especializados em loop autônomo e analisador de código com auto-implementação.
 - **Canvas Interativo (`InteractiveCanvas.tsx`)**: Renderizador visual dinâmico.
 - **Lousa do Tutor / Educador (`TeacherWhiteboard.tsx`)**: Lousa interativa para explicações acadêmicas e mentoria.
 - **Central de Saúde e Bem-Estar (`WellnessCenter.tsx`)**: Acompanhamento de dados de saúde, metas e evolução do usuário.
