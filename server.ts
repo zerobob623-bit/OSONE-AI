@@ -529,9 +529,37 @@ Comentário de @${user}: "${text}"`;
     }
   ];
 
-  // ====== KNOWLEDGE BASE & CONVERSATIONS STATE & HELPERS ======
+  // ====== KNOWLEDGE BASE, CONVERSATIONS & CONTACTS STATE & HELPERS ======
   const KNOWLEDGE_BASE_PATH = path.join(process.cwd(), "knowledge-base.json");
   const CONVERSATIONS_PATH = path.join(process.cwd(), "conversations.json");
+  const CONTACTS_PATH = path.join(process.cwd(), "contacts.json");
+
+  interface ContactItem {
+    id: string;
+    name: string;
+    phone: string;
+    notes?: string;
+    createdAt: number;
+  }
+
+  function loadContacts(): ContactItem[] {
+    try {
+      if (fs.existsSync(CONTACTS_PATH)) {
+        return JSON.parse(fs.readFileSync(CONTACTS_PATH, "utf-8"));
+      }
+    } catch (e) {
+      console.error("Erro ao ler contacts.json:", e);
+    }
+    return [];
+  }
+
+  function saveContacts(contacts: ContactItem[]): void {
+    try {
+      fs.writeFileSync(CONTACTS_PATH, JSON.stringify(contacts, null, 2), "utf-8");
+    } catch (e) {
+      console.error("Erro ao salvar contacts.json:", e);
+    }
+  }
 
   function loadKnowledgeBase(): string {
     try {
@@ -1007,6 +1035,65 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     res.json(conversationsMap);
   });
 
+  // Contacts Endpoints (GET, POST, DELETE)
+  app.get("/api/whatsapp/contacts", (req, res) => {
+    res.json(loadContacts());
+  });
+
+  app.post("/api/whatsapp/contacts", (req, res) => {
+    try {
+      const { id, name, phone, notes } = req.body;
+      if (!name || !phone) {
+        return res.status(400).json({ error: "Nome e telefone são obrigatórios." });
+      }
+
+      const cleanPhone = phone.replace(/\D/g, "");
+      if (!cleanPhone || cleanPhone.length < 8) {
+        return res.status(400).json({ error: "Telefone deve conter pelo menos 8 dígitos." });
+      }
+
+      const contacts = loadContacts();
+      const existingIndex = id ? contacts.findIndex(c => c.id === id) : -1;
+
+      let savedContact: ContactItem;
+      if (existingIndex >= 0) {
+        contacts[existingIndex] = {
+          ...contacts[existingIndex],
+          name: name.trim(),
+          phone: cleanPhone,
+          notes: (notes || "").trim()
+        };
+        savedContact = contacts[existingIndex];
+      } else {
+        savedContact = {
+          id: Math.random().toString(36).substring(2, 11),
+          name: name.trim(),
+          phone: cleanPhone,
+          notes: (notes || "").trim(),
+          createdAt: Date.now()
+        };
+        contacts.unshift(savedContact);
+      }
+
+      saveContacts(contacts);
+      return res.json({ status: "success", contact: savedContact, contacts });
+    } catch (err: any) {
+      return res.status(500).json({ error: `Erro ao salvar contato: ${err?.message || err}` });
+    }
+  });
+
+  app.delete("/api/whatsapp/contacts/:id", (req, res) => {
+    try {
+      const { id } = req.params;
+      let contacts = loadContacts();
+      contacts = contacts.filter(c => c.id !== id);
+      saveContacts(contacts);
+      return res.json({ status: "success", contacts });
+    } catch (err: any) {
+      return res.status(500).json({ error: `Erro ao remover contato: ${err?.message || err}` });
+    }
+  });
+
   // Simulate an incoming WhatsApp message
   app.post("/api/whatsapp/simulate-incoming", async (req, res) => {
     try {
@@ -1118,8 +1205,13 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       return res.status(400).json({ status: "error", error: errorMsg });
     }
 
-    if (!wwebjsClient || wwebjsStatus !== "conectado") {
-      const errorMsg = `Sessão do WhatsApp não está pronta/conectada (Status atual: ${wwebjsStatus}). Conecte via QR Code primeiro no painel.`;
+    const hasPupPage = Boolean(wwebjsClient && (wwebjsClient as any).pupPage);
+    if (!wwebjsClient || wwebjsStatus !== "conectado" || !hasPupPage) {
+      if (wwebjsStatus === "conectado" && !hasPupPage) {
+        wwebjsStatus = "desconectado";
+        wwebjsLastError = "A página do Puppeteer do WhatsApp não está pronta ou foi fechada.";
+      }
+      const errorMsg = `Sessão do WhatsApp não está pronta/conectada (Status atual: ${wwebjsStatus}, Navegador: ${hasPupPage ? 'OK' : 'Ausente'}). Por favor, clique em 'Iniciar Conexão' ou escaneie o QR Code no Monitor Central.`;
       console.error("[WhatsApp Send] Erro de prontidão do client:", errorMsg);
       whatsappLogs.unshift({
         id: Math.random().toString(36).substring(2, 11),
@@ -1180,6 +1272,11 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       const errMsg = sendErr?.message || String(sendErr);
       console.error("[WhatsApp Send] Erro durante wwebjsClient.sendMessage():", sendErr);
 
+      if (errMsg.includes("evaluate") || errMsg.includes("null") || errMsg.includes("Session closed")) {
+        wwebjsStatus = "desconectado";
+        wwebjsLastError = "A página do Puppeteer caiu ou perdeu a conexão. Clique em 'Iniciar Conexão' para reconectar.";
+      }
+
       whatsappLogs.unshift({
         id: Math.random().toString(36).substring(2, 11),
         timestamp: Date.now(),
@@ -1189,7 +1286,11 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       });
       if (whatsappLogs.length > 100) whatsappLogs.pop();
 
-      return res.status(500).json({ status: "error", error: errMsg });
+      return res.status(500).json({ 
+        status: "error", 
+        error: errMsg,
+        suggestion: "Sessão reiniciada. Por favor reconecte o WhatsApp no Monitor Central gerando um novo QR Code."
+      });
     }
   });
 

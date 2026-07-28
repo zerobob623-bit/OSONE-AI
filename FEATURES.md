@@ -35,10 +35,12 @@ Este documento registra todas as funcionalidades, rotas e módulos ativos no eco
 - **Canvas Interativo (`InteractiveCanvas.tsx`)**: Renderizador visual dinâmico.
 - **Lousa do Tutor / Educador (`TeacherWhiteboard.tsx`)**: Lousa interativa para explicações acadêmicas e mentoria.
 - **Central de Saúde e Bem-Estar (`WellnessCenter.tsx`)**: Acompanhamento de dados de saúde, metas e evolução do usuário.
-- **Integração WhatsApp Copilot (`WhatsAppConnect.tsx`, `WhatsAppIntegration.tsx`)**: Conexão nativa via `whatsapp-web.js` (Puppeteer local), auto-resposta inteligente com Gemini 3.5-flash-lite, e disparo de mensagens diretas (`POST /api/whatsapp/send-message`) formatando o JID diretamente (`${cleanDigits}@c.us`) sem a chamada `getNumberId()` para evitar o erro `No LID for user`.
-  - **Vendedor Comercial com Contexto Real**: Seção "Base de Conhecimento" no painel com salvamento manual em `knowledge-base.json`.
-  - **Importador de URL com Cheerio**: Extração de texto limpo de páginas externas usando a biblioteca `cheerio`.
-  - **Histórico de Conversa por Contato**: Armazenamento persistente em `conversations.json` limitando às últimas N=20 mensagens por cliente para manter o contexto contínuo no modelo Gemini.
+- **Integração WhatsApp Copilot (`WhatsAppConnect.tsx`, `WhatsAppIntegration.tsx`)**: Conexão nativa via `whatsapp-web.js` (Puppeteer local), auto-resposta inteligente com Gemini 3.5-flash-lite, e disparo de mensagens diretas (`POST /api/whatsapp/send-message`) com validação estrita do objeto `pupPage` para sanar o erro `Cannot read properties of null (reading 'evaluate')`.
+  - **Barra de Abas Completa**: "Monitor Central", "Base de Conhecimento", "Lista de Contatos", "Ajustes de Gateway", "Histórico de Conversas" e "Documentação OSONE".
+  - **Base de Conhecimento RAG do Produto**: Inserção manual e salvamento em `knowledge-base.json`.
+  - **Importador de URL com Cheerio**: Extração de texto limpo de páginas para alimentar o vendedor de IA.
+  - **Lista de Contatos Gerenciável (`contacts.json`)**: Gerenciamento CRUD completo de contatos (nome, telefone, observações) com ações rápidas de disparo e consulta de histórico.
+  - **Histórico de Conversa por Contato**: Armazenamento em `conversations.json` limitando às últimas N=20 mensagens por cliente.
 - **Casa Inteligente Tuya (`SmartHomeConnect.tsx`, `tuyaService.ts`)**: Controle de dispositivos IoT e automação residencial.
 - **Sentinela OSONE (`OSONESentinel.tsx`)**: Módulo de monitoramento contínuo e alertas de sistema.
 - **Visão Computacional OSONE Lens (`OSONELens.tsx`)**: Análise visual e entrada multimodal através da câmera.

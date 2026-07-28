@@ -5,7 +5,8 @@ import {
   MessageSquare, Settings, AlertCircle, CheckCircle, 
   RefreshCw, Play, Pause, Trash2, Cpu, Activity, Send, 
   Check, AlertTriangle, ArrowRight, BookOpen, Smartphone, ShieldCheck,
-  Database, Globe, Save, History, FileText, Link as LinkIcon
+  Database, Globe, Save, History, FileText, Link as LinkIcon,
+  Users, UserPlus, Edit3, Plus, Search, UserCheck
 } from 'lucide-react';
 
 interface WhatsappLog {
@@ -30,6 +31,14 @@ interface ChatMessage {
 
 type ConversationsMap = Record<string, ChatMessage[]>;
 
+interface ContactItem {
+  id: string;
+  name: string;
+  phone: string;
+  notes?: string;
+  createdAt: number;
+}
+
 export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: string }) {
   // Config state
   const [config, setConfig] = useState<WhatsAppConfig>({
@@ -41,7 +50,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
   const [isSaving, setIsSaving] = useState(false);
   const [logs, setLogs] = useState<WhatsappLog[]>([]);
   const [isRefreshingLogs, setIsRefreshingLogs] = useState(false);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'knowledge' | 'settings' | 'logs' | 'docs'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'knowledge' | 'contacts' | 'settings' | 'logs' | 'docs'>('dashboard');
 
   // Manual Outbound Sending State (whatsapp-web.js)
   const [sendNumber, setSendNumber] = useState('');
@@ -67,7 +76,17 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
   const [conversations, setConversations] = useState<ConversationsMap>({});
   const [selectedContactJid, setSelectedContactJid] = useState<string | null>(null);
 
-  // Load backend configurations and logs
+  // Contacts State
+  const [contacts, setContacts] = useState<ContactItem[]>([]);
+  const [cName, setCName] = useState('');
+  const [cPhone, setCPhone] = useState('');
+  const [cNotes, setCNotes] = useState('');
+  const [editingContactId, setEditingContactId] = useState<string | null>(null);
+  const [isSavingContact, setIsSavingContact] = useState(false);
+  const [contactStatusMsg, setContactStatusMsg] = useState<string | null>(null);
+  const [contactSearch, setContactSearch] = useState('');
+
+  // Load backend configurations, logs, knowledge base, conversations and contacts
   const fetchConfig = async () => {
     try {
       const res = await fetch('/api/whatsapp/config');
@@ -119,11 +138,24 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
     }
   };
 
+  const fetchContacts = async () => {
+    try {
+      const res = await fetch('/api/whatsapp/contacts');
+      if (res.ok) {
+        const data = await res.json();
+        setContacts(data || []);
+      }
+    } catch (e) {
+      console.error("Erro ao carregar contatos:", e);
+    }
+  };
+
   useEffect(() => {
     fetchConfig();
     fetchLogs();
     fetchKnowledgeBase();
     fetchConversations();
+    fetchContacts();
 
     // Constant auto-refresh for logs and conversations so user can see chatbot activity
     const val = setInterval(() => {
@@ -132,6 +164,71 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
     }, 4000);
     return () => clearInterval(val);
   }, []);
+
+  const handleSaveContact = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cName || !cPhone) return;
+    setIsSavingContact(true);
+    setContactStatusMsg(null);
+    try {
+      const res = await fetch('/api/whatsapp/contacts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: editingContactId || undefined,
+          name: cName,
+          phone: cPhone,
+          notes: cNotes
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setContacts(data.contacts || []);
+        setCName('');
+        setCPhone('');
+        setCNotes('');
+        setEditingContactId(null);
+        setContactStatusMsg("Contato cadastrado com sucesso!");
+      } else {
+        setContactStatusMsg(data.error || "Erro ao salvar contato.");
+      }
+    } catch (err: any) {
+      setContactStatusMsg(`Erro: ${err?.message || err}`);
+    } finally {
+      setIsSavingContact(false);
+    }
+  };
+
+  const handleEditContact = (contact: ContactItem) => {
+    setEditingContactId(contact.id);
+    setCName(contact.name);
+    setCPhone(contact.phone);
+    setCNotes(contact.notes || '');
+    setActiveTab('contacts');
+  };
+
+  const handleDeleteContact = async (id: string) => {
+    try {
+      const res = await fetch(`/api/whatsapp/contacts/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        const data = await res.json();
+        setContacts(data.contacts || []);
+      }
+    } catch (e) {
+      console.error("Erro ao remover contato:", e);
+    }
+  };
+
+  const handleSelectContactForMessage = (phone: string) => {
+    setSendNumber(phone);
+    setActiveTab('dashboard');
+  };
+
+  const handleSelectContactForHistory = (phone: string) => {
+    const cleanKey = phone.replace(/\D/g, "");
+    setSelectedContactJid(cleanKey);
+    setActiveTab('knowledge');
+  };
 
   const handleSaveConfig = async (updatedConfig?: Partial<WhatsAppConfig>) => {
     setIsSaving(true);
@@ -363,7 +460,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
             }`}
           >
             <Cpu size={14} />
-            Painel & Disparo
+            Monitor Central
           </button>
 
           <button
@@ -379,6 +476,18 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
           </button>
 
           <button
+            onClick={() => setActiveTab('contacts')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              activeTab === 'contacts' 
+                ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30 shadow-lg' 
+                : 'text-zinc-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <Users size={14} />
+            Lista de Contatos {contacts.length > 0 && <span className="text-[10px] bg-orange-500/30 px-1.5 py-0.5 rounded-full text-orange-300 font-mono">{contacts.length}</span>}
+          </button>
+
+          <button
             onClick={() => setActiveTab('settings')}
             className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
               activeTab === 'settings' 
@@ -387,7 +496,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
             }`}
           >
             <Settings size={14} />
-            Ajustes do Chatbot
+            Ajustes de Gateway
           </button>
 
           <button
@@ -399,7 +508,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
             }`}
           >
             <Activity size={14} />
-            Logs & Atividade ({logs.length})
+            Histórico de Conversas ({logs.length})
           </button>
 
           <button
@@ -411,7 +520,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
             }`}
           >
             <BookOpen size={14} />
-            Guia de Uso
+            Documentação OSONE
           </button>
         </div>
       </div>
@@ -443,6 +552,31 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                 </div>
 
                 <form onSubmit={handleSendDirectMessage} className="space-y-4">
+                  {/* Quick Select from Saved Contacts */}
+                  {contacts.length > 0 && (
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-300 mb-1.5 flex items-center justify-between">
+                        <span className="flex items-center gap-1.5 text-orange-400">
+                          <Users size={12} /> Selecionar de Contatos Cadastrados
+                        </span>
+                        <span className="text-[10px] text-zinc-500">{contacts.length} contatos salvos</span>
+                      </label>
+                      <select
+                        onChange={(e) => {
+                          if (e.target.value) setSendNumber(e.target.value);
+                        }}
+                        className="w-full px-3.5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-orange-500/50"
+                      >
+                        <option value="" className="bg-zinc-900 text-zinc-400">-- Escolha um contato ou digite abaixo --</option>
+                        {contacts.map((c) => (
+                          <option key={c.id} value={c.phone} className="bg-zinc-900 text-white">
+                            👤 {c.name} ({c.phone})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
                   <div>
                     <label className="block text-xs font-semibold text-zinc-300 mb-1.5">
                       Número de Destino (com DDI e DDD)
@@ -783,7 +917,203 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
           </div>
         )}
 
-        {/* TAB 3: CHATBOT SETTINGS */}
+        {/* TAB 3: LISTA DE CONTATOS */}
+        {activeTab === 'contacts' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Left: Add / Edit Contact Form */}
+            <div className="lg:col-span-4">
+              <div className="p-6 bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl">
+                <div className="flex items-center gap-2.5 mb-4 pb-3 border-b border-white/10">
+                  <div className="p-2 rounded-xl bg-orange-500/20 border border-orange-500/30 text-orange-400">
+                    <UserPlus size={18} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">
+                      {editingContactId ? 'Editar Contato' : 'Novo Contato'}
+                    </h3>
+                    <p className="text-[11px] text-zinc-400">Cadastre nome e telefone para envios rápidos e histórico</p>
+                  </div>
+                </div>
+
+                <form onSubmit={handleSaveContact} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                      Nome do Contato / Cliente
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ex: Carlos Oliveira"
+                      value={cName}
+                      onChange={(e) => setCName(e.target.value)}
+                      className="w-full px-3.5 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-orange-500/50"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                      Telefone (DDI + DDD + Número)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ex: 5511999998888"
+                      value={cPhone}
+                      onChange={(e) => setCPhone(e.target.value)}
+                      className="w-full px-3.5 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-orange-500/50 font-mono"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                      Observações / Categoria (Opcional)
+                    </label>
+                    <textarea
+                      rows={3}
+                      placeholder="Ex: Cliente interessado no OSONE G5. Atendido dia 25/07."
+                      value={cNotes}
+                      onChange={(e) => setCNotes(e.target.value)}
+                      className="w-full px-3.5 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-orange-500/50 resize-none"
+                    />
+                  </div>
+
+                  {contactStatusMsg && (
+                    <div className="p-2.5 rounded-xl bg-orange-500/10 border border-orange-500/30 text-orange-300 text-xs flex items-center gap-2">
+                      <CheckCircle size={14} className="shrink-0" />
+                      <p>{contactStatusMsg}</p>
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2 pt-2">
+                    {editingContactId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingContactId(null);
+                          setCName('');
+                          setCPhone('');
+                          setCNotes('');
+                        }}
+                        className="flex-1 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold text-xs transition-all cursor-pointer"
+                      >
+                        Cancelar
+                      </button>
+                    )}
+                    <button
+                      type="submit"
+                      disabled={isSavingContact || !cName || !cPhone}
+                      className="flex-1 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-400 text-black font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg shadow-orange-500/20"
+                    >
+                      {isSavingContact ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                      {editingContactId ? 'Atualizar Contato' : 'Salvar Contato'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+
+            {/* Right: Saved Contacts List */}
+            <div className="lg:col-span-8 space-y-6">
+              <div className="p-6 bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 pb-3 border-b border-white/10">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-xl bg-orange-500/20 border border-orange-500/30 text-orange-400">
+                      <Users size={18} />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-white">Agenda e Contatos Persistentes</h3>
+                      <p className="text-[11px] text-zinc-400">Armazenados em <code className="text-orange-400 font-mono">contacts.json</code></p>
+                    </div>
+                  </div>
+
+                  {/* Search Bar */}
+                  <div className="relative w-full sm:w-64">
+                    <Search size={14} className="absolute left-3 top-2.5 text-zinc-500" />
+                    <input
+                      type="text"
+                      placeholder="Buscar por nome ou telefone..."
+                      value={contactSearch}
+                      onChange={(e) => setContactSearch(e.target.value)}
+                      className="w-full pl-9 pr-3 py-1.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-orange-500/50"
+                    />
+                  </div>
+                </div>
+
+                {contacts.length === 0 ? (
+                  <div className="text-center py-12 text-zinc-500 text-xs">
+                    Nenhum contato cadastrado ainda. Preencha o formulário ao lado para adicionar o primeiro cliente!
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {contacts
+                      .filter(c => 
+                        c.name.toLowerCase().includes(contactSearch.toLowerCase()) || 
+                        c.phone.includes(contactSearch)
+                      )
+                      .map((c) => (
+                        <div key={c.id} className="p-4 bg-white/5 border border-white/10 rounded-2xl hover:border-orange-500/30 transition-all flex flex-col justify-between gap-3">
+                          <div>
+                            <div className="flex items-start justify-between gap-2 mb-1">
+                              <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                                <UserCheck size={14} className="text-orange-400 shrink-0" />
+                                {c.name}
+                              </h4>
+                              <span className="text-[10px] text-zinc-500 font-mono">
+                                +{c.phone}
+                              </span>
+                            </div>
+                            {c.notes && (
+                              <p className="text-[11px] text-zinc-400 mt-1 line-clamp-2 bg-black/30 p-2 rounded-xl border border-white/5">
+                                {c.notes}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/5">
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => handleSelectContactForMessage(c.phone)}
+                                className="px-2.5 py-1 rounded-lg bg-orange-500/20 hover:bg-orange-500/30 text-orange-300 border border-orange-500/30 text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer"
+                                title="Mandar Mensagem"
+                              >
+                                <Send size={11} /> Disparar
+                              </button>
+                              <button
+                                onClick={() => handleSelectContactForHistory(c.phone)}
+                                className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer"
+                                title="Ver Histórico de Conversa"
+                              >
+                                <History size={11} /> Histórico
+                              </button>
+                            </div>
+
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => handleEditContact(c)}
+                                className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-all cursor-pointer"
+                                title="Editar Contato"
+                              >
+                                <Edit3 size={13} />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteContact(c.id)}
+                                className="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 transition-all cursor-pointer"
+                                title="Excluir Contato"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 4: CHATBOT SETTINGS */}
         {activeTab === 'settings' && (
           <div className="max-w-2xl mx-auto bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl p-6 md:p-8 shadow-2xl">
             <h3 className="text-base font-bold text-white mb-2 flex items-center gap-2">
