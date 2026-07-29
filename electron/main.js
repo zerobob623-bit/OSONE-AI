@@ -1,4 +1,5 @@
 import { app, BrowserWindow, shell } from 'electron';
+import { autoUpdater } from 'electron-updater';
 import path from 'path';
 import http from 'http';
 import fs from 'fs';
@@ -121,10 +122,44 @@ function createWindow() {
   });
 }
 
+// Auto-update via electron-updater, publicando releases no GitHub (owner/repo do package.json).
+// Só roda em builds empacotados (app.isPackaged) — em dev não há release para comparar.
+function setupAutoUpdater() {
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('checking-for-update', () => {
+    console.log('[AutoUpdater] Verificando atualizações...');
+  });
+  autoUpdater.on('update-available', (info) => {
+    console.log(`[AutoUpdater] Atualização disponível: v${info.version}. Baixando...`);
+  });
+  autoUpdater.on('update-not-available', () => {
+    console.log('[AutoUpdater] Nenhuma atualização disponível. Versão atual em uso.');
+  });
+  autoUpdater.on('error', (err) => {
+    console.error('[AutoUpdater] Erro ao verificar/baixar atualização:', err);
+  });
+  autoUpdater.on('download-progress', (progress) => {
+    console.log(`[AutoUpdater] Baixando atualização: ${Math.round(progress.percent)}%`);
+  });
+  autoUpdater.on('update-downloaded', (info) => {
+    console.log(`[AutoUpdater] Atualização v${info.version} baixada. Será instalada ao fechar o app.`);
+  });
+
+  autoUpdater.checkForUpdates().catch((err) => {
+    console.error('[AutoUpdater] Falha ao iniciar verificação de atualização:', err);
+  });
+}
+
 app.whenReady().then(async () => {
   await startBackendServer();
   await waitForServer(PORT);
   createWindow();
+
+  if (app.isPackaged) {
+    setupAutoUpdater();
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

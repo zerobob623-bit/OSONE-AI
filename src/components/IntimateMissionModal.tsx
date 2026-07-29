@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Lock, Fingerprint, FileText, Download, CheckCircle, HelpCircle, Edit3, Trash2, Loader2, UploadCloud, Mic, MicOff } from 'lucide-react';
-import { INTIMATE_QUESTIONS, IntimateQuestion } from '../App';
+import { INTIMATE_QUESTIONS, IntimateQuestion } from '../constants/osoneConstants';
 
 interface IntimateMissionModalProps {
   isOpen: boolean;
