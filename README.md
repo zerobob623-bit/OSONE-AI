@@ -47,3 +47,12 @@ Ao implantar este projeto na **Vercel**, você **NÃO** precisa enviar nenhum ar
    - `TUYA_BASE_URL` (ex: `https://openapi.tuyaus.com`)
    - `TUYA_USER_UID`
 4. Salve e re-faça o deploy. A Vercel injetará automaticamente as variáveis no `process.env` do ambiente serverless.
+
+---
+
+### ⚠️ Limitação Conhecida: Voz em Tempo Real (Gemini Live / ElevenLabs) na Vercel
+
+A Vercel roda `server.ts` como uma função serverless (`api/index.ts`), que **não suporta conexões WebSocket de longa duração**. Isso afeta diretamente os proxies `/api/live-ws` (Gemini Live) e `/api/elevenlabs-ws` (ElevenLabs), além da função "Transferir para Celular" (handoff), que dependem desse tipo de conexão.
+
+- **ElevenLabs**: já resolvido. Se o usuário configurar sua **própria chave da ElevenLabs** em Configurações do app, o navegador conecta **direto** na ElevenLabs (`wss://api.elevenlabs.io/...`), sem passar pelo nosso backend — funciona normalmente na Vercel. Sem chave própria, o app cai no proxy do backend usando a `ELEVENLABS_API_KEY` do `.env`/Vercel, que só funciona em hospedagem com servidor persistente (local, Electron, ou self-host fora da Vercel).
+- **Gemini Live** (voz nativa do Gemini) e o handoff entre dispositivos: ainda dependem do proxy WebSocket do backend e **não funcionam quando deployado na Vercel** — funcionam normalmente local, no Electron, ou em qualquer hospedagem com servidor Node persistente.

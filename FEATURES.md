@@ -22,8 +22,8 @@ Este documento registra todas as funcionalidades, rotas e módulos ativos no eco
 ---
 
 ## 3. Comunicação de Voz & IA Multimodal (Gemini Live & ElevenLabs)
-- **Integração Gemini Live WebSocket Proxy (`/api/live-ws`)**: Comunicação bidirecional de áudio e texto com o modelo `gemini-3.1-flash-live-preview`.
-- **ElevenLabs Conversational AI (`/api/elevenlabs-ws`)**: Conexão com agentes conversacionais de voz da ElevenLabs.
+- **Integração Gemini Live WebSocket Proxy (`/api/live-ws`)**: Comunicação bidirecional de áudio e texto com o modelo `gemini-3.1-flash-live-preview`. Requer servidor persistente (não funciona em deploy serverless na Vercel).
+- **ElevenLabs Streaming TTS**: com chave própria do usuário nas Configurações, o navegador conecta direto na ElevenLabs (funciona em qualquer hospedagem, inclusive Vercel); sem chave própria, usa o proxy do backend (`/api/elevenlabs-ws`) com a chave do servidor, que requer servidor persistente.
 - **Suporte a Wake Word**: Detecção de palavra de ativação para início mãos-livres.
 - **Perfis e Alternador de Vozes (`VoiceSwitcher.tsx`)**: Configuração de tom e personalidade vocal (Escarlate, Fenrir, etc.).
 
