@@ -3526,6 +3526,77 @@ export default function App() {
     return 'guest';
   };
 
+  // Lê os fatos/datas/memória semântica que o usuário preenche manualmente no Livro de
+  // Memórias (aba "Fatos & Datas" / "Semântica"). Leitura direta do localStorage (sem hook
+  // reativo) para sempre pegar o valor mais recente no momento da montagem do prompt.
+  const getUserMemoryBookSnapshot = (): { facts: string[]; upcomingDates: string[]; semantic: string[] } => {
+    try {
+      const userId = getActiveUserIdHelper();
+      const raw = localStorage.getItem(`nash_memory_${userId}`);
+      if (!raw) return { facts: [], upcomingDates: [], semantic: [] };
+      const parsed = JSON.parse(raw);
+      const facts: string[] = Array.isArray(parsed.facts) ? parsed.facts : [];
+      const importantDates: any[] = Array.isArray(parsed.importantDates) ? parsed.importantDates : [];
+      const semanticMemory: any[] = Array.isArray(parsed.semanticMemory) ? parsed.semanticMemory : [];
+
+      const today = new Date();
+      const currentMonth = today.getMonth() + 1;
+      const currentDate = today.getDate();
+      const upcomingDates = importantDates
+        .filter((d: any) => {
+          if (!d?.date) return false;
+          const [m, day] = d.date.split('-').map(Number);
+          if (m > currentMonth) return true;
+          if (m === currentMonth && day >= currentDate) return true;
+          return false;
+        })
+        .sort((a: any, b: any) => {
+          const [am, ad] = a.date.split('-').map(Number);
+          const [bm, bd] = b.date.split('-').map(Number);
+          return am !== bm ? am - bm : ad - bd;
+        })
+        .map((d: any) => `${d.label}: ${d.date}${d.year ? `/${d.year}` : ''}`);
+
+      const semantic = semanticMemory.map((s: any) => `${s.concept} (${s.category || 'Geral'}): ${s.definition}`);
+
+      return { facts, upcomingDates, semantic };
+    } catch {
+      return { facts: [], upcomingDates: [], semantic: [] };
+    }
+  };
+
+  // Bloco unificado de memória, usado tanto no chat de texto quanto na sessão de voz, para
+  // que os dois modos enxerguem exatamente a mesma memória de longo prazo, dossiê, fatos,
+  // datas importantes e memória semântica.
+  const buildMemoryContextBlock = (): string => {
+    const dossierSummary = INTIMATE_QUESTIONS.map(q => {
+      const ans = intimateAnswers[q.id];
+      return ans ? `- ${q.question}: ${ans}` : null;
+    }).filter(Boolean).join('\n');
+
+    const { facts, upcomingDates, semantic } = getUserMemoryBookSnapshot();
+
+    return `
+[SISTEMA DE MEMÓRIA DE LONGO PRAZO DO SISTEMA E DO PC]:
+Você deve agir com total continuidade histórica e utilizar as seguintes informações consolidadas sobre o usuário:
+
+MEMÓRIA DE LONGO PRAZO:
+${longTermMemory || '(Nenhuma memória de longo prazo consolidada registrada ainda.)'}
+
+DOSSIÊ DE MEMÓRIA ÍNTIMA (RESPOSTAS ATIVAS DO CRIADOR):
+${dossierSummary || '(Nenhum fato íntimo do dossiê mapeado ainda.)'}
+
+FATOS REGISTRADOS NO LIVRO DE MEMÓRIAS:
+${facts.length > 0 ? facts.map(f => `- ${f}`).join('\n') : '(Nenhum fato registrado ainda.)'}
+
+DATAS IMPORTANTES PRÓXIMAS:
+${upcomingDates.length > 0 ? upcomingDates.map(d => `- ${d}`).join('\n') : '(Nenhuma data próxima registrada.)'}
+
+MEMÓRIA SEMÂNTICA (CONCEITOS REGISTRADOS PELO USUÁRIO):
+${semantic.length > 0 ? semantic.map(s => `- ${s}`).join('\n') : '(Nenhum conceito semântico registrado ainda.)'}
+`;
+  };
+
   const addDiaryEntryHelper = (content: string, mood: string = 'neutral') => {
     const userId = getActiveUserIdHelper();
     const diaryKey = `nash_diary_${userId}`;
@@ -7120,8 +7191,10 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
 
       const adaptive = getAdaptivePersonalityMetadata(chatHistoryRef.current);
       let activeSystemInstruction = `${profileInstruction}
-          
+
           PERSONALIDADE ATUAL: ${selectedPersona.instructions}`;
+
+      activeSystemInstruction += `\n\n${buildMemoryContextBlock()}`;
 
       if (selectedPersona.id === 'osone') {
         activeSystemInstruction += `\n\n[SISTEMA DE EVOLUÇÃO NEURO-ADAPTATIVA DO OSONE ATIVO]:
@@ -8107,21 +8180,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
         ? `\n\nPERFIL DE SAÚDE DO USUÁRIO:\n- Idade: ${healthData.age}\n- Peso: ${healthData.weight}kg\n- Altura: ${healthData.height}cm\n- Gênero: ${healthData.gender}\n- Estilo: ${healthData.stylePreference}` 
         : '';
 
-      const dossierSummary = INTIMATE_QUESTIONS.map(q => {
-        const ans = intimateAnswers[q.id];
-        return ans ? `- ${q.question}: ${ans}` : null;
-      }).filter(Boolean).join('\n');
-
-      const memoryContext = `
-[SISTEMA DE MEMÓRIA DE LONGO PRAZO DO SISTEMA E DO PC]:
-Você deve agir com total continuidade histórica e utilizar as seguintes informações consolidadas sobre o usuário Henrique Rodrigues:
-
-MEMÓRIA DE LONGO PRAZO:
-${longTermMemory || '(Nenhuma memória de longo prazo consolidada registrada ainda.)'}
-
-DOSSIÊ DE MEMÓRIA ÍNTIMA (RESPOSTAS ATIVAS DO CRIADOR):
-${dossierSummary || '(Nenhum fato íntimo do dossiê mapeado ainda.)'}
-`;
+      const memoryContext = buildMemoryContextBlock();
 
       let liveSystemInstruction = "";
       if (isTranslationMode) {
