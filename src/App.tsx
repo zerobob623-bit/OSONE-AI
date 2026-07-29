@@ -8261,7 +8261,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
           • 'sounds': Biblioteca de Sons.
           • 'canvas': Lousa e Quadro Interativo.
           • 'wellness': Saúde e Estilo.
-          • 'whatsapp': WhatsApp Evolution.
+          • 'whatsapp': OSONE ZAP (Atendimento e Auto-resposta pelo WhatsApp).
           • 'creator': Criador de Conteúdo Viral.
         - Se o usuário disser "Abra o OSONE CODE" ou "Abra a aba de código", chame 'switch_workspace_mode' com mode 'code'.
         - Se o usuário disser "Abra a aba de escrita" ou "Prosa", chame 'switch_workspace_mode' com mode 'writing'.
@@ -8611,7 +8611,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       mode: {
                         type: Type.STRING,
                         enum: ["home", "writing", "code", "sounds", "canvas", "wellness", "whatsapp", "creator", "smarthome", "tiktok", "map"],
-                        description: "O modo para o qual alternar: 'writing' (Aba de Prosa e Escrita de Texto/Documentos), 'code' (Aba OSONE CODE - Programação, Desenvolvimento de Jogos e Software), 'home' (Fechar aba atual / Voltar ao Início), 'canvas' (Lousa Interativa), 'sounds' (Biblioteca de Sons), 'wellness' (Saúde), 'whatsapp' (WhatsApp Evolution)."
+                        description: "O modo para o qual alternar: 'writing' (Aba de Prosa e Escrita de Texto/Documentos), 'code' (Aba OSONE CODE - Programação, Desenvolvimento de Jogos e Software), 'home' (Fechar aba atual / Voltar ao Início), 'canvas' (Lousa Interativa), 'sounds' (Biblioteca de Sons), 'wellness' (Saúde), 'whatsapp' (OSONE ZAP - Atendimento pelo WhatsApp)."
                       }
                     },
                     required: ["mode"]

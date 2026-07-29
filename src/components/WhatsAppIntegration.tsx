@@ -21,6 +21,11 @@ interface WhatsappLog {
 interface WhatsAppConfig {
   enabled: boolean;
   geminiApiKey: string;
+  sendAudioReplies: boolean;
+  ttsEngine: 'gemini' | 'elevenlabs';
+  ttsVoice: string;
+  elevenLabsApiKey: string;
+  elevenLabsVoiceId: string;
 }
 
 interface ChatMessage {
@@ -44,8 +49,14 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
   // Config state
   const [config, setConfig] = useState<WhatsAppConfig>({
     enabled: false,
-    geminiApiKey: ''
+    geminiApiKey: '',
+    sendAudioReplies: true,
+    ttsEngine: 'gemini',
+    ttsVoice: 'Kore',
+    elevenLabsApiKey: '',
+    elevenLabsVoiceId: ''
   });
+  const [waConnectionStatus, setWaConnectionStatus] = useState<string>('desconectado');
 
   // UI States
   const [isSaving, setIsSaving] = useState(false);
@@ -183,17 +194,31 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
     }
   };
 
+  const fetchConnectionStatus = async () => {
+    try {
+      const res = await fetch('/api/whatsapp/status');
+      if (res.ok) {
+        const data = await res.json();
+        setWaConnectionStatus(data.status || 'desconectado');
+      }
+    } catch (e) {
+      console.error("Erro ao carregar status da conexão do WhatsApp:", e);
+    }
+  };
+
   useEffect(() => {
     fetchConfig();
     fetchLogs();
     fetchKnowledgeBase();
     fetchConversations();
     fetchContacts();
+    fetchConnectionStatus();
 
     // Constant auto-refresh for logs and conversations so user can see chatbot activity
     const val = setInterval(() => {
       fetchLogs();
       fetchConversations();
+      fetchConnectionStatus();
     }, 4000);
     return () => clearInterval(val);
   }, []);
@@ -1203,9 +1228,15 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                   </div>
                 </div>
 
-                <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl text-[11px] text-emerald-300 flex items-center justify-between">
+                <div className={`p-3 border rounded-2xl text-[11px] flex items-center justify-between ${
+                  waConnectionStatus === 'conectado'
+                    ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+                    : 'bg-amber-500/10 border-amber-500/20 text-amber-300'
+                }`}>
                   <span>Sistema OSONE ZAP v5.0 — Status: </span>
-                  <span className="font-bold font-mono text-emerald-400">100% OPERACIONAL</span>
+                  <span className={`font-bold font-mono ${waConnectionStatus === 'conectado' ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {waConnectionStatus === 'conectado' ? 'CONECTADO E OPERACIONAL' : waConnectionStatus.toUpperCase()}
+                  </span>
                 </div>
               </div>
             </div>
@@ -1263,6 +1294,79 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                   Se deixado em branco, o sistema usará a chave de ambiente configurada no OSONE.
                 </p>
               </div>
+
+              {/* Audio Reply Toggle */}
+              <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
+                <div>
+                  <h4 className="text-xs font-bold text-white">Responder também por áudio</h4>
+                  <p className="text-[11px] text-zinc-400 mt-0.5">
+                    Além do texto, envia a resposta como mensagem de voz gerada por IA.
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => handleSaveConfig({ sendAudioReplies: !config.sendAudioReplies })}
+                  className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer shrink-0 ${
+                    config.sendAudioReplies ? 'bg-emerald-500' : 'bg-zinc-800'
+                  }`}
+                >
+                  <span
+                    className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${
+                      config.sendAudioReplies ? 'left-7' : 'left-1'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* TTS Engine Selector */}
+              {config.sendAudioReplies && (
+                <div>
+                  <label className="block text-xs font-bold text-white mb-1.5">
+                    Motor de Voz para as Respostas em Áudio
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => setConfig({ ...config, ttsEngine: 'gemini' })}
+                      className={`px-3.5 py-2.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                        config.ttsEngine === 'gemini'
+                          ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+                          : 'bg-white/5 border-white/10 text-zinc-400'
+                      }`}
+                    >
+                      Gemini (padrão)
+                    </button>
+                    <button
+                      onClick={() => setConfig({ ...config, ttsEngine: 'elevenlabs' })}
+                      className={`px-3.5 py-2.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                        config.ttsEngine === 'elevenlabs'
+                          ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+                          : 'bg-white/5 border-white/10 text-zinc-400'
+                      }`}
+                    >
+                      ElevenLabs
+                    </button>
+                  </div>
+
+                  {config.ttsEngine === 'elevenlabs' && (
+                    <div className="mt-3 space-y-2.5">
+                      <input
+                        type="password"
+                        placeholder="Chave API da ElevenLabs (opcional, usa a global se vazio)"
+                        value={config.elevenLabsApiKey}
+                        onChange={(e) => setConfig({ ...config, elevenLabsApiKey: e.target.value })}
+                        className="w-full px-3.5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500/50 font-mono"
+                      />
+                      <input
+                        type="text"
+                        placeholder="ID da Voz na ElevenLabs (opcional)"
+                        value={config.elevenLabsVoiceId}
+                        onChange={(e) => setConfig({ ...config, elevenLabsVoiceId: e.target.value })}
+                        className="w-full px-3.5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500/50 font-mono"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="pt-4 border-t border-white/10 flex justify-end">
                 <button
