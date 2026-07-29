@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Cpu, Palette, Key, Smartphone, Info, Power, Activity, CheckCircle2, AlertCircle, Loader2, Home, UserCircle, Pin, Volume2, RefreshCw, Copy, Check, Image, Eye, EyeOff } from 'lucide-react';
+import { X, Cpu, Palette, Key, Smartphone, Info, Power, Activity, CheckCircle2, AlertCircle, Loader2, Home, UserCircle, Pin, Volume2, RefreshCw, Copy, Check, Image, Eye, EyeOff, Fingerprint, Sparkles } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { ApiKeys, OrbStyle, AppTheme, AIProfile, VoiceModulation } from '../types';
+import { PERSONAS, Persona } from './PersonaSwitcher';
 import { googleHomeService } from '../services/googleHomeService';
 
 const VOICE_DETAILS = [
@@ -42,10 +43,15 @@ export const SettingsModal = ({
   onAddNotification,
   onRestoreState,
   vocalProfileEscarlate,
-  setVocalProfileEscarlate
-}: { 
-  isOpen: boolean; 
-  onClose: () => void; 
+  setVocalProfileEscarlate,
+  selectedPersona,
+  onPersonaChange,
+  onOpenIdentityDossier,
+  intimateAnswersCount,
+  onOpenAiDossier
+}: {
+  isOpen: boolean;
+  onClose: () => void;
   keys: ApiKeys;
   setKeys: (keys: ApiKeys) => void;
   selectedVoice: string;
@@ -70,6 +76,11 @@ export const SettingsModal = ({
   onRestoreState?: (payload: Record<string, string>) => void;
   vocalProfileEscarlate: string;
   setVocalProfileEscarlate: (val: string) => void;
+  selectedPersona: Persona;
+  onPersonaChange: (persona: Persona) => void;
+  onOpenIdentityDossier: () => void;
+  intimateAnswersCount: number;
+  onOpenAiDossier: () => void;
 }) => {
   const [activeTab, setActiveTab] = useState<TabId>('general');
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('idle');
@@ -1281,6 +1292,58 @@ export const SettingsModal = ({
                     exit={{ opacity: 0, x: 10 }}
                     className="space-y-6"
                   >
+                    <div>
+                      <div className="flex items-center gap-2 mb-3">
+                        <Sparkles size={12} className="text-her-accent" />
+                        <label className="block text-[9px] uppercase tracking-[0.2em] text-her-muted font-bold">Personalidade Pré-definida</label>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        {PERSONAS.map((persona) => (
+                          <button
+                            key={persona.id}
+                            onClick={() => onPersonaChange(persona)}
+                            className={cn(
+                              "flex flex-col items-start px-3.5 py-2.5 rounded-xl text-left transition-all border",
+                              selectedPersona.id === persona.id
+                                ? persona.id === 'shadow'
+                                  ? "bg-cyan-950/30 text-cyan-400 border-cyan-900/40"
+                                  : "bg-her-accent/10 text-her-accent border-her-accent/20"
+                                : "text-her-muted border-white/[0.05] hover:bg-white/5 hover:text-her-ink"
+                            )}
+                          >
+                            <div className="flex items-center gap-1.5 mb-0.5">
+                              {persona.icon}
+                              <span className="text-[11px] font-medium tracking-wide">{persona.name}</span>
+                            </div>
+                            <span className="text-[9px] opacity-50 font-light truncate w-full">{persona.description}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center gap-2 mb-3">
+                        <Fingerprint size={12} className="text-her-accent" />
+                        <label className="block text-[9px] uppercase tracking-[0.2em] text-her-muted font-bold">Dossiês</label>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <button
+                          onClick={onOpenIdentityDossier}
+                          className="w-full py-2.5 px-3 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
+                        >
+                          <Fingerprint size={13} />
+                          <span>Dossiê de Identidade ({intimateAnswersCount}/55)</span>
+                        </button>
+                        <button
+                          onClick={onOpenAiDossier}
+                          className="w-full py-2.5 px-3 rounded-xl bg-her-accent/10 hover:bg-her-accent/20 text-her-accent border border-her-accent/20 text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
+                        >
+                          <Sparkles size={13} />
+                          <span>Dossiê da IA</span>
+                        </button>
+                      </div>
+                    </div>
+
                     <div>
                       <div className="flex items-center gap-2 mb-3">
                         <UserCircle size={12} className="text-her-accent" />
