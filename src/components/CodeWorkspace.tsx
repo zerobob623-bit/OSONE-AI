@@ -11,6 +11,40 @@ import {
 import { cn } from '../lib/utils';
 import { CodePreview } from './CodePreview';
 import { CodeRepositoryFile } from '../types';
+import { applyCodeEdits, buildCodeEditSystemInstruction, applyModelCodeResponse } from '../lib/codeEdits';
+
+/**
+ * Chama /api/generate com retentativas automáticas (backoff simples) para falhas
+ * transitórias de rede/servidor. Evita que um único agente do Swarm derrube o
+ * pipeline inteiro por causa de uma falha passageira em uma das várias chamadas
+ * sequenciais.
+ */
+async function generateWithRetry(
+  body: Record<string, unknown>,
+  retries: number = 2
+): Promise<{ ok: boolean; text: string; error?: string }> {
+  let lastError = '';
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const response = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (response.ok) {
+        const data = await response.json();
+        return { ok: true, text: data.text || '' };
+      }
+      lastError = `HTTP ${response.status}`;
+    } catch (e: any) {
+      lastError = e?.message || String(e);
+    }
+    if (attempt < retries) {
+      await new Promise(resolve => setTimeout(resolve, 800 * (attempt + 1)));
+    }
+  }
+  return { ok: false, text: '', error: lastError };
+}
 
 const BowAndArrowIcon = ({ size = 16, className = "" }: { size?: number; className?: string }) => (
   <svg 
@@ -731,22 +765,25 @@ Sua missão é examinar o CÓDIGO FONTE ATUAL do arquivo do repositório ("${act
 
 Sua meta é GARANTIR 100% de conformidade, precisão e integridade do código sem faltar nada do pedido:
 1. Analise o código atual e verifique o que foi pedido pelo usuário.
-2. Se faltar alguma funcionalidade, estilização, verificação, lógica ou componente, implemente as alterações CIRÚRGICAS e forneça o CÓDIGO COMPLETO 100% corrigido e funcional no campo "correctedCode".
+2. Se faltar alguma funcionalidade, estilização, verificação, lógica ou componente, implemente EDIÇÕES CIRÚRGICAS: assim como um assistente de codificação real (par de programação estilo "vibe coding"), você NUNCA reescreve o arquivo inteiro quando já existe código funcionando. Localize o trecho exato do "old_string" (cópia LITERAL e EXATA, único no arquivo) e forneça o "new_string" que entra no lugar. Use quantos itens em "edits" forem necessários, cada um pequeno e focado numa única mudança.
 3. Se você tiver alguma DÚVIDA IMPEDITIVA CRÍTICA sobre o que o usuário deseja:
    - Defina "hasDoubt": true
    - Forneça a pergunta em "doubtQuestion"
 4. Se o pedido puder ser verificado e implementado com segurança:
    - Defina "hasDoubt": false
    - Defina "doubtQuestion": ""
-   - Coloque o código 100% corrigido e funcional na propriedade "correctedCode" (sem nenhum marcador externo fora do JSON).
+   - Defina "mode": "edits" e preencha "edits" com as edições cirúrgicas necessárias (ou "edits": [] se o código já estiver 100% conforme, sem necessidade de mudanças).
+   - Se o arquivo estiver vazio ou for necessário recriar do zero, defina "mode": "full" e coloque o código completo em "content".
    - Forneça um resumo objetivo e marcante das verificações/melhorias em "summary".
 
-FORMATO OBRIGATÓRIO (Retorne estritamente JSON válido nesta estrutura):
+FORMATO OBRIGATÓRIO (Retorne estritamente JSON válido nesta estrutura, sem markdown):
 {
   "hasDoubt": boolean,
   "doubtQuestion": string,
   "summary": string,
-  "correctedCode": string
+  "mode": "edits" | "full",
+  "edits": [ { "old_string": "trecho exato e único do código atual", "new_string": "texto que entra no lugar" } ],
+  "content": string
 }`;
 
       const userContentPayload = `EXIGÊNCIAS / REQUISITOS DO USUÁRIO A SEREM VERIFICADOS E IMPLEMENTADOS:
@@ -785,7 +822,8 @@ ${currentCode}`;
           hasDoubt: false,
           doubtQuestion: "",
           summary: "Análise e ajustes concluídos pelo Hunter.",
-          correctedCode: currentCode
+          mode: "edits",
+          edits: []
         };
       }
 
@@ -798,11 +836,27 @@ ${currentCode}`;
         setHunterStatus('success');
         setHunterProgress(100);
         setHunterDoubt(null);
-        const finalSummary = parsed.summary || "Código auditado e 100% alinhado com as especificações solicitadas!";
-        setHunterReport(finalSummary);
 
-        if (parsed.correctedCode && parsed.correctedCode.trim().length > 0) {
-          applyCodeToRepository(parsed.correctedCode, 'index.html');
+        let correctedCode: string | null = null;
+        let editSummaryNote = '';
+        if (parsed.mode === 'full' && typeof parsed.content === 'string' && parsed.content.trim().length > 0) {
+          correctedCode = parsed.content;
+        } else if (parsed.mode === 'edits' && Array.isArray(parsed.edits) && parsed.edits.length > 0) {
+          const { content, appliedCount, failedEdits } = applyCodeEdits(currentCode, parsed.edits);
+          if (appliedCount > 0) {
+            correctedCode = content;
+          }
+          const parts: string[] = [];
+          if (appliedCount > 0) parts.push(`${appliedCount} edição(ões) cirúrgica(s) aplicada(s)`);
+          if (failedEdits.length > 0) parts.push(`${failedEdits.length} edição(ões) não puderam ser aplicadas: ${failedEdits.map(f => f.reason).join('; ')}`);
+          editSummaryNote = parts.join('. ');
+        }
+
+        const finalSummary = [parsed.summary || "Código auditado.", editSummaryNote].filter(Boolean).join(' — ');
+        setHunterReport(finalSummary || "Código auditado e 100% alinhado com as especificações solicitadas!");
+
+        if (correctedCode && correctedCode.trim().length > 0) {
+          applyCodeToRepository(correctedCode, 'index.html');
 
           // Abrir Preview Vivo e notificar
           setViewLayout('preview');
@@ -865,25 +919,21 @@ FORMATO OBRIGATÓRIO (JSON estrito):
   "requirements": ["Requisito técnico 1", "Requisito 2", "Áudio Web Audio API"]
 }`;
 
-      const pmResponse = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          clientApiKey: effectiveApiKey,
-          model: currentModel,
-          prompt: `CONCEITO SOLICITADO PELO USUÁRIO:\n"${swarmPrompt}"`,
-          systemInstruction: pmSystemInstruction,
-          responseMimeType: "application/json"
-        })
+      const pmFallback = { gdd: swarmPrompt, mechanics: ["Controles Responsivos", "Pontuação"], requirements: ["HTML5 Canvas", "CSS3 / Tailwind"] };
+      const pmResult = await generateWithRetry({
+        clientApiKey: effectiveApiKey,
+        model: currentModel,
+        prompt: `CONCEITO SOLICITADO PELO USUÁRIO:\n"${swarmPrompt}"`,
+        systemInstruction: pmSystemInstruction,
+        responseMimeType: "application/json"
       });
 
-      if (!pmResponse.ok) throw new Error("Falha no Agente de Produto");
-      const pmData = await pmResponse.json();
-      let pmText = pmData.text || "";
-      if (pmText.startsWith("```")) pmText = pmText.replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '').trim();
-      
-      let pmParsed: any;
-      try { pmParsed = JSON.parse(pmText); } catch { pmParsed = { gdd: swarmPrompt, mechanics: ["Controles Responsivos", "Pontuação"], requirements: ["HTML5 Canvas", "CSS3 / Tailwind"] }; }
+      let pmParsed: any = pmFallback;
+      if (pmResult.ok) {
+        try { pmParsed = JSON.parse(pmResult.text.trim().replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '').trim()); } catch { pmParsed = pmFallback; }
+      } else {
+        addSwarmLog('📋 Agente de Produto', `⚠️ Falha ao contatar o Agente de Produto (${pmResult.error}). Usando GDD simplificado para não travar o Enxame.`, 'warn');
+      }
       setSwarmPMArtifact(pmParsed);
       setSwarmProgress(30);
       setSwarmProgressText('30% - GDD concluído! Iniciando Arquitetura do Sistema...');
@@ -907,25 +957,21 @@ FORMATO OBRIGATÓRIO (JSON estrito):
   "librariesUsed": ["Tailwind CSS CDN", "Lucide Icons", "Web Audio API (Sintetizador de Som)"]
 }`;
 
-      const archResponse = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          clientApiKey: effectiveApiKey,
-          model: currentModel,
-          prompt: `GDD DO PRODUCT MANAGER:\n${JSON.stringify(pmParsed, null, 2)}`,
-          systemInstruction: architectSystemInstruction,
-          responseMimeType: "application/json"
-        })
+      const archFallback = { fileStructure: "index.html", gameLoopStrategy: "requestAnimationFrame loop", librariesUsed: ["Tailwind CSS", "Lucide"] };
+      const archResult = await generateWithRetry({
+        clientApiKey: effectiveApiKey,
+        model: currentModel,
+        prompt: `GDD DO PRODUCT MANAGER:\n${JSON.stringify(pmParsed, null, 2)}`,
+        systemInstruction: architectSystemInstruction,
+        responseMimeType: "application/json"
       });
 
-      if (!archResponse.ok) throw new Error("Falha no Agente de Arquitetura");
-      const archData = await archResponse.json();
-      let archText = archData.text || "";
-      if (archText.startsWith("```")) archText = archText.replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '').trim();
-
-      let archParsed: any;
-      try { archParsed = JSON.parse(archText); } catch { archParsed = { fileStructure: "index.html", gameLoopStrategy: "requestAnimationFrame loop", librariesUsed: ["Tailwind CSS", "Lucide"] }; }
+      let archParsed: any = archFallback;
+      if (archResult.ok) {
+        try { archParsed = JSON.parse(archResult.text.trim().replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '').trim()); } catch { archParsed = archFallback; }
+      } else {
+        addSwarmLog('🏗️ Agente de Arquitetura', `⚠️ Falha ao contatar o Agente de Arquitetura (${archResult.error}). Usando arquitetura padrão para não travar o Enxame.`, 'warn');
+      }
       setSwarmArchitectArtifact(archParsed);
       setSwarmProgress(45);
       setSwarmProgressText('45% - Arquitetura validada! Iniciando Engenharia...');
@@ -937,50 +983,70 @@ FORMATO OBRIGATÓRIO (JSON estrito):
       let currentIter = 1;
       let lastCode = "";
       let isApproved = false;
+      let coderEverSucceeded = false;
       let previousQAFeedback = "";
 
       while (currentIter <= maxHarnessIterations && !isApproved) {
         setSwarmIteration(currentIter);
-        
+
         // 3.1 AGENTE DE ENGENHARIA (ENGINEER / CODER)
+        // A partir da 2ª iteração, o código já existe: o agente faz EDIÇÕES CIRÚRGICAS
+        // (old_string/new_string) em vez de reescrever tudo do zero, igual a um par de
+        // programação real — preserva o que já funciona e reduz o risco de regressão.
         setSwarmCurrentStep('coder');
         const iterCoderProg = 45 + Math.round(((currentIter - 0.5) / maxHarnessIterations) * 45);
         setSwarmProgress(iterCoderProg);
         setSwarmProgressText(`${iterCoderProg}% - Agente de Engenharia codificando o jogo em HTML5 (Ciclo ${currentIter}/${maxHarnessIterations})...`);
-        addSwarmLog('💻 Agente de Engenharia', `Codificando projeto completo em HTML5 + Canvas (Iteração ${currentIter}/${maxHarnessIterations})...`, 'info');
+        addSwarmLog('💻 Agente de Engenharia', lastCode
+          ? `Aplicando edições cirúrgicas para corrigir o código (Iteração ${currentIter}/${maxHarnessIterations})...`
+          : `Codificando projeto completo em HTML5 + Canvas (Iteração ${currentIter}/${maxHarnessIterations})...`, 'info');
 
-        const coderSystemInstruction = `Você é o AGENTE DE ENGENHARIA (Engineer/Coder) do OSONE CODE Swarm Engine.
-Sua missão é escrever o CÓDIGO FONTE 100% COMPLETO, FUNCIONAL E LINDO no arquivo "index.html".
+        const coderRoleIntro = `Você é o AGENTE DE ENGENHARIA (Engineer/Coder) do OSONE CODE Swarm Engine.
+Sua missão é produzir o CÓDIGO FONTE 100% COMPLETO, FUNCIONAL E LINDO no arquivo "index.html".
 O código DEVE conter:
 - HTML5 completo com <head>, estilo e <script> unificados no mesmo arquivo.
 - Importação do Tailwind CSS CDN (<script src="https://cdn.tailwindcss.com"></script>) e Lucide Icons.
 - Design futurista, limpo e adaptado para telas mobile e desktop.
 - Efeitos sonoros via Web Audio API (Sintetizador numérico simples para tiro, dano, pulo e game over).
-- Game loop completo com requestAnimationFrame, pontuação, recorde, tela de Início e tela de Game Over com botão de Reiniciar.
+- Game loop completo com requestAnimationFrame, pontuação, recorde, tela de Início e tela de Game Over com botão de Reiniciar.`;
+        const coderSystemInstruction = buildCodeEditSystemInstruction(coderRoleIntro);
 
-${previousQAFeedback ? `⚠️ CRÍTICO - CORREÇÕES EXIGIDAS PELO AGENTE DE QA NA ITERAÇÃO ANTERIOR:\n"${previousQAFeedback}"\nVOCÊ DEVE CORRIGIR TODOS OS ITENS ACIMA!` : ''}
+        const coderPrompt = lastCode
+          ? `CÓDIGO FONTE ATUAL NO REPOSITÓRIO:\n\n${lastCode}\n\nESPECIFICAÇÕES ORIGINAIS:\n- Pedido do Usuário: "${swarmPrompt}"\n- GDD do Produto: ${JSON.stringify(pmParsed)}\n- Arquitetura: ${JSON.stringify(archParsed)}\n\n⚠️ CRÍTICO - CORREÇÕES EXIGIDAS PELO AGENTE DE QA NA ITERAÇÃO ANTERIOR:\n"${previousQAFeedback}"\nCorrija TODOS os itens acima usando edições cirúrgicas (old_string/new_string), sem reescrever o arquivo inteiro.`
+          : `Não há código existente ainda. Crie do zero.\n\nESPECIFICAÇÕES:\n- Pedido do Usuário: "${swarmPrompt}"\n- GDD do Produto: ${JSON.stringify(pmParsed)}\n- Arquitetura: ${JSON.stringify(archParsed)}`;
 
-IMPORTANTE: Retorne APENAS O CÓDIGO FONTE HTML CRU sem explicações e sem markdown triple ticks externos se possível.`;
-
-        const coderResponse = await fetch("/api/generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            clientApiKey: effectiveApiKey,
-            model: currentModel,
-            prompt: `ESPECIFICAÇÕES:\n- Pedido do Usuário: "${swarmPrompt}"\n- GDD do Produto: ${JSON.stringify(pmParsed)}\n- Arquitetura: ${JSON.stringify(archParsed)}`,
-            systemInstruction: coderSystemInstruction
-          })
+        const coderResult = await generateWithRetry({
+          clientApiKey: effectiveApiKey,
+          model: currentModel,
+          prompt: coderPrompt,
+          systemInstruction: coderSystemInstruction,
+          responseMimeType: "application/json"
         });
 
-        if (!coderResponse.ok) throw new Error("Falha no Agente de Engenharia");
-        const coderData = await coderResponse.json();
-        let generatedCode = coderData.text || "";
-        if (generatedCode.startsWith("```")) {
-          generatedCode = generatedCode.replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '').trim();
+        if (!coderResult.ok) {
+          addSwarmLog('💻 Agente de Engenharia', `⚠️ Falha ao contatar o Agente de Engenharia (${coderResult.error}) na Iteração ${currentIter}.`, 'error');
+          if (coderEverSucceeded) {
+            addSwarmLog('💻 Agente de Engenharia', 'Mantendo a última versão do código já salva no repositório e encerrando o Enxame com o que foi produzido até aqui.', 'warn');
+          }
+          break;
         }
-        lastCode = generatedCode;
-        addSwarmLog('💻 Agente de Engenharia', `Código gerado (${lastCode.length} chars) na Iteração ${currentIter}.`, 'success');
+
+        const { content: newCode, summary: editSummary, hadFailures: editHadFailures } = applyModelCodeResponse(coderResult.text, lastCode);
+        if (!newCode || !newCode.trim()) {
+          addSwarmLog('💻 Agente de Engenharia', `⚠️ Resposta vazia do Agente de Engenharia na Iteração ${currentIter}. Mantendo código anterior.`, 'warn');
+          break;
+        }
+        lastCode = newCode;
+        coderEverSucceeded = true;
+
+        // Persistência incremental: salva o progresso no repositório a cada iteração,
+        // para que o usuário NUNCA fique sem resultado mesmo se uma etapa seguinte falhar.
+        applyCodeToRepository(lastCode, 'index.html');
+
+        addSwarmLog('💻 Agente de Engenharia', editSummary
+          ? `${editSummary} (${lastCode.length} chars). Progresso salvo no repositório.`
+          : `Código gerado (${lastCode.length} chars) na Iteração ${currentIter}. Progresso salvo no repositório.`,
+          editHadFailures ? 'warn' : 'success');
 
         // 3.2 AGENTE DE GARANTIA DE QUALIDADE (QA TESTER / HARNESS EVALUATOR)
         setSwarmCurrentStep('qa');
@@ -1006,21 +1072,21 @@ FORMATO OBRIGATÓRIO (JSON estrito):
   "missingItems": ["Item ausente 1", "Bug 2"]
 }`;
 
-        const qaResponse = await fetch("/api/generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            clientApiKey: effectiveApiKey,
-            model: currentModel,
-            prompt: `CÓDIGO GERADO PELO ENGENHEIRO:\n\n${lastCode.slice(0, 15000)}`,
-            systemInstruction: qaSystemInstruction,
-            responseMimeType: "application/json"
-          })
+        const qaResult = await generateWithRetry({
+          clientApiKey: effectiveApiKey,
+          model: currentModel,
+          prompt: `CÓDIGO GERADO PELO ENGENHEIRO:\n\n${lastCode.slice(0, 15000)}`,
+          systemInstruction: qaSystemInstruction,
+          responseMimeType: "application/json"
         });
 
-        if (!qaResponse.ok) throw new Error("Falha no Agente de QA");
-        const qaData = await qaResponse.json();
-        let qaText = qaData.text || "";
+        if (!qaResult.ok) {
+          addSwarmLog('🧪 Agente de QA (Harness Evaluator)', `⚠️ Falha ao contatar o Agente de QA (${qaResult.error}). Aceitando a última versão do código já salva no repositório.`, 'warn');
+          isApproved = true;
+          break;
+        }
+
+        let qaText = qaResult.text.trim();
         if (qaText.startsWith("```")) qaText = qaText.replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '').trim();
 
         let qaParsed: any;
@@ -1050,24 +1116,38 @@ FORMATO OBRIGATÓRIO (JSON estrito):
       // STAGE 5: ASSEMBLY & REPOSITORY SYNCHRONIZATION
       // ==========================================
       setSwarmCurrentStep('assembly');
-      setSwarmProgress(98);
-      setSwarmProgressText('98% - Aplicando projeto no Repositório e abrindo Preview Vivo...');
-      addSwarmLog('🚀 Cérebro Integrador', 'Aplicando o projeto aprovado no Repositório do OSONE CODE...', 'info');
 
-      if (lastCode && lastCode.trim()) {
-        applyCodeToRepository(lastCode, 'index.html');
+      if (!coderEverSucceeded || !lastCode.trim()) {
+        // Nenhuma versão de código foi produzida com sucesso em nenhuma iteração: reporta com honestidade.
+        setSwarmStatus('error');
+        setSwarmProgress(100);
+        setSwarmProgressText('O Enxame não conseguiu produzir um código válido.');
+        addSwarmLog('🚀 Cérebro Integrador', '❌ Nenhuma versão de código válida foi produzida pelo Enxame. Nada foi aplicado no repositório.', 'error');
+        return;
       }
+
+      setSwarmProgress(98);
+      setSwarmProgressText('98% - Projeto salvo! Abrindo Preview Vivo...');
+      addSwarmLog('🚀 Cérebro Integrador', 'Última versão do código já está salva no Repositório do OSONE CODE (persistida a cada iteração).', 'info');
 
       setSwarmStatus('success');
       setSwarmProgress(100);
-      setSwarmProgressText('100% - ✨ Jogo Finalizado & Testado pelo Enxame com Sucesso!');
-      addSwarmLog('🚀 Cérebro Integrador', '✨ Projeto finalizado e testado pelo Enxame de Agentes OSONE CODE!', 'success');
+      const finalMsg = isApproved
+        ? '100% - ✨ Jogo Finalizado & Testado pelo Enxame com Sucesso!'
+        : '100% - ⚠️ Enxame encerrado com a melhor versão obtida (nem todas as etapas concluíram, mas o progresso foi salvo).';
+      setSwarmProgressText(finalMsg);
+      addSwarmLog('🚀 Cérebro Integrador', isApproved
+        ? '✨ Projeto finalizado e testado pelo Enxame de Agentes OSONE CODE!'
+        : '⚠️ Enxame encerrado antes da aprovação total do QA, mas a última versão gerada foi salva no repositório e está pronta para uso.',
+        isApproved ? 'success' : 'warn');
 
       // Auto-abrir Preview Vivo e notificar
       setViewLayout('preview');
       setNotificationBanner({
-        message: "🎉 Jogo criado e testado pelo Enxame com sucesso! O código foi aplicado no repositório e o Preview Vivo foi aberto automaticamente.",
-        type: "success"
+        message: isApproved
+          ? "🎉 Jogo criado e testado pelo Enxame com sucesso! O código foi aplicado no repositório e o Preview Vivo foi aberto automaticamente."
+          : "⚠️ O Enxame encerrou sem aprovação total do QA, mas salvou a última versão do código no repositório. Você pode revisar e pedir ajustes.",
+        type: isApproved ? "success" : "info"
       });
 
       // Auto-fechar modal após 1.8 segundos
