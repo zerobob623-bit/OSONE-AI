@@ -5,7 +5,8 @@ import {
   FolderGit2, Sparkles, RefreshCw, Eye, Columns, 
   Upload, X, Mic, Loader2, MessageSquare, AlertCircle,
   Bot, Layers, ShieldCheck, Terminal, Cpu, Zap, RotateCw, CheckCircle2, 
-  AlertTriangle, ChevronDown, ChevronUp, PlayCircle, Gamepad2
+  AlertTriangle, ChevronDown, ChevronUp, PlayCircle, Gamepad2,
+  Undo, RotateCcw
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { CodePreview } from './CodePreview';
@@ -26,6 +27,14 @@ const BowAndArrowIcon = ({ size = 16, className = "" }: { size?: number; classNa
     <path d="M12 21a9 9 0 0 0 0-18M2 12h20M17 7l5 5-5 5" />
   </svg>
 );
+
+export interface OSONEProject {
+  id: string;
+  name: string;
+  files: CodeRepositoryFile[];
+  activeFileId: string;
+  updatedAt: number;
+}
 
 const DEFAULT_FILES: CodeRepositoryFile[] = [
   {
@@ -118,6 +127,132 @@ function calculateMetrics(a, b) {
   }
 ];
 
+const DEFAULT_PROJECTS: OSONEProject[] = [
+  {
+    id: 'proj-1',
+    name: 'Projeto 1',
+    files: DEFAULT_FILES,
+    activeFileId: 'main-app',
+    updatedAt: Date.now()
+  },
+  {
+    id: 'proj-2',
+    name: 'Projeto 2',
+    files: [
+      {
+        id: 'proj-2-main',
+        name: 'index.html',
+        language: 'html',
+        isMain: true,
+        updatedAt: Date.now(),
+        content: `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Projeto 2 - OSONE CODE</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-zinc-950 text-white min-h-screen flex items-center justify-center p-6">
+  <div class="p-8 rounded-2xl bg-zinc-900 border border-emerald-500/30 text-center space-y-4 max-w-md">
+    <h1 class="text-2xl font-bold text-emerald-400">Projeto 2 - Novo Canvas</h1>
+    <p class="text-xs text-zinc-400">Projeto independente. Alterações aqui afetam apenas este projeto!</p>
+  </div>
+</body>
+</html>`
+      }
+    ],
+    activeFileId: 'proj-2-main',
+    updatedAt: Date.now()
+  },
+  {
+    id: 'proj-3',
+    name: 'Projeto 3',
+    files: [
+      {
+        id: 'proj-3-main',
+        name: 'index.html',
+        language: 'html',
+        isMain: true,
+        updatedAt: Date.now(),
+        content: `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Projeto 3 - OSONE CODE</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-zinc-950 text-white min-h-screen flex items-center justify-center p-6">
+  <div class="p-8 rounded-2xl bg-zinc-900 border border-purple-500/30 text-center space-y-4 max-w-md">
+    <h1 class="text-2xl font-bold text-purple-400">Projeto 3 - Canvas Limpo</h1>
+    <p class="text-xs text-zinc-400">Edite, crie jogos ou apps com o Enxame OSONE CODE.</p>
+  </div>
+</body>
+</html>`
+      }
+    ],
+    activeFileId: 'proj-3-main',
+    updatedAt: Date.now()
+  },
+  {
+    id: 'proj-4',
+    name: 'Projeto 4',
+    files: [
+      {
+        id: 'proj-4-main',
+        name: 'index.html',
+        language: 'html',
+        isMain: true,
+        updatedAt: Date.now(),
+        content: `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Projeto 4 - OSONE CODE</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-zinc-950 text-white min-h-screen flex items-center justify-center p-6">
+  <div class="p-8 rounded-2xl bg-zinc-900 border border-amber-500/30 text-center space-y-4 max-w-md">
+    <h1 class="text-2xl font-bold text-amber-400">Projeto 4 - Sandbox</h1>
+    <p class="text-xs text-zinc-400">Pronto para codar!</p>
+  </div>
+</body>
+</html>`
+      }
+    ],
+    activeFileId: 'proj-4-main',
+    updatedAt: Date.now()
+  },
+  {
+    id: 'proj-5',
+    name: 'Projeto 5',
+    files: [
+      {
+        id: 'proj-5-main',
+        name: 'index.html',
+        language: 'html',
+        isMain: true,
+        updatedAt: Date.now(),
+        content: `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Projeto 5 - OSONE CODE</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-zinc-950 text-white min-h-screen flex items-center justify-center p-6">
+  <div class="p-8 rounded-2xl bg-zinc-900 border border-cyan-500/30 text-center space-y-4 max-w-md">
+    <h1 class="text-2xl font-bold text-cyan-400">Projeto 5 - Área de Testes</h1>
+    <p class="text-xs text-zinc-400">Código mantido de forma totalmente isolada.</p>
+  </div>
+</body>
+</html>`
+      }
+    ],
+    activeFileId: 'proj-5-main',
+    updatedAt: Date.now()
+  }
+];
+
 export const CodeWorkspace: React.FC<{
   onClose?: () => void;
   onGenerateCodeRequest?: (prompt: string) => void;
@@ -125,6 +260,62 @@ export const CodeWorkspace: React.FC<{
   apiKeys?: any;
   isGenerating?: boolean;
 }> = ({ onClose, onGenerateCodeRequest, onStartLiveVoice, apiKeys, isGenerating }) => {
+  // 5 PROJECTS MANAGEMENT
+  const [projects, setProjects] = useState<OSONEProject[]>(() => {
+    try {
+      const saved = localStorage.getItem('osone_code_projects_v2');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const merged = [...parsed];
+          for (let i = merged.length; i < 5; i++) {
+            merged.push(DEFAULT_PROJECTS[i] || {
+              id: `proj-${i+1}`,
+              name: `Projeto ${i+1}`,
+              files: DEFAULT_FILES,
+              activeFileId: 'main-app',
+              updatedAt: Date.now()
+            });
+          }
+          return merged.slice(0, 5);
+        }
+      }
+    } catch (e) {
+      console.error("Erro ao carregar lista de projetos:", e);
+    }
+
+    try {
+      const legacySaved = localStorage.getItem('osone_code_repository_files');
+      if (legacySaved) {
+        const parsedLegacy = JSON.parse(legacySaved);
+        if (Array.isArray(parsedLegacy) && parsedLegacy.length > 0) {
+          const initialProjects = [...DEFAULT_PROJECTS];
+          initialProjects[0] = {
+            ...initialProjects[0],
+            files: parsedLegacy,
+            activeFileId: parsedLegacy[0]?.id || 'main-app',
+            updatedAt: Date.now()
+          };
+          return initialProjects;
+        }
+      }
+    } catch (e) {}
+
+    return DEFAULT_PROJECTS;
+  });
+
+  const [activeProjectId, setActiveProjectId] = useState<string>(() => {
+    try {
+      const savedId = localStorage.getItem('osone_code_active_project_id');
+      if (savedId) return savedId;
+    } catch (e) {}
+    return 'proj-1';
+  });
+
+  const [editingProjectNameId, setEditingProjectNameId] = useState<string | null>(null);
+  const [editingProjectNameText, setEditingProjectNameText] = useState<string>('');
+
+  // REPOSITORY FILES STATE
   const [files, setFiles] = useState<CodeRepositoryFile[]>(() => {
     try {
       const saved = localStorage.getItem('osone_code_repository_files');
@@ -132,15 +323,18 @@ export const CodeWorkspace: React.FC<{
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
-    } catch (e) {
-      console.error("Erro ao carregar arquivos do repositório:", e);
-    }
-    return DEFAULT_FILES;
+    } catch (e) {}
+    const activeProj = DEFAULT_PROJECTS.find(p => p.id === activeProjectId) || DEFAULT_PROJECTS[0];
+    return activeProj.files;
   });
 
   const [activeFileId, setActiveFileId] = useState<string>(() => {
     return files[0]?.id || 'main-app';
   });
+
+  // UNDO HISTORY STATE FOR CODE EDITS
+  const [historyStack, setHistoryStack] = useState<CodeRepositoryFile[][]>([]);
+  const [lastTypedHistoryTime, setLastTypedHistoryTime] = useState<number>(0);
 
   const [viewLayout, setViewLayout] = useState<'split' | 'editor' | 'preview'>('split');
   const [showRepoSidebar, setShowRepoSidebar] = useState<boolean>(true);
@@ -208,17 +402,152 @@ export const CodeWorkspace: React.FC<{
     return () => window.removeEventListener('osone_repository_updated', handleRepoUpdated);
   }, []);
 
-  // Auto-save repository files to localStorage
+  // Auto-save active project repository files to localStorage
   useEffect(() => {
     try {
       localStorage.setItem('osone_code_repository_files', JSON.stringify(files));
       setIsSaved(true);
+
+      setProjects(prevProjects => {
+        const updated = prevProjects.map(p => {
+          if (p.id === activeProjectId) {
+            return { ...p, files: files, activeFileId: activeFileId, updatedAt: Date.now() };
+          }
+          return p;
+        });
+        localStorage.setItem('osone_code_projects_v2', JSON.stringify(updated));
+        return updated;
+      });
     } catch (e) {
-      console.error("Erro ao salvar repositório:", e);
+      console.error("Erro ao salvar repositório/projetos:", e);
     }
-  }, [files]);
+  }, [files, activeFileId, activeProjectId]);
+
+  // UNDO HISTORY HELPERS
+  const pushHistory = (currentFiles: CodeRepositoryFile[]) => {
+    setHistoryStack(prev => {
+      const snapshot = JSON.parse(JSON.stringify(currentFiles));
+      const last = prev[prev.length - 1];
+      if (last && JSON.stringify(last) === JSON.stringify(snapshot)) {
+        return prev;
+      }
+      const next = [...prev, snapshot];
+      if (next.length > 30) return next.slice(next.length - 30);
+      return next;
+    });
+  };
+
+  const handleUndoChange = () => {
+    if (historyStack.length === 0) {
+      setNotificationBanner({ message: "Nada para desfazer no código!", type: 'info' });
+      return;
+    }
+
+    const previousFiles = historyStack[historyStack.length - 1];
+    setHistoryStack(prev => prev.slice(0, -1));
+
+    if (previousFiles && Array.isArray(previousFiles) && previousFiles.length > 0) {
+      setFiles(previousFiles);
+
+      if (!previousFiles.some(f => f.id === activeFileId)) {
+        setActiveFileId(previousFiles[0].id);
+      }
+
+      try {
+        localStorage.setItem('osone_code_repository_files', JSON.stringify(previousFiles));
+      } catch (e) {}
+
+      setProjects(prevProjects => {
+        const updated = prevProjects.map(p => 
+          p.id === activeProjectId ? { ...p, files: previousFiles, updatedAt: Date.now() } : p
+        );
+        try {
+          localStorage.setItem('osone_code_projects_v2', JSON.stringify(updated));
+        } catch (e) {}
+        return updated;
+      });
+
+      window.dispatchEvent(new Event('osone_repository_updated'));
+      setNotificationBanner({ message: "Alteração desfeita com sucesso! Estado anterior restaurado. ↩️", type: 'success' });
+    }
+  };
+
+  // GLOBAL CTRL+Z / CMD+Z UNDO SHORTCUT
+  useEffect(() => {
+    const handleGlobalUndoKey = (e: KeyboardEvent) => {
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const isUndo = (isMac ? e.metaKey : e.ctrlKey) && e.key.toLowerCase() === 'z' && !e.shiftKey;
+      if (isUndo) {
+        const target = e.target as HTMLElement;
+        if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') && !target.classList.contains('code-editor-textarea')) {
+          return;
+        }
+        e.preventDefault();
+        handleUndoChange();
+      }
+    };
+    window.addEventListener('keydown', handleGlobalUndoKey);
+    return () => window.removeEventListener('keydown', handleGlobalUndoKey);
+  }, [historyStack, activeProjectId]);
+
+  // SWITCH ACTIVE PROJECT (1 OF 5)
+  const handleSwitchProject = (targetProjectId: string) => {
+    if (targetProjectId === activeProjectId) return;
+
+    // Save active project files to projects array
+    const updatedProjects = projects.map(p => {
+      if (p.id === activeProjectId) {
+        return {
+          ...p,
+          files: files,
+          activeFileId: activeFileId,
+          updatedAt: Date.now()
+        };
+      }
+      return p;
+    });
+
+    const targetProject = updatedProjects.find(p => p.id === targetProjectId) || updatedProjects[0];
+
+    setProjects(updatedProjects);
+    setActiveProjectId(targetProject.id);
+    setFiles(targetProject.files);
+    setActiveFileId(targetProject.activeFileId || targetProject.files[0]?.id || 'main-app');
+    setHistoryStack([]);
+
+    try {
+      localStorage.setItem('osone_code_active_project_id', targetProject.id);
+      localStorage.setItem('osone_code_projects_v2', JSON.stringify(updatedProjects));
+      localStorage.setItem('osone_code_repository_files', JSON.stringify(targetProject.files));
+    } catch (e) {}
+
+    window.dispatchEvent(new Event('osone_repository_updated'));
+    setNotificationBanner({
+      message: `Projeto alterado para "${targetProject.name}". Alterações afetam apenas este projeto! 📁`,
+      type: 'success'
+    });
+  };
+
+  // RENAME PROJECT
+  const handleSaveProjectName = (projId: string) => {
+    if (!editingProjectNameText.trim()) {
+      setEditingProjectNameId(null);
+      return;
+    }
+    const newName = editingProjectNameText.trim();
+    setProjects(prev => {
+      const updated = prev.map(p => p.id === projId ? { ...p, name: newName, updatedAt: Date.now() } : p);
+      try {
+        localStorage.setItem('osone_code_projects_v2', JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
+    setEditingProjectNameId(null);
+    setNotificationBanner({ message: `Projeto renomeado para "${newName}"!`, type: 'success' });
+  };
 
   const applyCodeToRepository = (newContent: string, targetFileIdOrName?: string) => {
+    pushHistory(files);
     let updatedFiles: CodeRepositoryFile[] = [];
     setFiles(prev => {
       let targetFound = false;
@@ -268,6 +597,11 @@ export const CodeWorkspace: React.FC<{
   };
 
   const handleUpdateActiveContent = (newContent: string) => {
+    const now = Date.now();
+    if (now - lastTypedHistoryTime > 2000) {
+      pushHistory(files);
+      setLastTypedHistoryTime(now);
+    }
     setIsSaved(false);
     setFiles(prev => {
       const updated = prev.map(f => f.id === activeFileId ? { ...f, content: newContent, updatedAt: Date.now() } : f);
@@ -282,6 +616,7 @@ export const CodeWorkspace: React.FC<{
     const fileName = window.prompt('Nome do novo arquivo (ex: index.html, script.js, style.css, app.py):');
     if (!fileName || !fileName.trim()) return;
 
+    pushHistory(files);
     const trimmed = fileName.trim();
     const ext = trimmed.split('.').pop()?.toLowerCase() || 'txt';
     let lang = 'javascript';
@@ -311,6 +646,7 @@ export const CodeWorkspace: React.FC<{
       return;
     }
     if (window.confirm(`Deseja mesmo apagar o arquivo "${name}" do repositório?`)) {
+      pushHistory(files);
       setFiles(prev => prev.filter(f => f.id !== id));
       if (activeFileId === id) {
         const remaining = files.filter(f => f.id !== id);
@@ -866,6 +1202,22 @@ FORMATO OBRIGATÓRIO (JSON estrito):
             <span className="tracking-wider hidden sm:inline">HUNTER AGÊNTICO</span>
           </button>
 
+          {/* BOTÃO DESFAZER ALTERAÇÃO NO CÓDIGO */}
+          <button 
+            onClick={handleUndoChange}
+            disabled={historyStack.length === 0}
+            className={cn(
+              "px-3 py-2 rounded-xl text-xs font-mono font-bold flex items-center gap-1.5 transition-all border shrink-0",
+              historyStack.length > 0
+                ? "bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20 active:scale-95 cursor-pointer shadow-lg shadow-amber-950/30"
+                : "bg-white/[0.02] text-zinc-600 border-white/5 cursor-not-allowed opacity-40"
+            )}
+            title={historyStack.length > 0 ? "Desfazer alteração no código (Ctrl+Z)" : "Nada para desfazer"}
+          >
+            <Undo size={15} className={historyStack.length > 0 ? "text-amber-400 animate-pulse" : ""} />
+            <span className="hidden sm:inline">Desfazer ({historyStack.length})</span>
+          </button>
+
           <button 
             onClick={handleCopyCode}
             className="p-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] text-zinc-300 border border-white/5 transition-all"
@@ -881,6 +1233,79 @@ FORMATO OBRIGATÓRIO (JSON estrito):
           >
             <Download size={16} />
           </button>
+        </div>
+      </div>
+
+      {/* Project Switcher Bar: "Em qual projeto você quer codar?" */}
+      <div className="bg-[#0b0d14] border-b border-white/10 px-4 py-2.5 flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0 z-20">
+        <div className="flex items-center gap-2">
+          <div className="p-1.5 rounded-lg bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shrink-0">
+            <FolderGit2 size={16} />
+          </div>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
+            <span className="text-xs font-bold text-white font-mono flex items-center gap-2">
+              Em qual projeto você quer codar?
+            </span>
+            <span className="text-[11px] text-cyan-400/80 font-mono">
+              (Isolado: alterações afetam apenas o projeto ativo)
+            </span>
+          </div>
+        </div>
+
+        {/* 5 Project Buttons */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0 custom-scrollbar">
+          {projects.map((proj) => {
+            const isCurrent = proj.id === activeProjectId;
+            const isEditingThis = editingProjectNameId === proj.id;
+
+            return (
+              <div
+                key={proj.id}
+                onClick={() => !isEditingThis && handleSwitchProject(proj.id)}
+                className={cn(
+                  "px-3 py-1.5 rounded-xl text-xs font-mono font-bold transition-all flex items-center gap-1.5 shrink-0 cursor-pointer border",
+                  isCurrent
+                    ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/50 shadow-md shadow-cyan-500/10 ring-1 ring-cyan-500/30"
+                    : "bg-white/[0.02] text-zinc-400 hover:text-white border-white/5 hover:bg-white/5"
+                )}
+                title={`Alternar para ${proj.name}`}
+              >
+                <span className={cn("w-2 h-2 rounded-full shrink-0", isCurrent ? "bg-cyan-400 animate-pulse" : "bg-zinc-600")} />
+                
+                {isEditingThis ? (
+                  <input
+                    type="text"
+                    value={editingProjectNameText}
+                    onChange={(e) => setEditingProjectNameText(e.target.value)}
+                    onBlur={() => handleSaveProjectName(proj.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleSaveProjectName(proj.id);
+                      if (e.key === 'Escape') setEditingProjectNameId(null);
+                    }}
+                    autoFocus
+                    className="bg-black/80 text-white px-2 py-0.5 rounded border border-cyan-400 text-xs w-24 focus:outline-none"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                ) : (
+                  <span>{proj.name}</span>
+                )}
+
+                {isCurrent && !isEditingThis && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingProjectNameId(proj.id);
+                      setEditingProjectNameText(proj.name);
+                    }}
+                    className="p-0.5 hover:text-white text-cyan-400/80 hover:bg-cyan-500/20 rounded transition-colors"
+                    title="Renomear Projeto"
+                  >
+                    <Edit3 size={11} />
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 
