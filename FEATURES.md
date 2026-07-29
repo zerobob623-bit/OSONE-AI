@@ -30,6 +30,7 @@ Este documento registra todas as funcionalidades, rotas e módulos ativos no eco
 ---
 
 ## 4. Modulos e Componentes do Ecossistema UI/UX
+- **Home Workspace Modular (`HomeWorkspaceSection.tsx`)**: Refatoração e modularização do workspace principal da Home extraído de `App.tsx` para seu próprio componente dedicado, reduzindo a carga visual e melhorando o tempo de build do Vite sem alterar nenhum comportamento existente.
 - **Mapa OS (`OSONEMap.tsx`)**: Visualização cartográfica integrada com busca e navegação para qualquer localidade indicada.
 - **Workspace e Preview de Código (`CodeWorkspace.tsx`, `CodePreview.tsx`)**: Ambiente interativo para edição e execução de código.
   - **Sistema de 5 Projetos Isolados ("Em qual projeto você quer codar?")**: Gerenciamento de até 5 projetos independentes ("Projeto 1" a "Projeto 5") com renomeação individual, onde cada projeto mantém seus próprios arquivos e estado isolados no localStorage (`osone_code_projects_v2`).
