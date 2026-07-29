@@ -2,14 +2,21 @@
   "name": "osone-app",
   "private": true,
   "version": "1.0.0",
+  "description": "OSONE G5 - Sistema Operacional Neural",
+  "author": "OSONE",
   "type": "module",
   "main": "electron/main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zerobob623-bit/OSONE-AI.git"
+  },
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "electron": "electron .",
     "build:desktop": "npm run build && electron-builder --win --linux",
+    "release": "npm run build && electron-builder --win --linux --publish always",
     "preview": "vite preview",
     "clean": "rm -rf dist dist-desktop",
     "lint": "tsc --noEmit"
@@ -26,6 +33,11 @@
       "electron/**/*",
       "package.json"
     ],
+    "publish": {
+      "provider": "github",
+      "owner": "zerobob623-bit",
+      "repo": "OSONE-AI"
+    },
     "win": {
       "target": [
         "nsis"
@@ -57,6 +69,7 @@
     "d3-geo": "^3.1.1",
     "docx": "^9.6.1",
     "dotenv": "^17.2.3",
+    "electron-updater": "^6.8.9",
     "esbuild": "^0.28.0",
     "express": "^4.21.2",
     "file-saver": "^2.0.5",
