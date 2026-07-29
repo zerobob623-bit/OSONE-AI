@@ -213,35 +213,46 @@ export interface IntimateQuestion {
 }
 
 export const INTIMATE_QUESTIONS: IntimateQuestion[] = [
+  // 1. Informações Básicas e Identidade
   { id: 1, category: "Informações Básicas e Identidade", question: "Qual é o seu nome completo?" },
   { id: 2, category: "Informações Básicas e Identidade", question: "Quantos anos você tem? (ou data de nascimento)" },
   { id: 3, category: "Informações Básicas e Identidade", question: "Qual é o seu gênero e pronome de preferência?" },
   { id: 4, category: "Informações Básicas e Identidade", question: "Em que cidade/país você mora atualmente?" },
   { id: 5, category: "Informações Básicas e Identidade", question: "Qual é a sua nacionalidade e etnia/cultura de origem?" },
   { id: 6, category: "Informações Básicas e Identidade", question: "Qual é o seu nível de fluência em idiomas? (português, inglês, etc.)" },
+
+  // 2. Vida Profissional e Educação
   { id: 7, category: "Vida Profissional e Educação", question: "Qual é a sua formação acadêmica (cursos, graduação, pós, etc.)?" },
   { id: 8, category: "Vida Profissional e Educação", question: "Qual é a sua profissão atual e área de atuação?" },
   { id: 9, category: "Vida Profissional e Educação", question: "Você trabalha por conta própria, em empresa, ou é estudante?" },
   { id: 10, category: "Vida Profissional e Educação", question: "Quais são as suas principais responsabilidades no trabalho/estudos?" },
   { id: 11, category: "Vida Profissional e Educação", question: "Qual é o seu objetivo de carreira de curto, médio e longo prazo?" },
   { id: 12, category: "Vida Profissional e Educação", question: "Você já mudou de carreira? Quais foram as principais transições?" },
+
+  // 3. Vida Pessoal e Rotina
   { id: 13, category: "Vida Pessoal e Rotina", question: "Como é um dia típico na sua vida (do acordar até dormir)?" },
   { id: 14, category: "Vida Pessoal e Rotina", question: "Qual é o seu horário habitual de acordar e dormir?" },
   { id: 15, category: "Vida Pessoal e Rotina", question: "Você pratica algum esporte ou atividade física? Com que frequência?" },
   { id: 16, category: "Vida Pessoal e Rotina", question: "Como é a sua alimentação (dieta, restrições, preferências)?" },
   { id: 17, category: "Vida Pessoal e Rotina", question: "Você tem algum problema de saúde, alergia ou condição médica importante?" },
   { id: 18, category: "Vida Pessoal e Rotina", question: "Como você cuida da sua saúde mental?" },
+
+  // 4. Relacionamentos e Vida Social
   { id: 19, category: "Relacionamentos e Vida Social", question: "Qual é o seu estado civil (solteiro, casado, namorando, etc.)?" },
   { id: 20, category: "Relacionamentos e Vida Social", question: "Você tem filhos? Quantos e quais as idades?" },
   { id: 21, category: "Relacionamentos e Vida Social", question: "Como é a sua relação com sua família (pais, irmãos, etc.)?" },
   { id: 22, category: "Relacionamentos e Vida Social", question: "Quantos amigos próximos você tem e com que frequência se encontra?" },
   { id: 23, category: "Relacionamentos e Vida Social", question: "Você prefere sair ou ficar em casa nos fins de semana?" },
+
+  // 5. Interesses, Hobbies e Entretenimento
   { id: 24, category: "Interesses, Hobbies e Entretenimento", question: "Quais são os seus hobbies e paixões principais?" },
   { id: 25, category: "Interesses, Hobbies e Entretenimento", question: "Que tipo de música você escuta (gêneros favoritos e artistas)?" },
   { id: 26, category: "Interesses, Hobbies e Entretenimento", question: "Quais séries, filmes, livros ou podcasts você mais gosta?" },
   { id: 27, category: "Interesses, Hobbies e Entretenimento", question: "Você joga videogames? Quais são seus favoritos?" },
   { id: 28, category: "Interesses, Hobbies e Entretenimento", question: "Você pratica alguma arte (desenho, música, escrita, dança, etc.)?" },
   { id: 29, category: "Interesses, Hobbies e Entretenimento", question: "Quais são os seus interesses intelectuais (ciência, história, filosofia, etc.)?" },
+
+  // 6. Valores, Crenças e Personalidade
   { id: 30, category: "Valores, Crenças e Personalidade", question: "Quais são os seus valores mais importantes na vida?" },
   { id: 31, category: "Valores, Crenças e Personalidade", question: "Você tem alguma religião ou crença espiritual?" },
   { id: 32, category: "Valores, Crenças e Personalidade", question: "Qual é a sua visão sobre política e sociedade?" },
@@ -249,20 +260,28 @@ export const INTIMATE_QUESTIONS: IntimateQuestion[] = [
   { id: 34, category: "Valores, Crenças e Personalidade", question: "Quais são os seus maiores medos ou inseguranças?" },
   { id: 35, category: "Valores, Crenças e Personalidade", question: "Como você lida com fracassos e adversidades?" },
   { id: 36, category: "Valores, Crenças e Personalidade", question: "Qual é o seu MBTI, Big Five ou qualquer teste de personalidade que já fez?" },
+
+  // 7. Metas, Sonhos e Futuro
   { id: 37, category: "Metas, Sonhos e Futuro", question: "Quais são os seus principais objetivos para os próximos 12 meses?" },
   { id: 38, category: "Metas, Sonhos e Futuro", question: "O que você gostaria de conquistar nos próximos 5 anos?" },
   { id: 39, category: "Metas, Sonhos e Futuro", question: "Qual é o seu \"sonho de vida\" (algo grande que quer realizar)?" },
   { id: 40, category: "Metas, Sonhos e Futuro", question: "Você tem vontade de mudar de cidade/país no futuro?" },
   { id: 41, category: "Metas, Sonhos e Futuro", question: "Em que áreas da sua vida você quer melhorar (financeira, saúde, relacionamentos, etc.)?" },
+
+  // 8. Preferências de Consumo e Estilo de Vida
   { id: 42, category: "Preferências de Consumo e Estilo de Vida", question: "Qual é o seu orçamento mensal aproximado (ou faixa de renda)?" },
   { id: 43, category: "Preferências de Consumo e Estilo de Vida", question: "Como você gosta de viajar (luxo, mochilão, aventura, relaxamento)?" },
   { id: 44, category: "Preferências de Consumo e Estilo de Vida", question: "Qual é o seu estilo de roupa e aparência preferido?" },
   { id: 45, category: "Preferências de Consumo e Estilo de Vida", question: "Você prefere produtos digitais ou físicos?" },
   { id: 46, category: "Preferências de Consumo e Estilo de Vida", question: "Quais aplicativos ou ferramentas você usa diariamente?" },
+
+  // 9. Relacionamento com Tecnologia e IA
   { id: 47, category: "Relacionamento com Tecnologia e IA", question: "Há quanto tempo você usa IAs como eu?" },
   { id: 48, category: "Relacionamento com Tecnologia e IA", question: "O que você espera de uma IA (estilo de resposta, tom, profundidade)?" },
   { id: 49, category: "Relacionamento com Tecnologia e IA", question: "Quais são os seus maiores medos ou preocupações com IA?" },
   { id: 50, category: "Relacionamento com Tecnologia e IA", question: "Em que áreas você mais quer ajuda de uma IA (estudos, produtividade, criatividade, etc.)?" },
+
+  // 10. Perguntas Profundas / "Tudo"
   { id: 51, category: "Perguntas Profundas / \"Tudo\"", question: "Qual foi o momento mais feliz da sua vida até hoje?" },
   { id: 52, category: "Perguntas Profundas / \"Tudo\"", question: "Qual foi o momento mais difícil e o que você aprendeu com ele?" },
   { id: 53, category: "Perguntas Profundas / \"Tudo\"", question: "Se você pudesse mudar uma coisa na sua vida agora, o que seria?" },
