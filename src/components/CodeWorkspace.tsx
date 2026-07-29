@@ -11,7 +11,7 @@ import {
 import { cn } from '../lib/utils';
 import { CodePreview } from './CodePreview';
 import { CodeRepositoryFile } from '../types';
-import { applyCodeEdits, buildCodeEditSystemInstruction, applyModelCodeResponse } from '../lib/codeEdits';
+import { buildCodeEditSystemInstruction, applyModelCodeResponse, parseSections } from '../lib/codeEdits';
 
 /**
  * Chama /api/generate com retentativas automáticas (backoff simples) para falhas
@@ -765,26 +765,30 @@ Sua missão é examinar o CÓDIGO FONTE ATUAL do arquivo do repositório ("${act
 
 Sua meta é GARANTIR 100% de conformidade, precisão e integridade do código sem faltar nada do pedido:
 1. Analise o código atual e verifique o que foi pedido pelo usuário.
-2. Se faltar alguma funcionalidade, estilização, verificação, lógica ou componente, implemente EDIÇÕES CIRÚRGICAS: assim como um assistente de codificação real (par de programação estilo "vibe coding"), você NUNCA reescreve o arquivo inteiro quando já existe código funcionando. Localize o trecho exato do "old_string" (cópia LITERAL e EXATA, único no arquivo) e forneça o "new_string" que entra no lugar. Use quantos itens em "edits" forem necessários, cada um pequeno e focado numa única mudança.
-3. Se você tiver alguma DÚVIDA IMPEDITIVA CRÍTICA sobre o que o usuário deseja:
-   - Defina "hasDoubt": true
-   - Forneça a pergunta em "doubtQuestion"
-4. Se o pedido puder ser verificado e implementado com segurança:
-   - Defina "hasDoubt": false
-   - Defina "doubtQuestion": ""
-   - Defina "mode": "edits" e preencha "edits" com as edições cirúrgicas necessárias (ou "edits": [] se o código já estiver 100% conforme, sem necessidade de mudanças).
-   - Se o arquivo estiver vazio ou for necessário recriar do zero, defina "mode": "full" e coloque o código completo em "content".
-   - Forneça um resumo objetivo e marcante das verificações/melhorias em "summary".
+2. Se faltar alguma funcionalidade, estilização, verificação, lógica ou componente, implemente EDIÇÕES CIRÚRGICAS: assim como um assistente de codificação real (par de programação estilo "vibe coding"), você NUNCA reescreve o arquivo inteiro quando já existe código funcionando. Localize o trecho exato e substitua só ele.
+3. Se você tiver alguma DÚVIDA IMPEDITIVA CRÍTICA sobre o que o usuário deseja, sinalize isso.
+4. Se o pedido puder ser verificado e implementado com segurança, aplique as mudanças e resuma o que foi feito.
 
-FORMATO OBRIGATÓRIO (Retorne estritamente JSON válido nesta estrutura, sem markdown):
-{
-  "hasDoubt": boolean,
-  "doubtQuestion": string,
-  "summary": string,
-  "mode": "edits" | "full",
-  "edits": [ { "old_string": "trecho exato e único do código atual", "new_string": "texto que entra no lugar" } ],
-  "content": string
-}`;
+Responda ESTRITAMENTE neste formato de texto puro (NUNCA use JSON — código com aspas e quebras de linha quebra o JSON facilmente), preenchendo cada seção:
+
+=== HAS_DOUBT ===
+true ou false
+
+=== DOUBT_QUESTION ===
+(a pergunta, só se HAS_DOUBT for true; senão deixe vazio)
+
+=== SUMMARY ===
+(resumo objetivo e marcante das verificações/melhorias feitas, ou da dúvida)
+
+=== EDITS ===
+(só preencha esta seção se HAS_DOUBT for false. Coloque um ou mais blocos SEARCH/REPLACE em texto puro, cada um assim:
+<<<<<<< SEARCH
+trecho exato e único do código atual a ser substituído
+=======
+texto que entra no lugar
+>>>>>>> REPLACE
+Se o código já estiver 100% conforme e nenhuma mudança for necessária, deixe esta seção vazia.
+Se o arquivo estiver vazio ou for necessário recriar do zero, em vez de blocos SEARCH/REPLACE coloque o código-fonte COMPLETO direto nesta seção, sem marcadores.)`;
 
       const userContentPayload = `EXIGÊNCIAS / REQUISITOS DO USUÁRIO A SEREM VERIFICADOS E IMPLEMENTADOS:
 "${promptToVerify}"
@@ -799,8 +803,7 @@ ${currentCode}`;
           clientApiKey: effectiveApiKey,
           model: apiKeys?.geminiModel || "gemini-3.5-flash",
           prompt: userContentPayload,
-          systemInstruction,
-          responseMimeType: "application/json"
+          systemInstruction
         })
       });
 
@@ -809,50 +812,30 @@ ${currentCode}`;
       }
 
       const data = await response.json();
-      let text = data.text || "";
-      if (text.startsWith("```")) {
-        text = text.replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '').trim();
-      }
+      const rawText = data.text || "";
+      const sections = parseSections(rawText);
+      const hasDoubt = /^true$/i.test((sections.HAS_DOUBT || '').trim());
+      const doubtQuestion = (sections.DOUBT_QUESTION || '').trim();
+      const summary = (sections.SUMMARY || '').trim();
+      const editsSection = sections.EDITS !== undefined ? sections.EDITS : rawText;
 
-      let parsed: any;
-      try {
-        parsed = JSON.parse(text);
-      } catch (e) {
-        parsed = {
-          hasDoubt: false,
-          doubtQuestion: "",
-          summary: "Análise e ajustes concluídos pelo Hunter.",
-          mode: "edits",
-          edits: []
-        };
-      }
-
-      if (parsed.hasDoubt && parsed.doubtQuestion) {
+      if (hasDoubt && doubtQuestion) {
         setHunterStatus('doubt');
         setHunterProgress(60);
-        setHunterDoubt(parsed.doubtQuestion);
-        setHunterReport(`Hunter identificou uma dúvida: ${parsed.doubtQuestion}`);
+        setHunterDoubt(doubtQuestion);
+        setHunterReport(`Hunter identificou uma dúvida: ${doubtQuestion}`);
       } else {
         setHunterStatus('success');
         setHunterProgress(100);
         setHunterDoubt(null);
 
         let correctedCode: string | null = null;
-        let editSummaryNote = '';
-        if (parsed.mode === 'full' && typeof parsed.content === 'string' && parsed.content.trim().length > 0) {
-          correctedCode = parsed.content;
-        } else if (parsed.mode === 'edits' && Array.isArray(parsed.edits) && parsed.edits.length > 0) {
-          const { content, appliedCount, failedEdits } = applyCodeEdits(currentCode, parsed.edits);
-          if (appliedCount > 0) {
-            correctedCode = content;
-          }
-          const parts: string[] = [];
-          if (appliedCount > 0) parts.push(`${appliedCount} edição(ões) cirúrgica(s) aplicada(s)`);
-          if (failedEdits.length > 0) parts.push(`${failedEdits.length} edição(ões) não puderam ser aplicadas: ${failedEdits.map(f => f.reason).join('; ')}`);
-          editSummaryNote = parts.join('. ');
+        const { content, summary: editSummaryNote } = applyModelCodeResponse(editsSection, currentCode);
+        if (content && content.trim() && content !== currentCode) {
+          correctedCode = content;
         }
 
-        const finalSummary = [parsed.summary || "Código auditado.", editSummaryNote].filter(Boolean).join(' — ');
+        const finalSummary = [summary || "Código auditado.", editSummaryNote].filter(Boolean).join(' — ');
         setHunterReport(finalSummary || "Código auditado e 100% alinhado com as especificações solicitadas!");
 
         if (correctedCode && correctedCode.trim().length > 0) {
@@ -1012,15 +995,14 @@ O código DEVE conter:
         const coderSystemInstruction = buildCodeEditSystemInstruction(coderRoleIntro);
 
         const coderPrompt = lastCode
-          ? `CÓDIGO FONTE ATUAL NO REPOSITÓRIO:\n\n${lastCode}\n\nESPECIFICAÇÕES ORIGINAIS:\n- Pedido do Usuário: "${swarmPrompt}"\n- GDD do Produto: ${JSON.stringify(pmParsed)}\n- Arquitetura: ${JSON.stringify(archParsed)}\n\n⚠️ CRÍTICO - CORREÇÕES EXIGIDAS PELO AGENTE DE QA NA ITERAÇÃO ANTERIOR:\n"${previousQAFeedback}"\nCorrija TODOS os itens acima usando edições cirúrgicas (old_string/new_string), sem reescrever o arquivo inteiro.`
+          ? `CÓDIGO FONTE ATUAL NO REPOSITÓRIO:\n\n${lastCode}\n\nESPECIFICAÇÕES ORIGINAIS:\n- Pedido do Usuário: "${swarmPrompt}"\n- GDD do Produto: ${JSON.stringify(pmParsed)}\n- Arquitetura: ${JSON.stringify(archParsed)}\n\n⚠️ CRÍTICO - CORREÇÕES EXIGIDAS PELO AGENTE DE QA NA ITERAÇÃO ANTERIOR:\n"${previousQAFeedback}"\nCorrija TODOS os itens acima usando blocos SEARCH/REPLACE cirúrgicos, sem reescrever o arquivo inteiro.`
           : `Não há código existente ainda. Crie do zero.\n\nESPECIFICAÇÕES:\n- Pedido do Usuário: "${swarmPrompt}"\n- GDD do Produto: ${JSON.stringify(pmParsed)}\n- Arquitetura: ${JSON.stringify(archParsed)}`;
 
         const coderResult = await generateWithRetry({
           clientApiKey: effectiveApiKey,
           model: currentModel,
           prompt: coderPrompt,
-          systemInstruction: coderSystemInstruction,
-          responseMimeType: "application/json"
+          systemInstruction: coderSystemInstruction
         });
 
         if (!coderResult.ok) {
