@@ -3407,20 +3407,25 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
         return res.status(400).json({ error: "Parâmetro 'commands' deve ser um array de comandos não vazio." });
       }
 
-      // Consulta detalhe do dispositivo para verificar se é fechadura/trava
+      // Consulta detalhe do dispositivo para verificar se é fechadura/trava.
+      // Falha ao consultar categoria = tratado como fechadura (fail-closed):
+      // nunca assumimos que um dispositivo não confirmado é seguro para acionar.
       let detail: any = null;
+      let detailFetchFailed = false;
       try {
         detail = await getDeviceDetail(deviceId);
       } catch (e) {
-        // Se falhar a busca do detalhe, prossegue, mas valida a categoria se retornada
+        detailFetchFailed = true;
       }
 
       const category = detail?.category || "";
-      const isLock = isTuyaLockCategory(category);
+      const isLock = detailFetchFailed || isTuyaLockCategory(category);
 
       if (isLock && confirmed !== true) {
         return res.status(400).json({
-          error: "Confirmação explícita obrigatória para dispositivos de categoria fechadura"
+          error: detailFetchFailed
+            ? "Não foi possível verificar a categoria do dispositivo. Por segurança, confirmação explícita é obrigatória."
+            : "Confirmação explícita obrigatória para dispositivos de categoria fechadura"
         });
       }
 
