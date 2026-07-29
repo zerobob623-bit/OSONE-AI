@@ -5873,8 +5873,7 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
           clientApiKey: effectiveApiKey,
           model: apiKeys.geminiModel || "gemini-3.5-flash",
           prompt: contentsText,
-          systemInstruction,
-          responseMimeType: "application/json"
+          systemInstruction
         })
       });
 
