@@ -13,6 +13,12 @@ import { CodePreview } from './CodePreview';
 import { CodeRepositoryFile } from '../types';
 import { buildCodeEditSystemInstruction, applyModelCodeResponse, parseSections } from '../lib/codeEdits';
 
+// Geração/edição de código (Hunter e Enxame/Swarm) sempre usa o melhor modelo GRATUITO
+// disponível para código (gemini-3.6-flash: mais recente, líder em benchmarks de código como
+// SWE-Bench Pro entre os modelos gratuitos), independente do modelo configurado nos Ajustes
+// gerais do chat — qualidade de código não pode ficar refém de um modelo lite mais fraco.
+const OSONE_CODE_BEST_MODEL = "gemini-3.6-flash";
+
 /**
  * Chama /api/generate com retentativas automáticas (backoff simples) para falhas
  * transitórias de rede/servidor. Evita que um único agente do Swarm derrube o
@@ -801,7 +807,7 @@ ${currentCode}`;
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           clientApiKey: effectiveApiKey,
-          model: apiKeys?.geminiModel || "gemini-3.5-flash",
+          model: OSONE_CODE_BEST_MODEL,
           prompt: userContentPayload,
           systemInstruction
         })
@@ -881,7 +887,7 @@ ${currentCode}`;
     };
 
     const effectiveApiKey = apiKeys?.gemini || '';
-    const currentModel = apiKeys?.geminiModel || "gemini-3.5-flash";
+    const currentModel = OSONE_CODE_BEST_MODEL;
 
     try {
       // ==========================================
