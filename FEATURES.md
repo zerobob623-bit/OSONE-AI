@@ -50,8 +50,7 @@ Este documento registra todas as funcionalidades, rotas e módulos ativos no eco
     - **Geração de Imagens (Ativa & Gratuita)**: Prompt de texto, proporções (1:1, 16:9, 9:16, 4:3), salvamento local automático em `generated-content/images/` com timestamp, galeria em grid com lightbox, download direto e exclusão do disco. Contador de gerações diárias com reset automático à meia-noite.
     - **Geração de Vídeo (Arquitetura Plugável & Trava de Segurança de Custo)**: Suporte a Texto-para-Vídeo e Imagem-para-Vídeo via interface `VideoProvider` plugável (`VeoVideoProvider` usando Google Veo `veo-3.1-lite`), salvamento local em `generated-content/videos/`, modal de confirmação explícita de custo (~US$0,03/s) com trava manual obrigatória antes da execução, e player HTML5 com download e exclusão.
 - **Casa Inteligente Tuya (`SmartHomeConnect.tsx`, `tuyaService.ts`)**: Controle de dispositivos IoT e automação residencial.
-- **Sentinela OSONE (`OSONESentinel.tsx`)**: Módulo de monitoramento contínuo e alertas de sistema.
-- **Visão Computacional OSONE Lens (`OSONELens.tsx`)**: Análise visual e entrada multimodal através da câmera.
+- **Removidos a pedido do usuário**: OSONE Sentinel (`OSONESentinel.tsx`) e OSONE Lens (`OSONELens.tsx`).
 - **Base de Conhecimento RAG (`RAGConnector.tsx`)**: Integração de documentos e consultas estruturadas por RAG.
 - **Análise Sensorial Aural (`AuralSense.tsx`)**: Análise e síntese avançada de áudio e sons ambiente.
 - **Evolução de Consciência Sensus (`SensusEvolutionPanel.tsx`)**: Métricas e acompanhamento do nível de vínculo e evolução do ecossistema Sensus.

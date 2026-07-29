@@ -73,7 +73,6 @@ interface HomeWorkspaceSectionProps {
   handleSpeakChatMessage: (text: string, id: string) => void;
   isPlayingChatSpeech: string | null;
   setWorkspaceMode: (mode: any) => void;
-  isSentinelActive: boolean;
   sensusMood: any;
   getMoodLabel: (mood: any) => string;
   osoneOrbImage: string;
@@ -165,7 +164,6 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
   handleSpeakChatMessage,
   isPlayingChatSpeech,
   setWorkspaceMode,
-  isSentinelActive,
   sensusMood,
   getMoodLabel,
   osoneOrbImage,
@@ -1052,32 +1050,6 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
                         <h3 className="text-xs font-bold text-zinc-100 uppercase tracking-wide group-hover:text-her-accent transition-colors">Prosa Livre</h3>
                         <p className="text-[10px] text-her-muted/60 leading-normal mt-1 font-light">
                           Explore insights mentais e criatividade usando o assistente neural por texto ou pelo motor de voz.
-                        </p>
-                      </div>
-                    </motion.div>
-
-                    <motion.div
-                      onClick={() => setWorkspaceMode('sentinel')}
-                      whileHover={{ y: -2 }}
-                      className="group bg-cyan-400/[0.02] hover:bg-cyan-400/[0.05] border border-cyan-400/10 hover:border-cyan-400/30 p-5 rounded-3xl transition-all duration-300 text-left relative overflow-hidden cursor-pointer active:scale-[0.98] flex flex-col justify-between h-44"
-                    >
-                      <div className="absolute -top-12 -left-12 w-24 h-24 bg-cyan-400/10 rounded-full blur-2xl pointer-events-none group-hover:bg-cyan-400/15 transition-all" />
-                      <div className="flex items-center justify-between">
-                        <div className="w-8 h-8 rounded-full bg-cyan-400/10 flex items-center justify-center text-cyan-400 border border-cyan-400/20">
-                          <Eye size={15} />
-                        </div>
-                        <span className={`text-[8px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded-md border ${
-                          isSentinelActive 
-                            ? "bg-cyan-500/20 border-cyan-500/30 text-cyan-400 animate-pulse" 
-                            : "bg-zinc-800 border-white/5 text-zinc-500"
-                        }`}>
-                          {isSentinelActive ? "Ativo" : "Inativo"}
-                        </span>
-                      </div>
-                      <div className="mt-4">
-                        <h3 className="text-xs font-bold text-zinc-100 uppercase tracking-wide group-hover:text-cyan-300 transition-colors">Olho Sentinela</h3>
-                        <p className="text-[10px] text-her-muted/60 leading-normal mt-1 font-light">
-                          Auto-print em tempo real. O OSONE acompanha silenciosamente as suas atividades e cria insights surpresa!
                         </p>
                       </div>
                     </motion.div>

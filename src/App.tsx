@@ -96,7 +96,6 @@ import { WhatsAppIntegration } from './components/WhatsAppIntegration';
 import { OSONEMap } from './components/OSONEMap';
 import { TeacherWhiteboard } from './components/TeacherWhiteboard';
 
-import { OSONESentinel } from './components/OSONESentinel';
 import { SkeletonBrainPopup } from './components/SkeletonBrainPopup';
 import { LocalAgentConfirmModal, PendingLocalAgentConfirmation } from './components/LocalAgentConfirmModal';
 import { SensusEvolutionPanel } from './components/SensusEvolutionPanel';
@@ -1706,71 +1705,6 @@ export default function App() {
   }, [isMuted]);
 
   const [isScreenSharing, setIsScreenSharing] = useState(false);
-
-  // Sentinel (Auto-Print Vision) States
-  const [isSentinelActive, setIsSentinelActive] = useState(() => {
-    try {
-      return localStorage.getItem('osone_sentinel_active') === 'true';
-    } catch {
-      return false;
-    }
-  });
-  const [sentinelInterval, setSentinelInterval] = useState(() => {
-    try {
-      const saved = localStorage.getItem('osone_sentinel_interval');
-      return saved ? parseInt(saved, 10) : 30;
-    } catch {
-      return 30;
-    }
-  });
-  const [sentinelLogs, setSentinelLogs] = useState<{ id: string; timestamp: string; image: string; comment: string }[]>(() => {
-    try {
-      const saved = localStorage.getItem('osone_sentinel_logs');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-  const [isSentinelProcessing, setIsSentinelProcessing] = useState(false);
-  const [lastCapturedImage, setLastCapturedImage] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem('osone_sentinel_last_image') || null;
-    } catch {
-      return null;
-    }
-  });
-
-  useEffect(() => {
-    localStorage.setItem('osone_sentinel_active', String(isSentinelActive));
-  }, [isSentinelActive]);
-
-  useEffect(() => {
-    localStorage.setItem('osone_sentinel_interval', String(sentinelInterval));
-  }, [sentinelInterval]);
-
-  useEffect(() => {
-    try {
-      if (sentinelLogs.length > 0) {
-        localStorage.setItem('osone_sentinel_logs', JSON.stringify(sentinelLogs.slice(0, 30)));
-      } else {
-        localStorage.removeItem('osone_sentinel_logs');
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  }, [sentinelLogs]);
-
-  useEffect(() => {
-    try {
-      if (lastCapturedImage) {
-        localStorage.setItem('osone_sentinel_last_image', lastCapturedImage);
-      } else {
-        localStorage.removeItem('osone_sentinel_last_image');
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  }, [lastCapturedImage]);
 
   const [isGoogleSearchActive, setIsGoogleSearchActive] = useState(() => {
     try {
@@ -6801,182 +6735,6 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt();
       liveSessionRef.current.sendRealtimeInput({ text: "O usuário DESATIVOU o compartilhamento de tela agora." });
     }
   };
-
-  // ==========================================
-  // OSONE SENTINEL EYE (Vision-Based Real-Time Watcher)
-  // ==========================================
-
-  const captureAndAnalyzeSentinel = async () => {
-    if (isSentinelProcessing) return;
-
-    // Privacy protection: Pause visual capture if sensitive modals (Settings, Profile, Dossier, Intimate Mission) are open
-    if (isSettingsOpen || isProfileModalOpen || isAiDossierOpen || isIntimateMissionOpen) {
-      console.log("OSONE Sentinel Eye: Captura pausada temporariamente para proteger dados sensíveis/configurações abertas.");
-      return;
-    }
-    
-    setIsSentinelProcessing(true);
-    let capturedDataUrl = "";
-    
-    try {
-      if (isScreenSharing && screenStreamRef.current) {
-        // Grab from screen share media stream
-        const captureFromStream = (stream: MediaStream): Promise<string> => {
-          return new Promise((resolve, reject) => {
-            const video = document.createElement('video');
-            video.srcObject = stream;
-            video.autoplay = true;
-            video.playsInline = true;
-            video.muted = true;
-            
-            let completed = false;
-            const timeout = setTimeout(() => {
-              if (!completed) {
-                completed = true;
-                reject(new Error("Timeout waiting for stream video track frame"));
-              }
-            }, 3000);
-
-            video.onloadeddata = () => {
-              setTimeout(() => {
-                if (completed) return;
-                completed = true;
-                clearTimeout(timeout);
-                try {
-                  const canvas = document.createElement('canvas');
-                  canvas.width = video.videoWidth || 640;
-                  canvas.height = video.videoHeight || 480;
-                  const ctx = canvas.getContext('2d');
-                  if (ctx) {
-                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                    const dataUrl = canvas.toDataURL('image/jpeg', 0.65);
-                    resolve(dataUrl);
-                  } else {
-                    reject(new Error("Failed to get 2d canvas context"));
-                  }
-                } catch (e) {
-                  reject(e);
-                } finally {
-                  video.srcObject = null;
-                }
-              }, 300);
-            };
-            video.onerror = (e) => {
-              if (completed) return;
-              completed = true;
-              clearTimeout(timeout);
-              reject(e);
-            };
-          });
-        };
-        
-        capturedDataUrl = await captureFromStream(screenStreamRef.current);
-      } else {
-        // Grab from application DOM silently using html2canvas
-        const appRoot = document.getElementById('root') || document.body;
-        const canvas = await html2canvas(appRoot, {
-          scale: 0.85, // Lightweight but clear
-          useCORS: true,
-          logging: false
-        });
-        capturedDataUrl = canvas.toDataURL('image/jpeg', 0.65);
-      }
-
-      if (!capturedDataUrl) {
-        throw new Error("Não foi possível gerar um print válido.");
-      }
-
-      setLastCapturedImage(capturedDataUrl);
-
-      // Transmit to Gemini vision proxy
-      const base64Part = capturedDataUrl.split(',')[1];
-      const effectiveApiKey = apiKeys.gemini || '';
-      const modelName = apiKeys.geminiModel || "gemini-3.5-flash";
-      
-      const visionPrompt = `Você é o OSONE Sentinel Eye (Olho Sentinela OSONE), o módulo de percepção visual avançada e visão computacional em tempo real que monitora de forma amigável as ações do usuário no OSONE G5.
-Analise a imagem da tela fornecida (representando o que o usuário está visualizando e editando). Veja as abas de trabalho (Escrita, Canvas, Saúde, Música, Whiteboard, TikTok Live, etc.), textos ativos, códigos, desenhos ou configurações.
-Com base no que observar, crie um único conselho prático, opinião sagaz, dica de estudos refinada ou comentário proativo interessante sobre essa atividade.
-
-Siga rigorosamente estas diretrizes:
-- Seja extremamente proativo, sincero, inteligente e perspicaz. Use o tom de um parceiro de codificação genial / co-mentor estratégico de alta performance.
-- Seja breve e de altíssimo impacto: escreva no máximo 2 parágrafos simples e amigáveis (menos de 80 palavras no total).
-- Chave de filtro crucial: Se a tela analisada não mudou praticamente nada ou o conteúdo visível for substancialmente idêntico à atividade anterior, responda única, literal e exclusivamente com a palavra [SEM ALTERAÇÕES]. Não use markdown nem pontuações adicionais para isso.`;
-
-      const response = await fetch("/api/gemini/generateContent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          clientApiKey: effectiveApiKey,
-          model: modelName,
-          contents: [
-            {
-              role: 'user',
-              parts: [
-                {
-                  inlineData: {
-                    data: base64Part,
-                    mimeType: "image/jpeg"
-                  }
-                },
-                {
-                  text: visionPrompt
-                }
-              ]
-            }
-          ]
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`Falha no processamento visual (${response.status})`);
-      }
-
-      const result = await response.json();
-      const rawText = result.text || "";
-
-      if (rawText.trim().toUpperCase() === "[SEM ALTERAÇÕES]" || rawText.trim().length < 5) {
-        console.log("OSONE Sentinel Eye: Nenhuma alteração significativa detectada na tela.");
-      } else {
-        const comment = rawText.trim();
-        const textToSpeak = comment.replace(/[*#]/g, ''); // strip markdown characters for safe speech synthesis
-
-        const newLog = {
-          id: Math.random().toString(36).substring(2, 9),
-          timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-          image: capturedDataUrl,
-          comment: comment
-        };
-
-        setSentinelLogs(prev => [newLog, ...prev].slice(0, 30));
-        addNotification("Olho Sentinela: Novo insight visual gerado!", "success");
-
-        // Autoplay voice if speech-auto-speak or the local speaker option is enabled
-        const autoSpeak = localStorage.getItem('osone_sentinel_autospeak') === 'true';
-        if (autoSpeak || isChatAutoSpeakActive) {
-          playSpeech(textToSpeak);
-        }
-      }
-    } catch (err: any) {
-      console.error("Erro na rotina do OSONE Sentinel Eye:", err);
-    } finally {
-      setIsSentinelProcessing(false);
-    }
-  };
-
-  // Sentinel Timer Trigger
-  useEffect(() => {
-    let intervalId: any = null;
-    if (isSentinelActive) {
-      intervalId = setInterval(() => {
-        captureAndAnalyzeSentinel();
-      }, sentinelInterval * 1000);
-    }
-    return () => {
-      if (intervalId) {
-        clearInterval(intervalId);
-      }
-    };
-  }, [isSentinelActive, sentinelInterval, apiKeys.gemini, apiKeys.geminiModel]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(workspaceText);
@@ -13141,50 +12899,6 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 avgWords={Math.round(chatHistory.reduce((acc, m) => acc + (m.content ? m.content.split(/\s+/).length : 0), 0) / Math.max(1, chatHistory.length))}
               />
             </motion.div>
-          ) : workspaceMode === 'sentinel' ? (
-            <motion.div
-              key="workspace-sentinel"
-              initial={{ opacity: 0, scale: 0.985 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.985 }}
-              className="w-full flex-1 flex flex-col min-h-0"
-            >
-              <div className="flex items-center gap-4 shrink-0 p-6 border-b border-white/10 w-full select-none">
-                <button 
-                  onClick={() => setWorkspaceMode('home')}
-                  className="p-3 bg-white/[0.03] hover:bg-white/[0.05] transition-all text-her-muted border border-white/[0.05]"
-                >
-                  <ChevronRight size={18} className="rotate-180" />
-                </button>
-                <div className="text-left">
-                  <span className="block text-[9px] uppercase tracking-widest text-cyan-400 font-mono">WORKSPACE SENTINELA</span>
-                  <h2 className="text-base font-bold uppercase tracking-wider text-white">OSONE Sentinel Eye</h2>
-                </div>
-              </div>
-              <div className="flex-1 overflow-hidden p-4 md:p-6 flex flex-col h-full min-h-0">
-                <OSONESentinel
-                  isActive={isSentinelActive}
-                  onToggleActive={setIsSentinelActive}
-                  interval={sentinelInterval}
-                  onIntervalChange={setSentinelInterval}
-                  logs={sentinelLogs}
-                  onClearLogs={() => setSentinelLogs([])}
-                  isProcessing={isSentinelProcessing}
-                  onTriggerManual={captureAndAnalyzeSentinel}
-                  lastImage={lastCapturedImage}
-                  onSpeakText={playSpeech}
-                  isScreenSharing={isScreenSharing}
-                  onStartScreenSharing={async () => {
-                    await startScreenSharing().then(() => {
-                      addNotification("Compartilhamento de tela iniciado com sucesso", "success");
-                    }).catch(err => {
-                      addNotification("Não foi possível iniciar o compartilhamento de tela", "error");
-                    });
-                  }}
-                  className="flex-1 w-full h-full min-h-0 text-left"
-                />
-              </div>
-            </motion.div>
           ) : workspaceMode === 'smarthome' || workspaceMode === 'local_control' ? (
             <motion.div
               key="workspace-smarthome"
@@ -13275,7 +12989,6 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 handleSpeakChatMessage={handleSpeakChatMessage}
                 isPlayingChatSpeech={isPlayingChatSpeech}
                 setWorkspaceMode={setWorkspaceMode}
-                isSentinelActive={isSentinelActive}
                 sensusMood={sensusMood}
                 getMoodLabel={getMoodLabel}
                 osoneOrbImage={osoneOrbImage}
