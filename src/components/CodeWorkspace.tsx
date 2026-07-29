@@ -14,9 +14,10 @@ import { CodeRepositoryFile } from '../types';
 import { buildCodeEditSystemInstruction, applyModelCodeResponse, parseSections } from '../lib/codeEdits';
 
 // Geração/edição de código (Hunter e Enxame/Swarm) sempre usa o melhor modelo GRATUITO
-// disponível para código, independente do modelo "rápido" configurado nos Ajustes gerais do
-// chat — qualidade de código não pode ficar refém de um modelo flash-lite mais fraco.
-const OSONE_CODE_BEST_MODEL = "gemini-3-flash-preview";
+// disponível para código (gemini-3.6-flash: mais recente, líder em benchmarks de código como
+// SWE-Bench Pro entre os modelos gratuitos), independente do modelo configurado nos Ajustes
+// gerais do chat — qualidade de código não pode ficar refém de um modelo lite mais fraco.
+const OSONE_CODE_BEST_MODEL = "gemini-3.6-flash";
 
 /**
  * Chama /api/generate com retentativas automáticas (backoff simples) para falhas
