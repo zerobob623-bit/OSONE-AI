@@ -528,6 +528,12 @@ Comentário de @${user}: "${text}"`;
   let wwebjsQrBase64 = "";
   let wwebjsPhoneInfo: { number?: string; name?: string } = {};
   let wwebjsLastError = "";
+  // Controla a reconexão automática: some fica true quando o próprio usuário desconecta/reseta
+  // de propósito, para não brigar com a intenção dele; caso contrário, toda queda de conexão
+  // (crash do Chromium, sessão derrubada pelo celular, etc.) tenta reconectar sozinha.
+  let wwebjsIntentionalDisconnect = false;
+  let wwebjsReconnectAttempts = 0;
+  let wwebjsReconnectTimer: NodeJS.Timeout | null = null;
 
   interface WhatsappLog {
     id: string;
@@ -867,8 +873,50 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     return msg;
   }
 
+  // Reconecta sozinho depois de uma queda não intencional (crash do Chromium, sessão derrubada
+  // pelo celular, conflito de outra sessão, etc.), com backoff crescente, em vez de deixar o
+  // usuário precisar clicar em "Iniciar Conexão" toda vez que a conexão cai.
+  function scheduleWhatsAppReconnect(reason: string) {
+    if (wwebjsIntentionalDisconnect || wwebjsReconnectTimer) return;
+
+    wwebjsReconnectAttempts++;
+    const maxAttempts = 8;
+    if (wwebjsReconnectAttempts > maxAttempts) {
+      whatsappLogs.unshift({
+        id: Math.random().toString(36).substring(2, 11),
+        timestamp: Date.now(),
+        type: "error",
+        sender: "Sistema",
+        message: `WhatsApp desconectou ${maxAttempts} vezes seguidas (último motivo: ${reason}). Parando a reconexão automática para não sobrecarregar o sistema — verifique sua internet/telefone e clique em "Iniciar Conexão" manualmente.`
+      });
+      if (whatsappLogs.length > 100) whatsappLogs.pop();
+      return;
+    }
+
+    const delayMs = Math.min(5000 * wwebjsReconnectAttempts, 60000);
+    whatsappLogs.unshift({
+      id: Math.random().toString(36).substring(2, 11),
+      timestamp: Date.now(),
+      type: "info",
+      sender: "Sistema",
+      message: `Conexão caiu (motivo: ${reason}). Tentando reconectar automaticamente em ${Math.round(delayMs / 1000)}s (tentativa ${wwebjsReconnectAttempts}/${maxAttempts})...`
+    });
+    if (whatsappLogs.length > 100) whatsappLogs.pop();
+
+    wwebjsReconnectTimer = setTimeout(() => {
+      wwebjsReconnectTimer = null;
+      initializeWhatsAppWebClient();
+    }, delayMs);
+  }
+
   // Helper function to initialize WhatsApp Web Client via Puppeteer
   const initializeWhatsAppWebClient = async () => {
+    if (wwebjsReconnectTimer) {
+      clearTimeout(wwebjsReconnectTimer);
+      wwebjsReconnectTimer = null;
+    }
+    wwebjsIntentionalDisconnect = false;
+
     if (wwebjsClient) {
       try {
         await wwebjsClient.destroy();
@@ -906,6 +954,13 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
           clientId: "osone_copilot_session",
           dataPath: path.join(process.cwd(), ".wwebjs_auth")
         }),
+        // Um Chrome mais recente evita que o WhatsApp trate a sessão como "navegador não
+        // suportado" e derrube a conexão sozinha. "takeoverOnConflict" evita quedas quando
+        // o WhatsApp Web é aberto em outro lugar (ex: no navegador do próprio celular/PC),
+        // assumindo a sessão em vez de simplesmente cair.
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        takeoverOnConflict: true,
+        takeoverTimeoutMs: 10000,
         puppeteer: {
           headless: true,
           ...(detectedExecutablePath ? { executablePath: detectedExecutablePath } : {}),
@@ -958,6 +1013,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
         virtualConnectionState = "CONNECTED";
         wwebjsQrRaw = "";
         wwebjsQrBase64 = "";
+        wwebjsReconnectAttempts = 0;
         wwebjsPhoneInfo = {
           number: wwebjsClient.info?.wid?.user || "Conectado",
           name: wwebjsClient.info?.pushname || "OSONE WhatsApp"
@@ -999,6 +1055,8 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
           message: `WhatsApp Web desconectado: ${reason}`
         });
         if (whatsappLogs.length > 100) whatsappLogs.pop();
+
+        scheduleWhatsAppReconnect(reason || "desconhecido");
       });
 
       wwebjsClient.on("message", async (msg: any) => {
@@ -1202,11 +1260,13 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
         wwebjsStatus = "erro";
         wwebjsLastError = explainWhatsAppLaunchError(err?.message || String(err));
         console.error("[WhatsApp] Erro na inicialização do Client:", err);
+        scheduleWhatsAppReconnect("falha ao inicializar");
       });
     } catch (err: any) {
       wwebjsStatus = "erro";
       wwebjsLastError = explainWhatsAppLaunchError(err?.message || String(err));
       console.error("[WhatsApp] Erro no setup do Client:", err);
+      scheduleWhatsAppReconnect("falha no setup");
     }
   };
 
@@ -1265,6 +1325,13 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   });
 
   app.post("/api/whatsapp/disconnect", async (req, res) => {
+    wwebjsIntentionalDisconnect = true;
+    if (wwebjsReconnectTimer) {
+      clearTimeout(wwebjsReconnectTimer);
+      wwebjsReconnectTimer = null;
+    }
+    wwebjsReconnectAttempts = 0;
+
     if (wwebjsClient) {
       try {
         await wwebjsClient.destroy();
@@ -1281,6 +1348,13 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
 
   app.post("/api/whatsapp/reset-session", async (req, res) => {
     try {
+      wwebjsIntentionalDisconnect = true;
+      if (wwebjsReconnectTimer) {
+        clearTimeout(wwebjsReconnectTimer);
+        wwebjsReconnectTimer = null;
+      }
+      wwebjsReconnectAttempts = 0;
+
       if (wwebjsClient) {
         try { await wwebjsClient.destroy(); } catch (_) {}
         wwebjsClient = null;
