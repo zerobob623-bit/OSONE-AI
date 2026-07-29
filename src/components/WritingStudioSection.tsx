@@ -54,7 +54,7 @@ interface WritingStudioSectionProps {
   workspaceAudioDuration: number;
   handleSeekWorkspaceAudio: (time: number) => void;
   setWorkspaceAudioUrl: (url: string | null) => void;
-  writingAttachedFiles: { name: string; type: string; data: string }[];
+  writingAttachedFiles: any[];
   writingWidthMode: 'compact' | 'classic' | 'wide';
   removeWritingFile: (idx: number) => void;
   writingFileInputRef: React.RefObject<HTMLInputElement | null>;
