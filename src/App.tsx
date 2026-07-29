@@ -5843,7 +5843,11 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
     }
   };
 
-  const handleCodeWorkspacePrompt = async (promptText: string) => {
+  const handleCodeWorkspacePrompt = async (
+    promptText: string,
+    referenceImages?: Array<{ mimeType: string; data: string }>,
+    maxEffort?: boolean
+  ) => {
     const effectiveApiKey = apiKeys.gemini || '';
     if (!promptText.trim()) return;
 
@@ -5863,8 +5867,18 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
       );
 
       const contentsText = currentCode.length > 20
-        ? `CÓDIGO FONTE ATUAL NO REPOSITÓRIO:\n\n${currentCode}\n\nINSTRUÇÕES DO USUÁRIO PARA ALTERAÇÃO/CRIAÇÃO:\n${promptText}`
-        : `Não há código existente ainda (arquivo vazio ou muito curto). Crie do zero.\n\nINSTRUÇÕES DO USUÁRIO:\n${promptText}`;
+        ? `CÓDIGO FONTE ATUAL NO REPOSITÓRIO:\n\n${currentCode}\n\nINSTRUÇÕES DO USUÁRIO PARA ALTERAÇÃO/CRIAÇÃO:\n${promptText}${referenceImages && referenceImages.length > 0 ? `\n\n(O usuário anexou ${referenceImages.length} imagem(ns) de referência visual para esta criação — use-as como inspiração de design/layout/estilo.)` : ''}${maxEffort ? '\n\nESFORÇO MÁXIMO SOLICITADO: capriche ao máximo, pense em todos os detalhes, casos extremos e refinamentos de design antes de responder. Não corte caminho nem simplifique por economia — priorize a melhor implementação possível, mesmo que leve mais tempo.' : ''}`
+        : `Não há código existente ainda (arquivo vazio ou muito curto). Crie do zero.\n\nINSTRUÇÕES DO USUÁRIO:\n${promptText}${referenceImages && referenceImages.length > 0 ? `\n\n(O usuário anexou ${referenceImages.length} imagem(ns) de referência visual para esta criação — use-as como inspiração de design/layout/estilo.)` : ''}${maxEffort ? '\n\nESFORÇO MÁXIMO SOLICITADO: capriche ao máximo, pense em todos os detalhes, casos extremos e refinamentos de design antes de responder. Não corte caminho nem simplifique por economia — priorize a melhor implementação possível, mesmo que leve mais tempo.' : ''}`;
+
+      const promptPayload = (referenceImages && referenceImages.length > 0)
+        ? [{
+            role: 'user',
+            parts: [
+              { text: contentsText },
+              ...referenceImages.map(img => ({ inlineData: { mimeType: img.mimeType, data: img.data } }))
+            ]
+          }]
+        : contentsText;
 
       const response = await fetch("/api/generate", {
         method: "POST",
@@ -5876,8 +5890,9 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
           // entre os modelos gratuitos), independente do modelo configurado nos Ajustes para o
           // chat geral — qualidade de código não pode ficar refém de um modelo lite mais fraco.
           model: "gemini-3.6-flash",
-          prompt: contentsText,
-          systemInstruction
+          prompt: promptPayload,
+          systemInstruction,
+          maxEffort: !!maxEffort
         })
       });
 

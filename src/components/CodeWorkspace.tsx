@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Code2, Play, FileCode, Plus, Trash2, Edit3, Download, Copy, Check, 
-  FolderGit2, Sparkles, RefreshCw, Eye, Columns, 
+import {
+  Code2, Play, FileCode, Plus, Trash2, Edit3, Download, Copy, Check,
+  FolderGit2, Sparkles, RefreshCw, Eye, Columns,
   Upload, X, Mic, Loader2, MessageSquare, AlertCircle,
-  Bot, Layers, ShieldCheck, Terminal, Cpu, Zap, RotateCw, CheckCircle2, 
+  Bot, Layers, ShieldCheck, Terminal, Cpu, Zap, RotateCw, CheckCircle2,
   AlertTriangle, ChevronDown, ChevronUp, PlayCircle, Gamepad2,
-  Undo, RotateCcw
+  Undo, Redo, RotateCcw, Paperclip, Flame
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { CodePreview } from './CodePreview';
@@ -295,7 +295,7 @@ const DEFAULT_PROJECTS: OSONEProject[] = [
 
 export const CodeWorkspace: React.FC<{
   onClose?: () => void;
-  onGenerateCodeRequest?: (prompt: string) => void;
+  onGenerateCodeRequest?: (prompt: string, referenceImages?: Array<{ mimeType: string; data: string }>, maxEffort?: boolean) => void;
   onStartLiveVoice?: () => void;
   apiKeys?: any;
   isGenerating?: boolean;
@@ -372,9 +372,18 @@ export const CodeWorkspace: React.FC<{
     return files[0]?.id || 'main-app';
   });
 
-  // UNDO HISTORY STATE FOR CODE EDITS
+  // UNDO/REDO HISTORY STATE FOR CODE EDITS
   const [historyStack, setHistoryStack] = useState<CodeRepositoryFile[][]>([]);
+  const [redoStack, setRedoStack] = useState<CodeRepositoryFile[][]>([]);
   const [lastTypedHistoryTime, setLastTypedHistoryTime] = useState<number>(0);
+
+  // IMAGENS DE REFERÊNCIA ANEXADAS AO PROMPT (clipe)
+  interface AttachedImage { id: string; name: string; mimeType: string; data: string; previewUrl: string; }
+  const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+
+  // MODO DE ESFORÇO MÁXIMO: pede ao modelo o maior nível de raciocínio/capricho possível
+  const [maxEffort, setMaxEffort] = useState<boolean>(false);
 
   const [viewLayout, setViewLayout] = useState<'split' | 'editor' | 'preview'>('split');
   const [showRepoSidebar, setShowRepoSidebar] = useState<boolean>(true);
@@ -463,7 +472,7 @@ export const CodeWorkspace: React.FC<{
     }
   }, [files, activeFileId, activeProjectId]);
 
-  // UNDO HISTORY HELPERS
+  // UNDO/REDO HISTORY HELPERS
   const pushHistory = (currentFiles: CodeRepositoryFile[]) => {
     setHistoryStack(prev => {
       const snapshot = JSON.parse(JSON.stringify(currentFiles));
@@ -475,6 +484,8 @@ export const CodeWorkspace: React.FC<{
       if (next.length > 30) return next.slice(next.length - 30);
       return next;
     });
+    // Uma mudança nova invalida qualquer "futuro" que só existia porque o usuário desfez algo.
+    setRedoStack([]);
   };
 
   const handleUndoChange = () => {
@@ -485,6 +496,14 @@ export const CodeWorkspace: React.FC<{
 
     const previousFiles = historyStack[historyStack.length - 1];
     setHistoryStack(prev => prev.slice(0, -1));
+
+    // Guarda o estado atual para que essa desfeita possa ser refeita depois.
+    setRedoStack(prev => {
+      const snapshot = JSON.parse(JSON.stringify(files));
+      const next = [...prev, snapshot];
+      if (next.length > 30) return next.slice(next.length - 30);
+      return next;
+    });
 
     if (previousFiles && Array.isArray(previousFiles) && previousFiles.length > 0) {
       setFiles(previousFiles);
@@ -498,7 +517,7 @@ export const CodeWorkspace: React.FC<{
       } catch (e) {}
 
       setProjects(prevProjects => {
-        const updated = prevProjects.map(p => 
+        const updated = prevProjects.map(p =>
           p.id === activeProjectId ? { ...p, files: previousFiles, updatedAt: Date.now() } : p
         );
         try {
@@ -512,23 +531,72 @@ export const CodeWorkspace: React.FC<{
     }
   };
 
-  // GLOBAL CTRL+Z / CMD+Z UNDO SHORTCUT
+  const handleRedoChange = () => {
+    if (redoStack.length === 0) {
+      setNotificationBanner({ message: "Nada para refazer no código!", type: 'info' });
+      return;
+    }
+
+    const nextFiles = redoStack[redoStack.length - 1];
+    setRedoStack(prev => prev.slice(0, -1));
+
+    // Guarda o estado atual de volta no histórico de desfazer, para poder desfazer o refazer.
+    setHistoryStack(prev => {
+      const snapshot = JSON.parse(JSON.stringify(files));
+      const next = [...prev, snapshot];
+      if (next.length > 30) return next.slice(next.length - 30);
+      return next;
+    });
+
+    if (nextFiles && Array.isArray(nextFiles) && nextFiles.length > 0) {
+      setFiles(nextFiles);
+
+      if (!nextFiles.some(f => f.id === activeFileId)) {
+        setActiveFileId(nextFiles[0].id);
+      }
+
+      try {
+        localStorage.setItem('osone_code_repository_files', JSON.stringify(nextFiles));
+      } catch (e) {}
+
+      setProjects(prevProjects => {
+        const updated = prevProjects.map(p =>
+          p.id === activeProjectId ? { ...p, files: nextFiles, updatedAt: Date.now() } : p
+        );
+        try {
+          localStorage.setItem('osone_code_projects_v2', JSON.stringify(updated));
+        } catch (e) {}
+        return updated;
+      });
+
+      window.dispatchEvent(new Event('osone_repository_updated'));
+      setNotificationBanner({ message: "Alteração refeita com sucesso! ↪️", type: 'success' });
+    }
+  };
+
+  // GLOBAL CTRL+Z / CMD+Z (DESFAZER) E CTRL+SHIFT+Z / CMD+SHIFT+Z / CTRL+Y (REFAZER)
   useEffect(() => {
-    const handleGlobalUndoKey = (e: KeyboardEvent) => {
+    const handleGlobalUndoRedoKey = (e: KeyboardEvent) => {
       const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-      const isUndo = (isMac ? e.metaKey : e.ctrlKey) && e.key.toLowerCase() === 'z' && !e.shiftKey;
-      if (isUndo) {
+      const modifierPressed = isMac ? e.metaKey : e.ctrlKey;
+      const isUndo = modifierPressed && e.key.toLowerCase() === 'z' && !e.shiftKey;
+      const isRedo = modifierPressed && ((e.key.toLowerCase() === 'z' && e.shiftKey) || e.key.toLowerCase() === 'y');
+      if (isUndo || isRedo) {
         const target = e.target as HTMLElement;
         if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') && !target.classList.contains('code-editor-textarea')) {
           return;
         }
         e.preventDefault();
-        handleUndoChange();
+        if (isRedo) {
+          handleRedoChange();
+        } else {
+          handleUndoChange();
+        }
       }
     };
-    window.addEventListener('keydown', handleGlobalUndoKey);
-    return () => window.removeEventListener('keydown', handleGlobalUndoKey);
-  }, [historyStack, activeProjectId]);
+    window.addEventListener('keydown', handleGlobalUndoRedoKey);
+    return () => window.removeEventListener('keydown', handleGlobalUndoRedoKey);
+  }, [historyStack, redoStack, files, activeProjectId]);
 
   // SWITCH ACTIVE PROJECT (1 OF 5)
   const handleSwitchProject = (targetProjectId: string) => {
@@ -744,8 +812,39 @@ export const CodeWorkspace: React.FC<{
   const handleSendAIPrompt = (promptText?: string) => {
     const textToSend = promptText || promptInput;
     if (!textToSend.trim() || !onGenerateCodeRequest) return;
-    onGenerateCodeRequest(textToSend);
+    const imagesToSend = attachedImages.map(img => ({ mimeType: img.mimeType, data: img.data }));
+    onGenerateCodeRequest(textToSend, imagesToSend.length > 0 ? imagesToSend : undefined, maxEffort);
     setPromptInput('');
+    attachedImages.forEach(img => URL.revokeObjectURL(img.previewUrl));
+    setAttachedImages([]);
+  };
+
+  const handleAttachImages = (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    Array.from(fileList).forEach(file => {
+      if (!file.type.startsWith('image/')) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64 = result.split(',')[1] || '';
+        setAttachedImages(prev => [...prev, {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          name: file.name,
+          mimeType: file.type,
+          data: base64,
+          previewUrl: URL.createObjectURL(file)
+        }]);
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleRemoveAttachedImage = (id: string) => {
+    setAttachedImages(prev => {
+      const target = prev.find(img => img.id === id);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter(img => img.id !== id);
+    });
   };
 
   // HUNTER CODE EXAMINATION & AUTOMATIC IMPLEMENTATION
@@ -1286,7 +1385,23 @@ FORMATO OBRIGATÓRIO (JSON estrito):
             <span className="hidden sm:inline">Desfazer ({historyStack.length})</span>
           </button>
 
-          <button 
+          {/* BOTÃO REFAZER ALTERAÇÃO NO CÓDIGO */}
+          <button
+            onClick={handleRedoChange}
+            disabled={redoStack.length === 0}
+            className={cn(
+              "px-3 py-2 rounded-xl text-xs font-mono font-bold flex items-center gap-1.5 transition-all border shrink-0",
+              redoStack.length > 0
+                ? "bg-cyan-500/10 text-cyan-400 border-cyan-500/30 hover:bg-cyan-500/20 active:scale-95 cursor-pointer shadow-lg shadow-cyan-950/30"
+                : "bg-white/[0.02] text-zinc-600 border-white/5 cursor-not-allowed opacity-40"
+            )}
+            title={redoStack.length > 0 ? "Refazer alteração no código (Ctrl+Shift+Z)" : "Nada para refazer"}
+          >
+            <Redo size={15} className={redoStack.length > 0 ? "text-cyan-400 animate-pulse" : ""} />
+            <span className="hidden sm:inline">Refazer ({redoStack.length})</span>
+          </button>
+
+          <button
             onClick={handleCopyCode}
             className="p-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] text-zinc-300 border border-white/5 transition-all"
             title="Copiar Código do Arquivo Ativo"
@@ -1563,10 +1678,67 @@ FORMATO OBRIGATÓRIO (JSON estrito):
             ))}
           </div>
 
+          {/* Miniaturas das imagens de referência anexadas */}
+          {attachedImages.length > 0 && (
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+              {attachedImages.map(img => (
+                <div key={img.id} className="relative shrink-0 group">
+                  <img
+                    src={img.previewUrl}
+                    alt={img.name}
+                    className="w-12 h-12 rounded-lg object-cover border border-cyan-500/30"
+                  />
+                  <button
+                    onClick={() => handleRemoveAttachedImage(img.id)}
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 hover:bg-red-400 text-white flex items-center justify-center shadow-lg cursor-pointer"
+                    title="Remover imagem"
+                  >
+                    <X size={10} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Prompt Input Line */}
           <div className="flex items-center gap-2 bg-black/50 border border-white/10 rounded-2xl p-1.5 focus-within:border-cyan-500/40 transition-all">
-            <input 
-              type="text" 
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                handleAttachImages(e.target.files);
+                e.target.value = '';
+              }}
+            />
+
+            <button
+              onClick={() => imageInputRef.current?.click()}
+              disabled={isGenerating}
+              className="p-2 rounded-xl bg-white/[0.03] hover:bg-cyan-500/10 text-zinc-400 hover:text-cyan-300 border border-white/5 hover:border-cyan-500/20 transition-all shrink-0 disabled:opacity-50"
+              title="Anexar imagem(ns) de referência para o modelo usar na criação"
+            >
+              <Paperclip size={15} />
+            </button>
+
+            <button
+              onClick={() => setMaxEffort(prev => !prev)}
+              disabled={isGenerating}
+              className={cn(
+                "p-2 rounded-xl border transition-all shrink-0 disabled:opacity-50",
+                maxEffort
+                  ? "bg-orange-500/15 text-orange-400 border-orange-500/40 shadow-lg shadow-orange-950/30"
+                  : "bg-white/[0.03] text-zinc-400 hover:text-orange-300 border-white/5 hover:border-orange-500/20"
+              )}
+              title={maxEffort ? "Esforço Máximo ATIVADO: o modelo vai capricho e raciocínio máximo na criação (clique para desativar)" : "Ativar Esforço Máximo: pede ao modelo o maior nível de raciocínio e capricho possível"}
+            >
+              <Flame size={15} className={maxEffort ? "animate-pulse" : ""} />
+            </button>
+
+            <input
+              type="text"
               value={promptInput}
               onChange={(e) => setPromptInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSendAIPrompt()}
@@ -1575,7 +1747,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
               className="flex-1 bg-transparent px-3 py-1.5 text-xs text-white placeholder-zinc-500 outline-none font-mono"
             />
 
-            <button 
+            <button
               onClick={() => handleSendAIPrompt()}
               disabled={!promptInput.trim() || isGenerating}
               className="px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 disabled:bg-zinc-800 text-black font-semibold text-xs font-mono transition-all flex items-center gap-1.5 shrink-0"

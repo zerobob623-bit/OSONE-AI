@@ -2673,9 +2673,9 @@ ${processedChunk}`;
   // Generic and robust POST endpoint for server-side Gemini 3.6-flash content generation 
   app.post("/api/generate", async (req, res) => {
     try {
-      const { prompt, systemInstruction, clientApiKey, model, responseMimeType } = req.body;
+      const { prompt, systemInstruction, clientApiKey, model, responseMimeType, maxEffort } = req.body;
       const apiKey = clientApiKey || getSecretGeminiKey();
-      
+
       if (!apiKey) {
         return res.status(400).json({ error: "Chave API do Gemini não definida no servidor." });
       }
@@ -2695,6 +2695,9 @@ ${processedChunk}`;
       const config: any = {};
       if (systemInstruction) config.systemInstruction = systemInstruction;
       if (responseMimeType) config.responseMimeType = responseMimeType;
+      // "Esforço máximo": eleva o orçamento de raciocínio do modelo ao nível mais alto
+      // suportado pela API, em vez de deixá-lo no padrão rápido/econômico.
+      if (maxEffort) config.thinkingConfig = { thinkingLevel: "HIGH" };
 
       const response = await generateContentWithFallback(ai, {
         model: selectedModel,
