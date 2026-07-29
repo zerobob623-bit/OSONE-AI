@@ -6303,6 +6303,41 @@ ${isBad
     startListeningElevenLabs();
   };
 
+  /**
+   * Abre um socket de streaming TTS da ElevenLabs. Se o usuário configurou sua própria
+   * chave em Configurações, conecta o navegador DIRETO na ElevenLabs (funciona em qualquer
+   * hospedagem, inclusive Vercel, onde o proxy /api/elevenlabs-ws do nosso backend não
+   * funciona por ser um WebSocket de longa duração em ambiente serverless). Sem chave própria,
+   * cai no proxy do backend usando a chave global do servidor (só funciona em hospedagem com
+   * servidor persistente, ex: local/Electron/self-host).
+   */
+  const openElevenLabsRealtimeSocket = (onReady: () => void): WebSocket => {
+    const voiceId = getActiveElevenLabsVoiceId();
+    const modelId = apiKeys.elevenLabsModel || 'eleven_flash_v2_5';
+    const stability = apiKeys.elevenLabsStability ?? 0.5;
+    const similarityBoost = apiKeys.elevenLabsSimilarityBoost ?? 0.75;
+    const clientKey = (apiKeys.elevenLabsApiKey || '').trim();
+
+    if (clientKey) {
+      const ws = new WebSocket(`wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?model_id=${modelId}&output_format=pcm_24000`);
+      ws.addEventListener('open', () => {
+        ws.send(JSON.stringify({
+          text: " ",
+          xi_api_key: clientKey,
+          voice_settings: { stability, similarity_boost: similarityBoost },
+          generation_config: { chunk_length_schedule: [120, 160, 250, 290] }
+        }));
+        onReady();
+      }, { once: true });
+      return ws;
+    }
+
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(`${protocol}//${window.location.host}/api/elevenlabs-ws?voiceId=${voiceId}&modelId=${modelId}&stability=${stability}&similarityBoost=${similarityBoost}`);
+    ws.addEventListener('open', () => onReady(), { once: true });
+    return ws;
+  };
+
   const playElevenLabsSpeech = async (text: string) => {
     if (!isElevenLabsLiveActiveRef.current) return;
     
@@ -6322,33 +6357,24 @@ ${isBad
     }
 
     try {
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const voiceId = getActiveElevenLabsVoiceId();
-      const modelId = apiKeys.elevenLabsModel || 'eleven_flash_v2_5';
-      const stability = apiKeys.elevenLabsStability ?? 0.5;
-      const similarityBoost = apiKeys.elevenLabsSimilarityBoost ?? 0.75;
-
-      const wsUrl = `${protocol}//${window.location.host}/api/elevenlabs-ws?voiceId=${voiceId}&modelId=${modelId}&stability=${stability}&similarityBoost=${similarityBoost}`;
-      const ws = new WebSocket(wsUrl);
-      elevenLabsWsRef.current = ws;
-
-      ws.onopen = () => {
-        console.log("ElevenLabs Proxy WS connected for single-play text speech");
+      const ws = openElevenLabsRealtimeSocket(() => {
+        console.log("ElevenLabs WS connected for single-play text speech");
         if (elevenLabsQueuePlayerRef.current) {
           elevenLabsQueuePlayerRef.current.resetStreamState();
         }
-        // Send the complete phrase chunk with apiKey in payload
-        ws.send(JSON.stringify({ apiKey: apiKeys.elevenLabsApiKey, text: text }));
-        // Immediately flush to signal end of stream
+        // Send the phrase chunk, then immediately flush to signal end of stream
+        ws.send(JSON.stringify({ text: text }));
         ws.send(JSON.stringify({ text: "", flush: true }));
-      };
+      });
+      elevenLabsWsRef.current = ws;
 
       ws.onmessage = async (event) => {
         try {
           const parsed = JSON.parse(event.data);
-          if (parsed.error) {
-            console.error("ElevenLabs server-side WS proxy error:", parsed.error);
-            addNotification(`Erro ElevenLabs: ${parsed.error}`, "error");
+          const errMsg = parsed.error || parsed.message || (typeof parsed.detail === 'string' ? parsed.detail : undefined);
+          if (errMsg) {
+            console.error("ElevenLabs WS error:", errMsg);
+            addNotification(`Erro ElevenLabs: ${errMsg}`, "error");
             return;
           }
 
@@ -6365,11 +6391,11 @@ ${isBad
       };
 
       ws.onerror = (err) => {
-        console.error("ElevenLabs Proxy WS error during speech playback:", err);
+        console.error("ElevenLabs WS error during speech playback:", err);
       };
 
       ws.onclose = () => {
-        console.log("ElevenLabs Proxy WS closed for single-play text speech");
+        console.log("ElevenLabs WS closed for single-play text speech");
         elevenLabsQueuePlayerRef.current?.markStreamFinished();
       };
 
@@ -6597,17 +6623,8 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt();
       - Nunca faça listas, tópicos estruturados, tópicos com hífens ou qualquer numeração por voz.
       - Conduza a conversa de forma estimulante, mantendo o diálogo profundo, natural e contínuo.`;
 
-      // 1. Establish the ElevenLabs proxy WebSocket connection
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const voiceId = getActiveElevenLabsVoiceId();
-      const modelId = apiKeys.elevenLabsModel || 'eleven_flash_v2_5';
-      const stability = apiKeys.elevenLabsStability ?? 0.5;
-      const similarityBoost = apiKeys.elevenLabsSimilarityBoost ?? 0.75;
-
-      const wsUrl = `${protocol}//${window.location.host}/api/elevenlabs-ws?voiceId=${voiceId}&modelId=${modelId}&stability=${stability}&similarityBoost=${similarityBoost}`;
-      elWs = new WebSocket(wsUrl);
-      elevenLabsWsRef.current = elWs;
-
+      // 1. Establish the ElevenLabs realtime socket (direto se houver chave própria nas
+      // Configurações, senão via proxy do backend usando a chave global do servidor)
       let hasReceivedAudio = false;
       const wsSendQueue: string[] = [];
 
@@ -6620,18 +6637,16 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt();
         }
       };
 
-      elWs.onopen = () => {
-        console.log("ElevenLabs Client WS connected. Flushing queued chunks:", wsSendQueue.length);
-        if (apiKeys.elevenLabsApiKey) {
-          elWs?.send(JSON.stringify({ apiKey: apiKeys.elevenLabsApiKey, text: "" }));
-        }
+      elWs = openElevenLabsRealtimeSocket(() => {
+        console.log("ElevenLabs WS connected. Flushing queued chunks:", wsSendQueue.length);
         while (wsSendQueue.length > 0) {
           const item = wsSendQueue.shift();
           if (item && elWs && elWs.readyState === WebSocket.OPEN) {
             elWs.send(item);
           }
         }
-      };
+      });
+      elevenLabsWsRef.current = elWs;
 
       // Set up the queue player
       if (!elevenLabsQueuePlayerRef.current) {
@@ -6657,9 +6672,10 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt();
       elWs.onmessage = (event) => {
         try {
           const parsed = JSON.parse(event.data);
-          if (parsed.error) {
-            console.error("ElevenLabs WS proxy response error:", parsed.error);
-            addNotification(`Erro ElevenLabs: ${parsed.error}`, "error");
+          const errMsg = parsed.error || parsed.message || (typeof parsed.detail === 'string' ? parsed.detail : undefined);
+          if (errMsg) {
+            console.error("ElevenLabs WS response error:", errMsg);
+            addNotification(`Erro ElevenLabs: ${errMsg}`, "error");
             return;
           }
           if (parsed.audio) {
