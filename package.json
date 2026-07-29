@@ -1,15 +1,51 @@
 {
-  "name": "react-example",
+  "name": "osone-app",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
+  "main": "electron/main.js",
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
+    "electron": "electron .",
+    "build:desktop": "npm run build && electron-builder --win --linux",
     "preview": "vite preview",
-    "clean": "rm -rf dist",
+    "clean": "rm -rf dist dist-desktop",
     "lint": "tsc --noEmit"
+  },
+  "build": {
+    "appId": "com.osone.app",
+    "productName": "OSONE G5",
+    "copyright": "Copyright © 2026 OSONE",
+    "directories": {
+      "output": "dist-desktop"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "OSONE G5"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Utility",
+      "icon": "build/icon.png"
+    }
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -55,6 +91,8 @@
     "@types/topojson-client": "^3.1.5",
     "@types/ws": "^8.18.1",
     "autoprefixer": "^10.4.21",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",

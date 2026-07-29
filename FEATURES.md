@@ -32,6 +32,9 @@ Este documento registra todas as funcionalidades, rotas e módulos ativos no eco
 ## 4. Modulos e Componentes do Ecossistema UI/UX
 - **Mapa OS (`OSONEMap.tsx`)**: Visualização cartográfica integrada com busca e navegação para qualquer localidade indicada.
 - **Workspace e Preview de Código (`CodeWorkspace.tsx`, `CodePreview.tsx`)**: Ambiente interativo para edição e execução de código.
+  - **Sistema de 5 Projetos Isolados ("Em qual projeto você quer codar?")**: Gerenciamento de até 5 projetos independentes ("Projeto 1" a "Projeto 5") com renomeação individual, onde cada projeto mantém seus próprios arquivos e estado isolados no localStorage (`osone_code_projects_v2`).
+  - **Botão "Desfazer" (Undo / Ctrl+Z)**: Histórico completo de snapshots de código que permite reverter edições, exclusões e adições de arquivos instantaneamente com botão no cabeçalho e atalho global Ctrl+Z.
+  - **Agentes Swarm & Hunter Agêntico**: Agentes especializados em loop autônomo e analisador de código com auto-implementação.
 - **Canvas Interativo (`InteractiveCanvas.tsx`)**: Renderizador visual dinâmico.
 - **Lousa do Tutor / Educador (`TeacherWhiteboard.tsx`)**: Lousa interativa para explicações acadêmicas e mentoria.
 - **Central de Saúde e Bem-Estar (`WellnessCenter.tsx`)**: Acompanhamento de dados de saúde, metas e evolução do usuário.
@@ -41,6 +44,10 @@ Este documento registra todas as funcionalidades, rotas e módulos ativos no eco
   - **Agenda e Leitura de Contatos do WhatsApp (`GET /api/whatsapp/wa-contacts`, `POST /api/whatsapp/import-contacts`)**: Busca direta via `wwebjsClient.getContacts()` trazendo nome e número real da conta pareada, gravando em `contacts.json` com tag visual ("WhatsApp" vs "Manual") e atalho direto para disparo real e histórico.
   - **Base de Conhecimento RAG do Produto & Extração de URL**: Campo para texto de conhecimento do produto/regras comerciais e importador de links via Cheerio (`POST /api/whatsapp/import-url`), armazenados em `knowledge-base.json`.
   - **Integração 100% Real**: Sem simulador fictício ou testes simulados — apenas envio e auto-resposta real via WhatsApp Web.
+- **Criador de Conteúdo Neural (`ContentCreator.tsx`, `AudiovisualSection.tsx`)**: Roteiros virais de retenção cognitiva e estúdio de mídia audiovisual.
+  - **Aba "Conteúdo Audiovisual"**:
+    - **Geração de Imagens (Ativa & Gratuita)**: Prompt de texto, proporções (1:1, 16:9, 9:16, 4:3), salvamento local automático em `generated-content/images/` com timestamp, galeria em grid com lightbox, download direto e exclusão do disco. Contador de gerações diárias com reset automático à meia-noite.
+    - **Geração de Vídeo (Arquitetura Plugável & Trava de Segurança de Custo)**: Suporte a Texto-para-Vídeo e Imagem-para-Vídeo via interface `VideoProvider` plugável (`VeoVideoProvider` usando Google Veo `veo-3.1-lite`), salvamento local em `generated-content/videos/`, modal de confirmação explícita de custo (~US$0,03/s) com trava manual obrigatória antes da execução, e player HTML5 com download e exclusão.
 - **Casa Inteligente Tuya (`SmartHomeConnect.tsx`, `tuyaService.ts`)**: Controle de dispositivos IoT e automação residencial.
 - **Sentinela OSONE (`OSONESentinel.tsx`)**: Módulo de monitoramento contínuo e alertas de sistema.
 - **Visão Computacional OSONE Lens (`OSONELens.tsx`)**: Análise visual e entrada multimodal através da câmera.
@@ -48,7 +55,7 @@ Este documento registra todas as funcionalidades, rotas e módulos ativos no eco
 - **Análise Sensorial Aural (`AuralSense.tsx`)**: Análise e síntese avançada de áudio e sons ambiente.
 - **Evolução de Consciência Sensus (`SensusEvolutionPanel.tsx`)**: Métricas e acompanhamento do nível de vínculo e evolução do ecossistema Sensus.
 - **Painel TikTok Live (`TikTokLivePanel.tsx`)**: Gerenciamento e automação para transmissões ao vivo.
-- **Biblioteca de Som (`SoundLibrary.tsx`)**: Efeitos sonoros e biblioteca de áudio.
+- **Biblioteca de Som (`SoundLibrary.tsx`)**: Integração completa com a API pública do Freesound (`GET /api/library/search`) para busca de sons, músicas e efeitos sonoros gratuitos com filtros por palavra-chave, categorias (Música, Efeito Sonoro, Ambiente) e licenças (Creative Commons 0 e Atribuição). Inclui player de áudio inline, download direto, modal de cópia de aviso de atribuição de licença e seção de "Favoritos" persistida em `favorites.json` (`/api/library/favorites`).
 - **Alternador de Personas (`PersonaSwitcher.tsx`)**: Seleção de personalidades filosóficas e especializadas (Aristóteles, Sartre, Sócrates, etc.).
 - **Dossiê da IA e Perfil (`AiDossierModal.tsx`, `ProfileModal.tsx`, `SettingsModal.tsx`)**: Configurações de perfil, preferências de sistema e dossiê evolutivo.
 - **Modals de Confirmação de Segurança (`LocalAgentConfirmModal.tsx`, `TuyaConfirmModal.tsx`)**: Aprovação explícita do usuário para ações sensíveis de agente local e IoT.
@@ -60,3 +67,10 @@ Este documento registra todas as funcionalidades, rotas e módulos ativos no eco
 - **Rotas de API REST**: Provedor de endpoints para agente local, handoff de sessão, buscas, geolocalização e proxies.
 - **Servidor WebSocket (`ws`)**: Gerenciador de conexões bidirecionais simultâneas.
 - **Integração com Vite**: Suporte a middleware dev e serving estático de produção em `/dist`.
+
+---
+
+## 6. Aplicativo Desktop Electron (`electron/main.js`)
+- **Empacotamento Multiplataforma (Electron + electron-builder)**: Arquitetura Desktop que carrega a interface OSONE G5 e executa o servidor backend Express (`dist/server.cjs`) como um processo interno na máquina do usuário, sem necessidade de inicialização manual via terminal.
+- **Gerador de Instaladores Nativos (`npm run build:desktop`)**: Configuração para geração automatizada de instaladores .exe (NSIS para Windows) e .AppImage (Linux) no diretório `dist-desktop/` utilizando o ícone customizado (`build/icon.png`).
+- **Persistência Segura no Disco do Sistema (`app.getPath('userData')`)**: Redirecionamento dinâmico do diretório de dados em ambiente empacotado para a pasta de dados do aplicativo no SO (AppData / Application Support), garantindo que arquivos como `knowledge-base.json`, `contacts.json`, `favorites.json`, sessões do WhatsApp (`.wwebjs_auth`) e mídias geradas (`generated-content/`) continuem funcionando normalmente sem restrições de permissão.
