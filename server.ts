@@ -2518,15 +2518,6 @@ ${processedChunk}`;
     }
   });
 
-  // GET endpoint to securely retrieve server-side Gemini key for serverless Gemini Live fallback (e.g. Vercel)
-  app.get("/api/gemini/key", (req, res) => {
-    const apiKey = getSecretGeminiKey();
-    if (apiKey) {
-      return res.json({ success: true, apiKey });
-    }
-    return res.status(404).json({ success: false, message: "Chave API do Gemini não configurada nas variáveis do servidor." });
-  });
-
   // POST endpoint for verifying Gemini API credentials in real-time
   app.post("/api/gemini/verify", async (req, res) => {
     try {
