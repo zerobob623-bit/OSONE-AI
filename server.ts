@@ -31,6 +31,17 @@ logTuyaStartupCheck();
 // native experimental Global WebSocket (which doesn't support the custom headers/authentication needed by Gemini Live).
 (globalThis as any).WebSocket = WebSocket;
 
+// Este processo serve as sessões de voz em tempo real (Gemini Live, ElevenLabs) de TODOS os
+// usuários simultâneos. Uma exceção não tratada em um callback de WebSocket (ex: uma conexão
+// que fecha antes de terminar de abrir) derrubaria o processo inteiro para todo mundo, então
+// logamos e seguimos em vez de deixar o Node encerrar o processo.
+process.on("uncaughtException", (err) => {
+  console.error("[uncaughtException] Erro não tratado capturado, servidor continua ativo:", err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection] Promise rejeitada sem tratamento, servidor continua ativo:", reason);
+});
+
 async function startServer() {
   const app = express();
   const server = http.createServer(app);
@@ -4003,7 +4014,7 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
     
     clientWs.on("close", () => {
       console.log("ElevenLabs Proxy client WS closed");
-      if (elWs.readyState === WebSocket.OPEN) {
+      if (elWs && elWs.readyState === WebSocket.OPEN) {
         elWs.close();
       }
     });
