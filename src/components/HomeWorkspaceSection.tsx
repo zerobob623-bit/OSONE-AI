@@ -9,7 +9,6 @@ import {
 import { cn } from '../lib/utils';
 import { InfinityLogo } from './InfinityLogo';
 import { VoiceSwitcher } from './VoiceSwitcher';
-import { DUO_COMBOS, DUO_TOPICS } from '../constants/osoneConstants';
 
 interface HomeWorkspaceSectionProps {
   isServerQuotaExhausted: boolean;
@@ -64,12 +63,6 @@ interface HomeWorkspaceSectionProps {
   isConfirmingClear: boolean;
   setIsConfirmingClear: (confirming: boolean) => void;
   checkAndPromptMemory: (callback: () => void) => void;
-  isDuoMode: boolean;
-  duoTopicId: string;
-  duoComboId: string;
-  duoSpeakingHost: 'hostA' | 'hostB' | null;
-  parseDuoTextToTurns: (text: string, combo: any) => any[];
-  playDuoSpeech: (text: string) => void;
   handleSpeakChatMessage: (text: string, id: string) => void;
   isPlayingChatSpeech: string | null;
   setWorkspaceMode: (mode: any) => void;
@@ -155,12 +148,6 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
   isConfirmingClear,
   setIsConfirmingClear,
   checkAndPromptMemory,
-  isDuoMode,
-  duoTopicId,
-  duoComboId,
-  duoSpeakingHost,
-  parseDuoTextToTurns,
-  playDuoSpeech,
   handleSpeakChatMessage,
   isPlayingChatSpeech,
   setWorkspaceMode,
@@ -773,7 +760,7 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
               )}
             </AnimatePresence>
 
-            {(chatHistory.length > 0 || isDuoMode || customSkill) && (
+            {(chatHistory.length > 0 || customSkill) && (
               <div className="flex justify-between items-center px-2 md:px-0 mb-3 shrink-0">
                 <div className="flex items-center gap-1.5 select-none animate-in fade-in slide-in-from-left-4 duration-300">
                   <button 
@@ -897,99 +884,6 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
               </div>
             )}
             <div className="flex-1 flex flex-col min-h-0 overflow-y-auto pr-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-              {isDuoMode && (
-                <motion.div 
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="mb-6 p-4 rounded-2xl bg-gradient-to-br from-zinc-950/80 via-zinc-900/60 to-black border border-white/5 shadow-2xl relative overflow-hidden"
-                >
-                  <div className="absolute -top-12 -left-12 w-32 h-32 bg-sky-500/10 rounded-full blur-3xl pointer-events-none" />
-                  <div className="absolute -bottom-12 -right-12 w-32 h-32 bg-rose-500/10 rounded-full blur-3xl pointer-events-none" />
-
-                  <div className="flex items-center justify-between mb-3 select-none">
-                    <div className="flex items-center gap-1.5 bg-sky-950/40 border border-sky-900/45 px-2.5 py-1 rounded-full text-[8px] tracking-widest uppercase font-bold text-sky-400">
-                      <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-ping inline-block" />
-                      <span>Co-Docência / Sala de Aula</span>
-                    </div>
-                    
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => setSubtitlesEnabled(!subtitlesEnabled)}
-                        className={cn(
-                          "flex items-center gap-1 px-2 py-0.5 rounded text-[8.5px] tracking-wider uppercase border font-mono transition-all duration-300 pointer-events-auto cursor-pointer",
-                          subtitlesEnabled 
-                            ? "bg-sky-500/10 text-sky-400 border-sky-500/20 hover:bg-sky-500/20" 
-                            : "bg-white/5 text-stone-400 border-white/5 hover:bg-white/10"
-                        )}
-                      >
-                        💬 Legendas: {subtitlesEnabled ? "ON" : "OFF"}
-                      </button>
-                      
-                      <span className="text-[10px] uppercase font-mono tracking-tight text-white/50">
-                        Tópico: {DUO_TOPICS.find(t => t.id === duoTopicId)?.name.split(' ').slice(1).join(' ')}
-                      </span>
-                    </div>
-                  </div>
-
-                  {(() => {
-                    const currentCombo = DUO_COMBOS.find(c => c.id === duoComboId) || DUO_COMBOS[0];
-                    const aS = duoSpeakingHost === 'hostA' && isSpeaking;
-                    const bS = duoSpeakingHost === 'hostB' && isSpeaking;
-                    
-                    return (
-                      <div className="grid grid-cols-2 gap-4 relative">
-                        <div className={cn(
-                          "flex flex-col items-center p-3 rounded-xl border transition-all duration-300 relative",
-                          aS 
-                            ? "bg-sky-500/[0.03] border-sky-500/30 shadow-[0_0_15px_rgba(56,189,248,0.15)] scale-[1.02]" 
-                            : "bg-white/[0.01] border-white/5 opacity-70"
-                        )}>
-                          <div className="relative mb-2">
-                            <img src={currentCombo.hostA.avatarUrl} alt={currentCombo.hostA.name} className={cn(
-                              "w-12 h-12 rounded-full object-cover transition-all",
-                              aS ? "ring-2 ring-sky-500 border-sky-450" : "border border-white/10"
-                            )} />
-                            {aS && (
-                              <div className="absolute -bottom-1 -right-1 bg-sky-500 text-white rounded-full p-0.5 text-[8px] shrink-0 font-bold flex items-center justify-center animate-bounce">🎓</div>
-                            )}
-                          </div>
-                          <span className="text-xs font-bold font-sans tracking-wide text-sky-400">{currentCombo.hostA.name}</span>
-                          <span className="text-[9px] text-zinc-400 text-center font-light leading-normal h-4 truncate w-full select-none">{currentCombo.hostA.role}</span>
-                        </div>
-
-                        <div className={cn(
-                          "flex flex-col items-center p-3 rounded-xl border transition-all duration-300 relative",
-                          bS 
-                            ? "bg-rose-500/[0.03] border-rose-500/30 shadow-[0_0_15px_rgba(244,63,94,0.15)] scale-[1.02]" 
-                            : "bg-white/[0.01] border-white/5 opacity-70"
-                        )}>
-                          <div className="relative mb-2">
-                            <img src={currentCombo.hostB.avatarUrl} alt={currentCombo.hostB.name} className={cn(
-                              "w-12 h-12 rounded-full object-cover transition-all",
-                              bS ? "ring-2 ring-rose-500 border-rose-500" : "border border-white/10"
-                            )} />
-                            {bS && (
-                              <div className="absolute -bottom-1 -right-1 bg-rose-500 text-white rounded-full p-0.5 text-[8px] shrink-0 font-bold flex items-center justify-center animate-bounce">🎙️</div>
-                            )}
-                          </div>
-                          <span className="text-xs font-bold font-sans tracking-wide text-rose-400">{currentCombo.hostB.name}</span>
-                          <span className="text-[9px] text-zinc-400 text-center font-light leading-normal h-4 truncate w-full select-none">{currentCombo.hostB.role}</span>
-
-                          {bS && (
-                            <div className="flex gap-0.5 items-end justify-center h-4 mt-2">
-                              <span className="w-[1.5px] h-2 bg-rose-400 animate-[bounce_0.6s_infinite] delay-100" />
-                              <span className="w-[1.5px] h-3.5 bg-rose-400 animate-[bounce_0.6s_infinite] delay-75" />
-                              <span className="w-[1.5px] h-1.5 bg-rose-400 animate-[bounce_0.6s_infinite] delay-200" />
-                              <span className="w-[1.5px] h-3.5 bg-rose-400 animate-[bounce_0.6s_infinite] delay-150" />
-                              <span className="w-[1.5px] h-2 bg-rose-400 animate-[bounce_0.6s_infinite] delay-300" />
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </motion.div>
-              )}
 
               {chatHistory.length === 0 ? (
                 <div className="flex-1 w-full max-w-2xl mx-auto px-4 py-8 md:py-16 flex flex-col items-center justify-center text-center select-none">
@@ -1103,12 +997,8 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
                       
                       {msg.role === 'assistant' && (
                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                          <button 
+                          <button
                             onClick={() => {
-                              if (isDuoMode) {
-                                playDuoSpeech(msg.content);
-                                return;
-                              }
                               handleSpeakChatMessage(msg.content, msg.id);
                             }}
                             className={cn(
@@ -1139,73 +1029,6 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
                     </div>
                     <div className="w-full">
                       {(() => {
-                        const currentCombo = DUO_COMBOS.find(c => c.id === duoComboId) || DUO_COMBOS[0];
-                        const turns = msg.role === 'assistant' && isDuoMode ? parseDuoTextToTurns(msg.content, currentCombo) : [];
-                        
-                        if (msg.role === 'assistant' && turns.length > 0) {
-                          return (
-                            <div className="flex flex-col gap-4 w-full my-2">
-                              {turns.map((turn, tIdx) => {
-                                const isHostA = turn.speaker === 'hostA';
-                                const hostConf = isHostA ? currentCombo.hostA : currentCombo.hostB;
-                                const isCurrentlyTalking = duoSpeakingHost === turn.speaker && isSpeaking;
-                                
-                                return (
-                                  <motion.div 
-                                    key={tIdx}
-                                    initial={{ opacity: 0, x: isHostA ? -15 : 15 }}
-                                    animate={{ opacity: 1, x: 0 }}
-                                    className={cn(
-                                      "flex gap-3 max-w-[90%] items-start",
-                                      isHostA ? "self-start text-left" : "self-end flex-row-reverse text-right"
-                                    )}
-                                  >
-                                    <div className="relative shrink-0 select-none">
-                                      <img 
-                                        src={hostConf.avatarUrl} 
-                                        alt={hostConf.name} 
-                                        className={cn(
-                                          "w-10 h-10 rounded-full object-cover border border-white/10 shadow-sm transition-all duration-300",
-                                          isHostA ? "border-sky-500/30" : "border-rose-500/30",
-                                          isCurrentlyTalking && (isHostA ? "ring-2 ring-sky-500/80 scale-105 border-sky-450 shadow-[0_0_15px_rgba(56,189,248,0.4)]" : "ring-2 ring-rose-500/80 scale-105 border-rose-450 shadow-[0_0_15px_rgba(251,113,133,0.4)]")
-                                        )}
-                                      />
-                                      {isCurrentlyTalking && (
-                                        <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5">
-                                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                                          <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-green-500 flex items-center justify-center text-[7px] text-white font-bold">🎙️</span>
-                                        </span>
-                                      )}
-                                    </div>
-                                    
-                                    <div className="flex flex-col">
-                                      <div className={cn(
-                                        "flex items-center gap-1.5 mb-1 select-none",
-                                        isHostA ? "justify-start" : "justify-end"
-                                      )}>
-                                        <span className="text-[10px] font-bold tracking-wider uppercase" style={{ color: isHostA ? '#38bdf8' : '#fb7185' }}>
-                                          {hostConf.name}
-                                        </span>
-                                        <span className="text-[8px] opacity-40 uppercase font-mono tracking-tight text-white">
-                                          {hostConf.role}
-                                        </span>
-                                      </div>
-                                      <div className={cn(
-                                        "px-4 py-3 rounded-2xl text-xs sm:text-sm font-light leading-relaxed tracking-wide border transition-all duration-300 shadow-sm text-left",
-                                        isHostA 
-                                          ? "bg-sky-500/[0.04] text-sky-100 border-sky-500/10 rounded-tl-none hover:bg-sky-500/[0.08]" 
-                                          : "bg-rose-500/[0.04] text-rose-100 border-rose-500/10 rounded-tr-none hover:bg-rose-500/[0.08]"
-                                      )}>
-                                        {turn.text}
-                                      </div>
-                                    </div>
-                                  </motion.div>
-                                );
-                              })}
-                            </div>
-                          );
-                        }
-                        
                         if (msg.role === 'user') {
                           return (
                             <div className="inline-block max-w-[85%] bg-her-accent/10 border border-her-accent/15 px-4.5 py-2.5 rounded-2xl rounded-tr-none text-zinc-150 text-xs sm:text-sm font-normal tracking-wide text-left shadow-lg backdrop-blur-md">
@@ -1214,7 +1037,7 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
                           );
                         }
                         
-                        const isCurrentlyTalkingSolo = !isDuoMode && isSpeaking;
+                        const isCurrentlyTalkingSolo = isSpeaking;
                         
                         return (
                           <div className="flex gap-3 max-w-[90%] items-start self-start text-left">

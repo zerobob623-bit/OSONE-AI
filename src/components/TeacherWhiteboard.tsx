@@ -342,7 +342,7 @@ export const TeacherWhiteboard: React.FC<TeacherWhiteboardProps> = ({
               <div className="h-full flex flex-col items-center justify-center opacity-25 text-center text-sm md:text-base font-mono py-8 select-none">
                 <Sparkles size={28} className="mb-2 text-current" />
                 <p>A lousa escolar está vazia.</p>
-                <p className="text-xs mt-1">Os professores escreverão dicas, traduções ou vocabulários aqui durante as aulas de Duo Mode.</p>
+                <p className="text-xs mt-1">O assistente escreverá dicas, traduções ou vocabulários aqui durante o uso da Skill.</p>
                 <button 
                   onClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
                   className="mt-4 px-4 py-1.5 rounded-lg border border-current text-xs hover:bg-white/5 active:scale-95 transition-all"

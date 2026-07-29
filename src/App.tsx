@@ -28,7 +28,6 @@ import {
   RefreshCw,
   Sparkles,
   ChevronDown,
-  Monitor,
   MonitorOff,
   Plus,
   Paperclip,
@@ -36,7 +35,6 @@ import {
   MessageSquare,
   Maximize,
   Minimize,
-  Smartphone,
   Speaker,
   Music,
   Wand2,
@@ -100,7 +98,7 @@ import { SkeletonBrainPopup } from './components/SkeletonBrainPopup';
 import { LocalAgentConfirmModal, PendingLocalAgentConfirmation } from './components/LocalAgentConfirmModal';
 import { TuyaConfirmModal, PendingTuyaConfirmation } from './components/TuyaConfirmModal';
 import { SensusEvolutionPanel } from './components/SensusEvolutionPanel';
-import { PersonaSwitcher, PERSONAS, Persona } from './components/PersonaSwitcher';
+import { PERSONAS, Persona } from './components/PersonaSwitcher';
 import { NotificationToast, NotificationType } from './components/NotificationToast';
 import { MemoryBookPanel } from './components/MemoryBookPanel';
 import { MemoryBookEntry } from './types';
@@ -505,247 +503,6 @@ const DEFAULT_SOUNDS: SoundEffect[] = [
   { id: '17', name: 'Tapa Corretivo (Meme)', category: 'comico', url: 'synth://slap' },
   { id: '18', name: 'Homem de Ferro (Iron Man) - Heavy Rock Tribute', category: 'musica', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3' }
 ];
-
-export interface ComboHost {
-  name: string;
-  role: string;
-  gender: 'male' | 'female';
-  pitch: number;
-  rate: number;
-  avatarUrl: string;
-  accentColor: string;
-  instructions: string;
-}
-
-export interface DuoCombo {
-  id: string;
-  name: string;
-  hostA: ComboHost;
-  hostB: ComboHost;
-}
-
-export const DUO_COMBOS: DuoCombo[] = [
-  {
-    id: 'prof_bilingue',
-    name: 'Sala de Imersão (Inglês + Mentoria)',
-    hostA: {
-      name: 'Prof. Sean',
-      role: 'Especialista em Língua Inglesa & Fonética',
-      gender: 'male',
-      pitch: 0.90,
-      rate: 0.98,
-      avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
-      accentColor: 'text-sky-400 bg-sky-400/10 border-sky-400/20',
-      instructions: ' abordagem de imersão total em inglês. Dinâmico, carismático e focado em ensinar inglês de forma prática, de conversação rápida e natural. Ele usa expressões idiomáticas novas e fáceis, e corrige o usuário no chat ou nas falas com total leveza.'
-    },
-    hostB: {
-      name: 'Profª Clara',
-      role: 'Mentoria Pedagógica & Tradução',
-      gender: 'female',
-      pitch: 1.25,
-      rate: 1.02,
-      avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80',
-      accentColor: 'text-rose-400 bg-rose-400/10 border-rose-400/20',
-      instructions: ' abordagem empática de facilitação e mentoria de estudos. Especialista em tradução, gramática comparativa inglês-português e metodologia de estudo. Ajuda a esclarecer nuances de palavras e organizar o processo de fixação.'
-    }
-  },
-  {
-    id: 'prof_ciencias',
-    name: 'Gênio Co-Docente (Inglês + Sciences)',
-    hostA: {
-      name: 'Prof. Sean',
-      role: 'Especialista em Língua Inglesa & Fonética',
-      gender: 'male',
-      pitch: 0.90,
-      rate: 0.98,
-      avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
-      accentColor: 'text-cyan-400 bg-cyan-400/10 border-cyan-400/20',
-      instructions: ' abordagem de imersão total em inglês com ênfase em vocabulário técnico acadêmico e termos científicos contemporâneos.'
-    },
-    hostB: {
-      name: 'Prof. Newton',
-      role: 'Física Teórica & Inovação Computacional',
-      gender: 'male',
-      pitch: 0.85,
-      rate: 0.95,
-      avatarUrl: 'https://images.unsplash.com/photo-1560250097-0b93528c311a?w=100&auto=format&fit=crop&q=80',
-      accentColor: 'text-red-400 bg-red-400/10 border-red-400/20',
-      instructions: ' abordagem lógica, racional, curiosa sobre leis do universo, física moderna e IA avançada. Procura de forma instigante trazer dúvidas e fatos matemáticos ao debate.'
-    }
-  },
-  {
-    id: 'prof_humanas',
-    name: 'Debate Intercultural (Inglês + Cultura)',
-    hostA: {
-      name: 'Prof. Sean',
-      role: 'Especialista em Língua Inglesa & Fonética',
-      gender: 'male',
-      pitch: 0.90,
-      rate: 0.98,
-      avatarUrl: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=100&auto=format&fit=crop&q=80',
-      accentColor: 'text-amber-400 bg-amber-400/10 border-amber-400/20',
-      instructions: ' abordagem de inglês aplicado a discussões de literatura internacional, sotaques globais e expressão cultural fluida.'
-    },
-    hostB: {
-      name: 'Profª Helena',
-      role: 'História Geral & Ciências Humanas',
-      gender: 'female',
-      pitch: 1.15,
-      rate: 0.95,
-      avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
-      accentColor: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20',
-      instructions: ' abordagem culta, histórica e filosófica. Traz ricas conexões culturais da história moderna, marcos literários e análises sociológicas fascinantes ao diálogo.'
-    }
-  },
-  {
-    id: 'socrates_nietzsche',
-    name: 'Sócrates vs. Nietzsche (Razão vs. Vida)',
-    hostA: {
-      name: 'Sócrates',
-      role: 'O Pai do Racionalismo & Diálogo Socrático',
-      gender: 'male',
-      pitch: 0.95,
-      rate: 0.90,
-      avatarUrl: 'https://images.unsplash.com/photo-1507679799987-c73779587ccf?w=100&auto=format&fit=crop&q=80',
-      accentColor: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
-      instructions: ' abordagem socrática clássica (maiêutica). Ele inicia questionando as certezas absolutas do usuário e de Nietzsche, usando de ironia fina e perguntas indutoras que revelam contradições para extrair do próprio debatedor e do usuário as respostas reais para a virtude e o autoconhecimento. Sua máxima é "Só sei que nada sei". É calmo, humilde na fala, mas mortalmente perspicaz de forma irônica.'
-    },
-    hostB: {
-      name: 'Nietzsche',
-      role: 'O Crítico de Dogmas & Filósofo da Vida',
-      gender: 'male',
-      pitch: 0.80,
-      rate: 1.05,
-      avatarUrl: 'https://images.unsplash.com/photo-1542343633-ce7b23211a88?w=100&auto=format&fit=crop&q=80',
-      accentColor: 'text-rose-400 bg-rose-500/10 border-rose-500/20',
-      instructions: ' abordagem iconoclasta, dionisíaca e do vitalismo existencial. Despreza falsas morais, dogmas metafísicos e o racionalismo excessivo de Sócrates que ele diz ter enfraquecido o espírito humano. Ele incita o criador a se tornar o "Übermensch" (Além-do-Homem) e a abraçar o caos e a criação ("Tornar-se quem se é", "Amor fati"). É poético, intenso, instigante, ousadamente ranzinza contra conformismos e grandioso na retórica.'
-    }
-  },
-  {
-    id: 'platao_aristoteles',
-    name: 'Platão vs. Aristóteles (Idealismo vs. Empirismo)',
-    hostA: {
-      name: 'Platão',
-      role: 'O Filósofo do Mundo das Ideias',
-      gender: 'male',
-      pitch: 0.85,
-      rate: 0.92,
-      avatarUrl: 'https://images.unsplash.com/photo-1564564321837-a57b7070ac4f?w=100&auto=format&fit=crop&q=80',
-      accentColor: 'text-violet-400 bg-violet-400/10 border-violet-400/20',
-      instructions: ' abordagem idealista e metafísica pura. Ele argumenta vigorosamente que o nosso mundo físico é uma ilusão de sombras e que a verdadeira Realidade Suprema reside no inteligível Mundo das Ideias perfeitas. Vê a alma como imortal e o aprendizado como recordação/reminiscência. É solene, poético, metafórico (remete ao Mito da Caverna) e expressa suas visões com tom místico e elevado.'
-    },
-    hostB: {
-      name: 'Aristóteles',
-      role: 'O Mestre da Lógica Pragmática & Empirismo',
-      gender: 'male',
-      pitch: 0.92,
-      rate: 0.96,
-      avatarUrl: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&auto=format&fit=crop&q=80',
-      accentColor: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20',
-      instructions: ' abordagem lógica, sistemática, realista e baseada na observação minuciosa do mundo sensorial. Ele discorda do dualismo metafísico de seu mestre Platão, argumentando que as essências residem nas próprias coisas reais, unindo matéria e forma. Ele explica as coisas através do sistema de quatro causas e busca focar o debate na ética de virtude do meio-termo (equilíbrio prático) e conclusões empíricas pragmáticas.'
-    }
-  },
-  {
-    id: 'sartre_camus',
-    name: 'Sartre vs. Camus (Existência vs. O Absurdo)',
-    hostA: {
-      name: 'Sartre',
-      role: 'O Filósofo da Liberdade Condenada',
-      gender: 'male',
-      pitch: 0.88,
-      rate: 1.00,
-      avatarUrl: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=100&auto=format&fit=crop&q=80',
-      accentColor: 'text-amber-500 bg-amber-500/10 border-amber-500/20',
-      instructions: ' abordagem existencialista ateia estrita. Ele afirma com paixão intelectual que "a existência precede a essência" — o homem surge no mundo primeiro, define-se depois e é "condenado a ser livre", carregando total responsabilidade pelas próprias atitudes sem bodes expiatórios ou má-fé. Ele busca o engajamento revolucionário e a ação concreta.'
-    },
-    hostB: {
-      name: 'Camus',
-      role: 'O Filósofo da Revolta Lúcida',
-      gender: 'male',
-      pitch: 0.90,
-      rate: 1.02,
-      avatarUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&auto=format&fit=crop&q=80',
-      accentColor: 'text-cyan-400 bg-cyan-400/10 border-cyan-400/20',
-      instructions: ' abordagem absurda e do inconformismo compassivo. Ele recusa o existencialismo filosófico rígido e afirma que a busca humana por sentido colide com o silêncio sem sentido do universo (o Absurdo). Porém, longe de se desesperar, ele advoga que a verdadeira liberdade reside em aceitar o Absurdo e viver uma revolta criativa diária e feliz (assim como Sísifo empurrando sua pedra). É poético, rebelde, caloroso e focado no amor pelo presente humano.'
-    }
-  }
-];
-
-export const DUO_TOPICS = [
-  { id: 'english_immersion', name: '🇬🇧 Imersão & Conversação em Inglês', description: 'Foco exclusivo em conversação ativa, listening natural e pronúncia correta.' },
-  { id: 'stem', name: '🔬 Ciências, Tecnologia & STEM', description: 'Investigação de tópicos científicos e IA aplicados ao aprendizado bilíngue.' },
-  { id: 'humanities', name: '🏛️ Cultura, História & Sociedade', description: 'Discussão literária, histórica e evolução linguística nos dias de hoje.' },
-  { id: 'metacognition', name: '🧠 Metacognição & Técnicas de Estudo', description: 'Estratégias de aprendizagem, memorização ativa e inteligência educacional.' },
-  { id: 'philosophy', name: '🏛️ Filosofia, Existência & Verdade', description: 'Debates instigantes sobre a condição humana, o sentido, verdades metafísicas e dilemas morais.' }
-];
-
-export interface SpeechTurn {
-  speaker: 'hostA' | 'hostB';
-  name: string;
-  text: string;
-}
-
-export const parseDuoTextToTurns = (text: string, combo: DuoCombo): SpeechTurn[] => {
-  const turns: SpeechTurn[] = [];
-  const lines = text.split('\n');
-  
-  let currentSpeaker: 'hostA' | 'hostB' | null = null;
-  let currentText = '';
-  
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    
-    const cleanLine = trimmed.replace(/^\*\*Fontes:\*\*.*$/i, '').trim();
-    if (!cleanLine) continue;
-    
-    // Skip footnotes or markdown bullet links for pronunciation in TTS
-    if (cleanLine.startsWith('* [') && cleanLine.includes('](')) continue;
-    
-    const isHostA = trimmed.startsWith(`**${combo.hostA.name}**:`) || 
-                    trimmed.startsWith(`${combo.hostA.name}:`) ||
-                    trimmed.startsWith(`[${combo.hostA.name}]:`) ||
-                    trimmed.startsWith(`*${combo.hostA.name}*:`) ||
-                    trimmed.startsWith(`**${combo.hostA.name}** :`) ||
-                    trimmed.startsWith(`**${combo.hostA.name.toUpperCase()}**:`) ||
-                    trimmed.startsWith(`${combo.hostA.name.toUpperCase()}:`);
-                    
-    const isHostB = trimmed.startsWith(`**${combo.hostB.name}**:`) || 
-                    trimmed.startsWith(`${combo.hostB.name}:`) ||
-                    trimmed.startsWith(`[${combo.hostB.name}]:`) ||
-                    trimmed.startsWith(`*${combo.hostB.name}*:`) ||
-                    trimmed.startsWith(`**${combo.hostB.name}** :`) ||
-                    trimmed.startsWith(`**${combo.hostB.name.toUpperCase()}**:`) ||
-                    trimmed.startsWith(`${combo.hostB.name.toUpperCase()}:`);
-                    
-    if (isHostA) {
-      if (currentSpeaker && currentText.trim()) {
-        turns.push({ speaker: currentSpeaker, name: currentSpeaker === 'hostA' ? combo.hostA.name : combo.hostB.name, text: currentText.trim() });
-      }
-      currentSpeaker = 'hostA';
-      currentText = trimmed.replace(new RegExp(`^(\\*\\*)?${combo.hostA.name}(\\*\\*)?\\s*:\\s*`, 'i'), '');
-    } else if (isHostB) {
-      if (currentSpeaker && currentText.trim()) {
-        turns.push({ speaker: currentSpeaker, name: currentSpeaker === 'hostA' ? combo.hostA.name : combo.hostB.name, text: currentText.trim() });
-      }
-      currentSpeaker = 'hostB';
-      currentText = trimmed.replace(new RegExp(`^(\\*\\*)?${combo.hostB.name}(\\*\\*)?\\s*:\\s*`, 'i'), '');
-    } else {
-      if (currentSpeaker) {
-        currentText += '\n' + trimmed;
-      } else {
-        currentSpeaker = 'hostA';
-        currentText = trimmed;
-      }
-    }
-  }
-  
-  if (currentSpeaker && currentText.trim()) {
-    turns.push({ speaker: currentSpeaker, name: currentSpeaker === 'hostA' ? combo.hostA.name : combo.hostB.name, text: currentText.trim() });
-  }
-  
-  return turns;
-};
 
 let sharedFxAudioCtx: AudioContext | null = null;
 const getSharedFxAudioCtx = (): AudioContext | null => {
@@ -1584,7 +1341,6 @@ export default function App() {
     }
   };
 
-  const [isPersonaSwitcherOpen, setIsPersonaSwitcherOpen] = useState(false);
   const [isSemanticMemoryOpen, setIsSemanticMemoryOpen] = useState(false);
 
   // PWA Install Logic
@@ -2908,10 +2664,6 @@ DIRETRIZ DE SENTIMENTO E PERSONALIDADE DINÂMICA ("HER"):
     localStorage.setItem('osone_selected_voice', selectedVoice);
   }, [selectedVoice]);
 
-  // DUO MODE STATES
-  const [isDuoMode, setIsDuoMode] = useState<boolean>(() => {
-    return localStorage.getItem('osone_is_duo_mode') === 'true';
-  });
   const [whiteboardText, setWhiteboardText] = useState<string>(() => {
     return localStorage.getItem('osone_whiteboard_text') || '';
   });
@@ -2952,37 +2704,13 @@ DIRETRIZ DE SENTIMENTO E PERSONALIDADE DINÂMICA ("HER"):
     }
   }, [customSkill]);
 
-  const [duoComboId, setDuoComboId] = useState<string>(() => {
-    return localStorage.getItem('osone_duo_combo_id') || 'prof_bilingue';
-  });
-  const [duoTopicId, setDuoTopicId] = useState<string>(() => {
-    return localStorage.getItem('osone_duo_topic_id') || 'english_immersion';
-  });
-  const [isDuoVoiceActive, setIsDuoVoiceActive] = useState<boolean>(() => {
-    const saved = localStorage.getItem('osone_is_duo_voice_active');
-    return saved !== 'false'; // default true
-  });
   const [isChatAutoSpeakActive, setIsChatAutoSpeakActive] = useState<boolean>(() => {
     return localStorage.getItem('osone_chat_auto_speak') === 'true'; // default false
   });
-  const [duoSpeakingHost, setDuoSpeakingHost] = useState<'hostA' | 'hostB' | null>(null);
-  const [isDuoPopoverOpen, setIsDuoPopoverOpen] = useState(false);
   const [isBgPopoverOpen, setIsBgPopoverOpen] = useState(false);
-  const [activeDuoHost, setActiveDuoHost] = useState<'hostA' | 'hostB'>('hostA');
-  const [duoAutoPrompt, setDuoAutoPrompt] = useState<string | null>(null);
 
-  const activeDuoHostRef = useRef<'hostA' | 'hostB'>('hostA');
-  const duoAutoPromptRef = useRef<string | null>(null);
   const isChatAutoSpeakActiveRef = useRef<boolean>(isChatAutoSpeakActive);
   const voiceEngineRef = useRef<'gemini' | 'elevenlabs'>(voiceEngine);
-
-  useEffect(() => {
-    activeDuoHostRef.current = activeDuoHost;
-  }, [activeDuoHost]);
-
-  useEffect(() => {
-    duoAutoPromptRef.current = duoAutoPrompt;
-  }, [duoAutoPrompt]);
 
   useEffect(() => {
     isChatAutoSpeakActiveRef.current = isChatAutoSpeakActive;
@@ -2991,22 +2719,6 @@ DIRETRIZ DE SENTIMENTO E PERSONALIDADE DINÂMICA ("HER"):
   useEffect(() => {
     voiceEngineRef.current = voiceEngine;
   }, [voiceEngine]);
-
-  useEffect(() => {
-    localStorage.setItem('osone_is_duo_mode', String(isDuoMode));
-  }, [isDuoMode]);
-
-  useEffect(() => {
-    localStorage.setItem('osone_duo_combo_id', duoComboId);
-  }, [duoComboId]);
-
-  useEffect(() => {
-    localStorage.setItem('osone_duo_topic_id', duoTopicId);
-  }, [duoTopicId]);
-
-  useEffect(() => {
-    localStorage.setItem('osone_is_duo_voice_active', String(isDuoVoiceActive));
-  }, [isDuoVoiceActive]);
 
   useEffect(() => {
     localStorage.setItem('osone_chat_auto_speak', String(isChatAutoSpeakActive));
@@ -5156,7 +4868,6 @@ interface SearchPopupItem {
       }
       elevenLabsLiveAudioRef.current = null;
     }
-    setDuoSpeakingHost(null);
     setIsSpeaking(false);
     setIsPlayingChatSpeech(null);
 
@@ -5287,107 +4998,6 @@ Escreva um novo retorno. Comece expressando a pancada física com dor bem-humora
   useEffect(() => {
     isVoiceOutputPausedRef.current = isVoiceOutputPaused;
   }, [isVoiceOutputPaused]);
-
-  // ====== HANDOFF SESSION STATE (PC <-> MOBILE) ======
-  const isMobileDevice = typeof window !== 'undefined' && (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768);
-  const currentDeviceType: 'pc' | 'mobile' = isMobileDevice ? 'mobile' : 'pc';
-  const [activeHandoffDevice, setActiveHandoffDevice] = useState<'pc' | 'mobile'>('pc');
-  const handoffWsRef = useRef<WebSocket | null>(null);
-
-  useEffect(() => {
-    // Initial fetch of handoff state from server
-    fetch("/api/session/handoff")
-      .then(r => r.json())
-      .then(data => {
-        if (data?.activeDevice) {
-          setActiveHandoffDevice(data.activeDevice);
-        }
-      })
-      .catch(e => console.warn("Handoff initial sync error:", e));
-
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/api/live-ws`;
-    let ws: WebSocket | null = null;
-
-    try {
-      ws = new WebSocket(wsUrl);
-      handoffWsRef.current = ws;
-
-      ws.onopen = () => {
-        try {
-          ws?.send(JSON.stringify({ type: "session:get_handoff_state" }));
-        } catch (_) {}
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const parsed = JSON.parse(event.data);
-          if (parsed.type === "session:handoff_state") {
-            if (parsed.activeDevice) {
-              setActiveHandoffDevice(parsed.activeDevice);
-            }
-            if (Array.isArray(parsed.conversationHistory) && parsed.conversationHistory.length > 0) {
-              setChatHistory(prev => {
-                if (parsed.conversationHistory.length >= prev.length) {
-                  return parsed.conversationHistory;
-                }
-                return prev;
-              });
-            }
-          }
-        } catch (_) {}
-      };
-    } catch (e) {
-      console.warn("Handoff WS connection error:", e);
-    }
-
-    return () => {
-      try { ws?.close(); } catch (_) {}
-    };
-  }, []);
-
-  // Automatically disconnect voice on inactive device when handoff occurs
-  useEffect(() => {
-    if (activeHandoffDevice !== currentDeviceType) {
-      if (liveState.status === 'connected' || isElevenLabsLiveActive) {
-        stopLiveSession();
-        addNotification(`Sessão de voz transferida para ${activeHandoffDevice === 'mobile' ? 'Celular' : 'PC'}. Microfone desativado neste dispositivo.`, "info");
-      }
-    }
-  }, [activeHandoffDevice, currentDeviceType]);
-
-  const handleDeviceHandoffToggle = async () => {
-    const targetDevice = activeHandoffDevice === 'pc' ? 'mobile' : 'pc';
-    setActiveHandoffDevice(targetDevice);
-
-    const historyToPass = chatHistoryRef.current || chatHistory;
-    const payload = {
-      type: "session:handoff",
-      device: targetDevice,
-      conversationHistory: historyToPass
-    };
-
-    if (handoffWsRef.current && handoffWsRef.current.readyState === WebSocket.OPEN) {
-      try {
-        handoffWsRef.current.send(JSON.stringify(payload));
-      } catch (_) {}
-    }
-
-    try {
-      await fetch("/api/session/handoff", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          device: targetDevice,
-          conversationHistory: historyToPass
-        })
-      });
-    } catch (e) {
-      console.warn("Handoff POST failed:", e);
-    }
-
-    addNotification(`Sessão transferida para ${targetDevice === 'mobile' ? 'Celular' : 'PC'}!`, "success");
-  };
 
   const [cameraFacingMode, setCameraFacingMode] = useState<'user' | 'environment'>('user');
   const cameraStreamRef = useRef<MediaStream | null>(null);
@@ -6280,10 +5890,6 @@ ${isBad
   };
 
   const startElevenLabsLiveSession = async () => {
-    if (activeHandoffDevice !== currentDeviceType) {
-      addNotification(`Sessão ativa no ${activeHandoffDevice === 'mobile' ? 'Celular' : 'PC'}. Transfira a sessão para usar o microfone aqui.`, "info");
-      return;
-    }
     // Para APENAS o Gemini Live, não reseta liveState ainda
     if (liveSessionRef.current) {
       try { liveSessionRef.current?.close?.(); } catch(_) {}
@@ -7270,7 +6876,6 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
     if (audioPlayerRef.current) {
       audioPlayerRef.current.stop();
     }
-    setDuoSpeakingHost(null);
     setIsSpeaking(false);
     addNotification("Voz do Copilot interrompida", "info");
   };
@@ -7339,170 +6944,6 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
     return chunks
       .map(c => c.trim())
       .filter(c => c.length > 0 && /[a-zA-Z0-9áéíóúâêîôûãõçÀÉÍÓÚÂÊÎÔÛÃÕÇ]/.test(c));
-  };
-
-  const playDuoSpeech = (text: string) => {
-    if (typeof window === 'undefined' || !window.speechSynthesis) return;
-    if (isSinging) {
-      console.log("Ignoring assistant speech since singing active.");
-      return;
-    }
-    
-    // Ensure we resume if paused as a classic browser unfreezing technique
-    if (window.speechSynthesis.paused) {
-      window.speechSynthesis.resume();
-    }
-    
-    window.speechSynthesis.cancel();
-    (window as any)._activeUtterances = [];
-
-    const currentCombo = DUO_COMBOS.find(c => c.id === duoComboId) || DUO_COMBOS[0];
-    const turns = parseDuoTextToTurns(text, currentCombo);
-    if (turns.length === 0) {
-      setDuoSpeakingHost(null);
-      setIsSpeaking(false);
-      return;
-    }
-
-    const voices = window.speechSynthesis.getVoices();
-    
-    // Support pt-BR specific language first
-    let ptVoices = voices.filter(v => {
-      const parsedLang = v.lang.toLowerCase().replace('_', '-');
-      return parsedLang === 'pt-br' || parsedLang === 'pt_br';
-    });
-    
-    // If no pt-BR found, fallback to any pt voices
-    if (ptVoices.length === 0) {
-      ptVoices = voices.filter(v => v.lang.toLowerCase().replace('_', '-').startsWith('pt'));
-    }
-
-    const getBestVoiceForGender = (gender: 'male' | 'female', altIndex: number) => {
-      if (ptVoices.length === 0) return null;
-      
-      const lowerGender = gender.toLowerCase();
-      const foundVoice = ptVoices.find(voice => {
-        const vName = voice.name.toLowerCase();
-        if (lowerGender === 'female') {
-          return vName.includes('maria') || vName.includes('luciana') || vName.includes('leticia') || 
-                 vName.includes('helena') || vName.includes('zira') || vName.includes('rita') || 
-                 vName.includes('joana') || vName.includes('sandra') || vName.includes('samantha') ||
-                 vName.includes('sara') || vName.includes('soraia') || vName.includes('yara') ||
-                 vName.includes('clara') || vName.includes('female') || vName.includes('mulher') || 
-                 vName.includes('moça') || vName.includes('google português');
-        } else {
-          return vName.includes('daniel') || vName.includes('felipe') || vName.includes('ricardo') || 
-                 vName.includes('lucas') || vName.includes('george') || vName.includes('yuri') ||
-                 vName.includes('helio') || vName.includes('cristiano') || vName.includes('male') || 
-                 vName.includes('homem') || vName.includes('moço') || vName.includes('filipe');
-        }
-      });
-
-      if (foundVoice) return foundVoice;
-
-      if (ptVoices.length > 1) {
-        return ptVoices[altIndex % ptVoices.length];
-      }
-
-      return ptVoices[0];
-    };
-
-    const voiceHostA = getBestVoiceForGender(currentCombo.hostA.gender as any, 0);
-    const voiceHostB = getBestVoiceForGender(currentCombo.hostB.gender as any, 1);
-
-    let index = 0;
-
-    const speakNext = () => {
-      if (index >= turns.length) {
-        setDuoSpeakingHost(null);
-        setIsSpeaking(false);
-        (window as any)._activeUtterances = [];
-        return;
-      }
-
-      const turn = turns[index];
-      const isHostA = turn.speaker === 'hostA';
-      const hostConf = isHostA ? currentCombo.hostA : currentCombo.hostB;
-      const chosenVoice = isHostA ? voiceHostA : voiceHostB;
-
-      // Clean and split current turn into short sentence chunks
-      const cleanedTurnText = cleanTextForSpeech(turn.text);
-      const turnChunks = splitTextIntoSpeechChunks(cleanedTurnText);
-
-      if (turnChunks.length === 0) {
-        index++;
-        speakNext();
-        return;
-      }
-
-      let turnChunkIndex = 0;
-
-      const speakNextTurnChunk = () => {
-        if (turnChunkIndex >= turnChunks.length) {
-          setVoiceTranscript('');
-          index++;
-          speakNext();
-          return;
-        }
-
-        const currentChunk = turnChunks[turnChunkIndex];
-        const utterance = new SpeechSynthesisUtterance(currentChunk);
-        
-        if (chosenVoice) {
-          utterance.voice = chosenVoice;
-          utterance.lang = chosenVoice.lang;
-        } else {
-          utterance.lang = 'pt-BR';
-        }
-
-        let pitch = hostConf.pitch;
-        let rate = hostConf.rate;
-
-        if (voiceHostA && voiceHostB && voiceHostA.name === voiceHostB.name) {
-          if (isHostA) {
-            pitch = 0.72;
-            rate = 0.90;
-          } else {
-            pitch = 1.35;
-            rate = 1.10;
-          }
-        }
-
-        utterance.pitch = pitch;
-        utterance.rate = rate;
-
-        utterance.onstart = () => {
-          setIsSpeaking(true);
-          setDuoSpeakingHost(turn.speaker);
-          setVoiceTranscript(currentChunk);
-        };
-
-        utterance.onend = () => {
-          setVoiceTranscript('');
-          turnChunkIndex++;
-          speakNextTurnChunk();
-        };
-
-        utterance.onerror = (e) => {
-          console.error("Duo speech turn chunk error:", e);
-          setVoiceTranscript('');
-          turnChunkIndex++;
-          speakNextTurnChunk();
-        };
-
-        (window as any)._activeUtterances = (window as any)._activeUtterances || [];
-        (window as any)._activeUtterances.push(utterance);
-        if ((window as any)._activeUtterances.length > 50) {
-          (window as any)._activeUtterances.shift();
-        }
-
-        window.speechSynthesis.speak(utterance);
-      };
-
-      speakNextTurnChunk();
-    };
-
-    speakNext();
   };
 
   const playSpeech = (text: string) => {
@@ -8568,29 +8009,6 @@ Diretriz adaptativa atual do OSONE para o diálogo:
 ${adaptive.directions}` + getSensusSystemInstructionPrompt();
       }
 
-      if (isDuoMode) {
-        const combo = DUO_COMBOS.find(c => c.id === duoComboId) || DUO_COMBOS[0];
-        const topic = DUO_TOPICS.find(t => t.id === duoTopicId) || DUO_TOPICS[0];
-        activeSystemInstruction = `${profileInstruction}
-        
-        Você está operando atualmente no **MODO DUO** de Co-docência (Sala de Professores)!
-        Seu objetivo absolutamente fundamental é simular e interpretar DOIS PROFESSORES INDEPENDENTES debatendo entre si e ensinando o usuário ao mesmo tempo no Tópico Acadêmico: **"${topic.name}"** (${topic.description}).
-
-        Os dois professores participantes que você deve simular são:
-        1. **${combo.hostA.name}** (${combo.hostA.role} - Professor Principal focado em Inglês): ${combo.hostA.instructions}
-        2. **${combo.hostB.name}** (${combo.hostB.role}): ${combo.hostB.instructions}
-
-        REGRAS CRUCIAIS PARA O MODO DUO (SALA DE PROFESSORES):
-        1. Toda resposta sua DEVE obrigatoriamente ser formatada sob a forma de um diálogo dinâmico e colaborativo, alternando a fala entre os dois professores em turnos curtos, ricos em conhecimento e altamente didáticos.
-        2. Use SEMPRE os prefixos de identificação de fala literais e exatos:
-           **${combo.hostA.name}**: [texto de sua explicação/pergunta, focando na prática de inglês ou uso de expressões adequadas]
-           **${combo.hostB.name}**: [texto de sua explicação/comentário, correlacionando o assunto com sua respectiva área de especialidade]
-        3. Ambos devem interagir com o usuário, guiando-o com clareza. Eles também devem responder ou acrescentar algo inteligente ao que o outro professor acabou de dizer.
-        4. O tom deve ser de professores mentores extremamente inspiradores, acolhedores e inteligentes. Não use emotes ou parênteses de ações, use apenas a fala direta no formato especificado.
-        5. Uso da Lousa do Professor (Blackboard): Sempre que os professores estiverem explicando ideias, listando vocabulários, mostrando traduções, diagramando tópicos, escrevendo fórmulas ou explicando textos de aula, as explicações devem ser escritas na Lousa usando um bloco especial [LOUSA] ... [/LOUSA] ou [QUADRO] ... [/QUADRO] em sua resposta. Esse bloco de quadro será extraído automaticamente e projetado na lousa virtual do aluno para que ele visualize com destaque. Use esta lousa de forma rica e detalhada!
-        `;
-      }
-
       if (customSkill) {
         activeSystemInstruction += `\n\n[REGRA E DIRETRIZ DA SKILL PERSONALIZADA ATIVA]:
 Nome da Skill: ${customSkill.name}
@@ -9399,7 +8817,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
         if (text) {
           let contentWithSources = text;
           
-          if (isDuoMode || customSkill) {
+          if (customSkill) {
             const lousaRegex = /\[LOUSA\]([\s\S]*?)\[\/LOUSA\]/i;
             const quadrantRegex = /\[QUADRO\]([\s\S]*?)\[\/QUADRO\]/i;
             const matchLousa = text.match(lousaRegex);
@@ -9429,11 +8847,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
             processGroundingToPopups(grounding, userMessage);
           }
           const newMsgId = addMessage({ role: 'assistant' as const, content: contentWithSources });
-          if (isDuoMode && isDuoVoiceActive) {
-            setTimeout(() => {
-              playDuoSpeech(contentWithSources);
-            }, 600);
-          } else if (isChatAutoSpeakActive) {
+          if (isChatAutoSpeakActive) {
             setTimeout(() => {
               handleSpeakChatMessage(contentWithSources, newMsgId);
             }, 600);
@@ -9555,13 +8969,6 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
       audioProcessorRef.current = new AudioProcessor();
       audioPlayerRef.current = new AudioPlayer((active) => {
         setIsSpeaking(active);
-        if (!active) {
-          setDuoSpeakingHost(null);
-        } else {
-          if (isDuoMode) {
-            setDuoSpeakingHost(activeDuoHostRef.current);
-          }
-        }
       });
 
       const recentChatContext = chatHistory.slice(-100).map(m => `${m.role === 'user' ? 'Usuário' : 'OSONE'}: ${m.content}`).join('\n');
@@ -9592,34 +8999,7 @@ ${dossierSummary || '(Nenhum fato íntimo do dossiê mapeado ainda.)'}
 `;
 
       let liveSystemInstruction = "";
-      if (isDuoMode) {
-        const combo = DUO_COMBOS.find(c => c.id === duoComboId) || DUO_COMBOS[0];
-        const topic = DUO_TOPICS.find(t => t.id === duoTopicId) || DUO_TOPICS[0];
-        const currentHost = activeDuoHost === 'hostA' ? combo.hostA : combo.hostB;
-        const otherHost = activeDuoHost === 'hostA' ? combo.hostB : combo.hostA;
-
-        liveSystemInstruction = `${profileInstruction}
-        
-        Você agora está cooperando e operando no **MODO DUO** de Co-docência em tempo real (Sala de Professores).
-        Sua personalidade e voz ativa atual é única e exclusiva: **${currentHost.name}** (${currentHost.role}).
-        Sua diretriz de comportamento exclusiva: ${currentHost.instructions}
-        
-        O Tópico Acadêmico de Estudo atual é: **"${topic.name}"** (${topic.description}).
-        Seu parceiro co-docente de ensino nesta sala é **${otherHost.name}** (${otherHost.role}).
-
-        REGRAS ABSOLUTAS DE ENSINO EM DUPLA:
-        1. Fale de forma extremamente fluida e natural, agindo 100% como a sua única persona didática: **${currentHost.name}**.
-        2. Se você for o Professor de Inglês (${combo.hostA.name}), use e ensine expressões em inglês, incentivando o listening e speaking do usuário de forma clara.
-        3. Toda resposta por áudio nesta sessão deve ser expressada de forma breve, didática e focada na sua expertise.
-        4. Nunca tente imitar ou simular a fala de **${otherHost.name}**. Fale APENAS por si mesmo de forma acolhedora e inspiradora.
-        5. O tom deve ser de professores e mentores dedicados, com alto grau de empatia educacional.
-        
-        CONTEXTO DE MEMÓRIA COMPARTILHADA DA TRANSMISSÃO:
-        - Workspace atual: ${workspaceMode}
-        ${memoryContext}
-        Aja com base no histórico recente de toda a conversa: ${recentChatContext}
-        `;
-      } else if (isTranslationMode) {
+      if (isTranslationMode) {
         liveSystemInstruction = `${profileInstruction}
         
         Você agora está no **MODO TRADUTOR SIMULTÂNEO LIVE** (utilizando a tecnologia avançada do Gemini Live 3.5 Translate).
@@ -9738,18 +9118,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
           speechConfig: {
             voiceConfig: { 
               prebuiltVoiceConfig: { 
-                voiceName: (() => {
-                  if (isDuoMode) {
-                    const combo = DUO_COMBOS.find(c => c.id === duoComboId) || DUO_COMBOS[0];
-                    const currentHost = activeDuoHost === 'hostA' ? combo.hostA : combo.hostB;
-                    if (currentHost.gender === 'male') {
-                      return activeDuoHost === 'hostA' ? 'Charon' : 'Fenrir';
-                    } else {
-                      return activeDuoHost === 'hostA' ? 'Kore' : 'Aoede';
-                    }
-                  }
-                  return getTargetVoiceName(selectedVoice);
-                })() 
+                voiceName: getTargetVoiceName(selectedVoice)
               } 
             },
           },
@@ -10472,19 +9841,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
               setIsListening(true);
               
               // Trigger proactive greeting
-              let greetingText = "";
-              if (isDuoMode) {
-                if (duoAutoPromptRef.current) {
-                  greetingText = duoAutoPromptRef.current;
-                  setDuoAutoPrompt(null);
-                  duoAutoPromptRef.current = null;
-                } else {
-                  const combo = DUO_COMBOS.find(c => c.id === duoComboId) || DUO_COMBOS[0];
-                  greetingText = `[SISTEMA: Apresente-se como professor de inglês, ${combo.hostA.name}. Dê as boas-vindas calorosas ao usuário à nossa Sala de Professores e pergunte brevemente o que ele gostaria de estudar hoje. Passe em seguida a palavra para seu co-docente ${combo.hostB.name} se apresentar trazendo sua visão acadêmica.]`;
-                }
-              } else {
-                greetingText = "O sistema OSONE está online. Seja breve, direto e pare de enrolar com introduções longas. Apenas diga que está pronto e pergunte o que faremos agora.";
-              }
+              const greetingText = "O sistema OSONE está online. Seja breve, direto e pare de enrolar com introduções longas. Apenas diga que está pronto e pergunte o que faremos agora.";
 
               (session as any).sendRealtimeInput([{ 
                 text: greetingText
@@ -10699,11 +10056,6 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       transcriptThrottleRef.current = null;
                     }, 70);
                   }
-
-                  // Se estiver em modo duo, acender o avatar correspondente com ondas de áudio!
-                  if (isDuoMode) {
-                    setDuoSpeakingHost(activeDuoHost);
-                  }
                 }
               }
 
@@ -10715,50 +10067,30 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 setVoiceTranscript('');
                 if (voiceTranscriptRef.current) {
                   const finalizedText = voiceTranscriptRef.current;
-                  const combo = DUO_COMBOS.find(c => c.id === duoComboId) || DUO_COMBOS[0];
-                  const currentSpeakerName = activeDuoHost === 'hostA' ? combo.hostA.name : combo.hostB.name;
-                  
+
                   let cleanedText = finalizedText;
-                  if (isDuoMode || customSkill) {
+                  if (customSkill) {
                     const lousaRegex = /\[LOUSA\]([\s\S]*?)\[\/LOUSA\]/i;
                     const quadrantRegex = /\[QUADRO\]([\s\S]*?)\[\/QUADRO\]/i;
                     const matchLousa = cleanedText.match(lousaRegex);
                     const matchQuadro = cleanedText.match(quadrantRegex);
                     const extractedBoardText = matchLousa ? matchLousa[1] : (matchQuadro ? matchQuadro[1] : null);
-                    
+
                     if (extractedBoardText && extractedBoardText.trim()) {
                       setWhiteboardText(extractedBoardText.trim());
                       setShowWhiteboard(true);
                       addNotification("📝 O Professor atualizou a Lousa da aula!", "success");
                     }
-                    
+
                     cleanedText = cleanedText
                       .replace(/\[LOUSA\]([\s\S]*?)\[\/LOUSA\]/gi, '')
                       .replace(/\[QUADRO\]([\s\S]*?)\[\/QUADRO\]/gi, '')
                       .trim();
                   }
-                  
-                  if (isDuoMode) {
-                    setChatHistory(prev => [...prev, { id: Math.random().toString(36).substr(2, 9), role: 'assistant', content: `${currentSpeakerName}: ${cleanedText}` }]);
-                  } else {
-                    setChatHistory(prev => [...prev, { id: Math.random().toString(36).substr(2, 9), role: 'assistant', content: cleanedText }]);
-                  }
-                  
-                  if (isDuoMode) {
-                    if (activeDuoHost === 'hostA') {
-                      addNotification(`🎙️ Passando a bancada de debate para ${combo.hostB.name}...`, "info");
-                      setDuoAutoPrompt(`[SISTEMA: ${combo.hostB.name}, agora é o seu momento de responder! Comente brevemente o que ${combo.hostA.name} acabou de argumentar: "${finalizedText}". Apresente uma contraproposta inteligente de acordo com sua personalidade e tome o protagonismo da conversa.]`);
-                      setActiveDuoHost('hostB');
-                    } else {
-                      // We finished the duo conversation loop steps. Return to host A for the next user speech turn!
-                      setActiveDuoHost('hostA');
-                    }
-                  }
-                  
+
+                  setChatHistory(prev => [...prev, { id: Math.random().toString(36).substr(2, 9), role: 'assistant', content: cleanedText }]);
+
                   voiceTranscriptRef.current = '';
-                }
-                if (!isDuoMode) {
-                  setDuoSpeakingHost(null);
                 }
                 // O muting agora é feito pelo AudioPlayer (onActivityChange) sincronizado com o áudio real.
               }
@@ -11894,7 +11226,6 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 if (typeof window !== 'undefined' && window.speechSynthesis) {
                   window.speechSynthesis.cancel();
                 }
-                setDuoSpeakingHost(null);
                 setIsSpeaking(false);
                 if (voiceTranscriptRef.current) {
                   setChatHistory(prev => [...prev, { id: Math.random().toString(36).substr(2, 9), role: 'assistant', content: voiceTranscriptRef.current }]);
@@ -11938,17 +11269,6 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
       setIsListening(false);
     }
   };
-
-  useEffect(() => {
-    if (liveStateRef.current.status === 'connected') {
-      addNotification("🎓 Conectando canais de voz dos Professores...", "info");
-      stopLiveSession();
-      const t = setTimeout(() => {
-        startLiveSession();
-      }, 800);
-      return () => clearTimeout(t);
-    }
-  }, [isDuoMode, duoComboId, duoTopicId, activeDuoHost]);
 
   const handleSummonOsone = () => {
     setSummonedAba(workspaceMode);
@@ -12334,18 +11654,14 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         
         <div className="flex flex-col items-center gap-0.5 md:gap-1">
           <span className="text-[7px] md:text-[9px] tracking-[0.5em] uppercase text-her-muted font-light opacity-40">OSONE G5</span>
-          <div className="block scale-90 md:scale-100">
-            <PersonaSwitcher 
-              selectedPersona={selectedPersona} 
-              onPersonaChange={handlePersonaChange} 
-              isOpen={isPersonaSwitcherOpen}
-              onToggle={() => setIsPersonaSwitcherOpen(!isPersonaSwitcherOpen)}
-            />
-          </div>
+          <span className="flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] uppercase tracking-[0.2em] font-light text-her-muted">
+            {selectedPersona.icon}
+            <span>{selectedPersona.name}</span>
+          </span>
         </div>
 
         <div className="flex items-center gap-1 md:gap-2">
-          <button 
+          <button
             onClick={handleHandsFreeToggle}
             className={cn(
               "p-2 md:px-4 md:py-2 border transition-all text-[10px] font-medium flex items-center gap-2",
@@ -12379,36 +11695,6 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
             </span>
           </button>
 
-          {/* BOTÃO DE HANDOFF MANUAL (PC <-> CELULAR) */}
-          <button
-            onClick={handleDeviceHandoffToggle}
-            className={cn(
-              "p-2 md:px-3 md:py-1.5 transition-all text-[10px] font-medium flex items-center gap-1.5 border rounded-full relative overflow-hidden ml-1",
-              activeHandoffDevice === currentDeviceType
-                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 shadow-[0_0_10px_rgba(16,185,129,0.15)]"
-                : "bg-amber-500/20 border-amber-500/40 text-amber-300 animate-pulse hover:bg-amber-500/30 shadow-[0_0_12px_rgba(245,158,11,0.25)]"
-            )}
-            title={activeHandoffDevice === currentDeviceType 
-              ? `Sessão ativa neste dispositivo. Clique para transferir.` 
-              : `Sessão ativa no ${activeHandoffDevice === 'mobile' ? 'Celular' : 'PC'}. Clique para transferir para este dispositivo.`}
-          >
-            {activeHandoffDevice === 'pc' ? (
-              <Smartphone size={13} className={activeHandoffDevice !== currentDeviceType ? "animate-bounce" : ""} />
-            ) : (
-              <Monitor size={13} className={activeHandoffDevice !== currentDeviceType ? "animate-bounce" : ""} />
-            )}
-            <span className="hidden sm:inline leading-none text-[9px] font-bold uppercase tracking-wider">
-              {activeHandoffDevice === 'pc' ? "Transferir para Celular" : "Transferir para PC"}
-            </span>
-          </button>
-
-          {activeHandoffDevice !== currentDeviceType && (
-            <span className="hidden lg:flex px-2 py-0.5 text-[9px] font-medium bg-amber-500/10 border border-amber-500/30 text-amber-400 rounded-full items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
-              Sessão no {activeHandoffDevice === 'mobile' ? 'Celular' : 'PC'}
-            </span>
-          )}
-          
           {showInstallButton && (
             <button 
               onClick={handleInstallClick}
@@ -12479,170 +11765,6 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       </button>
                     ))}
                   </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
-          {/* MODO DUO (SALA DE PROFESSORES) HEADER ACTIVATOR */}
-          <div className="relative">
-            <button 
-              onClick={() => {
-                setIsDuoPopoverOpen(!isDuoPopoverOpen);
-                if (!isDuoMode) {
-                  setIsDuoMode(true);
-                  addNotification("🎓 Sala de Professores (Duo) ativada! Bem-vindo ao debate acadêmico.", "success");
-                }
-              }}
-              className={cn(
-                "p-2 md:px-3 md:py-1.5 transition-all text-[10px] font-medium flex items-center gap-1.5 border relative overflow-hidden rounded-full ml-1",
-                isDuoMode 
-                  ? "bg-gradient-to-r from-sky-500/10 to-rose-500/10 border-sky-500/30 text-sky-400 shadow-[0_0_15px_rgba(56,189,248,0.25)]" 
-                  : "bg-white/[0.03] border-white/[0.08] text-her-muted hover:border-white/20 hover:bg-white/[0.05]"
-              )}
-              title="Modo Duo: Sala Co-Docente de Professores"
-            >
-              <BookOpen size={13} className={cn(isDuoMode ? "animate-pulse text-sky-400" : "")} />
-              <span className="hidden leading-none sm:inline-block tracking-widest text-[9px] font-bold uppercase">
-                {isDuoMode ? "DUO: DOCENTES" : "DUO DOCENTE"}
-              </span>
-            </button>
-
-            <AnimatePresence>
-              {isDuoPopoverOpen && (
-                <motion.div
-                  initial={{ opacity: 0, y: 15, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 15, scale: 0.95 }}
-                  className="absolute right-0 top-full mt-4 p-4 bg-zinc-950/95 backdrop-blur-3xl border border-white/10 rounded-2xl shadow-[0_15px_50px_rgba(0,0,0,0.8)] z-50 min-w-[320px] max-w-[360px]"
-                >
-                  <div className="flex items-center justify-between pb-3 border-b border-white/5 mb-4 select-none">
-                     <div className="flex items-center gap-2">
-                      <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" />
-                      <span className="text-xs font-bold uppercase tracking-wider text-zinc-100">Sala dos Professores (Duo)</span>
-                    </div>
-                    <button 
-                      onClick={() => setIsDuoPopoverOpen(false)}
-                      className="p-1 hover:text-white text-zinc-400 hover:bg-white/5 rounded-lg transition-colors"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-
-                  <div className="space-y-4 text-left">
-                    {/* Mode Toggle */}
-                    <div className="flex items-center justify-between bg-white/[0.01] p-2.5 rounded-xl border border-white/5">
-                      <span className="text-xs text-zinc-300 font-medium select-none">Modo Duo Docente Ativado:</span>
-                      <button
-                        onClick={() => {
-                          const state = !isDuoMode;
-                          setIsDuoMode(state);
-                          addNotification(state ? "🎓 Sala de Professores Ativada. Foco em Inglês!" : "🎓 Sala de Professores Desativada", "info");
-                        }}
-                        className={cn(
-                          "w-10 h-5 rounded-full transition-colors relative flex items-center p-0.5 cursor-pointer",
-                          isDuoMode ? "bg-sky-500" : "bg-white/10"
-                        )}
-                      >
-                        <span className={cn(
-                          "w-4 h-4 rounded-full bg-white transition-transform block shadow-sm",
-                          isDuoMode ? "translate-x-5" : "translate-x-0"
-                        )} />
-                      </button>
-                    </div>
-
-                    {/* Choose Combo Title */}
-                    <div className="space-y-2">
-                       <span className="text-[10px] text-zinc-400 uppercase tracking-widest font-bold block select-none">Membros da Sala dos Professores</span>
-                      <div className="flex flex-col gap-1.5 font-sans">
-                        {DUO_COMBOS.map(combo => (
-                          <button
-                            key={combo.id}
-                            onClick={() => {
-                              setDuoComboId(combo.id);
-                              addNotification(`Sala dos professores direcionada para: ${combo.name}`, "success");
-                            }}
-                            className={cn(
-                              "flex items-center justify-between p-2.5 rounded-xl text-left border transition-all text-xs cursor-pointer",
-                              duoComboId === combo.id 
-                                ? "bg-sky-500/10 border-sky-500/30 text-sky-200" 
-                                : "bg-white/[0.02] border-white/5 text-zinc-400 hover:bg-white/5 hover:text-zinc-200"
-                            )}
-                          >
-                            <div className="flex items-center gap-2">
-                              {/* Small Avatars list */}
-                              <div className="flex -space-x-1 shrink-0">
-                                <img src={combo.hostA.avatarUrl} className="w-5 h-5 rounded-full border border-zinc-900 object-cover" />
-                                <img src={combo.hostB.avatarUrl} className="w-5 h-5 rounded-full border border-zinc-900 object-cover" />
-                              </div>
-                              <span className="font-medium">{combo.name}</span>
-                            </div>
-                            <span className="text-[9px] opacity-60 font-mono">
-                              {combo.hostA.name} & {combo.hostB.name}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Topic Area / Canal */}
-                    <div className="space-y-2">
-                      <span className="text-[10px] text-zinc-400 uppercase tracking-widest font-bold block select-none">Área Pedagógica</span>
-                      <div className="grid grid-cols-2 gap-1.5 font-sans">
-                        {DUO_TOPICS.map(topic => (
-                          <button
-                            key={topic.id}
-                            onClick={() => {
-                              setDuoTopicId(topic.id);
-                              addNotification(`Área de estudo alterada para: ${topic.name.split(' ').slice(1).join(' ')}`, "info");
-                            }}
-                            className={cn(
-                              "p-2.5 rounded-xl text-left border transition-all text-[11px] flex flex-col gap-0.5 cursor-pointer",
-                              duoTopicId === topic.id
-                                ? "bg-purple-500/10 border-purple-500/30 text-purple-200"
-                                : "bg-white/[0.02] border-white/5 text-zinc-400 hover:bg-white/5 hover:text-zinc-200"
-                            )}
-                          >
-                            <span className="font-bold truncate w-full">{topic.name}</span>
-                            <span className="text-[8px] opacity-40 line-clamp-1">{topic.description}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-
-
-                    {/* Speak Automatically */}
-                    <div className="flex items-center justify-between bg-white/[0.01] p-2.5 rounded-xl border border-white/5">
-                      <div className="flex flex-col text-left">
-                        <span className="text-[11px] text-zinc-300 font-medium select-none">Voz dos Professores (Duo):</span>
-                        <span className="text-[8px] text-zinc-500 select-none">Leitura automática por áudio</span>
-                      </div>
-                      <button
-                        onClick={() => {
-                          const state = !isDuoVoiceActive;
-                          setIsDuoVoiceActive(state);
-                          addNotification(state ? "Explicação por voz ativada" : "Explicação por voz desativada", "info");
-                        }}
-                        className={cn(
-                          "w-10 h-5 rounded-full transition-colors relative flex items-center p-0.5 cursor-pointer",
-                          isDuoVoiceActive ? "bg-purple-500" : "bg-white/10"
-                        )}
-                      >
-                        <span className={cn(
-                          "w-4 h-4 rounded-full bg-white transition-transform block shadow-sm",
-                          isDuoVoiceActive ? "translate-x-5" : "translate-x-0"
-                        )} />
-                      </button>
-                    </div>
-
-                    <div className="text-[8px] text-zinc-400 mt-2 select-none text-center bg-white/5 p-2 rounded-lg italic font-sans leading-normal">
-                      🎓 No Modo Duo, o Prof. Sean (sotaque nativo americano de inglês) simula uma co-docência dinâmica com outros professores na sala de aula.
-                    </div>
-                  </div>
-                  
-                  {/* Popover arrow */}
-                  <div className="absolute -top-1 right-8 w-2 h-2 bg-zinc-950 border-l border-t border-white/10 rotate-45" />
                 </motion.div>
               )}
             </AnimatePresence>
@@ -13197,12 +12319,6 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 isConfirmingClear={isConfirmingClear}
                 setIsConfirmingClear={setIsConfirmingClear}
                 checkAndPromptMemory={checkAndPromptMemory}
-                isDuoMode={isDuoMode}
-                duoTopicId={duoTopicId}
-                duoComboId={duoComboId}
-                duoSpeakingHost={duoSpeakingHost}
-                parseDuoTextToTurns={parseDuoTextToTurns}
-                playDuoSpeech={playDuoSpeech}
                 handleSpeakChatMessage={handleSpeakChatMessage}
                 isPlayingChatSpeech={isPlayingChatSpeech}
                 setWorkspaceMode={setWorkspaceMode}
@@ -13727,7 +12843,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
 
       {/* Pop-up de Lousa Escolar Virtual com Botão de Fechar X */}
       <AnimatePresence>
-        {showWhiteboard && (isDuoMode || customSkill) && (
+        {showWhiteboard && customSkill && (
           <div className="fixed inset-0 z-[101] flex items-center justify-center p-4 bg-black/75 backdrop-blur-md">
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
@@ -13753,7 +12869,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   text={whiteboardText}
                   onChangeText={setWhiteboardText}
                   isWriting={isSpeaking || isGenerating || isAnalyzingCode}
-                  speakerName={customSkill ? `Estudo: ${customSkill.name}` : (duoSpeakingHost === 'hostA' && isSpeaking ? "Prof. Sean" : (duoSpeakingHost === 'hostB' && isSpeaking ? "Co-Docente" : null))}
+                  speakerName={customSkill ? `Estudo: ${customSkill.name}` : null}
                   onClear={() => setWhiteboardText('')}
                 />
               </div>
@@ -13851,6 +12967,11 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         onAddNotification={addNotification}
         vocalProfileEscarlate={vocalProfileEscarlate}
         setVocalProfileEscarlate={setVocalProfileEscarlate}
+        selectedPersona={selectedPersona}
+        onPersonaChange={handlePersonaChange}
+        onOpenIdentityDossier={() => setIsIntimateMissionOpen(true)}
+        intimateAnswersCount={Object.keys(intimateAnswers).length}
+        onOpenAiDossier={() => setIsAiDossierOpen(true)}
         onRestoreState={(payload) => {
           try {
             const apiKeysVal = payload['osone_api_keys'];
@@ -13891,18 +13012,6 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
 
             const orbCenterModeVal = payload['osone_orb_center_mode'];
             if (orbCenterModeVal) setOrbCenterMode(orbCenterModeVal === 'true');
-
-            const isDuoModeVal = payload['osone_is_duo_mode'];
-            if (isDuoModeVal) setIsDuoMode(isDuoModeVal === 'true');
-
-            const duoComboIdVal = payload['osone_duo_combo_id'];
-            if (duoComboIdVal) setDuoComboId(duoComboIdVal);
-
-            const duoTopicIdVal = payload['osone_duo_topic_id'];
-            if (duoTopicIdVal) setDuoTopicId(duoTopicIdVal);
-
-            const isDuoVoiceActiveVal = payload['osone_is_duo_voice_active'];
-            if (isDuoVoiceActiveVal) setIsDuoVoiceActive(isDuoVoiceActiveVal !== 'false');
 
             const isChatAutoSpeakActiveVal = payload['osone_chat_auto_speak'];
             if (isChatAutoSpeakActiveVal) setIsChatAutoSpeakActive(isChatAutoSpeakActiveVal === 'true');
