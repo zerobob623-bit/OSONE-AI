@@ -10,7 +10,7 @@ import { GoogleGenAI, Modality } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import pkgWhatsapp from "whatsapp-web.js";
-const { Client: WWebClient, LocalAuth: WWebLocalAuth } = pkgWhatsapp;
+const { Client: WWebClient, LocalAuth: WWebLocalAuth, MessageMedia: WWebMessageMedia } = pkgWhatsapp;
 import QRCode from "qrcode";
 import * as cheerio from "cheerio";
 import { 
@@ -508,7 +508,15 @@ Comentário de @${user}: "${text}"`;
   // ====== WHATSAPP CONFIG & LOGS STATE ======
   let whatsappConfig = {
     enabled: false,
-    geminiApiKey: ""
+    geminiApiKey: "",
+    // Auto-resposta funciona 100% de forma independente de qualquer sessão de voz em tempo
+    // real (Gemini Live/ElevenLabs Live) — ela roda direto no listener de mensagens do
+    // whatsapp-web.js sempre que "enabled" está true, mesmo com o app fechado no navegador.
+    sendAudioReplies: true,
+    ttsEngine: "gemini" as "gemini" | "elevenlabs",
+    ttsVoice: "Kore",
+    elevenLabsApiKey: "",
+    elevenLabsVoiceId: ""
   };
 
   let virtualConnectionState = "DISCONNECTED";
@@ -709,6 +717,121 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
 5. Mantenha a continuidade exata em relação ao Histórico Recente de Conversas. Se o cliente fizer uma pergunta de acompanhamento (ex: "E a segunda opção?", "Qual o valor daquele produto que mencionou?"), consulte o histórico acima para entender o contexto anterior antes de responder.`;
   }
 
+  // Sintetiza uma resposta em áudio para o OSONE ZAP (voz do vendedor IA), usada pelo listener
+  // de auto-resposta do WhatsApp para enviar tanto texto quanto áudio. Independente/isolada da
+  // rota /api/tts (usada pela Prosa/Sensus) para não arriscar alterar aquele fluxo já existente.
+  async function synthesizeWhatsAppVoiceReply(text: string, opts: {
+    engine?: "gemini" | "elevenlabs";
+    geminiApiKey?: string;
+    voice?: string;
+    elevenLabsApiKey?: string;
+    elevenLabsVoiceId?: string;
+  }): Promise<{ buffer: Buffer; mimeType: string; extension: string } | null> {
+    const cleanText = (text || "").trim();
+    if (!cleanText) return null;
+
+    if (opts.engine === "elevenlabs") {
+      const elApiKey = opts.elevenLabsApiKey || process.env.ELEVENLABS_API_KEY;
+      if (!elApiKey) return null;
+      const cleanTextForEleven = stripVocalTags(cleanText);
+      const voiceId = opts.elevenLabsVoiceId || process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
+
+      let response: Response | null = null;
+      try {
+        response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+          method: "POST",
+          headers: { "xi-api-key": elApiKey, "Content-Type": "application/json", "accept": "audio/mpeg" },
+          body: JSON.stringify({
+            text: cleanTextForEleven,
+            model_id: "eleven_turbo_v2_5",
+            voice_settings: { stability: 0.5, similarity_boost: 0.75, style: 0.0, use_speaker_boost: true }
+          })
+        });
+      } catch (_) { /* tenta o fallback abaixo */ }
+
+      if (!response || !response.ok) {
+        try {
+          response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+            method: "POST",
+            headers: { "xi-api-key": elApiKey, "Content-Type": "application/json", "accept": "audio/mpeg" },
+            body: JSON.stringify({
+              text: cleanTextForEleven,
+              model_id: "eleven_multilingual_v2",
+              voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+            })
+          });
+        } catch (_) { /* sem áudio disponível */ }
+      }
+
+      if (!response || !response.ok) return null;
+      const arrayBuffer = await response.arrayBuffer();
+      return { buffer: Buffer.from(arrayBuffer), mimeType: "audio/mpeg", extension: "mp3" };
+    }
+
+    // Motor padrão: Gemini TTS, com fallback automático para Google Translate TTS
+    const apiKey = opts.geminiApiKey || getSecretGeminiKey();
+    if (!apiKey) return null;
+
+    const ai = new GoogleGenAI({
+      apiKey,
+      vertexai: false,
+      httpOptions: { headers: { "User-Agent": "aistudio-build" } }
+    });
+
+    const supportedGeminiVoices = ["Puck", "Charon", "Kore", "Fenrir", "Zephyr", "Aoede"];
+    let selectedVoice = opts.voice || "Kore";
+    if (!supportedGeminiVoices.includes(selectedVoice)) selectedVoice = "Kore";
+
+    const candidateModels = ["gemini-3.1-flash-tts-preview", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash"];
+    const chunks = splitIntoTtsChunks(cleanText, 700);
+    const buffers: Buffer[] = [];
+    let usedFallback = false;
+
+    for (const chunk of chunks) {
+      const processedChunk = stripVocalTags(chunk);
+      let chunkAudioBuffer: Buffer | null = null;
+
+      for (const modelName of candidateModels) {
+        try {
+          const response = await ai.models.generateContent({
+            model: modelName,
+            contents: [{ parts: [{ text: `Leia o seguinte trecho com clareza absoluta, expressividade natural, pausas realistas e ritmo agradável de palestrante:\n\n${processedChunk}` }] }],
+            config: {
+              responseModalities: [Modality.AUDIO],
+              speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: selectedVoice } } }
+            }
+          });
+          const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+          if (base64Audio) {
+            chunkAudioBuffer = Buffer.from(base64Audio, "base64");
+            break;
+          }
+        } catch (_) { /* tenta o próximo modelo candidato */ }
+      }
+
+      if (chunkAudioBuffer) {
+        buffers.push(chunkAudioBuffer);
+      } else {
+        usedFallback = true;
+        const subChunks = splitIntoChunks(processedChunk, 180);
+        for (const subChunk of subChunks) {
+          try {
+            const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=pt-BR&client=tw-ob&q=${encodeURIComponent(subChunk)}`;
+            const fbResponse = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" } });
+            if (fbResponse.ok) buffers.push(Buffer.from(await fbResponse.arrayBuffer()));
+          } catch (_) { /* pula este subtrecho */ }
+        }
+      }
+    }
+
+    if (buffers.length === 0) return null;
+    const finalBuffer = Buffer.concat(buffers);
+    if (usedFallback) {
+      return { buffer: finalBuffer, mimeType: "audio/mpeg", extension: "mp3" };
+    }
+    return { buffer: pcmToWav(finalBuffer, 24000), mimeType: "audio/wav", extension: "wav" };
+  }
+
   // Helper function to initialize WhatsApp Web Client via Puppeteer
   const initializeWhatsAppWebClient = async () => {
     if (wwebjsClient) {
@@ -841,7 +964,65 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
         try {
           if (msg.isStatus || msg.from.endsWith("@g.us")) return;
           const sender = msg.from;
-          const body = msg.body;
+          const geminiApiKeyToUse = whatsappConfig.geminiApiKey || getSecretGeminiKey();
+          let body = msg.body || "";
+
+          // Mensagens de imagem/áudio não têm "body" de texto: usamos o Gemini para
+          // descrever a imagem ou transcrever o áudio, e tratamos o resultado como se
+          // fosse o texto da mensagem dali em diante (histórico, auto-resposta, etc.).
+          if (!body && msg.hasMedia && (msg.type === "image" || msg.type === "audio" || msg.type === "ptt")) {
+            if (!geminiApiKeyToUse) {
+              whatsappLogs.unshift({
+                id: Math.random().toString(36).substring(2, 11),
+                timestamp: Date.now(),
+                type: "error",
+                sender,
+                message: `Recebida mensagem de ${msg.type === "image" ? "imagem" : "áudio"}, mas nenhuma chave Gemini está configurada para analisá-la.`
+              });
+              if (whatsappLogs.length > 100) whatsappLogs.pop();
+              return;
+            }
+
+            try {
+              const media = await msg.downloadMedia();
+              if (!media || !media.data) {
+                body = msg.type === "image" ? "[Imagem recebida, mas o download falhou]" : "[Áudio recebido, mas o download falhou]";
+              } else {
+                const mediaAi = new GoogleGenAI({ apiKey: geminiApiKeyToUse, vertexai: false });
+                if (msg.type === "image") {
+                  const visionPrompt = `Você está examinando uma imagem enviada por um cliente no WhatsApp para um atendimento de vendas. Descreva objetivamente o que aparece (produto, defeito, print de conversa, comprovante, etc.), incluindo qualquer texto, preço ou detalhe visível que ajude a responder o cliente.${msg._data?.caption ? ` O cliente também escreveu esta legenda: "${msg._data.caption}"` : ''}`;
+                  const visionResult = await generateContentWithFallback(mediaAi, {
+                    model: "gemini-3.5-flash-lite",
+                    contents: [{ parts: [{ inlineData: { data: media.data, mimeType: media.mimetype } }, { text: visionPrompt }] }]
+                  });
+                  const description = (visionResult.text || "").trim() || "Não foi possível identificar o conteúdo da imagem.";
+                  body = `[Imagem enviada pelo cliente]${msg._data?.caption ? ` Legenda: "${msg._data.caption}".` : ''} Conteúdo identificado pela IA: ${description}`;
+                } else {
+                  const transcribePrompt = "Transcreva literalmente, em português, o que a pessoa está falando neste áudio. Responda APENAS com a transcrição, sem comentários adicionais. Se não conseguir entender, responda apenas com: [áudio incompreensível]";
+                  const transcribeResult = await generateContentWithFallback(mediaAi, {
+                    model: "gemini-3.5-flash-lite",
+                    contents: [{ parts: [{ inlineData: { data: media.data, mimeType: media.mimetype } }, { text: transcribePrompt }] }]
+                  });
+                  const transcript = (transcribeResult.text || "").trim();
+                  body = transcript && transcript !== "[áudio incompreensível]"
+                    ? `[Mensagem de voz do cliente]: ${transcript}`
+                    : "[Áudio recebido do cliente, mas não foi possível transcrever]";
+                }
+              }
+            } catch (mediaErr: any) {
+              console.error("[WhatsApp] Erro ao processar mídia recebida:", mediaErr);
+              body = msg.type === "image" ? "[Imagem recebida, mas houve erro ao analisá-la]" : "[Áudio recebido, mas houve erro ao transcrevê-lo]";
+              whatsappLogs.unshift({
+                id: Math.random().toString(36).substring(2, 11),
+                timestamp: Date.now(),
+                type: "error",
+                sender,
+                message: `Falha ao analisar mídia recebida: ${mediaErr?.message || mediaErr}`
+              });
+              if (whatsappLogs.length > 100) whatsappLogs.pop();
+            }
+          }
+
           if (!body) return;
 
           // Always add received message to contact history
@@ -857,25 +1038,63 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
           if (whatsappLogs.length > 100) whatsappLogs.pop();
 
           if (whatsappConfig.enabled) {
-            const geminiApiKeyToUse = whatsappConfig.geminiApiKey || getSecretGeminiKey();
+            if (!geminiApiKeyToUse) {
+              whatsappLogs.unshift({
+                id: Math.random().toString(36).substring(2, 11),
+                timestamp: Date.now(),
+                type: "error",
+                sender,
+                message: "Auto-resposta está ativada, mas nenhuma chave Gemini está configurada (nem nos Ajustes do OSONE ZAP, nem no servidor). A resposta não pôde ser gerada."
+              });
+              if (whatsappLogs.length > 100) whatsappLogs.pop();
+              return;
+            }
+
             const ai = new GoogleGenAI({ apiKey: geminiApiKeyToUse, vertexai: false });
-            
+
             // Build Context-Rich Sales Prompt with Knowledge Base + History
             const senderName = msg._data?.notifyName || sender;
             const systemPrompt = buildSalesPrompt(sender, senderName);
 
-            const gResult = await generateContentWithFallback(ai, {
-              model: "gemini-3.5-flash-lite",
-              contents: body,
-              config: { systemInstruction: systemPrompt }
-            });
+            let replyText = "";
+            try {
+              const gResult = await generateContentWithFallback(ai, {
+                model: "gemini-3.5-flash-lite",
+                contents: body,
+                config: { systemInstruction: systemPrompt }
+              });
+              replyText = (gResult.text || "").trim() || "Olá! Agradeço sua mensagem. Como posso te ajudar com nossos produtos hoje?";
+            } catch (genErr: any) {
+              console.error("[WhatsApp] Erro ao gerar resposta da IA:", genErr);
+              whatsappLogs.unshift({
+                id: Math.random().toString(36).substring(2, 11),
+                timestamp: Date.now(),
+                type: "error",
+                sender,
+                message: `Falha ao gerar resposta com a IA: ${genErr?.message || genErr}`
+              });
+              if (whatsappLogs.length > 100) whatsappLogs.pop();
+              return;
+            }
 
-            const replyText = gResult.text || "Olá! Agradeço sua mensagem. Como posso te ajudar com nossos produtos hoje?";
-            
             // Send reply directly back to contact
             const cleanDigits = sender.replace(/\D/g, "");
             const formattedJid = sender.endsWith("@c.us") ? sender : `${cleanDigits}@c.us`;
-            await wwebjsClient.sendMessage(formattedJid, replyText);
+
+            try {
+              await wwebjsClient.sendMessage(formattedJid, replyText);
+            } catch (sendErr: any) {
+              console.error("[WhatsApp] Erro ao enviar resposta de texto:", sendErr);
+              whatsappLogs.unshift({
+                id: Math.random().toString(36).substring(2, 11),
+                timestamp: Date.now(),
+                type: "error",
+                sender,
+                message: `A IA gerou uma resposta, mas o envio via WhatsApp falhou: ${sendErr?.message || sendErr}`
+              });
+              if (whatsappLogs.length > 100) whatsappLogs.pop();
+              return;
+            }
 
             // Add AI response to contact history
             addMessageToHistory(sender, "assistant", replyText);
@@ -888,9 +1107,53 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
               message: replyText
             });
             if (whatsappLogs.length > 100) whatsappLogs.pop();
+
+            // Também responde por áudio (voz), além do texto, se habilitado nas configurações.
+            if (whatsappConfig.sendAudioReplies) {
+              try {
+                const speech = await synthesizeWhatsAppVoiceReply(replyText, {
+                  engine: whatsappConfig.ttsEngine,
+                  geminiApiKey: geminiApiKeyToUse,
+                  voice: whatsappConfig.ttsVoice,
+                  elevenLabsApiKey: whatsappConfig.elevenLabsApiKey,
+                  elevenLabsVoiceId: whatsappConfig.elevenLabsVoiceId
+                });
+                if (speech && WWebMessageMedia) {
+                  const audioMedia = new WWebMessageMedia(speech.mimeType, speech.buffer.toString("base64"), `resposta.${speech.extension}`);
+                  await wwebjsClient.sendMessage(formattedJid, audioMedia, { sendAudioAsVoice: true });
+                } else {
+                  whatsappLogs.unshift({
+                    id: Math.random().toString(36).substring(2, 11),
+                    timestamp: Date.now(),
+                    type: "error",
+                    sender,
+                    message: "Não foi possível gerar o áudio da resposta (a resposta em texto já foi enviada normalmente)."
+                  });
+                  if (whatsappLogs.length > 100) whatsappLogs.pop();
+                }
+              } catch (ttsErr: any) {
+                console.error("[WhatsApp] Erro ao gerar/enviar áudio de resposta:", ttsErr);
+                whatsappLogs.unshift({
+                  id: Math.random().toString(36).substring(2, 11),
+                  timestamp: Date.now(),
+                  type: "error",
+                  sender,
+                  message: `Falha ao enviar o áudio da resposta (o texto já foi enviado): ${ttsErr?.message || ttsErr}`
+                });
+                if (whatsappLogs.length > 100) whatsappLogs.pop();
+              }
+            }
           }
         } catch (err: any) {
           console.error("[WhatsApp] Erro no listener de mensagem com IA e Vendas:", err);
+          whatsappLogs.unshift({
+            id: Math.random().toString(36).substring(2, 11),
+            timestamp: Date.now(),
+            type: "error",
+            sender: "Sistema",
+            message: `Erro inesperado ao processar mensagem recebida: ${err?.message || err}`
+          });
+          if (whatsappLogs.length > 100) whatsappLogs.pop();
         }
       });
 
@@ -905,6 +1168,34 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       console.error("[WhatsApp] Erro no setup do Client:", err);
     }
   };
+
+  // ====== WHATSAPP (OSONE ZAP) ACCESS CONTROL ======
+  // A integração do WhatsApp roda uma sessão real do usuário (envia mensagens, lê contatos e
+  // conversas, e expõe a chave Gemini configurada). Sem isto, QUALQUER requisição HTTP ao
+  // servidor conseguia disparar mensagens em nome do usuário. Por padrão, só o próprio
+  // computador (loopback) pode acessar; para uso remoto (ex: túnel, deploy), defina
+  // WHATSAPP_ACCESS_TOKEN no .env e envie o header "x-whatsapp-token" com o mesmo valor.
+  const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || "";
+
+  const isLoopbackAddress = (addr: string | undefined): boolean => {
+    if (!addr) return false;
+    const clean = addr.replace("::ffff:", "");
+    return clean === "127.0.0.1" || clean === "::1" || clean === "localhost";
+  };
+
+  const requireWhatsAppAccess = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const remoteAddr = req.socket?.remoteAddress;
+    if (isLoopbackAddress(remoteAddr)) return next();
+
+    const providedToken = req.headers["x-whatsapp-token"];
+    if (WHATSAPP_ACCESS_TOKEN && providedToken === WHATSAPP_ACCESS_TOKEN) return next();
+
+    return res.status(403).json({
+      error: "Acesso ao OSONE ZAP (WhatsApp) negado. Esta área só é acessível localmente (a partir do próprio computador) ou com um WHATSAPP_ACCESS_TOKEN válido configurado no servidor."
+    });
+  };
+
+  app.use("/api/whatsapp", requireWhatsAppAccess);
 
   // WhatsApp Web API routes
   app.get("/api/whatsapp/status", (req, res) => {
@@ -983,10 +1274,15 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   });
 
   app.post("/api/whatsapp/config", (req, res) => {
-    const { enabled, geminiApiKey } = req.body;
-    
+    const { enabled, geminiApiKey, sendAudioReplies, ttsEngine, ttsVoice, elevenLabsApiKey, elevenLabsVoiceId } = req.body;
+
     if (enabled !== undefined) whatsappConfig.enabled = enabled;
     if (geminiApiKey !== undefined) whatsappConfig.geminiApiKey = geminiApiKey;
+    if (sendAudioReplies !== undefined) whatsappConfig.sendAudioReplies = !!sendAudioReplies;
+    if (ttsEngine === "gemini" || ttsEngine === "elevenlabs") whatsappConfig.ttsEngine = ttsEngine;
+    if (ttsVoice !== undefined) whatsappConfig.ttsVoice = ttsVoice;
+    if (elevenLabsApiKey !== undefined) whatsappConfig.elevenLabsApiKey = elevenLabsApiKey;
+    if (elevenLabsVoiceId !== undefined) whatsappConfig.elevenLabsVoiceId = elevenLabsVoiceId;
 
     whatsappLogs.unshift({
       id: Math.random().toString(36).substring(2, 11),
