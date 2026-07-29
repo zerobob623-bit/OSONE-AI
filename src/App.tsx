@@ -5871,7 +5871,10 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           clientApiKey: effectiveApiKey,
-          model: apiKeys.geminiModel || "gemini-3.5-flash",
+          // Geração de código sempre usa o melhor modelo GRATUITO disponível para código,
+          // independente do modelo "rápido" configurado nos Ajustes para o chat geral —
+          // qualidade de código não pode ficar refém de um modelo flash-lite mais fraco.
+          model: "gemini-3-flash-preview",
           prompt: contentsText,
           systemInstruction
         })
