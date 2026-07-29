@@ -2,12 +2,11 @@ import React, { useState } from 'react';
 import { 
   Video, Sparkles, Send, Play, Copy, Check, Info, FileText, Share2, CornerDownRight, 
   Trash2, AlertCircle, RefreshCw, Volume2, Bookmark, HelpCircle, BookOpen, Upload,
-  Zap, Brain, Film, Image as ImageIcon
+  Zap, Brain
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { ApiKeys } from '../types';
-import { AudiovisualSection } from './AudiovisualSection';
 
 interface ContentCreatorProps {
   apiKeys: ApiKeys;
@@ -90,9 +89,6 @@ export const SCIENTIFIC_APPROACHES = [
 ];
 
 export function ContentCreator({ apiKeys, addNotification, onSaveToVirtualWorkspace }: ContentCreatorProps) {
-  // Main Section Tab: 'scripts' | 'audiovisual'
-  const [mainSection, setMainSection] = useState<'scripts' | 'audiovisual'>('scripts');
-
   // Inputs
   const [channelTema, setChannelTema] = useState('');
   const [targetAudience, setTargetAudience] = useState('');
@@ -677,45 +673,8 @@ Responda RIGOROSAMENTE com um objeto JSON puro, sem textos adicionais, seguindo 
         </div>
       </div>
 
-      {/* TOP SECTION TAB SELECTOR */}
-      <div className="flex items-center gap-3 px-6 pt-2">
-        <button
-          onClick={() => setMainSection('scripts')}
-          className={cn(
-            "px-5 py-3 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer border",
-            mainSection === 'scripts'
-              ? "bg-orange-500/10 text-orange-400 border-orange-500/30 shadow-lg shadow-orange-500/10"
-              : "bg-white/[0.01] text-zinc-400 hover:text-white border-white/[0.05]"
-          )}
-        >
-          <Brain size={16} />
-          <span>Roteiros & Neuro-Ideias Virais</span>
-        </button>
-
-        <button
-          onClick={() => setMainSection('audiovisual')}
-          className={cn(
-            "px-5 py-3 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer border",
-            mainSection === 'audiovisual'
-              ? "bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border-amber-500/40 shadow-lg shadow-amber-500/10"
-              : "bg-white/[0.01] text-zinc-400 hover:text-white border-white/[0.05]"
-          )}
-        >
-          <Film size={16} className="text-amber-400" />
-          <span>Conteúdo Audiovisual (IA Imagens & Vídeo)</span>
-          <span className="text-[9px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/30 font-mono">
-            Novo
-          </span>
-        </button>
-      </div>
-
-      {mainSection === 'audiovisual' ? (
-        <div className="px-6 pb-12">
-          <AudiovisualSection apiKeys={apiKeys} addNotification={addNotification} />
-        </div>
-      ) : (
-        /* BODY CONTENT - BENTO GRID */
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 px-6 pb-12">
+      {/* BODY CONTENT - BENTO GRID */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 px-6 pb-12">
         {/* INPUT PANEL - 2 COLUMNS */}
         <div className="lg:col-span-2 flex flex-col gap-4">
           <div className="p-6 bg-[#161514] border border-white/[0.02] rounded-3xl flex flex-col gap-5 shadow-2xl relative overflow-hidden">
@@ -1744,7 +1703,6 @@ Responda RIGOROSAMENTE com um objeto JSON puro, sem textos adicionais, seguindo 
           </AnimatePresence>
         </div>
       </div>
-      )}
     </div>
   );
 }
