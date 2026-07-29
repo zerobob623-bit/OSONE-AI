@@ -55,7 +55,7 @@ Este documento registra todas as funcionalidades, rotas e módulos ativos no eco
 - **Análise Sensorial Aural (`AuralSense.tsx`)**: Análise e síntese avançada de áudio e sons ambiente.
 - **Evolução de Consciência Sensus (`SensusEvolutionPanel.tsx`)**: Métricas e acompanhamento do nível de vínculo e evolução do ecossistema Sensus.
 - **Painel TikTok Live (`TikTokLivePanel.tsx`)**: Gerenciamento e automação para transmissões ao vivo.
-- **Biblioteca de Som (`SoundLibrary.tsx`)**: Integração completa com a API pública do Freesound (`GET /api/library/search`) para busca de sons, músicas e efeitos sonoros gratuitos com filtros por palavra-chave, categorias (Música, Efeito Sonoro, Ambiente) e licenças (Creative Commons 0 e Atribuição). Inclui player de áudio inline, download direto, modal de cópia de aviso de atribuição de licença e seção de "Favoritos" persistida em `favorites.json` (`/api/library/favorites`).
+- **Biblioteca de Som (`SoundLibrary.tsx`)**: Efeitos sonoros e biblioteca de áudio.
 - **Alternador de Personas (`PersonaSwitcher.tsx`)**: Seleção de personalidades filosóficas e especializadas (Aristóteles, Sartre, Sócrates, etc.).
 - **Dossiê da IA e Perfil (`AiDossierModal.tsx`, `ProfileModal.tsx`, `SettingsModal.tsx`)**: Configurações de perfil, preferências de sistema e dossiê evolutivo.
 - **Modals de Confirmação de Segurança (`LocalAgentConfirmModal.tsx`, `TuyaConfirmModal.tsx`)**: Aprovação explícita do usuário para ações sensíveis de agente local e IoT.
