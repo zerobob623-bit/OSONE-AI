@@ -832,6 +832,41 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     return { buffer: pcmToWav(finalBuffer, 24000), mimeType: "audio/wav", extension: "wav" };
   }
 
+  // Em algumas distros Linux o Chromium baixado automaticamente pelo Puppeteer não roda
+  // (bibliotecas do sistema ausentes, download bloqueado por proxy/firewall no npm install,
+  // etc.). Se isso acontecer, tentamos usar um Chrome/Chromium já instalado no sistema em vez
+  // de depender só do binário embutido do Puppeteer.
+  function resolvePuppeteerExecutablePath(): string | undefined {
+    const envPath = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_PATH;
+    if (envPath && fs.existsSync(envPath)) return envPath;
+
+    const candidates = [
+      "/usr/bin/google-chrome-stable",
+      "/usr/bin/google-chrome",
+      "/usr/bin/chromium-browser",
+      "/usr/bin/chromium",
+      "/snap/bin/chromium",
+      "/usr/bin/microsoft-edge-stable"
+    ];
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) return candidate;
+    }
+    return undefined;
+  }
+
+  // Traduz os erros mais comuns de inicialização do Puppeteer/Chromium no Linux em uma
+  // mensagem que explica ao usuário o que instalar/fazer, em vez de só mostrar a stack trace.
+  function explainWhatsAppLaunchError(rawMessage: string): string {
+    const msg = rawMessage || "";
+    if (/error while loading shared libraries|libnss3|libatk|libgtk|libgbm|libasound|cannot open shared object file/i.test(msg)) {
+      return `${msg}\n\nDica: faltam bibliotecas do sistema que o Chromium precisa para rodar no Linux. Instale-as com:\nsudo apt-get install -y libnss3 libatk-bridge2.0-0 libgtk-3-0 libgbm1 libasound2 libxss1 libxshmfence1\n(No Fedora/RHEL: sudo dnf install -y nss atk at-spi2-atk gtk3 mesa-libgbm alsa-lib)\nDepois clique em "Tentar Novamente".`;
+    }
+    if (/Failed to launch the browser process|spawn .*ENOENT|no usable sandbox/i.test(msg)) {
+      return `${msg}\n\nDica: o Chromium do Puppeteer pode não ter sido baixado corretamente durante o "npm install" (rede/proxy bloqueando o download). Tente instalar o Google Chrome ou Chromium do sistema (ex: sudo apt-get install -y chromium-browser) e reiniciar o servidor — o OSONE detecta e usa automaticamente um Chrome/Chromium já instalado no sistema.`;
+    }
+    return msg;
+  }
+
   // Helper function to initialize WhatsApp Web Client via Puppeteer
   const initializeWhatsAppWebClient = async () => {
     if (wwebjsClient) {
@@ -861,6 +896,11 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     } catch (_) {}
 
     try {
+      const detectedExecutablePath = resolvePuppeteerExecutablePath();
+      if (detectedExecutablePath) {
+        console.log(`[WhatsApp] Usando Chrome/Chromium do sistema: ${detectedExecutablePath}`);
+      }
+
       wwebjsClient = new WWebClient({
         authStrategy: new WWebLocalAuth({
           clientId: "osone_copilot_session",
@@ -868,6 +908,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
         }),
         puppeteer: {
           headless: true,
+          ...(detectedExecutablePath ? { executablePath: detectedExecutablePath } : {}),
           args: [
             "--no-sandbox",
             "--disable-setuid-sandbox",
@@ -1159,12 +1200,12 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
 
       wwebjsClient.initialize().catch((err: any) => {
         wwebjsStatus = "erro";
-        wwebjsLastError = err?.message || String(err);
+        wwebjsLastError = explainWhatsAppLaunchError(err?.message || String(err));
         console.error("[WhatsApp] Erro na inicialização do Client:", err);
       });
     } catch (err: any) {
       wwebjsStatus = "erro";
-      wwebjsLastError = err?.message || String(err);
+      wwebjsLastError = explainWhatsAppLaunchError(err?.message || String(err));
       console.error("[WhatsApp] Erro no setup do Client:", err);
     }
   };
