@@ -108,7 +108,7 @@ async function startServer() {
       msg.toLowerCase().includes("temporary") ||
       msg.toLowerCase().includes("temporarily")
     ) {
-      return "O modelo da API do Gemini está temporariamente congestionado com alta demanda global (Erro 503 / UNAVAILABLE). Por favor, aguarde alguns segundos e clique em enviar novamente, ou selecione outro modelo (como gemini-2.5-flash ou gemini-1.5-flash) nas Configurações (ícone de engrenagem no cabeçalho superior) para obter respostas mais estáveis.";
+      return "O modelo da API do Gemini está temporariamente congestionado com alta demanda global (Erro 503 / UNAVAILABLE). Por favor, aguarde alguns segundos e clique em enviar novamente, ou selecione outro modelo (como gemini-3.6-flash ou gemini-3.5-flash-lite) nas Configurações (ícone de engrenagem no cabeçalho superior) para obter respostas mais estáveis.";
     }
     return sanitizeMessageOfKeys(msg);
   };
@@ -788,7 +788,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     let selectedVoice = opts.voice || "Kore";
     if (!supportedGeminiVoices.includes(selectedVoice)) selectedVoice = "Kore";
 
-    const candidateModels = ["gemini-3.1-flash-tts-preview", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash"];
+    const candidateModels = ["gemini-3.1-flash-tts-preview", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
     const chunks = splitIntoTtsChunks(cleanText, 700);
     const buffers: Buffer[] = [];
     let usedFallback = false;
@@ -2393,8 +2393,7 @@ Retorne SOMENTE o objeto JSON conforme o esquema.
           "gemini-3.1-flash-tts-preview",
           "gemini-3.6-flash",
           "gemini-3.5-flash-lite",
-          "gemini-3.1-flash-lite",
-          "gemini-2.5-flash"
+          "gemini-3.1-flash-lite"
         ];
 
         for (const modelName of candidateModels) {
@@ -2494,12 +2493,11 @@ ${processedChunk}`;
 
   // Helper to run content generation with automated fallbacks
   async function generateContentWithFallback(ai: GoogleGenAI, params: { model: string; contents: any; config?: any }) {
-    const primaryModel = params.model || "gemini-2.5-flash";
-    
-    // Tiered candidates using standard highly-available Gemini 2.5 and 3.x models
+    const primaryModel = params.model || "gemini-3.6-flash";
+
+    // Tiered candidates using standard highly-available Gemini 3.x models
     const modelsToTry = [
-      primaryModel, 
-      "gemini-2.5-flash",
+      primaryModel,
       "gemini-3.6-flash",
       "gemini-3.5-flash-lite",
       "gemini-3.1-flash-lite",
@@ -2542,12 +2540,11 @@ ${processedChunk}`;
 
   // Helper to run content stream generation with automated fallbacks
   async function generateContentStreamWithFallback(ai: GoogleGenAI, params: { model: string; contents: any; config?: any }) {
-    const primaryModel = params.model || "gemini-2.5-flash";
-    
-    // Tiered candidates using standard highly-available Gemini 2.5 and 3.x models
+    const primaryModel = params.model || "gemini-3.6-flash";
+
+    // Tiered candidates using standard highly-available Gemini 3.x models
     const modelsToTry = [
-      primaryModel, 
-      "gemini-2.5-flash",
+      primaryModel,
       "gemini-3.6-flash",
       "gemini-3.5-flash-lite",
       "gemini-3.1-flash-lite",
@@ -2587,7 +2584,7 @@ ${processedChunk}`;
     throw lastError;
   }
 
-  // POST endpoint for high-quality, server-run intelligence completion using gemini-2.5-flash
+  // POST endpoint for high-quality, server-run intelligence completion using gemini-3.6-flash
   app.post("/api/chat-intel", async (req, res) => {
     try {
       const { historyContents, systemInstruction, clientApiKey } = req.body;
@@ -2773,9 +2770,9 @@ ${processedChunk}`;
         return res.status(400).json({ error: "Chave API do Gemini não definida. Insira uma chave válida nos Ajustes." });
       }
 
-      const requestedModel = model || "gemini-2.5-flash";
+      const requestedModel = model || "gemini-3.6-flash";
 
-      // Helper function to try generating with gemini-2.5-flash (generateContent) via direct REST API
+      // Helper function to try generating with Gemini (generateContent) via direct REST API
       const tryGeminiModelREST = async (modelName: string) => {
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
         const payload = {
@@ -2894,8 +2891,7 @@ ${processedChunk}`;
         requestedModel,
         "gemini-3.6-flash",
         "gemini-3.5-flash-lite",
-        "gemini-3.1-flash-lite",
-        "gemini-2.5-flash"
+        "gemini-3.1-flash-lite"
       ].filter(Boolean);
 
       const uniqueImageCandidates = Array.from(new Set(candidates));
@@ -3062,7 +3058,7 @@ ${processedChunk}`;
       let providerName = "Gemini Flash Image";
 
       try {
-        const candidates = ["gemini-3.5-flash", "gemini-2.5-flash", "imagen-3.0-generate-002"];
+        const candidates = ["gemini-3.6-flash", "gemini-3.5-flash", "imagen-3.0-generate-002"];
         let generated = false;
 
         if (apiKey) {
