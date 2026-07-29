@@ -22,21 +22,11 @@ export async function connectToLiveBridge(options: {
   };
   apiKey: string;
 }): Promise<LiveBridgeSession> {
-  // 1. Resolver Chave de API (usa chave enviada ou busca do endpoint do servidor)
-  let effectiveApiKey = options.apiKey?.trim();
-  if (!effectiveApiKey) {
-    try {
-      const res = await fetch("/api/gemini/key");
-      if (res.ok) {
-        const data = await res.json();
-        if (data.apiKey) {
-          effectiveApiKey = data.apiKey;
-        }
-      }
-    } catch (e) {
-      console.warn("OSONE G5: Não foi possível obter chave via /api/gemini/key:", e);
-    }
-  }
+  // 1. Resolver Chave de API. Usamos SOMENTE a chave que o próprio usuário configurou nos
+  // ajustes do OSONE — nunca buscamos a chave do servidor aqui, pois isso a exporia em texto
+  // puro para qualquer visitante do app (a chave do servidor só é usada server-side, dentro
+  // do proxy WebSocket /api/live-ws, que nunca a devolve ao cliente).
+  const effectiveApiKey = options.apiKey?.trim();
 
   // 2. Detectar se está rodando em ambiente Serverless/Vercel
   const isVercelServerless = 
@@ -51,7 +41,7 @@ export async function connectToLiveBridge(options: {
     console.log("OSONE G5 Client: Conectando diretamente ao Gemini Live API (Modo Serverless / Vercel)...");
     
     if (!key) {
-      const err = new Error("Chave API do Gemini não fornecida. Insira sua chave nos ajustes do OSONE ou configure GEMINI_API_KEY no Vercel.");
+      const err = new Error("Chave API do Gemini não fornecida. Nesta hospedagem, insira sua própria chave do Gemini nos ajustes do OSONE para usar a voz em tempo real.");
       if (options.callbacks?.onerror) options.callbacks.onerror(err);
       throw err;
     }
