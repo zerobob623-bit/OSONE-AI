@@ -106,6 +106,7 @@ import osoneOrbImage from './assets/images/osone_constellation_orb_1782154846239
 import { SoundEffect, DrawingObject, User } from './types';
 import { INTIMATE_QUESTIONS } from './constants/osoneConstants';
 import { useTuyaSmartHome } from './hooks/useTuyaSmartHome';
+import { buildCodeEditSystemInstruction, applyModelCodeResponse } from './lib/codeEdits';
 import { useLocalAgent } from './hooks/useLocalAgent';
 import { useTikTokLive } from './hooks/useTikTokLive';
 import { useSensusEvolution } from './hooks/useSensusEvolution';
@@ -5857,11 +5858,13 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
       const activeFile = (repoFiles && repoFiles.length > 0) ? repoFiles[0] : null;
       const currentCode = activeFile ? activeFile.content : '';
 
-      const systemInstruction = "Você é o arquiteto de software de elite do OSONE Studio. Sua missão é gerar ou refatorar código completo e totalmente funcional (HTML5, CSS, JS, React, Tailwind, Python ou similar). IMPORTANTE: Retorne APENAS o código fonte cru modificado/gerado, sem explicações externas, sem introduções e sem marcadores de texto fora do código.";
+      const systemInstruction = buildCodeEditSystemInstruction(
+        "Você é o arquiteto de software de elite do OSONE Studio. Sua missão é gerar ou editar código (HTML5, CSS, JS, React, Tailwind, Python ou similar)."
+      );
 
       const contentsText = currentCode.length > 20
         ? `CÓDIGO FONTE ATUAL NO REPOSITÓRIO:\n\n${currentCode}\n\nINSTRUÇÕES DO USUÁRIO PARA ALTERAÇÃO/CRIAÇÃO:\n${promptText}`
-        : promptText;
+        : `Não há código existente ainda (arquivo vazio ou muito curto). Crie do zero.\n\nINSTRUÇÕES DO USUÁRIO:\n${promptText}`;
 
       const response = await fetch("/api/generate", {
         method: "POST",
@@ -5870,7 +5873,8 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
           clientApiKey: effectiveApiKey,
           model: apiKeys.geminiModel || "gemini-3.5-flash",
           prompt: contentsText,
-          systemInstruction
+          systemInstruction,
+          responseMimeType: "application/json"
         })
       });
 
@@ -5879,11 +5883,8 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
       }
 
       const data = await response.json();
-      let text = data.text;
-      if (text) {
-        if (text.startsWith("```")) {
-          text = text.replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '').trim();
-        }
+      if (data.text) {
+        const { content: newContent, summary, hadFailures } = applyModelCodeResponse(data.text, currentCode);
 
         if (!Array.isArray(repoFiles) || repoFiles.length === 0) {
           repoFiles = [{
@@ -5892,18 +5893,23 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
             language: 'html',
             isMain: true,
             updatedAt: Date.now(),
-            content: text
+            content: newContent
           }];
         } else {
           const mainIdx = repoFiles.findIndex((f: any) => f.name?.toLowerCase() === 'index.html' || f.id === 'main-app' || f.isMain);
           const targetIdx = mainIdx !== -1 ? mainIdx : 0;
-          repoFiles[targetIdx].content = text;
+          repoFiles[targetIdx].content = newContent;
           repoFiles[targetIdx].updatedAt = Date.now();
         }
 
         localStorage.setItem('osone_code_repository_files', JSON.stringify(repoFiles));
         window.dispatchEvent(new Event('osone_repository_updated'));
-        addNotification("Código gerado e atualizado no Repositório do OSONE!", "success");
+
+        if (hadFailures) {
+          addNotification(`Código atualizado com ressalvas: ${summary}`, "info");
+        } else {
+          addNotification(summary ? `Código atualizado! ${summary}` : "Código gerado e atualizado no Repositório do OSONE!", "success");
+        }
       }
     } catch (error: any) {
       console.error("Erro na geração do Repositório de Código:", error);
