@@ -1568,7 +1568,15 @@ export default function App() {
     };
     try {
       const saved = localStorage.getItem('osone_api_keys');
-      if (saved) return { ...defaultKeys, ...JSON.parse(saved) };
+      if (saved) {
+        const merged = { ...defaultKeys, ...JSON.parse(saved) };
+        // Gemini 2.5 foi removido do OSONE: qualquer preferência salva anteriormente com esse
+        // modelo é migrada automaticamente para o melhor modelo disponível, sem exigir ação do usuário.
+        if ((merged.geminiModel as string) === 'gemini-2.5-flash') {
+          merged.geminiModel = 'gemini-3.6-flash';
+        }
+        return merged;
+      }
     } catch (e) {
       console.error("Failed to parse API keys:", e);
     }
@@ -4503,7 +4511,7 @@ ${isBad
                 id: 'useGemini-file',
                 name: 'useGemini.ts',
                 type: 'file',
-                content: 'import { useState } from "react";\nimport { GoogleGenAI } from "@google/genai";\n\nexport function useGemini() {\n  const [loading, setLoading] = useState(false);\n  const [response, setResponse] = useState("");\n  const [error, setError] = useState<string | null>(null);\n\n  const generateContent = async (prompt: string, apiKey: string) => {\n    if (!apiKey) {\n      setError("API Key is required");\n      return;\n    }\n    \n    setLoading(true);\n    setError(null);\n    \n    try {\n      const ai = new GoogleGenAI({ apiKey });\n      const result = await ai.models.generateContent({\n        model: "gemini-2.5-flash",\n        contents: prompt,\n      });\n      \n      setResponse(result.text || "");\n    } catch (err: any) {\n      setError(err.message || "An error occurred");\n    } finally {\n      setLoading(false);\n    }\n  };\n\n  return { generateContent, response, loading, error };\n}'
+                content: 'import { useState } from "react";\nimport { GoogleGenAI } from "@google/genai";\n\nexport function useGemini() {\n  const [loading, setLoading] = useState(false);\n  const [response, setResponse] = useState("");\n  const [error, setError] = useState<string | null>(null);\n\n  const generateContent = async (prompt: string, apiKey: string) => {\n    if (!apiKey) {\n      setError("API Key is required");\n      return;\n    }\n    \n    setLoading(true);\n    setError(null);\n    \n    try {\n      const ai = new GoogleGenAI({ apiKey });\n      const result = await ai.models.generateContent({\n        model: "gemini-3.6-flash",\n        contents: prompt,\n      });\n      \n      setResponse(result.text || "");\n    } catch (err: any) {\n      setError(err.message || "An error occurred");\n    } finally {\n      setLoading(false);\n    }\n  };\n\n  return { generateContent, response, loading, error };\n}'
               }
             ]
           },
@@ -6029,7 +6037,7 @@ ${workspaceText}`;
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           clientApiKey: effectiveApiKey,
-          model: apiKeys.geminiModel || "gemini-2.5-flash",
+          model: apiKeys.geminiModel || "gemini-3.6-flash",
           prompt: userContentPayload,
           systemInstruction,
           responseMimeType: "application/json"
@@ -7536,7 +7544,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                       clientApiKey: effectiveApiKey,
-                      model: 'gemini-2.5-flash',
+                      model: 'gemini-3.6-flash',
                       prompt: prompt,
                       config: {
                         numberOfImages: 1,
@@ -10324,7 +10332,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({
                               clientApiKey: effectiveApiKey,
-                              model: 'gemini-2.5-flash',
+                              model: 'gemini-3.6-flash',
                               prompt: prompt,
                               config: {
                                 numberOfImages: 1,
