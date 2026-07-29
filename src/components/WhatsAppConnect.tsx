@@ -335,7 +335,7 @@ export function WhatsAppConnect({ onStatusChange, className = '' }: WhatsAppConn
             </div>
 
             <h4 className="text-base font-bold text-red-400 mb-1">Falha na Conexão</h4>
-            <p className="text-xs text-red-300/80 mb-4 max-w-sm font-mono break-all bg-black/40 p-3 rounded-xl border border-red-500/20">
+            <p className="text-xs text-red-300/80 mb-4 max-w-sm text-left font-mono whitespace-pre-line break-words bg-black/40 p-3 rounded-xl border border-red-500/20">
               {errorMsg || "Não foi possível inicializar o navegador Puppeteer local."}
             </p>
 
