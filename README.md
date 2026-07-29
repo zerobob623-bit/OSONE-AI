@@ -1,4 +1,4 @@
-# OSONE - Inteligência Artificial & Automação Tuya Cloud
+# OSONE - Sua Inteligência Artificial Geral & AUTOMAÇÃO
 
 Este projeto integra o OSONE (baseado em React, Express e Google Gemini) com a plataforma oficial **Tuya Cloud IoT Platform (Tuya OpenAPI)** para controle seguro de dispositivos físicos reais.
 
