@@ -47,3 +47,13 @@ Ao implantar este projeto na **Vercel**, você **NÃO** precisa enviar nenhum ar
    - `TUYA_BASE_URL` (ex: `https://openapi.tuyaus.com`)
    - `TUYA_USER_UID`
 4. Salve e re-faça o deploy. A Vercel injetará automaticamente as variáveis no `process.env` do ambiente serverless.
+
+---
+
+### ⚠️ Limitação Conhecida: Voz em Tempo Real (Gemini Live / ElevenLabs) na Vercel
+
+A Vercel roda `server.ts` como uma função serverless (`api/index.ts`), que **não suporta conexões WebSocket de longa duração**. Isso afeta diretamente os proxies `/api/live-ws` (Gemini Live) e `/api/elevenlabs-ws` (ElevenLabs), além da função "Transferir para Celular" (handoff), que dependem desse tipo de conexão.
+
+- **ElevenLabs**: já resolvido. Se o usuário configurar sua **própria chave da ElevenLabs** em Configurações do app, o navegador conecta **direto** na ElevenLabs (`wss://api.elevenlabs.io/...`), sem passar pelo nosso backend — funciona normalmente na Vercel. Sem chave própria, o app cai no proxy do backend usando a `ELEVENLABS_API_KEY` do `.env`/Vercel, que só funciona em hospedagem com servidor persistente (local, Electron, ou self-host fora da Vercel).
+- **Gemini Live**: já resolvido, com o mesmo princípio. Com **chave própria do Gemini** configurada em Configurações, o navegador conecta direto na API do Gemini (`src/lib/live-bridge.ts`) e funciona em qualquer hospedagem, inclusive Vercel. Sem chave própria, cai no proxy `/api/live-ws` do backend usando a `GEMINI_API_KEY` do servidor — só funciona com servidor persistente (não na Vercel). **Importante**: o backend nunca devolve a chave do servidor para o navegador em nenhum dos dois casos — se você não configurar sua própria chave, a voz em tempo real simplesmente não fica disponível na Vercel, em vez de expor a chave do `.env` para qualquer visitante do app.
+- **Handoff entre dispositivos** ("Transferir para Celular"): ainda depende do proxy WebSocket do backend e **não funciona quando deployado na Vercel** — funciona normalmente local, no Electron, ou em qualquer hospedagem com servidor Node persistente.
