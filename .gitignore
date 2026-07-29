@@ -1,7 +1,9 @@
 node_modules
 dist
+dist-desktop
 .env
 .env.local
 .env.*.local
 .wwebjs_auth
 .wwebjs_cache
+firebase-applet-config.json
