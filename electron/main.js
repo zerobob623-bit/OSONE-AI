@@ -1,10 +1,17 @@
 import { app, BrowserWindow, shell } from 'electron';
-import { autoUpdater } from 'electron-updater';
+import electronUpdaterPkg from 'electron-updater';
 import path from 'path';
 import http from 'http';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
+
+// electron-updater é um módulo CommonJS cujo export 'autoUpdater' é uma propriedade getter
+// (lazy-loaded), o que o cjs-module-lexer do Node não detecta de forma confiável como export
+// nomeado em contexto ESM — importar como named export ("import { autoUpdater } from ...")
+// derruba o processo principal com SyntaxError assim que o app inicia. Importar o pacote
+// inteiro e desestruturar funciona porque aciona o getter normalmente.
+const { autoUpdater } = electronUpdaterPkg;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
