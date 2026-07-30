@@ -48,6 +48,10 @@ const EMPTY_STATE: HierarchicalMemoryState = {
 const MIN_NEW_MESSAGES_TO_CONSOLIDATE = 6;
 const MIN_MINUTES_BETWEEN_CONSOLIDATIONS = 10;
 const MAX_MESSAGES_PER_CONSOLIDATION_WINDOW = 40;
+// Piso de segurança: mesmo com backlog de mensagens acima do limiar, nunca tenta de novo antes
+// disso desde a última tentativa (sucesso ou falha) — evita martelar a API a cada nova mensagem
+// enquanto um erro persistir (chave inválida, rate limit, rede instável).
+const MIN_RETRY_COOLDOWN_MINUTES = 2;
 
 function getStorageKey(userId: string): string {
   return `osone_hierarchical_memory_${userId}`;
@@ -347,9 +351,11 @@ Retorne ESTRITAMENTE este JSON:
     const newMessageCount = history.length - s.lastConsolidatedMessageCount;
     const minutesSinceLast = (Date.now() - s.lastConsolidatedAt) / 60000;
 
+    const pastCooldown = s.lastConsolidatedAt === 0 || minutesSinceLast >= MIN_RETRY_COOLDOWN_MINUTES;
     const shouldRun =
-      newMessageCount >= MIN_NEW_MESSAGES_TO_CONSOLIDATE ||
-      (newMessageCount >= 2 && minutesSinceLast >= MIN_MINUTES_BETWEEN_CONSOLIDATIONS);
+      pastCooldown &&
+      (newMessageCount >= MIN_NEW_MESSAGES_TO_CONSOLIDATE ||
+        (newMessageCount >= 2 && minutesSinceLast >= MIN_MINUTES_BETWEEN_CONSOLIDATIONS));
 
     if (!shouldRun) return;
 
@@ -361,6 +367,9 @@ Retorne ESTRITAMENTE este JSON:
       persist({ tiers: next.tiers, lastConsolidatedMessageCount: history.length, lastConsolidatedAt: Date.now() });
     } catch (e) {
       console.error('Erro no Agente de Consolidação Reflexiva:', e);
+      // Registra o horário da tentativa mesmo em falha, para não martelar a API a cada
+      // nova mensagem enquanto o erro persistir (ex: chave inválida, rate limit, rede instável).
+      persist({ ...s, lastConsolidatedAt: Date.now() });
     } finally {
       isConsolidatingRef.current = false;
     }
