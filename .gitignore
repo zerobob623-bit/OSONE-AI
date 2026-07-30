@@ -18,3 +18,6 @@ knowledge-base.json
 config.json
 audit.log
 trash/
+
+# Google Home OAuth account-linking tokens
+google-home-tokens.json

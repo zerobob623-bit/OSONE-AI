@@ -4,7 +4,6 @@ import { X, Cpu, Palette, Key, Smartphone, Info, Power, Activity, CheckCircle2, 
 import { cn } from '../lib/utils';
 import { ApiKeys, OrbStyle, AppTheme, AIProfile, VoiceModulation } from '../types';
 import { PERSONAS, Persona } from './PersonaSwitcher';
-import { googleHomeService } from '../services/googleHomeService';
 
 const VOICE_DETAILS = [
   { id: 'Kore', name: 'Kore', desc: 'Feminina • Doce, expressiva e natural', category: 'Femininas' },
@@ -299,21 +298,28 @@ export const SettingsModal = ({
 
   const handleTestConnection = async () => {
     setConnectionStatus('testing');
-    setConnectionMessage('Iniciando handshake com Google Home Graph...');
-    
+    setConnectionMessage('Verificando configuração do Google Home no servidor...');
+
     try {
-      const result = await googleHomeService.verifyConnection(keys);
-      if (result.success) {
+      const res = await fetch('/api/google-home/status');
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.configured) {
         setConnectionStatus('connected');
-        setConnectionMessage(result.message);
+        setConnectionMessage('GOOGLE_HOME_CLIENT_ID e GOOGLE_HOME_CLIENT_SECRET configurados no servidor. Se você já vinculou a conta pelo app Google Home, os comandos por voz já devem funcionar.');
       } else {
         setConnectionStatus('error');
-        setConnectionMessage(result.message);
+        setConnectionMessage('GOOGLE_HOME_CLIENT_ID e/ou GOOGLE_HOME_CLIENT_SECRET ainda não estão definidos nas variáveis de ambiente do servidor. Siga o guia de configuração abaixo.');
       }
     } catch (error) {
       setConnectionStatus('error');
-      setConnectionMessage('Falha crítica na rede. Tente novamente.');
+      setConnectionMessage('Falha de rede ao consultar /api/google-home/status.');
     }
+  };
+
+  const googleHomeUrls = {
+    authorize: `${typeof window !== 'undefined' ? window.location.origin : ''}/api/google-home/authorize`,
+    token: `${typeof window !== 'undefined' ? window.location.origin : ''}/api/google-home/token`,
+    fulfillment: `${typeof window !== 'undefined' ? window.location.origin : ''}/api/google-home/fulfillment`
   };
 
   const handleVerifyGemini = async () => {
@@ -1537,36 +1543,15 @@ export const SettingsModal = ({
                         </div>
                         <div>
                           <h3 className="text-sm font-bold text-her-ink">Google Home</h3>
-                          <p className="text-[10px] text-her-muted uppercase tracking-widest">Sincronização Cloud-to-Cloud</p>
+                          <p className="text-[10px] text-her-muted uppercase tracking-widest">Smart Home Action Real (Google Assistant)</p>
                         </div>
                       </div>
                       <p className="text-xs text-her-muted leading-relaxed font-light">
-                        Integre o OSONE à sua infraestrutura Google Home. Controle dispositivos, execute rotinas e monitore sua casa via comandos neurais.
+                        Controla os MESMOS dispositivos Tuya já conectados no OSONE através do Google Assistant/Google Home — nenhuma simulação. Exige que você crie o seu próprio projeto no Actions on Google Console (isso só pode ser feito por você, é uma etapa fora do OSONE). Siga o guia abaixo.
                       </p>
                     </div>
 
                     <div className="space-y-4">
-                      <div className="space-y-2">
-                        <label className="block text-[9px] uppercase tracking-[0.2em] text-her-muted pl-1 font-bold">Google Project ID</label>
-                        <input 
-                          type="text"
-                          value={keys.googleHomeId || ''}
-                          onChange={(e) => setKeys({ ...keys, googleHomeId: e.target.value })}
-                          className="w-full bg-white/[0.02] border border-white/[0.05] rounded-2xl px-5 py-3 focus:outline-none focus:border-her-accent/30 transition-all text-sm font-light text-her-ink/80"
-                          placeholder="osone-home-automation"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="block text-[9px] uppercase tracking-[0.2em] text-her-muted pl-1 font-bold">OAuth Access Token</label>
-                        <input 
-                          type="password"
-                          value={keys.googleHomeToken || ''}
-                          onChange={(e) => setKeys({ ...keys, googleHomeToken: e.target.value })}
-                          className="w-full bg-white/[0.02] border border-white/[0.05] rounded-2xl px-5 py-3 focus:outline-none focus:border-her-accent/30 transition-all text-sm font-light text-her-ink/80"
-                          placeholder="ya29.a0AfH6S..."
-                        />
-                      </div>
-                      
                       <button
                         onClick={handleTestConnection}
                         disabled={connectionStatus === 'testing'}
@@ -1586,59 +1571,86 @@ export const SettingsModal = ({
                         ) : connectionStatus === 'connected' ? (
                           <>
                             <CheckCircle2 size={14} />
-                            Conta Vinculada
+                            Configurado no Servidor
                           </>
                         ) : (
                           <>
                             <Activity size={14} />
-                            Verificar Credenciais
+                            Verificar Configuração do Servidor
                           </>
                         )}
                       </button>
 
                       {connectionStatus !== 'idle' && (
-                      <div className={cn(
-                        "px-4 py-3 rounded-xl text-[10px] flex flex-col gap-2 animate-in fade-in slide-in-from-top-1",
-                        connectionStatus === 'connected' ? "bg-green-500/5 text-green-400" :
-                        connectionStatus === 'error' ? "bg-red-500/5 text-red-400" :
-                        "bg-white/5 text-her-muted"
-                      )}>
-                        <div className="flex items-start gap-2">
-                          {connectionStatus === 'error' ? <AlertCircle size={12} className="shrink-0 mt-0.5" /> : <CheckCircle2 size={12} className="shrink-0 mt-0.5" />}
-                          <span className="leading-relaxed font-medium uppercase tracking-wider">{connectionMessage}</span>
+                        <div className={cn(
+                          "px-4 py-3 rounded-xl text-[10px] flex flex-col gap-2 animate-in fade-in slide-in-from-top-1",
+                          connectionStatus === 'connected' ? "bg-green-500/5 text-green-400" :
+                          connectionStatus === 'error' ? "bg-red-500/5 text-red-400" :
+                          "bg-white/5 text-her-muted"
+                        )}>
+                          <div className="flex items-start gap-2">
+                            {connectionStatus === 'error' ? <AlertCircle size={12} className="shrink-0 mt-0.5" /> : <CheckCircle2 size={12} className="shrink-0 mt-0.5" />}
+                            <span className="leading-relaxed font-medium normal-case tracking-normal">{connectionMessage}</span>
+                          </div>
                         </div>
-                        {connectionStatus === 'error' && (
-                          <button 
-                            onClick={() => {
-                              setKeys({ ...keys, googleHomeToken: '' });
-                              setConnectionStatus('idle');
-                            }}
-                            className="text-[8px] uppercase tracking-[0.2em] font-bold text-her-accent hover:underline text-left mt-1"
-                          >
-                            Recuperar Conta / Limpar Cache
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                      )}
+                    </div>
 
-                  <div className="bg-white/5 p-5 rounded-2xl space-y-3 border border-white/5">
+                    <div className="bg-white/5 p-5 rounded-2xl space-y-3 border border-white/5">
                       <div className="flex items-center gap-2">
                         <Info size={14} className="text-her-accent" />
-                        <span className="text-[9px] font-bold uppercase tracking-widest text-her-ink">Guia de Recuperação</span>
+                        <span className="text-[9px] font-bold uppercase tracking-widest text-her-ink">URLs para colar no Actions on Google Console</span>
+                      </div>
+                      {([
+                        { label: 'Authorization URL', value: googleHomeUrls.authorize },
+                        { label: 'Token URL', value: googleHomeUrls.token },
+                        { label: 'Fulfillment URL', value: googleHomeUrls.fulfillment }
+                      ]).map((item) => (
+                        <div key={item.label} className="space-y-1">
+                          <span className="text-[9px] uppercase tracking-wider text-her-muted/60 font-bold">{item.label}</span>
+                          <div className="flex items-center gap-2">
+                            <code className="flex-1 text-[10px] font-mono text-her-ink/80 bg-black/30 px-3 py-2 rounded-xl truncate">{item.value}</code>
+                            <button
+                              type="button"
+                              onClick={() => navigator.clipboard?.writeText(item.value)}
+                              className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-her-muted hover:text-white transition-all shrink-0"
+                              title="Copiar"
+                            >
+                              <Copy size={12} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                      <p className="text-[10px] text-amber-400/80 leading-relaxed pt-1">
+                        ⚠️ O Google exige HTTPS público (não aceita localhost) — essas URLs só funcionam depois que o OSONE estiver publicado num domínio real (ex: Vercel).
+                      </p>
+                    </div>
+
+                    <div className="bg-white/5 p-5 rounded-2xl space-y-3 border border-white/5">
+                      <div className="flex items-center gap-2">
+                        <Info size={14} className="text-her-accent" />
+                        <span className="text-[9px] font-bold uppercase tracking-widest text-her-ink">Guia de Configuração</span>
                       </div>
                       <ul className="space-y-2 text-[10px] text-her-muted/60 leading-relaxed list-none pl-1">
                         <li className="flex gap-2 border-l border-white/10 pl-3">
                           <span className="text-her-accent font-bold">01</span>
-                          Verifique se o seu Token OAuth está ativo no Google Cloud Console.
+                          Crie um projeto em console.actions.google.com e escolha "Smart Home".
                         </li>
                         <li className="flex gap-2 border-l border-white/10 pl-3">
                           <span className="text-her-accent font-bold">02</span>
-                          Certifique-se de que o "Home Graph API" está habilitado no seu projeto.
+                          Em "Account Linking", cole as 3 URLs acima e gere um Client ID/Secret.
                         </li>
                         <li className="flex gap-2 border-l border-white/10 pl-3">
                           <span className="text-her-accent font-bold">03</span>
-                          Se o login persistir bloqueado, limpe o token acima e gere um novo.
+                          Defina GOOGLE_HOME_CLIENT_ID e GOOGLE_HOME_CLIENT_SECRET (o mesmo par gerado no passo 02) nas variáveis de ambiente do servidor OSONE e reinicie-o.
+                        </li>
+                        <li className="flex gap-2 border-l border-white/10 pl-3">
+                          <span className="text-her-accent font-bold">04</span>
+                          Habilite a "Home Graph API" no projeto do Google Cloud vinculado.
+                        </li>
+                        <li className="flex gap-2 border-l border-white/10 pl-3">
+                          <span className="text-her-accent font-bold">05</span>
+                          No app Google Home do celular: + → Configurar dispositivo → "Funciona com o Google" → procure seu projeto de teste e autorize na tela que o OSONE abrir.
                         </li>
                       </ul>
                     </div>
