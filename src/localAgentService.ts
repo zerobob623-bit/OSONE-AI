@@ -961,6 +961,122 @@ const handleExec = (req: Request, res: Response) => {
   });
 };
 
+// ============================================================================
+// SEÇÃO 10: CONTROLE DE MOUSE (CONTROLE POR VISÃO / GESTOS DE MÃO)
+// ============================================================================
+
+/**
+ * GET /screen-info - Retorna as dimensões da tela virtual (união de todos os monitores
+ * conectados), usada pelo frontend para mapear a posição da mão detectada pela câmera para
+ * coordenadas absolutas de tela, incluindo monitores estendidos.
+ */
+const handleGetScreenInfo = async (_req: Request, res: Response) => {
+  const platform = process.platform;
+  try {
+    if (platform === 'linux') {
+      const { stdout } = await runShell(`xdotool getdisplaygeometry`);
+      const [width, height] = stdout.trim().split(/\s+/).map(Number);
+      return res.status(200).json({ width, height, offsetX: 0, offsetY: 0, monitors: 'union' });
+    }
+    if (platform === 'win32') {
+      const script = `Add-Type -AssemblyName System.Windows.Forms; $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen; Write-Output "$($vs.Width)|$($vs.Height)|$($vs.X)|$($vs.Y)"`;
+      const { stdout } = await runShell(`powershell -NoProfile -Command "${script}"`);
+      const [width, height, offsetX, offsetY] = stdout.trim().split('|').map(Number);
+      return res.status(200).json({ width, height, offsetX, offsetY, monitors: 'union' });
+    }
+    return res.status(501).json({ error: `Controle de mouse ainda não suportado na plataforma '${platform}'.` });
+  } catch (err: any) {
+    logAudit('ERROR', 'SCREEN_INFO_FAILED', err.message, { platform });
+    return res.status(500).json({ error: `Não foi possível obter as dimensões da tela: ${err.message}. No Linux é necessário ter o pacote 'xdotool' instalado.` });
+  }
+};
+
+/** Monta o comando PowerShell que dispara um evento nativo de mouse via user32.dll (mouse_event). */
+function winMouseEventCommand(flag: number, x?: number, y?: number): string {
+  const moveCmd = (x !== undefined && y !== undefined)
+    ? `[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${Math.round(x)},${Math.round(y)}); `
+    : '';
+  const script = `Add-Type -AssemblyName System.Windows.Forms; Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public class OsoneMouse { [DllImport("user32.dll")] public static extern void mouse_event(int flags, int dx, int dy, int data, int extra); }'; ${moveCmd}[OsoneMouse]::mouse_event(${flag},0,0,0,0);`;
+  return `powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`;
+}
+
+const WIN_MOUSEEVENTF = { LEFTDOWN: 0x0002, LEFTUP: 0x0004, RIGHTDOWN: 0x0008, RIGHTUP: 0x0010 };
+
+/**
+ * POST /mouse/move - Move o cursor do sistema para coordenadas absolutas de tela (x, y),
+ * podendo cobrir qualquer monitor conectado. É a base do controle por visão: cada quadro em
+ * que a câmera detecta a posição da mão, o frontend chama este endpoint (com controle de taxa
+ * no próprio frontend para não sobrecarregar).
+ */
+const handleMouseMove = async (req: Request, res: Response) => {
+  const x = Number(req.body?.x);
+  const y = Number(req.body?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return res.status(400).json({ error: "Parâmetros 'x' e 'y' (numéricos) são obrigatórios." });
+  }
+  const platform = process.platform;
+  try {
+    if (platform === 'linux') {
+      await runShell(`xdotool mousemove ${Math.round(x)} ${Math.round(y)}`, 3000);
+    } else if (platform === 'win32') {
+      await runShell(`powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${Math.round(x)},${Math.round(y)})"`, 3000);
+    } else {
+      return res.status(501).json({ error: `Controle de mouse ainda não suportado na plataforma '${platform}'.` });
+    }
+    return res.status(200).json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: `Falha ao mover o cursor: ${err.message}` });
+  }
+};
+
+/**
+ * POST /mouse/button - Ação de botão do mouse. action: 'down' | 'up' | 'click'.
+ * button: 'left' | 'right' (padrão 'left'). Usado pelo controle por visão para gestos:
+ * pinça iniciando = down, soltando rápido = click, soltando após arrastar = up (o down/up
+ * separados permitem que o gesto de arrastar funcione, já que o frontend manda 'down',
+ * uma sequência de /mouse/move, e por fim 'up').
+ */
+const handleMouseButton = async (req: Request, res: Response) => {
+  const action = (req.body?.action || 'click').toString();
+  const button = (req.body?.button || 'left').toString();
+  const double = req.body?.double === true;
+
+  if (!['down', 'up', 'click'].includes(action)) {
+    return res.status(400).json({ error: "Parâmetro 'action' deve ser 'down', 'up' ou 'click'." });
+  }
+  if (!['left', 'right'].includes(button)) {
+    return res.status(400).json({ error: "Parâmetro 'button' deve ser 'left' ou 'right'." });
+  }
+
+  const platform = process.platform;
+  const xdotoolButton = button === 'left' ? '1' : '3';
+  try {
+    if (platform === 'linux') {
+      if (action === 'down') await runShell(`xdotool mousedown ${xdotoolButton}`, 3000);
+      else if (action === 'up') await runShell(`xdotool mouseup ${xdotoolButton}`, 3000);
+      else await runShell(`xdotool click ${double ? '--repeat 2 --delay 120 ' : ''}${xdotoolButton}`, 3000);
+    } else if (platform === 'win32') {
+      const down = button === 'left' ? WIN_MOUSEEVENTF.LEFTDOWN : WIN_MOUSEEVENTF.RIGHTDOWN;
+      const up = button === 'left' ? WIN_MOUSEEVENTF.LEFTUP : WIN_MOUSEEVENTF.RIGHTUP;
+      if (action === 'down') await runShell(winMouseEventCommand(down), 3000);
+      else if (action === 'up') await runShell(winMouseEventCommand(up), 3000);
+      else {
+        await runShell(winMouseEventCommand(down), 3000);
+        await runShell(winMouseEventCommand(up), 3000);
+        if (double) {
+          await runShell(winMouseEventCommand(down), 3000);
+          await runShell(winMouseEventCommand(up), 3000);
+        }
+      }
+    } else {
+      return res.status(501).json({ error: `Controle de mouse ainda não suportado na plataforma '${platform}'.` });
+    }
+    return res.status(200).json({ success: true, action, button });
+  } catch (err: any) {
+    return res.status(500).json({ error: `Falha ao executar ação de mouse '${action}': ${err.message}` });
+  }
+};
+
 // Mapeamento das rotas no router
 agentRouter.get('/status', handleStatus);
 agentRouter.post('/open-app', handleOpenApp);
@@ -974,4 +1090,7 @@ agentRouter.post('/file/trash', handleFileTrash);
 agentRouter.post('/volume', handleSetVolume);
 agentRouter.get('/system-check', handleSystemCheck);
 agentRouter.post('/exec', handleExec);
+agentRouter.get('/screen-info', handleGetScreenInfo);
+agentRouter.post('/mouse/move', handleMouseMove);
+agentRouter.post('/mouse/button', handleMouseButton);
 agentRouter.get('/audit/logs', handleAuditLogs);
