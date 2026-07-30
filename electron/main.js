@@ -70,6 +70,10 @@ async function startBackendServer() {
   try {
     const serverBundlePath = path.join(__dirname, '../dist/server.cjs');
     if (fs.existsSync(serverBundlePath)) {
+      // Roda o bundle já compilado (dist/server.cjs) em modo produção: serve os arquivos
+      // estáticos do frontend já buildados, em vez de subir o middleware de desenvolvimento do
+      // Vite (mais lento, e desnecessário — o app instalado nunca precisa de hot-reload).
+      process.env.NODE_ENV = 'production';
       require(serverBundlePath);
     } else {
       const serverTsPath = path.join(__dirname, '../server.ts');
