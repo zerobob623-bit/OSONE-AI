@@ -3762,7 +3762,17 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
       if (!allowed.includes(file)) {
         return res.status(400).json({ error: "Arquivo proibido ou não mapeado nas diretrizes." });
       }
-      const filePath = path.join(process.cwd(), "src", "documentos_osone", file);
+      // Arquivo estático pertencente à própria instalação do OSONE (não é dado do usuário),
+      // então usa __dirname (fixo, independe de process.chdir para o diretório de dados do
+      // usuário feito pelo Electron em builds empacotados) em vez de process.cwd(). A raiz do
+      // projeto fica um nível acima de __dirname quando rodando o bundle já compilado
+      // (dist/server.cjs) e no próprio __dirname quando rodando server.ts direto via tsx (dev),
+      // então tenta os dois caminhos possíveis.
+      const docsCandidates = [
+        path.join(__dirname, "src", "documentos_osone", file),
+        path.join(__dirname, "..", "src", "documentos_osone", file)
+      ];
+      const filePath = docsCandidates.find(p => fs.existsSync(p)) || docsCandidates[0];
       if (!fs.existsSync(filePath)) {
         return res.status(404).json({ error: `Arquivo ${file} não existe no diretório.` });
       }
@@ -4560,7 +4570,11 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
     app.use(vite.middlewares);
     console.log("Vite dev server mounted on Express middleware");
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    // __dirname (não process.cwd()) porque este branch só roda com o bundle já compilado
+    // (dist/server.cjs), que vive dentro da própria pasta dist/ ao lado dos assets do
+    // frontend — diferente de process.cwd(), que em builds empacotados do Electron é trocado
+    // para o diretório de dados do usuário e não aponta mais para os arquivos da instalação.
+    const distPath = __dirname;
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
