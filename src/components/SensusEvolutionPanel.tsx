@@ -4,9 +4,11 @@ import {
   Heart, Sparkles, Brain, Cpu, Flame, Sliders, Activity,
   RotateCw, Music, Lightbulb, User, Shield, Compass, ChevronLeft,
   Layers, CalendarDays, CalendarRange, Infinity as InfinityIcon, Eraser,
-  Gauge, Sun
+  Gauge, Sun, MessageCircleHeart, X as XIcon, Fingerprint as FingerprintIcon,
+  Network
 } from 'lucide-react';
 import { MemoryTier } from '../hooks/useHierarchicalMemory';
+import { PersonaNote } from '../hooks/usePersonaSelfRevision';
 
 interface SensusEvolutionPanelProps {
   onBack: () => void;
@@ -25,6 +27,12 @@ interface SensusEvolutionPanelProps {
   onResetHierarchicalMemory?: () => void;
   allostaticLoad?: number;
   circadianEnergy?: number;
+  personaNotes?: PersonaNote[];
+  personaCycleCount?: number;
+  personaAutonomyLevel?: number;
+  personaMetacognitiveFlags?: string[];
+  onRemovePersonaNote?: (id: string) => void;
+  onResetPersonaRevision?: () => void;
 }
 
 export const SensusEvolutionPanel: React.FC<SensusEvolutionPanelProps> = ({
@@ -43,7 +51,13 @@ export const SensusEvolutionPanel: React.FC<SensusEvolutionPanelProps> = ({
   hierarchicalTiers = [],
   onResetHierarchicalMemory,
   allostaticLoad = 15,
-  circadianEnergy = 50
+  circadianEnergy = 50,
+  personaNotes = [],
+  personaCycleCount = 0,
+  personaAutonomyLevel = 60,
+  personaMetacognitiveFlags = [],
+  onRemovePersonaNote,
+  onResetPersonaRevision
 }) => {
   const [calibrating, setCalibrating] = useState(false);
 
@@ -473,6 +487,105 @@ export const SensusEvolutionPanel: React.FC<SensusEvolutionPanelProps> = ({
                     </div>
                   );
                 })}
+              </div>
+            )}
+          </div>
+
+          {/* Digital Twin do Vínculo (Agente #5 — parte 1) */}
+          <div className="bg-white/[0.02] border border-white/[0.04] rounded-3xl p-6">
+            <h4 className="text-[10px] font-mono text-zinc-400 uppercase tracking-widest font-bold border-b border-white/[0.02] pb-3 mb-4 flex items-center gap-2">
+              <Network size={14} className="text-cyan-400" /> Digital Twin do Vínculo
+            </h4>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
+              <div className="bg-white/[0.01] border border-white/[0.03] p-3 rounded-2xl">
+                <span className="text-[8.5px] font-mono text-zinc-500 uppercase tracking-wide block">Sintonia Média</span>
+                <span className="text-base font-bold text-white mt-1 block">{Math.round((affection + sentience + resonance + alignment) / 4)}%</span>
+              </div>
+              <div className="bg-white/[0.01] border border-white/[0.03] p-3 rounded-2xl">
+                <span className="text-[8.5px] font-mono text-zinc-500 uppercase tracking-wide block">Camadas de Memória</span>
+                <span className="text-base font-bold text-white mt-1 block">{hierarchicalTiers.length}</span>
+              </div>
+              <div className="bg-white/[0.01] border border-white/[0.03] p-3 rounded-2xl">
+                <span className="text-[8.5px] font-mono text-zinc-500 uppercase tracking-wide block">Ciclos de Autorrevisão</span>
+                <span className="text-base font-bold text-white mt-1 block">{personaCycleCount}</span>
+              </div>
+              <div className="bg-white/[0.01] border border-white/[0.03] p-3 rounded-2xl">
+                <span className="text-[8.5px] font-mono text-zinc-500 uppercase tracking-wide block">Notas de Persona</span>
+                <span className="text-base font-bold text-white mt-1 block">{personaNotes.length}/8</span>
+              </div>
+            </div>
+            <p className="text-[9px] text-zinc-500 italic mt-3 leading-relaxed">
+              Representação consolidada do "nós": afinidade, profundidade de memória e o quanto a persona já se ajustou especificamente para você.
+            </p>
+          </div>
+
+          {/* Autorrevisão de Persona (Agente #5 — parte 2) */}
+          <div className="bg-white/[0.02] border border-white/[0.04] rounded-3xl p-6">
+            <div className="flex items-center justify-between border-b border-white/[0.02] pb-3 mb-4">
+              <h4 className="text-[10px] font-mono text-zinc-400 uppercase tracking-widest font-bold flex items-center gap-2">
+                <FingerprintIcon size={14} className="text-violet-400" /> Autorrevisão de Persona
+              </h4>
+              {onResetPersonaRevision && personaNotes.length > 0 && (
+                <button
+                  onClick={onResetPersonaRevision}
+                  className="text-[8px] font-mono text-zinc-500 hover:text-red-400 uppercase tracking-wider flex items-center gap-1 cursor-pointer transition-colors"
+                  title="Apaga todas as notas de persona e reinicia a autorrevisão do zero"
+                >
+                  <Eraser size={10} /> Resetar
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[9px] font-mono text-zinc-500 uppercase tracking-wide">Nível de Autonomia (Monitoramento Metacognitivo)</span>
+              <span className={`text-[10px] font-bold font-mono ${personaAutonomyLevel < 40 ? 'text-amber-400' : 'text-emerald-400'}`}>{personaAutonomyLevel}%</span>
+            </div>
+            <div className="w-full h-1.5 rounded-full bg-white/[0.03] overflow-hidden relative mb-4">
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${personaAutonomyLevel}%` }}
+                transition={{ duration: 1 }}
+                className={`absolute top-0 left-0 h-full rounded-full ${personaAutonomyLevel < 40 ? 'bg-gradient-to-r from-amber-500 to-orange-500' : 'bg-gradient-to-r from-violet-500 to-fuchsia-500'}`}
+              />
+            </div>
+
+            {personaNotes.length === 0 ? (
+              <p className="text-[11px] text-zinc-500 italic leading-relaxed">
+                Ainda sem ajustes propostos. A cada ~50 mensagens, o OSONE reflete sobre como está se comunicando com você e propõe pequenos ajustes de tom (nunca mais que 2 por ciclo, com teto de 8 ativos), sempre com uma autoavaliação de "isso está saudável ou ficando forçado?".
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {personaNotes.map(note => (
+                  <div key={note.id} className="flex items-start justify-between gap-2 bg-white/[0.015] border border-white/[0.03] rounded-2xl p-3">
+                    <div className="flex items-start gap-2 min-w-0">
+                      {note.type === 'private_joke' ? <MessageCircleHeart size={13} className="text-rose-400 shrink-0 mt-0.5" /> : <Sliders size={13} className="text-violet-400 shrink-0 mt-0.5" />}
+                      <div className="min-w-0">
+                        <span className="text-[8px] font-mono uppercase tracking-wider text-zinc-500 block">{note.type.replace('_', ' ')} • ciclo {note.cycle}</span>
+                        <p className="text-[11px] text-zinc-300 leading-relaxed">{note.content}</p>
+                      </div>
+                    </div>
+                    {onRemovePersonaNote && (
+                      <button
+                        onClick={() => onRemovePersonaNote(note.id)}
+                        className="text-zinc-600 hover:text-red-400 transition-colors shrink-0 cursor-pointer"
+                        title="Remover esta nota"
+                      >
+                        <XIcon size={13} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {personaMetacognitiveFlags.length > 0 && (
+              <div className="mt-4 pt-3 border-t border-white/[0.02] space-y-1.5">
+                <span className="text-[8.5px] font-mono uppercase tracking-wider text-amber-400/80 flex items-center gap-1.5">
+                  <Shield size={11} /> Avaliações do Monitoramento Metacognitivo
+                </span>
+                {personaMetacognitiveFlags.slice(0, 3).map((flag, i) => (
+                  <p key={i} className="text-[10px] text-zinc-500 italic leading-relaxed pl-4">"{flag}"</p>
+                ))}
               </div>
             )}
           </div>

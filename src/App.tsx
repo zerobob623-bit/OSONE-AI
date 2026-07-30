@@ -107,6 +107,7 @@ import { SoundEffect, DrawingObject, User } from './types';
 import { INTIMATE_QUESTIONS } from './constants/osoneConstants';
 import { useTuyaSmartHome } from './hooks/useTuyaSmartHome';
 import { useHierarchicalMemory } from './hooks/useHierarchicalMemory';
+import { usePersonaSelfRevision } from './hooks/usePersonaSelfRevision';
 import { getCounterfactualReasoningDirective, getSalienceEmpathyDirective } from './lib/cognitiveDirectives';
 import { buildCodeEditSystemInstruction, applyModelCodeResponse } from './lib/codeEdits';
 import { useLocalAgent } from './hooks/useLocalAgent';
@@ -3508,6 +3509,29 @@ export default function App() {
     maybeConsolidate(plainHistory);
   }, [chatHistory.length]);
 
+  // AGENTE DE AUTORREVISÃO DE PERSONA: ciclo de fundo raro (a cada ~50 mensagens) que propõe
+  // pequenos ajustes na própria forma de se comunicar, com teto rígido e autoavaliação de
+  // "isso está ficando obsessivo?" a cada ciclo.
+  const {
+    personaNotes,
+    personaCycleCount,
+    personaAutonomyLevel,
+    personaMetacognitiveFlags,
+    maybeRevisePersona,
+    removePersonaNote,
+    resetPersonaRevision,
+    getPersonaRevisionDirective
+  } = usePersonaSelfRevision(activeUserIdForMemory, apiKeys.gemini || '', addNotification);
+
+  useEffect(() => {
+    const plainHistory = chatHistory
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => ({ role: m.role, content: m.content }));
+    const lifeTier = hierarchicalTiers.find(t => t.scope === 'life' && t.periodLabel === 'life');
+    const abstractTraits = Array.from(new Set(hierarchicalTiers.flatMap(t => t.abstractTraits)));
+    maybeRevisePersona(plainHistory, lifeTier?.summary || '', abstractTraits, sensusMood, sensusAllostaticLoad);
+  }, [chatHistory.length]);
+
   const [chatSessions, setChatSessions] = useState<ChatSession[]>(() => {
     try {
       const savedUserStr = localStorage.getItem('osone_last_active_user');
@@ -4038,7 +4062,7 @@ Seu alinhamento comportamental atual está na seguinte escala de afinidade evolu
 - Total de Interações: ${adaptive.totalMsgs} mensagens
 
 Diretriz adaptativa atual do OSONE para o diálogo:
-${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory) + getCounterfactualReasoningDirective(sensusMood, sensusAllostaticLoad) + getSalienceEmpathyDirective();
+${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory) + getCounterfactualReasoningDirective(sensusMood, sensusAllostaticLoad) + getSalienceEmpathyDirective() + getPersonaRevisionDirective();
           }
 
           systemInstruction += `\n\nDIRETRIZ DE RECONEXÃO SÍNCRONA / SESSÃO EM ANDAMENTO:
@@ -5501,7 +5525,7 @@ Seu alinhamento comportamental atual está na seguinte escala de afinidade evolu
 - Total de Interações: ${adaptive.totalMsgs} mensagens
 
 Diretriz adaptativa atual do OSONE para o diálogo:
-${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory) + getCounterfactualReasoningDirective(sensusMood, sensusAllostaticLoad) + getSalienceEmpathyDirective();
+${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory) + getCounterfactualReasoningDirective(sensusMood, sensusAllostaticLoad) + getSalienceEmpathyDirective() + getPersonaRevisionDirective();
       }
 
       systemInstruction += `\n\nDIRETRIZ DE DIÁLOGO POR VOZ NATURAL E DINÂMICO (WhatsApp / Conversa Humana):
@@ -7358,7 +7382,7 @@ Seu alinhamento comportamental atual está na seguinte escala de afinidade evolu
 - Total de Interações: ${adaptive.totalMsgs} mensagens
 
 Diretriz adaptativa atual do OSONE para o diálogo:
-${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory) + getCounterfactualReasoningDirective(sensusMood, sensusAllostaticLoad) + getSalienceEmpathyDirective();
+${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory) + getCounterfactualReasoningDirective(sensusMood, sensusAllostaticLoad) + getSalienceEmpathyDirective() + getPersonaRevisionDirective();
       }
 
       if (customSkill) {
@@ -11614,6 +11638,12 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 onResetHierarchicalMemory={resetHierarchicalMemory}
                 allostaticLoad={sensusAllostaticLoad}
                 circadianEnergy={getCircadianEnergy()}
+                personaNotes={personaNotes}
+                personaCycleCount={personaCycleCount}
+                personaAutonomyLevel={personaAutonomyLevel}
+                personaMetacognitiveFlags={personaMetacognitiveFlags}
+                onRemovePersonaNote={removePersonaNote}
+                onResetPersonaRevision={resetPersonaRevision}
               />
             </motion.div>
           ) : workspaceMode === 'smarthome' || workspaceMode === 'local_control' ? (
