@@ -103,8 +103,14 @@ async function findFreePort(startPort, maxAttempts = 20) {
 
 // Start the internal Express backend server
 async function startBackendServer() {
-  // Se já existe uma instância do OSONE servindo nesta porta, reaproveita em vez de subir outra.
-  if (await isOsoneServerRunning(DEFAULT_PORT)) {
+  // O app instalado SEMPRE sobe o próprio servidor, mesmo que já exista outro OSONE na porta.
+  //
+  // Antes ele se pendurava em qualquer servidor OSONE que encontrasse — normalmente o do
+  // `npm run dev`. O resultado era um app que parecia funcionar mas dependia de um processo
+  // externo: fechar o terminal do modo desenvolvimento derrubava o servidor por baixo do app
+  // instalado, junto com o Agente Local. Rodando o seu próprio servidor em porta própria, o
+  // app instalado fica autossuficiente e nada fora dele pode derrubá-lo.
+  if (!app.isPackaged && await isOsoneServerRunning(DEFAULT_PORT)) {
     console.log(`Backend server already active on port ${DEFAULT_PORT}`);
     activePort = DEFAULT_PORT;
     return;
@@ -330,6 +336,21 @@ function setupScreenSharing() {
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
     const allowed = ['media', 'display-capture', 'audioCapture', 'videoCapture', 'clipboard-read', 'notifications'];
     callback(allowed.includes(permission));
+  });
+}
+
+// Uma instância só. Abrir o OSONE de novo (atalho, duplo clique) passa a focar a janela que
+// já existe, em vez de subir um segundo app com um segundo servidor e um segundo Agente Local
+// disputando os mesmos arquivos de dados.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
   });
 }
 

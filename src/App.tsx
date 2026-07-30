@@ -5870,6 +5870,40 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
     localStorage.setItem('osone_api_keys', JSON.stringify(apiKeys));
   }, [apiKeys]);
 
+  /**
+   * Provisiona o token do Agente Local automaticamente, sem o usuário precisar fazer nada.
+   *
+   * O agente roda dentro do próprio servidor do OSONE, na mesma máquina — exigir que a pessoa
+   * abrisse as Configurações e clicasse num botão (ou pior, caçasse o config.json) para que o
+   * app conseguisse falar consigo mesmo era atrito sem propósito. No app instalado isso era
+   * ainda mais confuso: o token do app empacotado fica numa pasta de dados do sistema,
+   * diferente do usado em desenvolvimento, então o agente parecia só funcionar com o servidor
+   * de desenvolvimento ligado.
+   *
+   * O endpoint só responde a pedidos da própria máquina (loopback), então buscar o token aqui
+   * não expõe nada que quem está usando o app já não pudesse obter.
+   */
+  useEffect(() => {
+    if ((apiKeys.localAgentToken || '').trim()) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/agent/provision-token');
+        if (!res.ok) return;
+        const data = await res.json().catch(() => null);
+        if (cancelled || !data?.token) return;
+        setApiKeys(prev => (prev.localAgentToken || '').trim() ? prev : { ...prev, localAgentToken: data.token });
+        console.log('[Agente Local] Token provisionado automaticamente para esta instalação.');
+      } catch {
+        // Servidor ainda subindo ou agente indisponível: segue sem token, e o usuário ainda
+        // pode gerá-lo manualmente nas Configurações.
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [apiKeys.localAgentToken]);
+
   useEffect(() => {
     return () => {
       // Cleanup on unmount
