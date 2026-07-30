@@ -128,7 +128,12 @@ export const SettingsModal = ({
   };
 
   const handleTestLocalAgent = async () => {
-    const token = keys.localAgentToken || "osone-local-agent-secret-token";
+    const token = (keys.localAgentToken || '').trim();
+    if (!token) {
+      setLocalAgentStatus('error');
+      setLocalAgentMessage("Nenhum token configurado. Copie o token gerado em config.json (na pasta de instalação do OSONE) e cole no campo acima.");
+      return;
+    }
 
     setLocalAgentStatus('testing');
     setLocalAgentMessage('Conectando ao Agente Local Unificado (/api/agent/status)...');
@@ -676,16 +681,16 @@ export const SettingsModal = ({
                         </label>
                       </div>
                       <p className="text-[10px] text-her-muted/60 leading-relaxed font-sans">
-                        O Agente Local agora é integrado diretamente ao servidor principal do OSONE (<code className="font-mono text-emerald-400">/api/agent</code>). O token padrão pré-configurado é <code className="font-mono text-emerald-400">osone-local-agent-secret-token</code>. Você também pode acessar o painel completo na aba <strong>Automação</strong>.
+                        O Agente Local agora é integrado diretamente ao servidor principal do OSONE (<code className="font-mono text-emerald-400">/api/agent</code>). Cada instalação gera automaticamente o seu próprio token único e forte na primeira vez que o servidor liga — copie o valor do campo <code className="font-mono text-emerald-400">token</code> dentro do arquivo <code className="font-mono text-emerald-400">config.json</code> (na pasta do OSONE) e cole abaixo. Você também pode acessar o painel completo na aba <strong>Automação</strong>.
                       </p>
                       <div className="space-y-3">
                         <div className="relative flex items-center">
-                          <input 
+                          <input
                             type={showLocalAgentToken ? "text" : "password"}
                             value={keys.localAgentToken || ''}
                             onChange={(e) => setKeys({ ...keys, localAgentToken: e.target.value })}
                             className="w-full bg-white/[0.02] border border-white/[0.05] rounded-2xl px-5 py-3 pr-12 focus:outline-none focus:border-emerald-500/30 transition-all text-xs font-mono text-white placeholder:text-her-muted/20"
-                            placeholder="Insira o token do Agente Local..."
+                            placeholder="Cole aqui o token gerado em config.json..."
                           />
                           <button
                             type="button"
@@ -1447,7 +1452,7 @@ export const SettingsModal = ({
                       </div>
 
                       <p className="text-xs text-her-muted leading-relaxed font-light">
-                        O Agente Local agora roda <strong>unificado</strong> dentro do próprio servidor principal do OSONE (porta 3000, rota <code className="font-mono text-emerald-400">/api/agent</code>). Ele permite abrir aplicativos locais (Spotify, VSCode, Terminal) e organizar arquivos locais com jail de segurança estrito.
+                        O Agente Local agora roda <strong>unificado</strong> dentro do próprio servidor principal do OSONE (porta 3000, rota <code className="font-mono text-emerald-400">/api/agent</code>). Ele permite abrir qualquer app/arquivo/pasta/URL, ajustar volume, checar a saúde do PC, rodar comandos de terminal e organizar arquivos locais — sempre protegido por um token único gerado automaticamente para esta instalação.
                       </p>
 
                       <div className="space-y-3 pt-2">
@@ -1455,13 +1460,16 @@ export const SettingsModal = ({
                           <label className="block text-[9px] uppercase tracking-[0.2em] text-her-muted font-bold mb-1.5 pl-1">
                             Token do Agente Local (Authorization Bearer)
                           </label>
+                          <p className="text-[10px] text-her-muted/60 leading-relaxed font-sans mb-2 pl-1">
+                            Copie o valor de <code className="font-mono text-emerald-400">token</code> no arquivo <code className="font-mono text-emerald-400">config.json</code> (gerado automaticamente na pasta do OSONE na primeira vez que o servidor liga) e cole abaixo.
+                          </p>
                           <div className="relative flex items-center">
-                            <input 
+                            <input
                               type={showLocalAgentToken ? "text" : "password"}
                               value={keys.localAgentToken || ''}
                               onChange={(e) => setKeys({ ...keys, localAgentToken: e.target.value })}
                               className="w-full bg-white/[0.02] border border-white/[0.05] rounded-2xl px-5 py-3 pr-12 focus:outline-none focus:border-emerald-500/30 transition-all text-xs font-mono text-white placeholder:text-her-muted/20"
-                              placeholder="osone-local-agent-secret-token"
+                              placeholder="Cole aqui o token gerado em config.json..."
                             />
                             <button
                               type="button"

@@ -12,10 +12,14 @@ export function useLocalAgent() {
   const pendingLocalAgentTimerRef = useRef<any>(null);
 
   const executeLocalAgentCall = async (toolName: string, args: any, localAgentToken?: string, isVoiceSession: boolean = false): Promise<any> => {
-    const token = localAgentToken || "osone-local-agent-secret-token";
-    if (!token || !token.trim()) {
+    // Sem fallback para um token fixo: cada instalação gera seu próprio token forte em
+    // config.json na primeira vez que o servidor sobe (ver localAgentService.ts). Usar um
+    // valor padrão aqui seria o mesmo token público em toda instalação do OSONE — quem lesse
+    // o código-fonte no GitHub teria acesso de terminal a qualquer computador rodando o agente.
+    const token = (localAgentToken || '').trim();
+    if (!token) {
       return {
-        error: "Agente Local não configurado. Peça ao usuário para configurar o Token do Agente Local nas Configurações do OSONE."
+        error: "Agente Local não configurado. Copie o token gerado em config.json (na pasta do OSONE) para o campo 'Token do Agente Local' nas Configurações do OSONE."
       };
     }
 
@@ -253,6 +257,125 @@ export function useLocalAgent() {
             },
             onCancel: () => {
               resolveOnce({ error: "Ação de mover para a lixeira cancelada pelo usuário no painel de confirmação da interface." });
+            }
+          });
+        });
+      }
+
+      if (toolName === 'open_any_path' || toolName === 'open_local_path') {
+        const { target } = args || {};
+        if (!target) return { error: "Parâmetro 'target' é obrigatório (nome de app, caminho de arquivo/pasta ou URL)." };
+        const res = await fetch(`${LOCAL_AGENT_URL}/open-any`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ target })
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          return { error: data?.error || `Não foi possível abrir '${target}'.` };
+        }
+        return data || { message: `'${target}' aberto com sucesso.` };
+      }
+
+      if (toolName === 'set_system_volume') {
+        const { action, value } = args || {};
+        if (!action) return { error: "Parâmetro 'action' é obrigatório ('set', 'up', 'down', 'mute' ou 'unmute')." };
+        const res = await fetch(`${LOCAL_AGENT_URL}/volume`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ action, value })
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          return { error: data?.error || 'Erro ao ajustar o volume do sistema.' };
+        }
+        return data || { message: `Volume ajustado (${action}).` };
+      }
+
+      if (toolName === 'system_health_check') {
+        const res = await fetch(`${LOCAL_AGENT_URL}/system-check`, { method: 'GET', headers });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          return { error: data?.error || 'Erro ao checar o estado do sistema.' };
+        }
+        return data || {};
+      }
+
+      if (toolName === 'run_terminal_command') {
+        const { command } = args || {};
+        if (!command) return { error: "Parâmetro 'command' é obrigatório." };
+
+        const attemptExec = async (confirmed: boolean) => {
+          const res = await fetch(`${LOCAL_AGENT_URL}/exec`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ command, confirmed })
+          });
+          const data = await res.json().catch(() => null);
+          return { res, data };
+        };
+
+        const first = await attemptExec(false);
+        if (first.res.ok) {
+          return first.data || { success: true, message: 'Comando executado com sucesso.' };
+        }
+
+        if (!first.data?.requiresConfirmation) {
+          return { error: first.data?.error || `Erro ao executar comando (HTTP ${first.res.status}).` };
+        }
+
+        // Comando classificado como importante (ex: apagar em massa, instalar programa,
+        // elevar privilégios): exige confirmação explícita no chat de texto, nunca por voz.
+        if (isVoiceSession) {
+          return {
+            error: `Este comando é considerado importante (${first.data.reason}) e precisa de confirmação explícita no chat de texto do OSONE — não pode ser autorizado por voz.`
+          };
+        }
+
+        if (pendingLocalAgentResolveRef.current) {
+          if (pendingLocalAgentTimerRef.current) clearTimeout(pendingLocalAgentTimerRef.current);
+          pendingLocalAgentResolveRef.current({ error: "Solicitação de confirmação anterior foi cancelada pois uma nova ação foi solicitada." });
+          pendingLocalAgentResolveRef.current = null;
+        }
+
+        return new Promise((resolve) => {
+          const resolveOnce = (val: any) => {
+            if (pendingLocalAgentTimerRef.current) {
+              clearTimeout(pendingLocalAgentTimerRef.current);
+              pendingLocalAgentTimerRef.current = null;
+            }
+            setPendingLocalAgentConfirmation(null);
+            if (pendingLocalAgentResolveRef.current === resolveOnce) {
+              pendingLocalAgentResolveRef.current = null;
+            }
+            resolve(val);
+          };
+
+          pendingLocalAgentResolveRef.current = resolveOnce;
+
+          pendingLocalAgentTimerRef.current = setTimeout(() => {
+            resolveOnce({ error: "A confirmação do comando de terminal expirou por tempo limite (3 minutos sem resposta do usuário no painel)." });
+          }, 180000);
+
+          setPendingLocalAgentConfirmation({
+            id: Math.random().toString(36).substring(2, 9),
+            type: 'run_terminal_command',
+            command,
+            reason: first.data.reason,
+            onConfirm: async () => {
+              try {
+                const { res, data } = await attemptExec(true);
+                if (!res.ok) {
+                  resolveOnce({ error: data?.error || 'Erro ao executar o comando de terminal.' });
+                } else {
+                  resolveOnce(data || { success: true, message: 'Comando executado com sucesso após confirmação do usuário.' });
+                }
+              } catch (err) {
+                resolveOnce({ error: 'Erro de conexão ao executar o comando de terminal.' });
+              }
+            },
+            onCancel: () => {
+              resolveOnce({ error: 'Execução do comando de terminal cancelada pelo usuário no painel de confirmação.' });
             }
           });
         });

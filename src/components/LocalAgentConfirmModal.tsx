@@ -1,25 +1,28 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  FolderSync, 
-  Trash2, 
-  ShieldAlert, 
-  Check, 
-  X, 
-  ArrowRight, 
-  FileText, 
+import {
+  FolderSync,
+  Trash2,
+  ShieldAlert,
+  Check,
+  X,
+  ArrowRight,
+  FileText,
   FolderCheck,
-  AlertTriangle
+  AlertTriangle,
+  Terminal
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 export interface PendingLocalAgentConfirmation {
   id: string;
-  type: 'organize_folder_execute' | 'trash_local_file';
-  folderKey: string;
+  type: 'organize_folder_execute' | 'trash_local_file' | 'run_terminal_command';
+  folderKey?: string;
   baseDir?: string;
   planArray?: Array<{ fileName: string; targetSubfolder: string; extension?: string }>;
   fileName?: string;
+  command?: string;
+  reason?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -32,6 +35,7 @@ export function LocalAgentConfirmModal({ pending }: LocalAgentConfirmModalProps)
   if (!pending) return null;
 
   const isOrganize = pending.type === 'organize_folder_execute';
+  const isTerminal = pending.type === 'run_terminal_command';
 
   // Group plan array by targetSubfolder for clean breakdown
   const folderGroups: Record<string, string[]> = {};
@@ -62,15 +66,15 @@ export function LocalAgentConfirmModal({ pending }: LocalAgentConfirmModalProps)
             <div className="flex items-center gap-4">
               <div className={cn(
                 "w-12 h-12 md:w-14 md:h-14 rounded-2xl flex items-center justify-center border shadow-lg shrink-0",
-                isOrganize 
-                  ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30 shadow-emerald-500/10" 
+                isOrganize
+                  ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30 shadow-emerald-500/10"
                   : "bg-red-500/20 text-red-400 border-red-500/30 shadow-red-500/10"
               )}>
-                {isOrganize ? <FolderSync size={26} className="animate-pulse" /> : <Trash2 size={26} />}
+                {isOrganize ? <FolderSync size={26} className="animate-pulse" /> : isTerminal ? <Terminal size={26} /> : <Trash2 size={26} />}
               </div>
               <div>
                 <h2 className="text-xl md:text-2xl font-serif italic text-white leading-tight">
-                  {isOrganize ? "Organização de Pasta Local" : "Mover Arquivo para Lixeira"}
+                  {isOrganize ? "Organização de Pasta Local" : isTerminal ? "Comando de Terminal Importante" : "Mover Arquivo para Lixeira"}
                 </h2>
                 <p className="text-[10px] uppercase tracking-[0.25em] text-emerald-400 font-bold mt-0.5">
                   OSONE Local Agent • Confirmação Humana Obrigatória
@@ -88,9 +92,11 @@ export function LocalAgentConfirmModal({ pending }: LocalAgentConfirmModalProps)
             <div className="flex items-start gap-3 p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl">
               <AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5" />
               <p className="text-xs text-amber-200/90 leading-relaxed font-sans">
-                {isOrganize 
-                  ? `O OSONE solicita autorização para mover arquivos na pasta local "${pending.folderKey.toUpperCase()}". NENHUM arquivo será deletado — eles apenas serão organizados em subpastas.`
-                  : `O OSONE solicita autorização para enviar um arquivo da pasta "${pending.folderKey.toUpperCase()}" para a lixeira interna do Agente Local.`}
+                {isOrganize
+                  ? `O OSONE solicita autorização para mover arquivos na pasta local "${(pending.folderKey || '').toUpperCase()}". NENHUM arquivo será deletado — eles apenas serão organizados em subpastas.`
+                  : isTerminal
+                    ? `O OSONE quer rodar um comando de terminal classificado como importante: ${pending.reason || 'ação com risco potencial no seu computador'}.`
+                    : `O OSONE solicita autorização para enviar um arquivo da pasta "${(pending.folderKey || '').toUpperCase()}" para a lixeira interna do Agente Local.`}
               </p>
             </div>
 
@@ -141,7 +147,7 @@ export function LocalAgentConfirmModal({ pending }: LocalAgentConfirmModalProps)
               </div>
             )}
 
-            {!isOrganize && (
+            {!isOrganize && !isTerminal && (
               <div className="p-5 bg-white/[0.02] border border-white/[0.05] rounded-2xl space-y-3">
                 <div className="text-xs font-bold text-white uppercase tracking-wider">
                   Arquivo Alvo
@@ -155,6 +161,21 @@ export function LocalAgentConfirmModal({ pending }: LocalAgentConfirmModalProps)
                 </div>
                 <p className="text-[11px] text-her-muted leading-relaxed italic">
                   * A lixeira interna do Agente Local preserva o arquivo na pasta <code className="text-emerald-400 font-mono">.osone_trash</code>, permitindo restauração manual a qualquer momento.
+                </p>
+              </div>
+            )}
+
+            {isTerminal && (
+              <div className="p-5 bg-white/[0.02] border border-white/[0.05] rounded-2xl space-y-3">
+                <div className="text-xs font-bold text-white uppercase tracking-wider">
+                  Comando a ser executado
+                </div>
+                <div className="flex items-center gap-3 p-3.5 bg-red-500/10 border border-red-500/20 rounded-xl text-red-200 font-mono text-xs overflow-x-auto">
+                  <Terminal size={18} className="text-red-400 shrink-0" />
+                  <code className="whitespace-pre-wrap break-all">{pending.command}</code>
+                </div>
+                <p className="text-[11px] text-her-muted leading-relaxed italic">
+                  * Motivo da confirmação: {pending.reason || 'ação com risco potencial no seu computador'}.
                 </p>
               </div>
             )}
@@ -185,7 +206,7 @@ export function LocalAgentConfirmModal({ pending }: LocalAgentConfirmModalProps)
                 )}
               >
                 <Check size={16} />
-                {isOrganize ? "Confirmar Organização" : "Mover para Lixeira"}
+                {isOrganize ? "Confirmar Organização" : isTerminal ? "Executar Comando" : "Mover para Lixeira"}
                 <ArrowRight size={14} />
               </button>
             </div>

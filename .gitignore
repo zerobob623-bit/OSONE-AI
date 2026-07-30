@@ -12,3 +12,9 @@ firebase-applet-config.json
 contacts.json
 conversations.json
 knowledge-base.json
+
+# OSONE Local Agent — config.json holds the auto-generated bearer token that guards
+# app-opening/volume/terminal access to this machine; audit.log/trash are local runtime data
+config.json
+audit.log
+trash/
