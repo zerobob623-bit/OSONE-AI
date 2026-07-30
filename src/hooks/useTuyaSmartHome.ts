@@ -42,20 +42,39 @@ export function useTuyaSmartHome() {
     }
   };
 
-  const buildTuyaCommandsForAction = async (deviceId: string, action: string, value: any, color: any): Promise<Array<{ code: string; value: any }>> => {
-    if (action === 'toggle') {
-      let currentOn = false;
-      try {
-        const statusRes = await fetch(`/api/tuya/device/${encodeURIComponent(deviceId)}/status`);
-        const statusData = await statusRes.json().catch(() => null);
-        const switchDp = (statusData?.status || []).find((s: any) => /switch/i.test(s.code));
-        currentOn = !!switchDp?.value;
-      } catch {
-        // Se não conseguirmos ler o estado atual, assume desligado e liga (ação mais previsível).
+  // Descobre o código real de liga/desliga do dispositivo consultando seu status atual.
+  // Bulbo/luz (categoria "dj") normalmente usa "switch_led", tomadas/interruptores usam
+  // "switch_1"/"switch". Enviar sempre "switch_1" hardcoded fazia o comando ser aceito pela
+  // Tuya Cloud (sem erro) mas ignorado pelo dispositivo físico, porque esse DP nem existe nele
+  // — por isso a luz "não fazia nada" mesmo com tudo conectado.
+  const resolveTuyaSwitchDp = async (deviceId: string): Promise<{ code: string; currentValue: boolean } | null> => {
+    try {
+      const statusRes = await fetch(`/api/tuya/device/${encodeURIComponent(deviceId)}/status`);
+      const statusData = await statusRes.json().catch(() => null);
+      const dps: any[] = statusData?.status || [];
+
+      const preferredOrder = ['switch_led', 'switch_1', 'switch', 'switch_one', 'power_switch_1'];
+      for (const preferred of preferredOrder) {
+        const match = dps.find((d: any) => d.code === preferred);
+        if (match) return { code: match.code, currentValue: !!match.value };
       }
-      return [{ code: 'switch_1', value: !currentOn }];
+
+      const generic = dps.find((d: any) => /switch/i.test(d.code) && typeof d.value === 'boolean');
+      if (generic) return { code: generic.code, currentValue: !!generic.value };
+    } catch {
+      // Se não conseguirmos consultar o status, cai no fallback abaixo.
     }
-    if (action === 'turn_off') return [{ code: 'switch_1', value: false }];
+    return null;
+  };
+
+  const buildTuyaCommandsForAction = async (deviceId: string, action: string, value: any, color: any): Promise<Array<{ code: string; value: any }>> => {
+    if (action === 'toggle' || action === 'turn_on' || action === 'turn_off') {
+      const resolved = await resolveTuyaSwitchDp(deviceId);
+      const switchCode = resolved?.code || 'switch_1';
+      if (action === 'turn_off') return [{ code: switchCode, value: false }];
+      if (action === 'toggle') return [{ code: switchCode, value: !resolved?.currentValue }];
+      return [{ code: switchCode, value: true }]; // turn_on
+    }
     if (action === 'set_value' && value !== undefined) {
       const clamped = Math.max(10, Math.min(1000, Math.round(Number(value) * 10)));
       return [{ code: 'bright_value', value: clamped }];
@@ -63,8 +82,9 @@ export function useTuyaSmartHome() {
     if (action === 'set_color' && color) {
       return [{ code: 'switch_led', value: true }];
     }
-    // 'turn_on' e qualquer outra ação não mapeada caem no comando genérico de ligar.
-    return [{ code: 'switch_1', value: true }];
+    // Qualquer ação não mapeada cai no comando genérico de ligar, resolvendo o DP real também.
+    const resolved = await resolveTuyaSwitchDp(deviceId);
+    return [{ code: resolved?.code || 'switch_1', value: true }];
   };
 
   const executeTuyaDeviceControl = async (
