@@ -102,10 +102,15 @@ export function initializeConfig(): LocalAgentConfig {
     console.warn('[CONFIG WARNING] Erro ao ler config.json. Usando padrão.', err.message);
   }
 
-  // Se token não existir ou estiver vazio, gera um novo token criptograficamente forte
-  if (!CONFIG.token || CONFIG.token.trim() === '') {
+  // Se o token não existir, estiver vazio, OU ainda for o valor padrão inseguro que já esteve
+  // hardcoded neste projeto (mesmo texto em toda instalação = qualquer um lendo o código no
+  // GitHub tinha acesso de terminal a qualquer computador rodando o agente), gera um novo
+  // token criptograficamente forte e único para esta instalação.
+  const INSECURE_LEGACY_TOKENS = new Set(['osone-local-agent-secret-token']);
+  if (!CONFIG.token || CONFIG.token.trim() === '' || INSECURE_LEGACY_TOKENS.has(CONFIG.token.trim())) {
     CONFIG.token = crypto.randomBytes(32).toString('hex');
     saveConfig();
+    console.warn('[SECURITY] Token do Agente Local ausente ou inseguro foi substituído por um novo token forte gerado automaticamente. Atualize o campo "Token do Agente Local" nas Configurações do OSONE com o novo valor salvo em config.json.');
   }
 
   // Garante que o diretório da lixeira local exista
@@ -692,13 +697,281 @@ const handleAuditLogs = (req: Request, res: Response) => {
   }
 };
 
+// ============================================================================
+// SEÇÃO 6: ABRIR QUALQUER APP/ARQUIVO/PASTA/URL SEM PRECISAR DE ALLOWLIST
+// ============================================================================
+
+function runShell(cmd: string, timeoutMs: number = 10000): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    exec(cmd, { timeout: timeoutMs, windowsHide: true }, (error, stdout, stderr) => {
+      if (error) return reject(new Error(stderr?.toString().trim() || error.message));
+      resolve({ stdout: stdout?.toString() || '', stderr: stderr?.toString() || '' });
+    });
+  });
+}
+
+/**
+ * POST /open-any - Abre QUALQUER app instalado, arquivo, pasta ou URL pelo nome/caminho,
+ * sem precisar estar pré-cadastrado em config.json (diferente de /open-app, que só abre
+ * apps da allowlist). Usa os abridores nativos do sistema operacional.
+ */
+const handleOpenAny = (req: Request, res: Response) => {
+  const target = (req.body?.target || '').toString().trim();
+  if (!target) {
+    return res.status(400).json({ error: "Parâmetro 'target' é obrigatório (nome de app, caminho de arquivo/pasta ou URL)." });
+  }
+
+  const safeTarget = target.replace(/"/g, '\\"');
+  const platform = process.platform;
+  const command = platform === 'win32'
+    ? `start "" "${safeTarget}"`
+    : platform === 'darwin'
+      ? `open "${safeTarget}"`
+      : `xdg-open "${safeTarget}"`;
+
+  exec(command, { windowsHide: true }, (error) => {
+    if (error) {
+      logAudit('ERROR', 'OPEN_ANY_FAILED', `Falha ao abrir '${target}': ${error.message}`, { target, command });
+      return res.status(500).json({ error: `Não foi possível abrir '${target}': ${error.message}` });
+    }
+    logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto com sucesso`, { target, command });
+    return res.status(200).json({ message: `'${target}' aberto com sucesso.`, target });
+  });
+};
+
+// ============================================================================
+// SEÇÃO 7: CONTROLE DE VOLUME DO SISTEMA
+// ============================================================================
+
+/**
+ * POST /volume - Ajusta o volume do sistema. action: 'set' | 'up' | 'down' | 'mute' | 'unmute'.
+ * 'set' exige 'value' (0-100). No Windows, 'set' é melhor esforço (usa nircmd se disponível
+ * no PATH; caso contrário, aproxima com passos relativos), já que ajustar volume para um
+ * valor exato ali normalmente depende de uma ferramenta externa. up/down/mute são sempre
+ * confiáveis em qualquer plataforma suportada.
+ */
+const handleSetVolume = async (req: Request, res: Response) => {
+  const action = (req.body?.action || '').toString();
+  const value = req.body?.value;
+  const platform = process.platform;
+
+  if (!['set', 'up', 'down', 'mute', 'unmute'].includes(action)) {
+    return res.status(400).json({ error: "Parâmetro 'action' deve ser 'set', 'up', 'down', 'mute' ou 'unmute'." });
+  }
+  if (action === 'set' && (value === undefined || isNaN(Number(value)))) {
+    return res.status(400).json({ error: "Ação 'set' exige o parâmetro numérico 'value' (0-100)." });
+  }
+
+  try {
+    if (platform === 'darwin') {
+      if (action === 'set') {
+        const v = Math.max(0, Math.min(100, Math.round(Number(value))));
+        await runShell(`osascript -e "set volume output volume ${v}"`);
+      } else if (action === 'mute') {
+        await runShell(`osascript -e "set volume output muted true"`);
+      } else if (action === 'unmute') {
+        await runShell(`osascript -e "set volume output muted false"`);
+      } else {
+        const { stdout } = await runShell(`osascript -e "output volume of (get volume settings)"`);
+        const current = parseInt(stdout.trim(), 10) || 50;
+        const next = Math.max(0, Math.min(100, current + (action === 'up' ? 10 : -10)));
+        await runShell(`osascript -e "set volume output volume ${next}"`);
+      }
+    } else if (platform === 'win32') {
+      const sendKeys = (key: string, times: number = 1) => {
+        const presses = Array(times).fill(`[System.Windows.Forms.SendKeys]::SendWait('${key}')`).join('; Start-Sleep -Milliseconds 80; ');
+        return `Add-Type -AssemblyName System.Windows.Forms; ${presses}`;
+      };
+      if (action === 'up') {
+        await runShell(`powershell -NoProfile -Command "${sendKeys('{VOLUME_UP}', 2)}"`);
+      } else if (action === 'down') {
+        await runShell(`powershell -NoProfile -Command "${sendKeys('{VOLUME_DOWN}', 2)}"`);
+      } else if (action === 'mute' || action === 'unmute') {
+        await runShell(`powershell -NoProfile -Command "${sendKeys('{VOLUME_MUTE}')}"`);
+      } else if (action === 'set') {
+        const v = Math.max(0, Math.min(100, Math.round(Number(value))));
+        try {
+          // Melhor esforço: usa nircmd se estiver instalado/no PATH (ajuste exato).
+          await runShell(`nircmd.exe setsysvolume ${Math.round((v / 100) * 65535)}`);
+        } catch {
+          // Sem nircmd: aproxima com passos relativos (impreciso, mas não falha silenciosamente).
+          const steps = Math.round(v / 10);
+          if (steps > 0) await runShell(`powershell -NoProfile -Command "${sendKeys('{VOLUME_UP}', steps)}"`);
+          logAudit('WARN', 'VOLUME_SET_APPROXIMATE', `nircmd não encontrado; volume ajustado por aproximação no Windows.`, { requestedValue: v });
+        }
+      }
+    } else {
+      // Linux: tenta PulseAudio (pactl), cai para ALSA (amixer) se indisponível.
+      if (action === 'set') {
+        const v = Math.max(0, Math.min(100, Math.round(Number(value))));
+        try {
+          await runShell(`pactl set-sink-volume @DEFAULT_SINK@ ${v}%`);
+        } catch {
+          await runShell(`amixer -D pulse sset Master ${v}%`);
+        }
+      } else if (action === 'mute') {
+        try { await runShell(`pactl set-sink-mute @DEFAULT_SINK@ 1`); } catch { await runShell(`amixer -D pulse sset Master mute`); }
+      } else if (action === 'unmute') {
+        try { await runShell(`pactl set-sink-mute @DEFAULT_SINK@ 0`); } catch { await runShell(`amixer -D pulse sset Master unmute`); }
+      } else {
+        const delta = action === 'up' ? '+10%' : '-10%';
+        try { await runShell(`pactl set-sink-volume @DEFAULT_SINK@ ${delta}`); } catch { await runShell(`amixer -D pulse sset Master 10%${action === 'up' ? '+' : '-'}`); }
+      }
+    }
+
+    logAudit('INFO', 'VOLUME_CHANGED', `Volume ajustado: ${action}${action === 'set' ? ` (${value}%)` : ''}`, { action, value, platform });
+    return res.status(200).json({ success: true, action, value, platform });
+  } catch (err: any) {
+    logAudit('ERROR', 'VOLUME_CHANGE_FAILED', err.message, { action, value, platform });
+    return res.status(500).json({ error: `Erro ao ajustar o volume: ${err.message}` });
+  }
+};
+
+// ============================================================================
+// SEÇÃO 8: CHECAGEM DE SAÚDE DO SISTEMA (CPU, MEMÓRIA, DISCO, UPTIME)
+// ============================================================================
+
+/**
+ * GET /system-check - Retorna um panorama do estado atual da máquina local.
+ */
+const handleSystemCheck = async (req: Request, res: Response) => {
+  const platform = process.platform;
+  const info: any = {
+    platform,
+    hostname: os.hostname(),
+    osType: os.type(),
+    osRelease: os.release(),
+    uptimeSeconds: Math.round(os.uptime()),
+    cpuModel: os.cpus()[0]?.model || 'desconhecido',
+    cpuCount: os.cpus().length,
+    loadAvg1m: platform === 'win32' ? null : os.loadavg()[0],
+    totalMemMB: Math.round(os.totalmem() / 1024 / 1024),
+    freeMemMB: Math.round(os.freemem() / 1024 / 1024),
+  };
+  info.usedMemPercent = Math.round(((info.totalMemMB - info.freeMemMB) / info.totalMemMB) * 100);
+
+  try {
+    if (platform === 'win32') {
+      const { stdout } = await runShell(`wmic logicaldisk get Caption,FreeSpace,Size`);
+      info.diskRaw = stdout.trim();
+    } else {
+      const { stdout } = await runShell(`df -h`);
+      info.diskRaw = stdout.trim();
+    }
+  } catch {
+    info.diskRaw = null;
+    info.diskCheckError = 'Não foi possível consultar espaço em disco nesta máquina.';
+  }
+
+  logAudit('INFO', 'SYSTEM_CHECK', `Checagem de sistema executada`, { platform });
+  return res.status(200).json(info);
+};
+
+// ============================================================================
+// SEÇÃO 9: TERMINAL — EXECUÇÃO DE COMANDOS COM CONFIRMAÇÃO PARA AÇÕES IMPORTANTES
+// ============================================================================
+
+/**
+ * Classifica um comando como "importante" (exige confirmação explícita do usuário) ou seguro
+ * para rodar direto. Por padrão o agente tem permissão ampla — só pede confirmação para
+ * categorias de comando com risco real de dano (apagar em massa, formatar, instalar/remover
+ * programas, elevar privilégios, mexer em firewall/antivírus/registro, etc.). Em caso de
+ * dúvida, o comando cai no bloco de "requer confirmação" (mais seguro pedir demais do que
+ * de menos).
+ */
+function classifyCommandRisk(command: string): string | null {
+  const patterns: Array<{ re: RegExp; reason: string }> = [
+    { re: /\brm\s+-[a-z]*r[a-z]*f\b|\brm\s+-[a-z]*f[a-z]*r\b|\bdel\s+\/[fsq]/i, reason: 'Exclusão em massa/forçada de arquivos ou pastas.' },
+    { re: /\bformat\b|\bmkfs\b|\bdiskpart\b/i, reason: 'Formatação ou particionamento de disco.' },
+    { re: /\bshutdown\b|\breboot\b|\bhalt\b|\bpoweroff\b/i, reason: 'Desligamento ou reinicialização do sistema.' },
+    { re: /\b(apt|apt-get|yum|dnf|brew|choco|winget|pip3?|npm)\s+(install|remove|uninstall|purge)\b/i, reason: 'Instalação ou remoção de programas/pacotes.' },
+    { re: /\bsudo\b|\brunas\b/i, reason: 'Comando com elevação de privilégios administrativos.' },
+    { re: /\bpasswd\b|\buseradd\b|\buserdel\b|\busermod\b|\bnet\s+user\b/i, reason: 'Alteração de usuários ou senhas do sistema.' },
+    { re: /\bchmod\s+777\b|\bchown\b/i, reason: 'Alteração de permissões ou dono de arquivos.' },
+    { re: /\bufw\b|\biptables\b|\bnetsh\s+advfirewall\b/i, reason: 'Alteração de regras de firewall.' },
+    { re: /set-mppreference|defender/i, reason: 'Alteração de configurações de antivírus/segurança do Windows.' },
+    { re: /\bregedit\b|\breg\s+(add|delete)\b/i, reason: 'Alteração do registro do Windows.' },
+    { re: />\s*\/dev\/sd|dd\s+if=.*of=\/dev/i, reason: 'Escrita direta em um dispositivo de disco.' },
+    { re: /\bgit\s+(push|reset\s+--hard|clean\s+-f)/i, reason: 'Operação Git potencialmente destrutiva ou que publica alterações.' },
+  ];
+  for (const { re, reason } of patterns) {
+    if (re.test(command)) return reason;
+  }
+  return null;
+}
+
+/**
+ * Bloqueia (não apenas pede confirmação, recusa de fato) qualquer comando que pareça tentar
+ * modificar a própria instalação do OSONE — o usuário pediu acesso total ao PC "menos
+ * reescrever o próprio código".
+ */
+function targetsOwnInstallation(command: string): boolean {
+  const projectDir = process.cwd();
+  if (!command.includes(projectDir) && !command.includes('OSONE-AI')) return false;
+  const writeVerbs = /\b(rm|del|mv|move|cp\s+-f|sed\s+-i|git\s+(commit|push)|npm\s+publish)\b|>>?\s|\btee\b/i;
+  return writeVerbs.test(command);
+}
+
+/**
+ * POST /exec - Executa um comando de terminal na máquina local. Comandos classificados como
+ * "importantes" por classifyCommandRisk() exigem 'confirmed: true' no corpo da requisição
+ * (o cliente mostra um modal de confirmação para o usuário antes de reenviar com confirmed).
+ */
+const handleExec = (req: Request, res: Response) => {
+  const command = (req.body?.command || '').toString();
+  const confirmed = req.body?.confirmed === true;
+
+  if (!command.trim()) {
+    return res.status(400).json({ error: "Parâmetro 'command' é obrigatório." });
+  }
+
+  if (targetsOwnInstallation(command)) {
+    logAudit('SECURITY', 'EXEC_BLOCKED_SELF', `Comando bloqueado por tentar modificar a própria instalação do OSONE`, { command });
+    return res.status(403).json({ error: 'Bloqueado: este comando parece tentar modificar a própria instalação do OSONE, o que não é permitido.' });
+  }
+
+  const risk = classifyCommandRisk(command);
+  if (risk && !confirmed) {
+    logAudit('WARN', 'EXEC_REQUIRES_CONFIRMATION', `Comando classificado como importante, aguardando confirmação`, { command, risk });
+    return res.status(400).json({
+      error: 'Confirmação explícita obrigatória para este comando.',
+      requiresConfirmation: true,
+      reason: risk
+    });
+  }
+
+  exec(command, { timeout: 30000, maxBuffer: 1024 * 1024 * 5, windowsHide: true }, (error, stdout, stderr) => {
+    const success = !error;
+    logAudit(success ? 'INFO' : 'ERROR', 'EXEC_COMMAND', `Comando executado: ${success ? 'sucesso' : 'falha'}`, {
+      command,
+      confirmed,
+      exitCode: (error as any)?.code
+    });
+
+    if (error && (error as any).killed) {
+      return res.status(500).json({ error: 'O comando excedeu o tempo limite de 30 segundos e foi encerrado.' });
+    }
+
+    return res.status(200).json({
+      success,
+      exitCode: error ? ((error as any).code ?? 1) : 0,
+      stdout: (stdout || '').toString().slice(0, 20000),
+      stderr: (stderr || '').toString().slice(0, 20000)
+    });
+  });
+};
+
 // Mapeamento das rotas no router
 agentRouter.get('/status', handleStatus);
 agentRouter.post('/open-app', handleOpenApp);
+agentRouter.post('/open-any', handleOpenAny);
 agentRouter.post('/close-app', handleCloseApp);
 agentRouter.post('/create-folder', handleCreateFolder);
 agentRouter.post('/write-file', handleWriteFile);
 agentRouter.post('/organize/plan', handleOrganizePlan);
 agentRouter.post('/organize/execute', handleOrganizeExecute);
 agentRouter.post('/file/trash', handleFileTrash);
+agentRouter.post('/volume', handleSetVolume);
+agentRouter.get('/system-check', handleSystemCheck);
+agentRouter.post('/exec', handleExec);
 agentRouter.get('/audit/logs', handleAuditLogs);
