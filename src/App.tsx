@@ -5251,9 +5251,73 @@ ${isBad
     return ws;
   };
 
+  /**
+   * Fallback de verdade quando o streaming via WebSocket da ElevenLabs não produz áudio: uma
+   * chamada REST comum (POST /api/tts, não-streaming) para o mesmo texto. Diferente de tentar
+   * abrir outro WebSocket (que repetiria exatamente a mesma falha, já que usa a mesma
+   * voz/conta), esta é uma rota de código genuinamente diferente no servidor.
+   */
+  const playElevenLabsRestFallback = async (text: string) => {
+    if (!isElevenLabsLiveActiveRef.current) return;
+
+    elevenLabsStateRef.current = 'speaking';
+    setIsSpeaking(true);
+    setIsListening(false);
+    setIsTranscribing(true);
+    setVoiceTranscript(text);
+
+    const finishAndResumeListening = () => {
+      setIsSpeaking(false);
+      setVoiceTranscript('');
+      if (isElevenLabsLiveActiveRef.current) {
+        elevenLabsStateRef.current = 'listening';
+        startListeningElevenLabs();
+      }
+    };
+
+    try {
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text,
+          engine: 'elevenlabs',
+          elevenLabsApiKey: apiKeys.elevenLabsApiKey || '',
+          elevenLabsVoiceId: getActiveElevenLabsVoiceId(),
+          elevenLabsStability: apiKeys.elevenLabsStability,
+          elevenLabsSimilarityBoost: apiKeys.elevenLabsSimilarityBoost,
+          elevenLabsStyle: apiKeys.elevenLabsStyle,
+          elevenLabsSpeakerBoost: apiKeys.elevenLabsSpeakerBoost,
+          elevenLabsModel: apiKeys.elevenLabsModel
+        })
+      });
+
+      if (!response.ok) {
+        const errJson = await response.json().catch(() => ({}));
+        addNotification(`Erro ElevenLabs (REST): ${errJson.error || `HTTP ${response.status}`}`, "error");
+        finishAndResumeListening();
+        return;
+      }
+
+      const blob = await response.blob();
+      const audioUrl = URL.createObjectURL(blob);
+      const audio = new Audio(audioUrl);
+      audio.onended = finishAndResumeListening;
+      audio.onerror = () => {
+        addNotification("Erro ao reproduzir o áudio de fallback da ElevenLabs.", "error");
+        finishAndResumeListening();
+      };
+      await audio.play();
+    } catch (err: any) {
+      console.error("Erro no fallback REST da ElevenLabs:", err);
+      addNotification(`Erro ElevenLabs (REST): ${err?.message || "Falha de conexão"}`, "error");
+      finishAndResumeListening();
+    }
+  };
+
   const playElevenLabsSpeech = async (text: string) => {
     if (!isElevenLabsLiveActiveRef.current) return;
-    
+
     elevenLabsStateRef.current = 'speaking';
     setIsSpeaking(true);
     setIsListening(false);
@@ -5697,11 +5761,14 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
       // 3. Send final flush chunk to ElevenLabs to complete audio synthesis
       safeSendToWs({ text: "", flush: true });
 
-      // Fallback check: Se o WebSocket da ElevenLabs não enviou nenhum áudio e a resposta já terminou, toca via REST TTS
+      // Fallback check: Se o WebSocket da ElevenLabs não enviou nenhum áudio e a resposta já terminou, toca via REST TTS.
+      // Importante: isto tem que ser uma chamada REST de verdade (endpoint /api/tts, não-streaming),
+      // não outra tentativa via WebSocket — chamar playElevenLabsSpeech aqui apenas repetiria o
+      // mesmo caminho que acabou de falhar (mesma voz/conta), duplicando o erro sem nenhum ganho real.
       setTimeout(() => {
         if (!hasReceivedAudio && accumulatedReply && isElevenLabsLiveActiveRef.current) {
           console.warn("ElevenLabs WS não gerou chunks de áudio. Executando fallback via REST TTS...");
-          playElevenLabsSpeech(accumulatedReply);
+          playElevenLabsRestFallback(accumulatedReply);
         }
       }, 1200);
 
