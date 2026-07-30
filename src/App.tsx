@@ -939,11 +939,14 @@ export default function App() {
   - O sistema de Smart Home (control_smart_device, get_connected_devices, run_smart_routine) pode operar em dois modos, dependendo se o usuário configurou credenciais reais da Tuya Cloud no servidor: MODO SIMULADO (ambiente de demonstração local, nenhum hardware físico é alterado) ou MODO REAL (comandos enviados de fato a dispositivos Tuya reais via nuvem). Você NÃO decide qual modo está ativo — a resposta de cada chamada de ferramenta informa isso explicitamente (mensagens com "[SIMULADO]" são simuladas; mensagens com "Dispositivo real" ou "Tuya Cloud" são reais). SEMPRE relate ao usuário exatamente o que a resposta da ferramenta disse, sem inventar nem inverter o modo.
   - FECHADURAS/TRAVAS (categoria contém "lock", "fechadura", "door", "latch"): é EXPRESSAMENTE PROIBIDO acionar fechaduras por voz — se você estiver em uma sessão de voz e a ferramenta retornar bloqueio de segurança, informe ao usuário que ele precisa usar o chat de texto do OSONE para essa ação. Em texto, uma fechadura real só é acionada após o usuário confirmar explicitamente no painel de confirmação que aparece na tela; se ele não confirmar em 3 minutos ou cancelar, a ação não ocorre — nunca diga que a fechadura foi destravada/travada se a resposta da ferramenta indicar cancelamento, expiração ou erro.
 
-  DIRETRIZ - AGENTE LOCAL (open_local_app, fecharAplicativo, criarPasta, escreverArquivo, organize_folder_plan, organize_folder_execute, trash_local_file, get_local_agent_status):
+  DIRETRIZ - AGENTE LOCAL (open_local_app, open_any_path, fecharAplicativo, criarPasta, escreverArquivo, organize_folder_plan, organize_folder_execute, trash_local_file, get_local_agent_status, set_system_volume, system_health_check, run_terminal_command):
   - Essas ferramentas só funcionam se o usuário tiver instalado e ligado manualmente o Agente Local OSONE no computador dele. Nunca assuma que está disponível sem checar a resposta da chamada.
-  - Se qualquer chamada retornar erro (agente offline, token inválido, app/pasta não permitidos), informe isso claramente ao usuário. NUNCA diga que um app foi aberto ou uma pasta foi organizada se a resposta da ferramenta indicar erro ou falha.
+  - Se qualquer chamada retornar erro (agente offline, token inválido, app/pasta não permitidos), informe isso claramente ao usuário. NUNCA diga que um app foi aberto, o volume foi ajustado ou um comando foi executado se a resposta da ferramenta indicar erro ou falha.
+  - MODELO DE PERMISSÃO: o usuário concedeu acesso amplo ao próprio computador (abrir qualquer app/arquivo/pasta/URL com open_any_path, ajustar volume, checar saúde do sistema, e rodar comandos de terminal com run_terminal_command) SEM precisar pedir permissão a cada vez para ações comuns e não-destrutivas. NÃO peça confirmação extra para essas ações simples — apenas execute e relate o resultado.
   - Para organize_folder_execute e trash_local_file: SEMPRE gere o plano primeiro, apresente um resumo claro do que será feito (quantos arquivos, para quais categorias, ou qual arquivo específico), e SÓ prossiga com a execução depois que o usuário responder afirmando explicitamente que concorda, na mesma conversa. Nunca pule esta etapa de confirmação, mesmo que o usuário peça pressa.
-  - Nunca invente nomes de apps ou pastas fora do que get_local_agent_status ou as respostas de erro informarem como disponível.
+  - Para run_terminal_command: comandos classificados como "importantes" pelo próprio servidor (ex: apagar em massa, instalar/remover programas, elevar privilégios, mexer em firewall/registro/antivírus) exigem confirmação humana explícita num painel na tela — a resposta da ferramenta informará "requiresConfirmation" quando isso acontecer. Nesse caso, explique ao usuário qual é o risco (o campo "reason" da resposta) e diga que ele precisa confirmar no painel; NUNCA tente reformular o comando para escapar da classificação de risco. Comandos importantes NUNCA são executados por voz, só pelo chat de texto.
+  - O Agente Local está configurado para RECUSAR qualquer comando que tente modificar a própria instalação/código-fonte do OSONE — isso é intencional e não deve ser contornado.
+  - Nunca invente nomes de apps ou pastas fora do que get_local_agent_status ou as respostas de erro informarem como disponível; para abrir algo específico, prefira open_any_path (não precisa de cadastro prévio).
 
   MODULAÇÃO DE VOZ:
   - IMPORTANTE: Não altere seus parâmetros de voz (pitch/rate) a menos que o usuário peça explicitamente ou a situação seja DRAMATICAMENTE necessária para um efeito criativo (ex: contar uma história de terror ou imitar um robô). NÃO troque de voz em diálogos comuns.
@@ -7152,6 +7155,52 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
         }
       });
 
+      functionDeclarations.push({
+        name: "open_any_path",
+        description: "Abre QUALQUER aplicativo instalado, arquivo, pasta ou URL no computador do usuário pelo nome ou caminho, sem precisar estar pré-cadastrado. Use isso como primeira opção para abrir algo; só use open_local_app se isso falhar.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            target: { type: Type.STRING, description: "Nome do aplicativo (ex: 'notepad', 'calculator'), caminho de arquivo/pasta, ou URL a ser aberto." }
+          },
+          required: ["target"]
+        }
+      });
+
+      functionDeclarations.push({
+        name: "set_system_volume",
+        description: "Ajusta o volume do sistema operacional do computador do usuário.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            action: { type: Type.STRING, description: "'set' (define um valor exato), 'up' (aumenta), 'down' (diminui), 'mute' ou 'unmute'." },
+            value: { type: Type.NUMBER, description: "Valor de 0 a 100. Obrigatório apenas quando action='set'." }
+          },
+          required: ["action"]
+        }
+      });
+
+      functionDeclarations.push({
+        name: "system_health_check",
+        description: "Faz uma checagem de saúde do computador do usuário: CPU, memória RAM livre/usada, espaço em disco e tempo ligado (uptime). Use quando o usuário pedir para verificar/diagnosticar o PC.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {}
+        }
+      });
+
+      functionDeclarations.push({
+        name: "run_terminal_command",
+        description: "Executa um comando de terminal/shell diretamente no computador do usuário e retorna a saída (stdout/stderr). Comandos classificados como importantes (ex: apagar em massa, instalar/remover programas, elevar privilégios, mexer em firewall/registro) exigem confirmação explícita do usuário no chat de texto antes de rodar — a resposta da ferramenta informará se isso for necessário; nesse caso, explique ao usuário e aguarde ele confirmar pelo painel, nunca insista ou tente contornar.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            command: { type: Type.STRING, description: "O comando de terminal completo a ser executado." }
+          },
+          required: ["command"]
+        }
+      });
+
       if (isGoogleSearchActive) {
         functionDeclarations.push({
           name: "google_search",
@@ -8024,7 +8073,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
               role: 'assistant' as const, 
               content: `Desenhei ${objects.length} objeto(s) no canvas interativo.` 
             }]);
-          } else if (['open_local_app', 'close_local_app', 'fecharAplicativo', 'create_local_folder', 'criarPasta', 'write_local_file', 'escreverArquivo', 'get_local_agent_status', 'organize_folder_plan', 'organize_folder_execute', 'trash_local_file'].includes(call.name)) {
+          } else if (['open_local_app', 'close_local_app', 'fecharAplicativo', 'create_local_folder', 'criarPasta', 'write_local_file', 'escreverArquivo', 'get_local_agent_status', 'organize_folder_plan', 'organize_folder_execute', 'trash_local_file', 'open_any_path', 'set_system_volume', 'system_health_check', 'run_terminal_command'].includes(call.name)) {
             const agentRes = await executeLocalAgentCall(call.name, call.args, apiKeys.localAgentToken, false);
             let displayContent = "";
             if (agentRes.error) {
@@ -8827,6 +8876,48 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   }
                 },
                 {
+                  name: "open_any_path",
+                  description: "Abre QUALQUER aplicativo instalado, arquivo, pasta ou URL no computador do usuário pelo nome ou caminho, sem precisar estar pré-cadastrado. Use isso como primeira opção para abrir algo; só use open_local_app se isso falhar.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      target: { type: Type.STRING, description: "Nome do aplicativo (ex: 'notepad', 'calculator'), caminho de arquivo/pasta, ou URL a ser aberto." }
+                    },
+                    required: ["target"]
+                  }
+                },
+                {
+                  name: "set_system_volume",
+                  description: "Ajusta o volume do sistema operacional do computador do usuário.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      action: { type: Type.STRING, description: "'set' (define um valor exato), 'up' (aumenta), 'down' (diminui), 'mute' ou 'unmute'." },
+                      value: { type: Type.NUMBER, description: "Valor de 0 a 100. Obrigatório apenas quando action='set'." }
+                    },
+                    required: ["action"]
+                  }
+                },
+                {
+                  name: "system_health_check",
+                  description: "Faz uma checagem de saúde do computador do usuário: CPU, memória RAM livre/usada, espaço em disco e tempo ligado (uptime). Use quando o usuário pedir para verificar/diagnosticar o PC.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {}
+                  }
+                },
+                {
+                  name: "run_terminal_command",
+                  description: "Executa um comando de terminal/shell diretamente no computador do usuário e retorna a saída (stdout/stderr). Comandos classificados como importantes (ex: apagar em massa, instalar/remover programas, elevar privilégios, mexer em firewall/registro) exigem confirmação explícita do usuário no chat de TEXTO antes de rodar — por voz, comandos importantes são recusados automaticamente e o usuário deve confirmar pelo painel de texto.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      command: { type: Type.STRING, description: "O comando de terminal completo a ser executado." }
+                    },
+                    required: ["command"]
+                  }
+                },
+                {
                   name: "export_to_excel",
                   description: "Gera um arquivo Excel (.xlsx) para o usuário baixar a partir de dados estruturados em formato JSON, a partir da edição ou criação que o usuário pedir. Use para tabelas, planilhas, relatórios baseados em grade.",
                   parameters: {
@@ -9504,7 +9595,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       id: call.id,
                       response: { result: resultMsg }
                     });
-                  } else if (['open_local_app', 'close_local_app', 'fecharAplicativo', 'create_local_folder', 'criarPasta', 'write_local_file', 'escreverArquivo', 'get_local_agent_status', 'organize_folder_plan', 'organize_folder_execute', 'trash_local_file'].includes(call.name)) {
+                  } else if (['open_local_app', 'close_local_app', 'fecharAplicativo', 'create_local_folder', 'criarPasta', 'write_local_file', 'escreverArquivo', 'get_local_agent_status', 'organize_folder_plan', 'organize_folder_execute', 'trash_local_file', 'open_any_path', 'set_system_volume', 'system_health_check', 'run_terminal_command'].includes(call.name)) {
                     const agentRes = await executeLocalAgentCall(call.name, call.args, apiKeys.localAgentToken, true);
                     if (agentRes.error) {
                       addNotification(agentRes.error, 'error');
