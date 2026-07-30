@@ -944,6 +944,13 @@ export default function App() {
   - O sistema de Smart Home (control_smart_device, get_connected_devices, run_smart_routine) pode operar em dois modos, dependendo se o usuário configurou credenciais reais da Tuya Cloud no servidor: MODO SIMULADO (ambiente de demonstração local, nenhum hardware físico é alterado) ou MODO REAL (comandos enviados de fato a dispositivos Tuya reais via nuvem). Você NÃO decide qual modo está ativo — a resposta de cada chamada de ferramenta informa isso explicitamente (mensagens com "[SIMULADO]" são simuladas; mensagens com "Dispositivo real" ou "Tuya Cloud" são reais). SEMPRE relate ao usuário exatamente o que a resposta da ferramenta disse, sem inventar nem inverter o modo.
   - FECHADURAS/TRAVAS (categoria contém "lock", "fechadura", "door", "latch"): é EXPRESSAMENTE PROIBIDO acionar fechaduras por voz — se você estiver em uma sessão de voz e a ferramenta retornar bloqueio de segurança, informe ao usuário que ele precisa usar o chat de texto do OSONE para essa ação. Em texto, uma fechadura real só é acionada após o usuário confirmar explicitamente no painel de confirmação que aparece na tela; se ele não confirmar em 3 minutos ou cancelar, a ação não ocorre — nunca diga que a fechadura foi destravada/travada se a resposta da ferramenta indicar cancelamento, expiração ou erro.
 
+  DIRETRIZ - WHATSAPP (send_whatsapp_message):
+  - Para mandar mensagem no WhatsApp de alguém você DEVE chamar a ferramenta send_whatsapp_message. Não existe nenhuma outra forma: você não consegue enviar apenas escrevendo o texto na resposta.
+  - NUNCA diga que enviou, mandou ou encaminhou uma mensagem sem ter chamado a ferramenta e recebido confirmação de sucesso dela. Se a ferramenta retornar erro (WhatsApp desconectado, número inválido, sessão caída), diga exatamente que NÃO foi enviado e qual foi o motivo. Afirmar um envio que não aconteceu é o pior erro possível aqui.
+  - Para enviar áudio (mensagem de voz), chame a mesma ferramenta com asAudio: true — o texto que você escrever será convertido em voz e enviado como áudio no WhatsApp. Use alsoText: false se o usuário quiser SOMENTE o áudio, sem o texto junto.
+  - O número deve ir com DDI e DDD, apenas dígitos (ex: 5584999259368). Se o usuário não informar o número e você não tiver certeza de qual é, pergunte antes de enviar — nunca chute um destinatário.
+  - Se a resposta avisar que o áudio falhou mas o texto foi enviado, relate exatamente isso ao usuário, sem arredondar para "enviei o áudio".
+
   DIRETRIZ - AGENTE LOCAL (open_local_app, open_any_path, fecharAplicativo, close_window_or_app, criarPasta, escreverArquivo, organize_folder_plan, organize_folder_execute, trash_local_file, delete_path, manage_path, list_path, get_local_agent_status, set_system_volume, control_media, open_system_settings, system_health_check, run_terminal_command):
   - Essas ferramentas só funcionam se o Agente Local do OSONE estiver ativo. Nunca assuma que está disponível sem checar a resposta da chamada.
   - Se qualquer chamada retornar erro (agente offline, token inválido, caminho inexistente), informe isso claramente ao usuário. NUNCA diga que algo foi aberto, fechado, apagado ou executado se a resposta da ferramenta indicar erro ou falha.
@@ -1853,6 +1860,54 @@ export default function App() {
 
   const [proposedPlan, setProposedPlan] = useState<SkeletonPlan | null>(null);
   const { pendingLocalAgentConfirmation, executeLocalAgentCall } = useLocalAgent();
+
+  /**
+   * Envia uma mensagem de WhatsApp de verdade, a pedido do modelo.
+   *
+   * Antes não existia ferramenta nenhuma de envio declarada para o modelo: como ele não tinha
+   * como enviar, acabava apenas AFIRMANDO que havia enviado. Agora existe um caminho real, e o
+   * resultado retornado aqui é a única fonte de verdade sobre o envio ter acontecido.
+   */
+  const sendWhatsAppFromModel = async (args: any): Promise<{ message: string; error?: string }> => {
+    const number = String(args?.number || '').replace(/\D/g, '');
+    const message = String(args?.message || '').trim();
+
+    if (!number || number.length < 8) {
+      return { message: '', error: `Número de destino inválido: '${args?.number}'. Informe com DDI e DDD (ex: 5584999259368).` };
+    }
+    if (!message) {
+      return { message: '', error: 'A mensagem está vazia — nada foi enviado.' };
+    }
+
+    try {
+      const res = await fetch('/api/whatsapp/send-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          number,
+          message,
+          asAudio: args?.asAudio === true,
+          alsoText: args?.alsoText !== false,
+          geminiApiKey: apiKeys.gemini || '',
+          elevenLabsApiKey: apiKeys.elevenLabsApiKey || '',
+          elevenLabsVoiceId: getActiveElevenLabsVoiceId()
+        })
+      });
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok || data?.status === 'error') {
+        return { message: '', error: data?.error || `Falha ao enviar (HTTP ${res.status}). A mensagem NÃO foi entregue.` };
+      }
+      // Áudio pedido que falhou, mas o texto saiu: é sucesso parcial e precisa ser dito, para
+      // o modelo não afirmar que mandou o áudio quando só o texto chegou.
+      const partialAudioWarning = (args?.asAudio === true && !data?.audioSent && data?.audioError)
+        ? ` ATENÇÃO: o áudio NÃO foi enviado (${data.audioError}) — apenas o texto chegou.`
+        : '';
+      return { message: `${data?.message || 'Mensagem enviada com sucesso pelo WhatsApp.'}${partialAudioWarning}` };
+    } catch (err: any) {
+      return { message: '', error: `Erro de conexão ao enviar pelo WhatsApp: ${err?.message || err}. A mensagem NÃO foi entregue.` };
+    }
+  };
   const {
     isTuyaConfigured,
     pendingTuyaConfirmation,
@@ -7376,6 +7431,21 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
       });
 
       functionDeclarations.push({
+        name: "send_whatsapp_message",
+        description: "Envia uma mensagem de WhatsApp REAL para um contato, pelo WhatsApp conectado no OSONE ZAP. Use SEMPRE esta ferramenta quando o usuário pedir para mandar mensagem para alguém — você não tem nenhuma outra forma de enviar. Pode enviar como texto, como áudio (mensagem de voz gerada a partir do texto) ou ambos. Só afirme que a mensagem foi enviada se a resposta desta ferramenta confirmar o sucesso.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            number: { type: Type.STRING, description: "Número de telefone do destinatário com DDI e DDD, apenas dígitos (ex: '5584999259368')." },
+            message: { type: Type.STRING, description: "O texto da mensagem a enviar. Se asAudio for true, este texto é convertido em voz." },
+            asAudio: { type: Type.BOOLEAN, description: "true para enviar como mensagem de voz (áudio) no WhatsApp. Padrão: false (só texto)." },
+            alsoText: { type: Type.BOOLEAN, description: "Quando asAudio for true, define se o texto também é enviado junto. Padrão: true." }
+          },
+          required: ["number", "message"]
+        }
+      });
+
+      functionDeclarations.push({
         name: "close_window_or_app",
         description: "Fecha uma janela ou encerra um aplicativo em execução pelo nome do programa ou título da janela. Não precisa de cadastro prévio.",
         parameters: {
@@ -8302,6 +8372,14 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
               role: 'assistant' as const, 
               content: `Desenhei ${objects.length} objeto(s) no canvas interativo.` 
             }]);
+          } else if (call.name === 'send_whatsapp_message') {
+            const waRes = await sendWhatsAppFromModel(call.args);
+            setChatHistory(prev => [...prev, {
+              id: Math.random().toString(36).substr(2, 9),
+              role: 'assistant' as const,
+              content: waRes.error ? `⚠️ [WHATSAPP] ${waRes.error}` : `✅ [WHATSAPP] ${waRes.message}`
+            }]);
+            addNotification(waRes.error || waRes.message, waRes.error ? 'error' : 'success');
           } else if (['open_local_app', 'close_local_app', 'fecharAplicativo', 'create_local_folder', 'criarPasta', 'write_local_file', 'escreverArquivo', 'get_local_agent_status', 'organize_folder_plan', 'organize_folder_execute', 'trash_local_file', 'open_any_path', 'set_system_volume', 'system_health_check', 'run_terminal_command', 'close_window_or_app', 'control_media', 'delete_path', 'manage_path', 'list_path', 'open_system_settings'].includes(call.name)) {
             const agentRes = await executeLocalAgentCall(call.name, call.args, apiKeys.localAgentToken, false);
             let displayContent = "";
@@ -9148,6 +9226,20 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   }
                 },
                 {
+                  name: "send_whatsapp_message",
+                  description: "Envia uma mensagem de WhatsApp REAL para um contato, pelo WhatsApp conectado no OSONE ZAP. Use SEMPRE esta ferramenta quando o usuário pedir para mandar mensagem para alguém — você não tem nenhuma outra forma de enviar. Pode enviar como texto, como áudio (mensagem de voz gerada a partir do texto) ou ambos. Só afirme que a mensagem foi enviada se a resposta desta ferramenta confirmar o sucesso.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      number: { type: Type.STRING, description: "Número do destinatário com DDI e DDD, apenas dígitos." },
+                      message: { type: Type.STRING, description: "O texto da mensagem a enviar." },
+                      asAudio: { type: Type.BOOLEAN, description: "true para enviar como mensagem de voz (áudio)." },
+                      alsoText: { type: Type.BOOLEAN, description: "Quando asAudio for true, define se o texto também vai junto. Padrão: true." }
+                    },
+                    required: ["number", "message"]
+                  }
+                },
+                {
                   name: "close_window_or_app",
                   description: "Fecha uma janela ou encerra um aplicativo em execução pelo nome do programa ou título da janela.",
                   parameters: {
@@ -9891,6 +9983,13 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       name: call.name,
                       id: call.id,
                       response: { result: resultMsg }
+                    });
+                  } else if (call.name === 'send_whatsapp_message') {
+                    const waRes = await sendWhatsAppFromModel(call.args);
+                    responses.push({
+                      name: call.name,
+                      id: call.id,
+                      response: { result: waRes.error ? `ERRO: ${waRes.error}` : waRes.message }
                     });
                   } else if (['open_local_app', 'close_local_app', 'fecharAplicativo', 'create_local_folder', 'criarPasta', 'write_local_file', 'escreverArquivo', 'get_local_agent_status', 'organize_folder_plan', 'organize_folder_execute', 'trash_local_file', 'open_any_path', 'set_system_volume', 'system_health_check', 'run_terminal_command', 'close_window_or_app', 'control_media', 'delete_path', 'manage_path', 'list_path', 'open_system_settings'].includes(call.name)) {
                     const agentRes = await executeLocalAgentCall(call.name, call.args, apiKeys.localAgentToken, true);
