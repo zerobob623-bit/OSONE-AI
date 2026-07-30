@@ -13,7 +13,7 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
-    "start": "node dist/server.cjs",
+    "start": "NODE_ENV=production node dist/server.cjs",
     "electron": "electron .",
     "build:desktop": "npm run build && electron-builder --win --linux",
     "release": "npm run build && electron-builder --win --linux --publish always",
@@ -31,7 +31,13 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "package.json"
+      "src/documentos_osone/**/*",
+      "package.json",
+      "node_modules/**/*",
+      "!node_modules/**/*.{md,markdown,ts,map}",
+      "!node_modules/**/test/**",
+      "!node_modules/**/tests/**",
+      "!node_modules/**/*.d.ts"
     ],
     "publish": {
       "provider": "github",
@@ -109,7 +115,6 @@
     "electron-builder": "^26.15.3",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "typescript": "~5.8.2"
   }
 }
