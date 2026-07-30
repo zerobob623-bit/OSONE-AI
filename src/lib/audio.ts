@@ -2,11 +2,43 @@
  * Audio processing utilities for Gemini Live API
  */
 
+const PCM_WORKLET_URL = '/audio-worklets/pcm-recorder-processor.js';
+
 export class AudioProcessor {
   private audioContext: AudioContext | null = null;
   private stream: MediaStream | null = null;
-  private processor: ScriptProcessorNode | null = null;
+  private workletNode: AudioWorkletNode | null = null;
+  private legacyProcessor: ScriptProcessorNode | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
+
+  private handleChunk(inputData: Float32Array, onAudioData: (base64Data: string, rms: number) => void) {
+    // Calculate RMS to detect user voice volume
+    let sum = 0;
+    for (let i = 0; i < inputData.length; i++) {
+      sum += inputData[i] * inputData[i];
+    }
+    const rms = Math.sqrt(sum / inputData.length);
+
+    // Dispatch CustomEvent on window for components to react to user speaking volume
+    const voiceEvent = new CustomEvent('osone_user_voice', { detail: { rms } });
+    window.dispatchEvent(voiceEvent);
+
+    // Convert Float32 to Int16 PCM
+    const pcmData = new Int16Array(inputData.length);
+    for (let i = 0; i < inputData.length; i++) {
+      pcmData[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
+    }
+
+    // Convert to base64 safely without using spread operator to avoid 'Maximum call stack size exceeded' errors
+    const uint8Bytes = new Uint8Array(pcmData.buffer);
+    let binary = "";
+    const len = uint8Bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+      binary += String.fromCharCode(uint8Bytes[i]);
+    }
+    const base64Data = btoa(binary);
+    onAudioData(base64Data, rms);
+  }
 
   async startRecording(onAudioData: (base64Data: string, rms: number) => void) {
     try {
@@ -23,55 +55,46 @@ export class AudioProcessor {
           autoGainControl: true
         }
       });
-      
+
       if (!this.audioContext || !this.stream) {
-        return; 
+        return;
       }
-      
+
       this.source = this.audioContext.createMediaStreamSource(this.stream);
-      
-      this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
-      
-      this.processor.onaudioprocess = (e) => {
-        if (!this.processor) return;
-        const inputData = e.inputBuffer.getChannelData(0);
-        
-        // Calculate RMS to detect user voice volume
-        let sum = 0;
-        for (let i = 0; i < inputData.length; i++) {
-          sum += inputData[i] * inputData[i];
+
+      // AudioWorkletNode roda em thread própria e substitui o ScriptProcessorNode (depreciado).
+      // Em navegadores/contextos sem suporte (ex: HTTP não-seguro), cai de volta pro antigo.
+      if (this.audioContext.audioWorklet) {
+        try {
+          await this.audioContext.audioWorklet.addModule(PCM_WORKLET_URL);
+          this.workletNode = new AudioWorkletNode(this.audioContext, 'pcm-recorder-processor');
+          this.workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
+            this.handleChunk(e.data, onAudioData);
+          };
+          this.source.connect(this.workletNode);
+          this.workletNode.connect(this.audioContext.destination);
+        } catch (workletError) {
+          console.warn("Falha ao carregar AudioWorklet, usando ScriptProcessorNode como fallback:", workletError);
+          this.workletNode = null;
         }
-        const rms = Math.sqrt(sum / inputData.length);
-        
-        // Dispatch CustomEvent on window for components to react to user speaking volume
-        const voiceEvent = new CustomEvent('osone_user_voice', { detail: { rms } });
-        window.dispatchEvent(voiceEvent);
-        
-        // Convert Float32 to Int16 PCM
-        const pcmData = new Int16Array(inputData.length);
-        for (let i = 0; i < inputData.length; i++) {
-          pcmData[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
-        }
-        
-        // Convert to base64 safely without using spread operator to avoid 'Maximum call stack size exceeded' errors
-        const uint8Bytes = new Uint8Array(pcmData.buffer);
-        let binary = "";
-        const len = uint8Bytes.byteLength;
-        for (let i = 0; i < len; i++) {
-          binary += String.fromCharCode(uint8Bytes[i]);
-        }
-        const base64Data = btoa(binary);
-        onAudioData(base64Data, rms);
-      };
-  
-      this.source.connect(this.processor);
-      this.processor.connect(this.audioContext.destination);
+      }
+
+      if (!this.workletNode) {
+        this.legacyProcessor = this.audioContext.createScriptProcessor(4096, 1, 1);
+        this.legacyProcessor.onaudioprocess = (e) => {
+          if (!this.legacyProcessor) return;
+          this.handleChunk(e.inputBuffer.getChannelData(0), onAudioData);
+        };
+        this.source.connect(this.legacyProcessor);
+        this.legacyProcessor.connect(this.audioContext.destination);
+      }
+
       if (this.audioContext.state === 'suspended') {
         await this.audioContext.resume();
       }
     } catch (error: any) {
-      const isPermissionDenied = error?.name === 'NotAllowedError' || 
-                                 error?.message?.includes('Permission denied') || 
+      const isPermissionDenied = error?.name === 'NotAllowedError' ||
+                                 error?.message?.includes('Permission denied') ||
                                  error?.message?.includes('not-allowed');
       if (isPermissionDenied) {
         console.warn("Aviso: Gravação de áudio indisponível por falta de permissão:", error.message || error);
@@ -89,12 +112,15 @@ export class AudioProcessor {
   }
 
   stopRecording() {
-    this.processor?.disconnect();
+    this.workletNode?.port.close();
+    this.workletNode?.disconnect();
+    this.legacyProcessor?.disconnect();
     this.source?.disconnect();
     this.stream?.getTracks().forEach(track => track.stop());
     this.audioContext?.close();
-    
-    this.processor = null;
+
+    this.workletNode = null;
+    this.legacyProcessor = null;
     this.source = null;
     this.stream = null;
     this.audioContext = null;
