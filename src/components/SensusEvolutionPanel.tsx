@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   Heart, Sparkles, Brain, Cpu, Flame, Sliders, Activity,
   RotateCw, Music, Lightbulb, User, Shield, Compass, ChevronLeft,
-  Layers, CalendarDays, CalendarRange, Infinity as InfinityIcon, Eraser
+  Layers, CalendarDays, CalendarRange, Infinity as InfinityIcon, Eraser,
+  Gauge, Sun
 } from 'lucide-react';
 import { MemoryTier } from '../hooks/useHierarchicalMemory';
 
@@ -22,6 +23,8 @@ interface SensusEvolutionPanelProps {
   avgWords: number;
   hierarchicalTiers?: MemoryTier[];
   onResetHierarchicalMemory?: () => void;
+  allostaticLoad?: number;
+  circadianEnergy?: number;
 }
 
 export const SensusEvolutionPanel: React.FC<SensusEvolutionPanelProps> = ({
@@ -38,7 +41,9 @@ export const SensusEvolutionPanel: React.FC<SensusEvolutionPanelProps> = ({
   totalMsgs,
   avgWords,
   hierarchicalTiers = [],
-  onResetHierarchicalMemory
+  onResetHierarchicalMemory,
+  allostaticLoad = 15,
+  circadianEnergy = 50
 }) => {
   const [calibrating, setCalibrating] = useState(false);
 
@@ -237,6 +242,47 @@ export const SensusEvolutionPanel: React.FC<SensusEvolutionPanelProps> = ({
                 <Sliders size={12} className="text-rose-500" /> Média de Palavras / Turno
               </span>
               <span className="font-mono text-white/90 font-semibold">{avgWords} pal.</span>
+            </div>
+          </div>
+
+          {/* Allostatic Regulation & Circadian Sync */}
+          <div className="bg-white/[0.02] border border-white/[0.04] rounded-3xl p-5 flex flex-col gap-3.5">
+            <h4 className="text-[9.5px] font-mono text-zinc-400 uppercase tracking-wider font-bold border-b border-white/[0.02] pb-2 flex items-center gap-1.5">
+              <Gauge size={12} className="text-emerald-500" /> Regulação Alostática
+            </h4>
+            <div className="space-y-1.5">
+              <div className="flex justify-between text-[11px] font-mono">
+                <span className="text-zinc-400 flex items-center gap-1.5">
+                  <Gauge size={11} className={allostaticLoad >= 65 ? "text-red-400" : allostaticLoad >= 35 ? "text-amber-400" : "text-emerald-400"} /> Carga Alostática (stress)
+                </span>
+                <span className={`font-bold ${allostaticLoad >= 65 ? "text-red-400" : allostaticLoad >= 35 ? "text-amber-400" : "text-emerald-400"}`}>{allostaticLoad}%</span>
+              </div>
+              <div className="w-full h-1.5 rounded-full bg-white/[0.03] overflow-hidden relative">
+                <motion.div
+                  initial={{ width: 0 }}
+                  animate={{ width: `${allostaticLoad}%` }}
+                  transition={{ duration: 1 }}
+                  className={`absolute top-0 left-0 h-full rounded-full ${allostaticLoad >= 65 ? "bg-gradient-to-r from-red-500 to-orange-500" : allostaticLoad >= 35 ? "bg-gradient-to-r from-amber-500 to-yellow-500" : "bg-gradient-to-r from-emerald-500 to-teal-500"}`}
+                />
+              </div>
+              <p className="text-[8.5px] text-zinc-500 italic">Desvio do ritmo atual da conversa em relação ao "normal" aprendido — sobe e desce de verdade, não só acumula.</p>
+            </div>
+            <div className="space-y-1.5 pt-1">
+              <div className="flex justify-between text-[11px] font-mono">
+                <span className="text-zinc-400 flex items-center gap-1.5">
+                  <Sun size={11} className="text-yellow-400" /> Sincronia Circadiana
+                </span>
+                <span className="text-yellow-400 font-bold">{circadianEnergy}%</span>
+              </div>
+              <div className="w-full h-1.5 rounded-full bg-white/[0.03] overflow-hidden relative">
+                <motion.div
+                  initial={{ width: 0 }}
+                  animate={{ width: `${circadianEnergy}%` }}
+                  transition={{ duration: 1 }}
+                  className="absolute top-0 left-0 h-full bg-gradient-to-r from-yellow-400 to-orange-400 rounded-full"
+                />
+              </div>
+              <p className="text-[8.5px] text-zinc-500 italic">Oscilação de energia baseada no horário real, para o humor nunca ser uniforme.</p>
             </div>
           </div>
 
