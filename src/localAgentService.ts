@@ -49,6 +49,58 @@ function expandHomePath(inputPath: string): string {
 }
 
 /**
+ * Nomes possíveis das pastas padrão do usuário, POR IDIOMA.
+ *
+ * Um sistema em português nomeia as pastas "Documentos" e "Área de Trabalho"; a configuração
+ * antiga assumia os nomes em inglês ("Documents", "Desktop") e portanto apontava para pastas
+ * que sequer existem nessas máquinas — o agente falhava em qualquer operação nelas. Aqui
+ * testamos os nomes reais no disco e usamos o primeiro que existir de fato.
+ */
+const WELL_KNOWN_FOLDER_ALIASES: Record<string, string[]> = {
+  downloads: ['Downloads', 'Descargas', 'Transferências', 'Baixados'],
+  desktop: ['Desktop', 'Área de Trabalho', 'Area de Trabalho', 'Escritorio', 'Escritório'],
+  documents: ['Documents', 'Documentos'],
+  pictures: ['Pictures', 'Imagens', 'Fotos'],
+  music: ['Music', 'Música', 'Musicas', 'Músicas'],
+  videos: ['Videos', 'Vídeos'],
+  home: [''],
+};
+
+/**
+ * Converte o que o modelo mandou num caminho ABSOLUTO real do disco.
+ *
+ * Aceita tanto um caminho completo ("/home/user/projetos", "C:\\Users\\x\\Downloads", "~/x")
+ * quanto um apelido de pasta conhecida ("downloads", "documentos", "área de trabalho"). Antes
+ * só apelidos em inglês eram aceitos, e qualquer caminho real era recusado — que é a razão de
+ * o agente "não achar os caminhos" e falhar ao criar, escrever ou apagar qualquer coisa.
+ */
+export function resolveAnyPath(input: string): string {
+  const raw = expandHomePath(String(input || '').trim());
+  if (!raw) return USER_HOME_DIR;
+
+  // Já é um caminho absoluto: usa como veio.
+  if (path.isAbsolute(raw)) return path.resolve(raw);
+
+  // Apelido de pasta conhecida (em qualquer idioma suportado).
+  const key = raw.toLowerCase().replace(/\s+/g, '_');
+  const aliasKey = Object.keys(WELL_KNOWN_FOLDER_ALIASES).find(k =>
+    k === key || WELL_KNOWN_FOLDER_ALIASES[k].some(n => n.toLowerCase().replace(/\s+/g, '_') === key)
+  );
+  if (aliasKey) {
+    for (const candidate of WELL_KNOWN_FOLDER_ALIASES[aliasKey]) {
+      const full = candidate ? path.join(USER_HOME_DIR, candidate) : USER_HOME_DIR;
+      if (fs.existsSync(full)) return full;
+    }
+    // Nenhum nome existe ainda: usa o primeiro, que será criado quando necessário.
+    const fallback = WELL_KNOWN_FOLDER_ALIASES[aliasKey][0];
+    return fallback ? path.join(USER_HOME_DIR, fallback) : USER_HOME_DIR;
+  }
+
+  // Caminho relativo qualquer: interpreta a partir da pasta do usuário, nunca da pasta do app.
+  return path.resolve(USER_HOME_DIR, raw);
+}
+
+/**
  * Categorias de extensões de arquivo para organização automática
  */
 export const FILE_CATEGORIES: Record<string, string[]> = {
@@ -335,6 +387,17 @@ const handleStatus = (req: Request, res: Response) => {
     userName: os.userInfo().username,
     defaultWorkingDir: USER_HOME_DIR,
     protectedPath: OSONE_INSTALL_DIR,
+    // Caminhos REAIS das pastas do usuário, já resolvidos no disco e com o nome que elas
+    // têm neste sistema (num Linux em português, "Documentos" e "Área de Trabalho", não
+    // "Documents"/"Desktop"). Assim o modelo não precisa adivinhar nem tentar caminhos.
+    userFolders: (() => {
+      const out: Record<string, string> = {};
+      for (const key of Object.keys(WELL_KNOWN_FOLDER_ALIASES)) {
+        const resolved = resolveAnyPath(key);
+        if (fs.existsSync(resolved)) out[key] = resolved;
+      }
+      return out;
+    })(),
     availableApps: Object.keys(CONFIG.apps || {}),
     allowedFolders: Object.keys(CONFIG.allowedFolders || {})
   });
@@ -544,22 +607,28 @@ const handleOrganizeExecute = (req: Request, res: Response) => {
  */
 const handleFileTrash = (req: Request, res: Response) => {
   try {
-    const { folderKey, fileName, confirmed } = req.body || {};
-
-    if (confirmed !== true) {
-      return res.status(400).json({
-        error: 'Confirmação necessária para mover para a lixeira. Envie confirmed: true.'
-      });
-    }
+    const { folderKey, fileName } = req.body || {};
 
     if (!fileName || typeof fileName !== 'string') {
       return res.status(400).json({ error: 'O nome do arquivo (fileName) é obrigatório.' });
     }
 
-    const { targetPath: safeSource } = resolveSafePath(folderKey, fileName);
+    // Aceita qualquer arquivo do computador: caminho absoluto direto em fileName, ou pasta
+    // (absoluta/apelido em qualquer idioma) + nome. A jail antiga só aceitava três apelidos em
+    // inglês, apontando para pastas que nem existem num sistema em português — motivo real de
+    // "não consegue apagar nada". A confirmação por parâmetro também saiu: o dono da máquina
+    // concedeu acesso total, e a exclusão é reversível (vai para a lixeira do agente).
+    const safeSource = path.isAbsolute(expandHomePath(fileName))
+      ? path.resolve(expandHomePath(fileName))
+      : path.join(resolveAnyPath(folderKey || 'home'), fileName);
+
+    if (isProtectedInstallPath(safeSource)) {
+      logAudit('SECURITY', 'TRASH_BLOCKED_SELF', `Exclusão bloqueada dentro da instalação do OSONE`, { safeSource });
+      return res.status(403).json({ error: `Bloqueado: '${safeSource}' faz parte da instalação do OSONE em uso, o único lugar protegido.` });
+    }
 
     if (!fs.existsSync(safeSource)) {
-      return res.status(404).json({ error: `Arquivo '${fileName}' não foi encontrado em '${folderKey}'.` });
+      return res.status(404).json({ error: `Arquivo não encontrado: '${safeSource}'. Use list_path para conferir o caminho real antes de apagar.` });
     }
 
     if (!fs.existsSync(TRASH_DIR_PATH)) {
@@ -661,8 +730,14 @@ const handleCreateFolder = (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Nome da pasta (folderName) é obrigatório.' });
     }
 
-    // Validação estrita do Jail e permissão da pasta base
-    const { targetPath: safeFolderPath } = resolveSafePath(parentFolder, folderName);
+    // Qualquer caminho do computador é aceito (absoluto, com '~', ou apelido de pasta
+    // conhecida em português/inglês). A única recusa é escrever dentro da instalação do OSONE.
+    const safeFolderPath = path.join(resolveAnyPath(parentFolder), folderName);
+
+    if (isProtectedInstallPath(safeFolderPath)) {
+      logAudit('SECURITY', 'FOLDER_CREATE_BLOCKED_SELF', `Criação bloqueada dentro da instalação do OSONE`, { safeFolderPath });
+      return res.status(403).json({ error: `Bloqueado: '${safeFolderPath}' fica dentro da instalação do OSONE em uso, o único lugar protegido.` });
+    }
 
     if (!fs.existsSync(safeFolderPath)) {
       fs.mkdirSync(safeFolderPath, { recursive: true });
@@ -706,16 +781,22 @@ const handleWriteFile = (req: Request, res: Response) => {
       return res.status(400).json({ error: 'O parâmetro content é obrigatório.' });
     }
 
-    // Validação de pasta autorizada em allowedFolders
-    if (!CONFIG.allowedFolders || !CONFIG.allowedFolders[folder]) {
-      logAudit('WARN', 'WRITE_FILE_REJECTED', `Pasta '${folder}' não está autorizada em allowedFolders.`, { folder, fileName });
-      return res.status(403).json({ error: `A pasta '${folder}' não está na lista de allowedFolders autorizadas.` });
-    }
-
     const fileContent = String(content);
 
-    // Validação de Jail de diretório usando resolveSafePath()
-    const { targetPath: caminhoValidado } = resolveSafePath(folder, fileName);
+    // Qualquer pasta do computador serve (caminho absoluto, com '~', ou apelido conhecido em
+    // português/inglês). Só a instalação do OSONE é protegida contra escrita.
+    const destDir = resolveAnyPath(folder);
+    const caminhoValidado = path.join(destDir, fileName);
+
+    if (isProtectedInstallPath(caminhoValidado)) {
+      logAudit('SECURITY', 'WRITE_FILE_BLOCKED_SELF', `Escrita bloqueada dentro da instalação do OSONE`, { caminhoValidado });
+      return res.status(403).json({ error: `Bloqueado: '${caminhoValidado}' fica dentro da instalação do OSONE em uso, o único lugar protegido.` });
+    }
+
+    // Cria a pasta de destino se ainda não existir, para o pedido não falhar por um detalhe.
+    if (!fs.existsSync(destDir)) {
+      fs.mkdirSync(destDir, { recursive: true });
+    }
 
     const fileExists = fs.existsSync(caminhoValidado);
 

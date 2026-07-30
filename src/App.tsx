@@ -687,6 +687,11 @@ export default function App() {
   });
   const isCloudSyncReady = useRef<boolean>(false);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
+
+  // Ambiente real da máquina (sistema operacional, pastas do usuário com os nomes que
+  // realmente têm no disco). Descoberto uma vez e injetado no prompt, para o modelo agir
+  // direto em vez de adivinhar o sistema ou tentar caminhos que não existem.
+  const [localAgentEnvironment, setLocalAgentEnvironment] = useState<any>(null);
   const [isGuestMode, setIsGuestMode] = useState(() => {
     try {
       const saved = localStorage.getItem('osone_last_active_user');
@@ -944,7 +949,18 @@ export default function App() {
   - O sistema de Smart Home (control_smart_device, get_connected_devices, run_smart_routine) pode operar em dois modos, dependendo se o usuário configurou credenciais reais da Tuya Cloud no servidor: MODO SIMULADO (ambiente de demonstração local, nenhum hardware físico é alterado) ou MODO REAL (comandos enviados de fato a dispositivos Tuya reais via nuvem). Você NÃO decide qual modo está ativo — a resposta de cada chamada de ferramenta informa isso explicitamente (mensagens com "[SIMULADO]" são simuladas; mensagens com "Dispositivo real" ou "Tuya Cloud" são reais). SEMPRE relate ao usuário exatamente o que a resposta da ferramenta disse, sem inventar nem inverter o modo.
   - FECHADURAS/TRAVAS (categoria contém "lock", "fechadura", "door", "latch"): é EXPRESSAMENTE PROIBIDO acionar fechaduras por voz — se você estiver em uma sessão de voz e a ferramenta retornar bloqueio de segurança, informe ao usuário que ele precisa usar o chat de texto do OSONE para essa ação. Em texto, uma fechadura real só é acionada após o usuário confirmar explicitamente no painel de confirmação que aparece na tela; se ele não confirmar em 3 minutos ou cancelar, a ação não ocorre — nunca diga que a fechadura foi destravada/travada se a resposta da ferramenta indicar cancelamento, expiração ou erro.
 
-  DIRETRIZ - WHATSAPP (send_whatsapp_message):
+  ${localAgentEnvironment ? `AMBIENTE REAL DESTE COMPUTADOR (já detectado — NÃO precisa chamar ferramenta para descobrir, e NÃO tente adivinhar):
+  - Sistema operacional: ${localAgentEnvironment.osName} (${localAgentEnvironment.platform})
+  - Shell/terminal: ${localAgentEnvironment.shell}
+  - Separador de caminho: ${localAgentEnvironment.pathSeparator}
+  - Pasta pessoal do usuário: ${localAgentEnvironment.homeDir}
+  - Usuário: ${localAgentEnvironment.userName}
+  - Pastas reais do usuário NESTE sistema (use EXATAMENTE estes caminhos, já existem no disco):
+${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    ${k}: ${v}`).join('\n') || '    (nenhuma detectada)'}
+  - Caminho protegido (única coisa que você NÃO pode apagar/sobrescrever): ${localAgentEnvironment.protectedPath}
+  Use a sintaxe do sistema acima em todo comando de terminal. Nunca misture comandos de Windows com Linux. Nunca invente caminhos em inglês se as pastas acima estiverem em português.
+
+` : ''}  DIRETRIZ - WHATSAPP (send_whatsapp_message):
   - Para mandar mensagem no WhatsApp de alguém você DEVE chamar a ferramenta send_whatsapp_message. Não existe nenhuma outra forma: você não consegue enviar apenas escrevendo o texto na resposta.
   - NUNCA diga que enviou, mandou ou encaminhou uma mensagem sem ter chamado a ferramenta e recebido confirmação de sucesso dela. Se a ferramenta retornar erro (WhatsApp desconectado, número inválido, sessão caída), diga exatamente que NÃO foi enviado e qual foi o motivo. Afirmar um envio que não aconteceu é o pior erro possível aqui.
   - Para enviar áudio (mensagem de voz), chame a mesma ferramenta com asAudio: true — o texto que você escrever será convertido em voz e enviado como áudio no WhatsApp. Use alsoText: false se o usuário quiser SOMENTE o áudio, sem o texto junto.
@@ -5869,6 +5885,67 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
   useEffect(() => {
     localStorage.setItem('osone_api_keys', JSON.stringify(apiKeys));
   }, [apiKeys]);
+
+  /**
+   * Provisiona o token do Agente Local automaticamente, sem o usuário precisar fazer nada.
+   *
+   * O agente roda dentro do próprio servidor do OSONE, na mesma máquina — exigir que a pessoa
+   * abrisse as Configurações e clicasse num botão (ou pior, caçasse o config.json) para que o
+   * app conseguisse falar consigo mesmo era atrito sem propósito. No app instalado isso era
+   * ainda mais confuso: o token do app empacotado fica numa pasta de dados do sistema,
+   * diferente do usado em desenvolvimento, então o agente parecia só funcionar com o servidor
+   * de desenvolvimento ligado.
+   *
+   * O endpoint só responde a pedidos da própria máquina (loopback), então buscar o token aqui
+   * não expõe nada que quem está usando o app já não pudesse obter.
+   */
+  useEffect(() => {
+    if ((apiKeys.localAgentToken || '').trim()) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/agent/provision-token');
+        if (!res.ok) return;
+        const data = await res.json().catch(() => null);
+        if (cancelled || !data?.token) return;
+        setApiKeys(prev => (prev.localAgentToken || '').trim() ? prev : { ...prev, localAgentToken: data.token });
+        console.log('[Agente Local] Token provisionado automaticamente para esta instalação.');
+      } catch {
+        // Servidor ainda subindo ou agente indisponível: segue sem token, e o usuário ainda
+        // pode gerá-lo manualmente nas Configurações.
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [apiKeys.localAgentToken]);
+
+  /**
+   * Descobre o ambiente real da máquina uma vez e guarda para injetar no prompt.
+   *
+   * Antes o modelo precisava chamar uma ferramenta para descobrir o sistema, e frequentemente
+   * não chamava — saía chutando sintaxe do Windows num Linux e caminhos em inglês num sistema
+   * em português. Sabendo o ambiente de antemão, ele age direto e para de "procurar" caminho.
+   */
+  useEffect(() => {
+    const token = (apiKeys.localAgentToken || '').trim();
+    if (!token || localAgentEnvironment) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/agent/status', { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) return;
+        const data = await res.json().catch(() => null);
+        if (cancelled || !data?.osName) return;
+        setLocalAgentEnvironment(data);
+      } catch {
+        // Agente indisponível agora; tenta de novo quando o token mudar.
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [apiKeys.localAgentToken, localAgentEnvironment]);
 
   useEffect(() => {
     return () => {
