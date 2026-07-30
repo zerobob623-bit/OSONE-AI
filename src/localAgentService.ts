@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { Request, Response, NextFunction, Router } from 'express';
 
 // ============================================================================
@@ -711,32 +711,100 @@ function runShell(cmd: string, timeoutMs: number = 10000): Promise<{ stdout: str
 }
 
 /**
+ * Nomes "conceito" de aplicativo (o jeito que um usuário ou a IA naturalmente pede, ex:
+ * "notepad", "explorer", "calculadora") mapeados para candidatos reais por plataforma. Sem
+ * isso, um pedido para abrir o "notepad" ou o "explorer" em uma máquina Linux tentaria abrir
+ * literalmente um arquivo com esse nome (que não existe) em vez do editor de texto ou
+ * gerenciador de arquivos equivalente. No Linux, onde não existe um único programa padrão
+ * garantido, tenta uma lista de candidatos comuns em ordem até um deles existir no PATH.
+ */
+const APP_CONCEPT_ALIASES: Record<string, { win32: string; darwin: string; linux: string[] }> = {
+  notepad: { win32: 'notepad', darwin: 'open -e', linux: ['gedit', 'gnome-text-editor', 'kate', 'xed', 'mousepad', 'leafpad'] },
+  texteditor: { win32: 'notepad', darwin: 'open -e', linux: ['gedit', 'gnome-text-editor', 'kate', 'xed', 'mousepad', 'leafpad'] },
+  bloco_de_notas: { win32: 'notepad', darwin: 'open -e', linux: ['gedit', 'gnome-text-editor', 'kate', 'xed', 'mousepad', 'leafpad'] },
+  explorer: { win32: 'explorer', darwin: 'open .', linux: ['nautilus .', 'dolphin .', 'pcmanfm .', 'thunar .', 'nemo .', 'xdg-open .'] },
+  filemanager: { win32: 'explorer', darwin: 'open .', linux: ['nautilus .', 'dolphin .', 'pcmanfm .', 'thunar .', 'nemo .', 'xdg-open .'] },
+  gerenciador_de_arquivos: { win32: 'explorer', darwin: 'open .', linux: ['nautilus .', 'dolphin .', 'pcmanfm .', 'thunar .', 'nemo .', 'xdg-open .'] },
+  calculator: { win32: 'calc', darwin: 'open -a Calculator', linux: ['gnome-calculator', 'kcalc', 'qalculate-gtk', 'xcalc'] },
+  calculadora: { win32: 'calc', darwin: 'open -a Calculator', linux: ['gnome-calculator', 'kcalc', 'qalculate-gtk', 'xcalc'] },
+  terminal: { win32: 'start cmd', darwin: 'open -a Terminal', linux: ['gnome-terminal', 'konsole', 'xterm', 'xfce4-terminal'] },
+};
+
+/** Verifica rapidamente (comando que sempre retorna na hora) se um binário existe no PATH. */
+function binaryExists(binary: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    exec(`command -v ${binary}`, { timeout: 2000 }, (error) => resolve(!error));
+  });
+}
+
+/**
+ * Lança um comando em segundo plano, totalmente desacoplado do processo do servidor
+ * (spawn + detached + unref), sem esperar o app fechar — crucial para apps que ficam
+ * abertos indefinidamente (ex: um editor de texto ou um terminal), diferente de exec com
+ * timeout, que mataria o app assim que o tempo limite estourasse.
+ */
+function launchDetached(command: string): void {
+  const child = spawn(command, { shell: true, detached: true, stdio: 'ignore' });
+  child.unref();
+}
+
+/**
+ * Tenta, em ordem, cada candidato de comando cujo binário existe no PATH, e lança o primeiro
+ * encontrado em segundo plano (sem esperar ele fechar).
+ */
+async function tryCommandsInOrder(commands: string[]): Promise<{ command: string }> {
+  for (const cmd of commands) {
+    const binary = cmd.split(' ')[0];
+    if (await binaryExists(binary)) {
+      launchDetached(cmd);
+      return { command: cmd };
+    }
+  }
+  throw new Error(`Nenhum dos programas testados está instalado (${commands.join(', ')}).`);
+}
+
+/**
  * POST /open-any - Abre QUALQUER app instalado, arquivo, pasta ou URL pelo nome/caminho,
  * sem precisar estar pré-cadastrado em config.json (diferente de /open-app, que só abre
- * apps da allowlist). Usa os abridores nativos do sistema operacional.
+ * apps da allowlist). Usa os abridores nativos do sistema operacional, com tradução de
+ * nomes-conceito de app (ex: 'notepad', 'explorer') para o equivalente real da plataforma.
  */
-const handleOpenAny = (req: Request, res: Response) => {
+const handleOpenAny = async (req: Request, res: Response) => {
   const target = (req.body?.target || '').toString().trim();
   if (!target) {
     return res.status(400).json({ error: "Parâmetro 'target' é obrigatório (nome de app, caminho de arquivo/pasta ou URL)." });
   }
 
-  const safeTarget = target.replace(/"/g, '\\"');
   const platform = process.platform;
-  const command = platform === 'win32'
-    ? `start "" "${safeTarget}"`
-    : platform === 'darwin'
-      ? `open "${safeTarget}"`
-      : `xdg-open "${safeTarget}"`;
+  const conceptKey = target.toLowerCase().replace(/\s+/g, '_');
+  const alias = APP_CONCEPT_ALIASES[conceptKey];
 
-  exec(command, { windowsHide: true }, (error) => {
-    if (error) {
-      logAudit('ERROR', 'OPEN_ANY_FAILED', `Falha ao abrir '${target}': ${error.message}`, { target, command });
-      return res.status(500).json({ error: `Não foi possível abrir '${target}': ${error.message}` });
+  try {
+    if (alias) {
+      if (platform === 'linux') {
+        const { command } = await tryCommandsInOrder(alias.linux);
+        logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto com sucesso via alias`, { target, command });
+        return res.status(200).json({ message: `'${target}' aberto com sucesso.`, target });
+      }
+      const command = platform === 'win32' ? `start "" ${alias.win32}` : `${alias.darwin}`;
+      await runShell(command, 4000);
+      logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto com sucesso via alias`, { target, command });
+      return res.status(200).json({ message: `'${target}' aberto com sucesso.`, target });
     }
+
+    const safeTarget = target.replace(/"/g, '\\"');
+    const command = platform === 'win32'
+      ? `start "" "${safeTarget}"`
+      : platform === 'darwin'
+        ? `open "${safeTarget}"`
+        : `xdg-open "${safeTarget}"`;
+    await runShell(command, 4000);
     logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto com sucesso`, { target, command });
     return res.status(200).json({ message: `'${target}' aberto com sucesso.`, target });
-  });
+  } catch (error: any) {
+    logAudit('ERROR', 'OPEN_ANY_FAILED', `Falha ao abrir '${target}': ${error.message}`, { target });
+    return res.status(500).json({ error: `Não foi possível abrir '${target}': ${error.message}` });
+  }
 };
 
 // ============================================================================
