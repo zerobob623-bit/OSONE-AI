@@ -7260,7 +7260,7 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
         parameters: {
           type: Type.OBJECT,
           properties: {
-            target: { type: Type.STRING, description: "Nome do aplicativo (ex: 'notepad', 'calculator'), caminho de arquivo/pasta, ou URL a ser aberto." }
+            target: { type: Type.STRING, description: "Nome CONCEITUAL e genérico do aplicativo (ex: 'notepad' para editor de texto, 'explorer' para gerenciador de arquivos, 'calculator', 'terminal'), caminho de arquivo/pasta, ou URL a ser aberto. NUNCA presuma nomes de binário específicos de uma plataforma (ex: nomes de app do Windows) — o Agente Local já traduz esses nomes-conceito para o programa real equivalente em qualquer sistema operacional (Windows, Linux ou macOS)." }
           },
           required: ["target"]
         }
@@ -8962,7 +8962,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   parameters: {
                     type: Type.OBJECT,
                     properties: {
-                      target: { type: Type.STRING, description: "Nome do aplicativo (ex: 'notepad', 'calculator'), caminho de arquivo/pasta, ou URL a ser aberto." }
+                      target: { type: Type.STRING, description: "Nome CONCEITUAL e genérico do aplicativo (ex: 'notepad' para editor de texto, 'explorer' para gerenciador de arquivos, 'calculator', 'terminal'), caminho de arquivo/pasta, ou URL a ser aberto. NUNCA presuma nomes de binário específicos de uma plataforma (ex: nomes de app do Windows) — o Agente Local já traduz esses nomes-conceito para o programa real equivalente em qualquer sistema operacional (Windows, Linux ou macOS)." }
                     },
                     required: ["target"]
                   }
