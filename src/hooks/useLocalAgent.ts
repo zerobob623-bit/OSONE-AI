@@ -302,83 +302,101 @@ export function useLocalAgent() {
       }
 
       if (toolName === 'run_terminal_command') {
-        const { command } = args || {};
+        const { command, cwd } = args || {};
         if (!command) return { error: "Parâmetro 'command' é obrigatório." };
 
-        const attemptExec = async (confirmed: boolean) => {
-          const res = await fetch(`${LOCAL_AGENT_URL}/exec`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({ command, confirmed })
-          });
-          const data = await res.json().catch(() => null);
-          return { res, data };
-        };
-
-        const first = await attemptExec(false);
-        if (first.res.ok) {
-          return first.data || { success: true, message: 'Comando executado com sucesso.' };
-        }
-
-        if (!first.data?.requiresConfirmation) {
-          return { error: first.data?.error || `Erro ao executar comando (HTTP ${first.res.status}).` };
-        }
-
-        // Comando classificado como importante (ex: apagar em massa, instalar programa,
-        // elevar privilégios): exige confirmação explícita no chat de texto, nunca por voz.
-        if (isVoiceSession) {
-          return {
-            error: `Este comando é considerado importante (${first.data.reason}) e precisa de confirmação explícita no chat de texto do OSONE — não pode ser autorizado por voz.`
-          };
-        }
-
-        if (pendingLocalAgentResolveRef.current) {
-          if (pendingLocalAgentTimerRef.current) clearTimeout(pendingLocalAgentTimerRef.current);
-          pendingLocalAgentResolveRef.current({ error: "Solicitação de confirmação anterior foi cancelada pois uma nova ação foi solicitada." });
-          pendingLocalAgentResolveRef.current = null;
-        }
-
-        return new Promise((resolve) => {
-          const resolveOnce = (val: any) => {
-            if (pendingLocalAgentTimerRef.current) {
-              clearTimeout(pendingLocalAgentTimerRef.current);
-              pendingLocalAgentTimerRef.current = null;
-            }
-            setPendingLocalAgentConfirmation(null);
-            if (pendingLocalAgentResolveRef.current === resolveOnce) {
-              pendingLocalAgentResolveRef.current = null;
-            }
-            resolve(val);
-          };
-
-          pendingLocalAgentResolveRef.current = resolveOnce;
-
-          pendingLocalAgentTimerRef.current = setTimeout(() => {
-            resolveOnce({ error: "A confirmação do comando de terminal expirou por tempo limite (3 minutos sem resposta do usuário no painel)." });
-          }, 180000);
-
-          setPendingLocalAgentConfirmation({
-            id: Math.random().toString(36).substring(2, 9),
-            type: 'run_terminal_command',
-            command,
-            reason: first.data.reason,
-            onConfirm: async () => {
-              try {
-                const { res, data } = await attemptExec(true);
-                if (!res.ok) {
-                  resolveOnce({ error: data?.error || 'Erro ao executar o comando de terminal.' });
-                } else {
-                  resolveOnce(data || { success: true, message: 'Comando executado com sucesso após confirmação do usuário.' });
-                }
-              } catch (err) {
-                resolveOnce({ error: 'Erro de conexão ao executar o comando de terminal.' });
-              }
-            },
-            onCancel: () => {
-              resolveOnce({ error: 'Execução do comando de terminal cancelada pelo usuário no painel de confirmação.' });
-            }
-          });
+        // Execução direta: o dono da máquina liberou explicitamente o controle total do
+        // terminal, então não há mais gate de confirmação por categoria de comando (o servidor
+        // registra tudo no log de auditoria). A única recusa possível vem do servidor, quando o
+        // comando alteraria a própria instalação do OSONE.
+        const res = await fetch(`${LOCAL_AGENT_URL}/exec`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ command, cwd })
         });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          return { error: data?.error || `Erro ao executar comando (HTTP ${res.status}).` };
+        }
+        return data || { success: true, message: 'Comando executado com sucesso.' };
+      }
+
+      if (toolName === 'close_window_or_app') {
+        const { target, force } = args || {};
+        if (!target) return { error: "Parâmetro 'target' é obrigatório (nome do app ou título da janela)." };
+        const res = await fetch(`${LOCAL_AGENT_URL}/window/close`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ target, force: !!force })
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) return { error: data?.error || `Não foi possível fechar '${target}'.` };
+        return data || { success: true };
+      }
+
+      if (toolName === 'control_media') {
+        const { action } = args || {};
+        if (!action) return { error: "Parâmetro 'action' é obrigatório (playpause, play, pause, next, previous, stop)." };
+        const res = await fetch(`${LOCAL_AGENT_URL}/media`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ action })
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) return { error: data?.error || `Não foi possível controlar a mídia.` };
+        return data || { success: true };
+      }
+
+      if (toolName === 'delete_path') {
+        const { target } = args || {};
+        if (!target) return { error: "Parâmetro 'target' é obrigatório (caminho do arquivo ou pasta)." };
+        const res = await fetch(`${LOCAL_AGENT_URL}/path/delete`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ target })
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) return { error: data?.error || `Não foi possível apagar '${target}'.` };
+        return data || { success: true };
+      }
+
+      if (toolName === 'manage_path') {
+        const { action, source, destination } = args || {};
+        if (!action || !source || !destination) {
+          return { error: "Parâmetros 'action' (move/copy/rename), 'source' e 'destination' são obrigatórios." };
+        }
+        const res = await fetch(`${LOCAL_AGENT_URL}/path/manage`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ action, source, destination })
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) return { error: data?.error || `Não foi possível ${action} '${source}'.` };
+        return data || { success: true };
+      }
+
+      if (toolName === 'list_path') {
+        const { target } = args || {};
+        const res = await fetch(`${LOCAL_AGENT_URL}/path/list`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ target: target || '' })
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) return { error: data?.error || `Não foi possível listar o caminho.` };
+        return data || { entries: [] };
+      }
+
+      if (toolName === 'open_system_settings') {
+        const { panel } = args || {};
+        const res = await fetch(`${LOCAL_AGENT_URL}/system/settings`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ panel: panel || 'main' })
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) return { error: data?.error || `Não foi possível abrir as configurações.` };
+        return data || { success: true };
       }
 
       return { error: `Ferramenta desconhecida: ${toolName}` };

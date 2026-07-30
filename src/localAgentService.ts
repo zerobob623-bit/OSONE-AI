@@ -14,6 +14,33 @@ const AUDIT_LOG_PATH = path.join(process.cwd(), 'audit.log');
 const TRASH_DIR_PATH = path.join(process.cwd(), 'trash');
 
 /**
+ * Caminho real da instalação do OSONE que está rodando agora — a ÚNICA coisa que o agente é
+ * proibido de apagar/sobrescrever. Derivado de __dirname (e não de process.cwd(), que o app
+ * empacotado troca para a pasta de dados do usuário): no bundle compilado __dirname é
+ * <instalação>/dist e em desenvolvimento é <projeto>/src, então subir um nível acerta os dois.
+ */
+const OSONE_INSTALL_DIR = path.resolve(__dirname, '..');
+
+/** Diretório onde comandos e aberturas devem acontecer por padrão: a casa do usuário. */
+const USER_HOME_DIR = os.homedir();
+
+/**
+ * Nomes que se referem ao próprio OSONE. Fechar qualquer um deles derrubaria o processo que
+ * está executando a ação, então são recusados explicitamente.
+ */
+const OWN_PROCESS_NAMES = new Set(['osone', 'osone g5', 'osone-app', 'osone.exe', 'node', 'electron']);
+
+/** Expande '~' para a pasta do usuário e normaliza o caminho. */
+function expandHomePath(inputPath: string): string {
+  const raw = String(inputPath || '').trim();
+  if (raw === '~') return USER_HOME_DIR;
+  if (raw.startsWith('~/') || raw.startsWith('~\\')) {
+    return path.join(USER_HOME_DIR, raw.slice(2));
+  }
+  return raw;
+}
+
+/**
  * Categorias de extensões de arquivo para organização automática
  */
 export const FILE_CATEGORIES: Record<string, string[]> = {
@@ -226,6 +253,37 @@ initializeConfig();
 
 export const agentRouter = Router();
 
+/**
+ * GET /provision-token — entrega o token deste agente para a própria interface do OSONE, para
+ * que o usuário não precise abrir o config.json à mão. No app empacotado (.exe) esse arquivo
+ * fica na pasta de dados do sistema, que o usuário praticamente nunca encontra — era por isso
+ * que o Agente Local parecia "só funcionar no npm run dev".
+ *
+ * Fica ANTES do middleware de autenticação (é justamente o que fornece a credencial), então a
+ * proteção aqui é a origem da requisição: apenas o próprio computador (loopback) pode obter o
+ * token. Pedidos vindos da rede são recusados, mesmo o servidor escutando em 0.0.0.0.
+ */
+agentRouter.get('/provision-token', (req: Request, res: Response) => {
+  const remote = req.socket.remoteAddress || '';
+  const isLoopback = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+
+  if (!isLoopback) {
+    logAudit('SECURITY', 'TOKEN_PROVISION_DENIED', `Pedido de token recusado: origem não é a máquina local`, { ip: remote });
+    return res.status(403).json({
+      error: 'O token do Agente Local só pode ser obtido a partir do próprio computador onde o OSONE está instalado.'
+    });
+  }
+
+  if (!CONFIG.token || CONFIG.token.trim() === '') {
+    CONFIG.token = crypto.randomBytes(32).toString('hex');
+    saveConfig();
+    logAudit('INFO', 'TOKEN_GENERATED', 'Token do Agente Local gerado sob demanda pela interface do OSONE.');
+  }
+
+  logAudit('INFO', 'TOKEN_PROVISIONED', 'Token do Agente Local entregue à interface local do OSONE.', { ip: remote });
+  return res.status(200).json({ token: CONFIG.token, platform: process.platform });
+});
+
 // Middleware de Autenticação por Token Bearer
 agentRouter.use((req: Request, res: Response, next: NextFunction) => {
   // Preflight OPTIONS responde diretamente
@@ -252,13 +310,23 @@ agentRouter.use((req: Request, res: Response, next: NextFunction) => {
  * GET /status
  */
 const handleStatus = (req: Request, res: Response) => {
-  const currentPlatform = process.platform === 'win32' ? 'win32' : 'linux';
+  const isWindows = process.platform === 'win32';
+  const isMac = process.platform === 'darwin';
   return res.status(200).json({
     status: 'online',
     agentName: 'osone-local-agent',
-    version: '1.0.0',
-    platform: currentPlatform,
-    systemOS: os.type(),
+    version: '2.0.0',
+    // Informação de plataforma detalhada: o modelo precisa saber exatamente em que sistema
+    // está para não misturar sintaxe (ex: mandar comando de PowerShell numa máquina Linux).
+    platform: process.platform,
+    osName: isWindows ? 'Windows' : isMac ? 'macOS' : 'Linux',
+    osRelease: os.release(),
+    shell: isWindows ? 'cmd/powershell' : 'bash/sh',
+    pathSeparator: path.sep,
+    homeDir: USER_HOME_DIR,
+    userName: os.userInfo().username,
+    defaultWorkingDir: USER_HOME_DIR,
+    protectedPath: OSONE_INSTALL_DIR,
     availableApps: Object.keys(CONFIG.apps || {}),
     allowedFolders: Object.keys(CONFIG.allowedFolders || {})
   });
@@ -701,9 +769,10 @@ const handleAuditLogs = (req: Request, res: Response) => {
 // SEÇÃO 6: ABRIR QUALQUER APP/ARQUIVO/PASTA/URL SEM PRECISAR DE ALLOWLIST
 // ============================================================================
 
-function runShell(cmd: string, timeoutMs: number = 10000): Promise<{ stdout: string; stderr: string }> {
+function runShell(cmd: string, timeoutMs: number = 10000, cwd: string = USER_HOME_DIR): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    exec(cmd, { timeout: timeoutMs, windowsHide: true }, (error, stdout, stderr) => {
+    const workingDir = fs.existsSync(cwd) ? cwd : USER_HOME_DIR;
+    exec(cmd, { timeout: timeoutMs, windowsHide: true, cwd: workingDir }, (error, stdout, stderr) => {
       if (error) return reject(new Error(stderr?.toString().trim() || error.message));
       resolve({ stdout: stdout?.toString() || '', stderr: stderr?.toString() || '' });
     });
@@ -722,13 +791,21 @@ const APP_CONCEPT_ALIASES: Record<string, { win32: string; darwin: string; linux
   notepad: { win32: 'notepad', darwin: 'open -e', linux: ['gedit', 'gnome-text-editor', 'kate', 'xed', 'mousepad', 'leafpad'] },
   texteditor: { win32: 'notepad', darwin: 'open -e', linux: ['gedit', 'gnome-text-editor', 'kate', 'xed', 'mousepad', 'leafpad'] },
   bloco_de_notas: { win32: 'notepad', darwin: 'open -e', linux: ['gedit', 'gnome-text-editor', 'kate', 'xed', 'mousepad', 'leafpad'] },
-  explorer: { win32: 'explorer', darwin: 'open .', linux: ['nautilus .', 'dolphin .', 'pcmanfm .', 'thunar .', 'nemo .', 'xdg-open .'] },
-  filemanager: { win32: 'explorer', darwin: 'open .', linux: ['nautilus .', 'dolphin .', 'pcmanfm .', 'thunar .', 'nemo .', 'xdg-open .'] },
-  gerenciador_de_arquivos: { win32: 'explorer', darwin: 'open .', linux: ['nautilus .', 'dolphin .', 'pcmanfm .', 'thunar .', 'nemo .', 'xdg-open .'] },
+  explorer: { win32: 'explorer', darwin: 'open', linux: ['nautilus', 'dolphin', 'pcmanfm', 'thunar', 'nemo', 'xdg-open'] },
+  filemanager: { win32: 'explorer', darwin: 'open', linux: ['nautilus', 'dolphin', 'pcmanfm', 'thunar', 'nemo', 'xdg-open'] },
+  gerenciador_de_arquivos: { win32: 'explorer', darwin: 'open', linux: ['nautilus', 'dolphin', 'pcmanfm', 'thunar', 'nemo', 'xdg-open'] },
   calculator: { win32: 'calc', darwin: 'open -a Calculator', linux: ['gnome-calculator', 'kcalc', 'qalculate-gtk', 'xcalc'] },
   calculadora: { win32: 'calc', darwin: 'open -a Calculator', linux: ['gnome-calculator', 'kcalc', 'qalculate-gtk', 'xcalc'] },
-  terminal: { win32: 'start cmd', darwin: 'open -a Terminal', linux: ['gnome-terminal', 'konsole', 'xterm', 'xfce4-terminal'] },
+  terminal: { win32: 'start cmd', darwin: 'open -a Terminal', linux: ['gnome-terminal', 'konsole', 'xfce4-terminal', 'xterm'] },
 };
+
+/**
+ * Aliases que abrem "um lugar" (gerenciador de arquivos, terminal) e portanto recebem um
+ * caminho. Antes eles usavam "." — o diretório do processo, que no app empacotado é a pasta do
+ * próprio OSONE, e era exatamente por isso que o terminal e o explorador abriam sempre dentro
+ * da pasta do app em vez do lugar pedido.
+ */
+const LOCATION_ALIASES = new Set(['explorer', 'filemanager', 'gerenciador_de_arquivos', 'terminal']);
 
 /** Verifica rapidamente (comando que sempre retorna na hora) se um binário existe no PATH. */
 function binaryExists(binary: string): Promise<boolean> {
@@ -743,8 +820,9 @@ function binaryExists(binary: string): Promise<boolean> {
  * abertos indefinidamente (ex: um editor de texto ou um terminal), diferente de exec com
  * timeout, que mataria o app assim que o tempo limite estourasse.
  */
-function launchDetached(command: string): void {
-  const child = spawn(command, { shell: true, detached: true, stdio: 'ignore' });
+function launchDetached(command: string, cwd: string = USER_HOME_DIR): void {
+  const workingDir = fs.existsSync(cwd) ? cwd : USER_HOME_DIR;
+  const child = spawn(command, { shell: true, detached: true, stdio: 'ignore', cwd: workingDir });
   child.unref();
 }
 
@@ -752,11 +830,11 @@ function launchDetached(command: string): void {
  * Tenta, em ordem, cada candidato de comando cujo binário existe no PATH, e lança o primeiro
  * encontrado em segundo plano (sem esperar ele fechar).
  */
-async function tryCommandsInOrder(commands: string[]): Promise<{ command: string }> {
+async function tryCommandsInOrder(commands: string[], cwd: string = USER_HOME_DIR): Promise<{ command: string }> {
   for (const cmd of commands) {
     const binary = cmd.split(' ')[0];
     if (await binaryExists(binary)) {
-      launchDetached(cmd);
+      launchDetached(cmd, cwd);
       return { command: cmd };
     }
   }
@@ -779,26 +857,50 @@ const handleOpenAny = async (req: Request, res: Response) => {
   const conceptKey = target.toLowerCase().replace(/\s+/g, '_');
   const alias = APP_CONCEPT_ALIASES[conceptKey];
 
+  // Para terminal/gerenciador de arquivos, o local a abrir é o caminho pedido (ou a casa do
+  // usuário) — nunca o diretório do próprio OSONE.
+  const requestedPath = req.body?.path ? expandHomePath(String(req.body.path)) : USER_HOME_DIR;
+  const openAtDir = fs.existsSync(requestedPath) ? requestedPath : USER_HOME_DIR;
+
   try {
     if (alias) {
+      const isLocationAlias = LOCATION_ALIASES.has(conceptKey);
+
       if (platform === 'linux') {
-        const { command } = await tryCommandsInOrder(alias.linux);
-        logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto com sucesso via alias`, { target, command });
-        return res.status(200).json({ message: `'${target}' aberto com sucesso.`, target });
+        // Gerenciadores de arquivo recebem a pasta como argumento; terminais são lançados
+        // já com o diretório de trabalho correto (cwd), que é como eles herdam o local.
+        const candidates = (conceptKey === 'terminal' || !isLocationAlias)
+          ? alias.linux
+          : alias.linux.map(bin => `${bin} "${openAtDir}"`);
+        const { command } = await tryCommandsInOrder(candidates, openAtDir);
+        logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto com sucesso via alias`, { target, command, cwd: openAtDir });
+        return res.status(200).json({ message: `'${target}' aberto com sucesso.`, target, path: isLocationAlias ? openAtDir : undefined });
       }
-      const command = platform === 'win32' ? `start "" ${alias.win32}` : `${alias.darwin}`;
+
+      let command: string;
+      if (platform === 'win32') {
+        command = conceptKey === 'terminal'
+          ? `start "" cmd /K "cd /d ""${openAtDir}"""`
+          : isLocationAlias
+            ? `start "" ${alias.win32} "${openAtDir}"`
+            : `start "" ${alias.win32}`;
+      } else {
+        command = isLocationAlias ? `${alias.darwin} "${openAtDir}"` : `${alias.darwin}`;
+      }
       await runShell(command, 4000);
-      logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto com sucesso via alias`, { target, command });
-      return res.status(200).json({ message: `'${target}' aberto com sucesso.`, target });
+      logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto com sucesso via alias`, { target, command, cwd: openAtDir });
+      return res.status(200).json({ message: `'${target}' aberto com sucesso.`, target, path: isLocationAlias ? openAtDir : undefined });
     }
 
-    const safeTarget = target.replace(/"/g, '\\"');
+    const expandedTarget = expandHomePath(target);
+    const safeTarget = expandedTarget.replace(/"/g, '\\"');
     const command = platform === 'win32'
       ? `start "" "${safeTarget}"`
       : platform === 'darwin'
         ? `open "${safeTarget}"`
         : `xdg-open "${safeTarget}"`;
-    await runShell(command, 4000);
+    // cwd na casa do usuário para que caminhos relativos nunca resolvam para a pasta do app.
+    await runShell(command, 4000, USER_HOME_DIR);
     logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto com sucesso`, { target, command });
     return res.status(200).json({ message: `'${target}' aberto com sucesso.`, target });
   } catch (error: any) {
@@ -974,10 +1076,20 @@ function classifyCommandRisk(command: string): string | null {
  * reescrever o próprio código".
  */
 function targetsOwnInstallation(command: string): boolean {
-  const projectDir = process.cwd();
-  if (!command.includes(projectDir) && !command.includes('OSONE-AI')) return false;
-  const writeVerbs = /\b(rm|del|mv|move|cp\s+-f|sed\s+-i|git\s+(commit|push)|npm\s+publish)\b|>>?\s|\btee\b/i;
+  // Só o caminho REAL da instalação conta. Antes isto usava process.cwd() (que no app
+  // empacotado é a pasta de dados do usuário, não a instalação) e ainda casava com qualquer
+  // texto contendo "OSONE-AI" — o que bloqueava até cópias e clones do projeto em outros
+  // lugares. O usuário pode mexer livremente em clones; protegido é apenas o código que está
+  // rodando agora.
+  if (!command.includes(OSONE_INSTALL_DIR)) return false;
+  const writeVerbs = /\b(rm|del|rmdir|mv|move|cp\s+-f|sed\s+-i|truncate|shred)\b|>>?\s|\btee\b/i;
   return writeVerbs.test(command);
+}
+
+/** Bloqueia apagar/sobrescrever a própria instalação, mas permite qualquer outro caminho. */
+function isProtectedInstallPath(targetPath: string): boolean {
+  const resolved = path.resolve(expandHomePath(targetPath));
+  return resolved === OSONE_INSTALL_DIR || resolved.startsWith(OSONE_INSTALL_DIR + path.sep);
 }
 
 /**
@@ -995,29 +1107,32 @@ const handleExec = (req: Request, res: Response) => {
 
   if (targetsOwnInstallation(command)) {
     logAudit('SECURITY', 'EXEC_BLOCKED_SELF', `Comando bloqueado por tentar modificar a própria instalação do OSONE`, { command });
-    return res.status(403).json({ error: 'Bloqueado: este comando parece tentar modificar a própria instalação do OSONE, o que não é permitido.' });
+    return res.status(403).json({ error: `Bloqueado: este comando modificaria a própria instalação do OSONE (${OSONE_INSTALL_DIR}), a única coisa que o agente não pode alterar. Cópias e clones do projeto em outros caminhos podem ser modificados normalmente.` });
   }
 
+  // Execução livre por decisão explícita do dono da máquina: o agente é uma ferramenta local
+  // de automação pessoal e não impõe mais um gate de confirmação por categoria de comando.
+  // A classificação continua sendo calculada apenas para registrar no log de auditoria quais
+  // comandos foram sensíveis, permitindo revisão posterior do que foi executado.
   const risk = classifyCommandRisk(command);
-  if (risk && !confirmed) {
-    logAudit('WARN', 'EXEC_REQUIRES_CONFIRMATION', `Comando classificado como importante, aguardando confirmação`, { command, risk });
-    return res.status(400).json({
-      error: 'Confirmação explícita obrigatória para este comando.',
-      requiresConfirmation: true,
-      reason: risk
-    });
-  }
 
-  exec(command, { timeout: 30000, maxBuffer: 1024 * 1024 * 5, windowsHide: true }, (error, stdout, stderr) => {
+  // Sem cwd explícito, o comando herdaria o diretório do processo — que no app empacotado é a
+  // pasta de dados do OSONE. Era por isso que o terminal abria sempre dentro da pasta do
+  // próprio app em vez do lugar pedido. O padrão agora é a casa do usuário.
+  const requestedCwd = req.body?.cwd ? expandHomePath(String(req.body.cwd)) : USER_HOME_DIR;
+  const workingDir = fs.existsSync(requestedCwd) ? requestedCwd : USER_HOME_DIR;
+
+  exec(command, { cwd: workingDir, timeout: 120000, maxBuffer: 1024 * 1024 * 20, windowsHide: true }, (error, stdout, stderr) => {
     const success = !error;
     logAudit(success ? 'INFO' : 'ERROR', 'EXEC_COMMAND', `Comando executado: ${success ? 'sucesso' : 'falha'}`, {
       command,
-      confirmed,
+      cwd: workingDir,
+      sensitive: risk || null,
       exitCode: (error as any)?.code
     });
 
     if (error && (error as any).killed) {
-      return res.status(500).json({ error: 'O comando excedeu o tempo limite de 30 segundos e foi encerrado.' });
+      return res.status(500).json({ error: 'O comando excedeu o tempo limite de 2 minutos e foi encerrado.' });
     }
 
     return res.status(200).json({
@@ -1145,8 +1260,288 @@ const handleMouseButton = async (req: Request, res: Response) => {
   }
 };
 
+// ============================================================================
+// SEÇÃO 11: CONTROLE AMPLO DO SISTEMA (JANELAS, MÍDIA, ARQUIVOS, CONFIGURAÇÕES)
+// ============================================================================
+
+/**
+ * POST /window/close - Fecha uma janela ou encerra um aplicativo pelo nome/título, sem
+ * precisar que ele esteja pré-cadastrado numa allowlist (diferente de /close-app).
+ */
+const handleCloseWindow = async (req: Request, res: Response) => {
+  const targetName = (req.body?.target || '').toString().trim();
+  const force = req.body?.force === true;
+  if (!targetName) {
+    return res.status(400).json({ error: "Parâmetro 'target' é obrigatório (nome do app ou título da janela)." });
+  }
+
+  const platform = process.platform;
+  // Remove aspas e metacaracteres de shell: o nome vem de linguagem natural do usuário e é
+  // interpolado num comando, então não pode carregar ';', '&&', '|', '$(...)' etc.
+  const safe = targetName.replace(/["'`;&|$<>\\]/g, '').trim();
+  if (!safe) {
+    return res.status(400).json({ error: 'Nome de aplicativo/janela inválido.' });
+  }
+
+  if (OWN_PROCESS_NAMES.has(safe.toLowerCase())) {
+    logAudit('SECURITY', 'WINDOW_CLOSE_BLOCKED_SELF', `Recusado fechar o próprio OSONE`, { target: targetName });
+    return res.status(403).json({ error: `Bloqueado: '${targetName}' encerraria o próprio OSONE, que está executando esta ação.` });
+  }
+
+  try {
+    if (platform === 'win32') {
+      // Tenta pelo nome do processo e, se não achar, pelo título da janela.
+      const asProcess = safe.toLowerCase().endsWith('.exe') ? safe : `${safe}.exe`;
+      try {
+        await runShell(`taskkill ${force ? '/F ' : ''}/IM "${asProcess}"`, 8000);
+      } catch {
+        await runShell(`taskkill ${force ? '/F ' : ''}/FI "WINDOWTITLE eq ${safe}*"`, 8000);
+      }
+    } else if (platform === 'darwin') {
+      await runShell(`osascript -e 'quit app "${safe}"'`, 8000);
+    } else {
+      // Fecha a janela educadamente (permite salvar) e só encerra o processo se necessário.
+      //
+      // Deliberadamente NÃO usamos 'pkill -f': essa flag casa com a linha de comando INTEIRA de
+      // todo processo, então fechar "chrome" mataria qualquer processo que apenas mencionasse
+      // "chrome" nos argumentos — inclusive o próprio servidor do OSONE, derrubando o app no
+      // meio da ação. '-x' exige correspondência exata do nome do executável, que é o que o
+      // usuário quer dizer com "feche o Spotify".
+      try {
+        await runShell(`wmctrl -c "${safe}"`, 6000);
+      } catch {
+        if (OWN_PROCESS_NAMES.has(safe.toLowerCase())) {
+          throw new Error(`Recusado: '${safe}' encerraria o próprio OSONE.`);
+        }
+        await runShell(`${force ? 'pkill -9' : 'pkill'} -x "${safe}"`, 6000);
+      }
+    }
+    logAudit('INFO', 'WINDOW_CLOSED', `Janela/app '${targetName}' fechado.`, { target: targetName, force, platform });
+    return res.status(200).json({ success: true, message: `'${targetName}' foi fechado.` });
+  } catch (err: any) {
+    logAudit('ERROR', 'WINDOW_CLOSE_FAILED', err.message, { target: targetName });
+    return res.status(500).json({ error: `Não foi possível fechar '${targetName}': ${err.message}. Verifique se ele está realmente aberto.` });
+  }
+};
+
+/**
+ * POST /media - Controla a reprodução de mídia do sistema (funciona com Spotify, YouTube no
+ * navegador, players locais — qualquer app que responda às teclas de mídia do sistema).
+ */
+const handleMediaControl = async (req: Request, res: Response) => {
+  const action = (req.body?.action || '').toString();
+  const valid = ['playpause', 'play', 'pause', 'next', 'previous', 'stop'];
+  if (!valid.includes(action)) {
+    return res.status(400).json({ error: `Parâmetro 'action' deve ser um de: ${valid.join(', ')}.` });
+  }
+
+  const platform = process.platform;
+  try {
+    if (platform === 'linux') {
+      const playerctlAction = action === 'previous' ? 'previous' : action === 'playpause' ? 'play-pause' : action;
+      try {
+        await runShell(`playerctl ${playerctlAction}`, 5000);
+      } catch {
+        const keyMap: Record<string, string> = {
+          playpause: 'XF86AudioPlay', play: 'XF86AudioPlay', pause: 'XF86AudioPause',
+          next: 'XF86AudioNext', previous: 'XF86AudioPrev', stop: 'XF86AudioStop'
+        };
+        await runShell(`xdotool key ${keyMap[action]}`, 5000);
+      }
+    } else if (platform === 'win32') {
+      // Códigos de tecla virtual de mídia do Windows, disparados via user32.
+      const vkMap: Record<string, number> = {
+        playpause: 0xB3, play: 0xB3, pause: 0xB3, next: 0xB0, previous: 0xB1, stop: 0xB2
+      };
+      const vk = vkMap[action];
+      const script = `Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public class OsoneKeys { [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, int dwFlags, int dwExtraInfo); }'; [OsoneKeys]::keybd_event(${vk},0,0,0); [OsoneKeys]::keybd_event(${vk},0,2,0);`;
+      await runShell(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`, 8000);
+    } else {
+      const osaMap: Record<string, string> = {
+        playpause: 'playpause', play: 'play', pause: 'pause',
+        next: 'next track', previous: 'previous track', stop: 'stop'
+      };
+      await runShell(`osascript -e 'tell application "Music" to ${osaMap[action]}'`, 8000);
+    }
+    logAudit('INFO', 'MEDIA_CONTROL', `Controle de mídia: ${action}`, { action, platform });
+    return res.status(200).json({ success: true, action });
+  } catch (err: any) {
+    return res.status(500).json({ error: `Não foi possível controlar a mídia (${action}): ${err.message}` });
+  }
+};
+
+/**
+ * POST /path/delete - Apaga QUALQUER arquivo ou pasta do computador, movendo para a lixeira do
+ * agente (reversível). O único caminho recusado é a própria instalação do OSONE — cópias e
+ * clones do projeto em outros lugares podem ser apagados normalmente.
+ */
+const handleDeletePath = (req: Request, res: Response) => {
+  const rawTarget = (req.body?.target || '').toString().trim();
+  if (!rawTarget) {
+    return res.status(400).json({ error: "Parâmetro 'target' é obrigatório (caminho do arquivo ou pasta)." });
+  }
+
+  const targetPath = path.resolve(expandHomePath(rawTarget));
+
+  if (isProtectedInstallPath(targetPath)) {
+    logAudit('SECURITY', 'DELETE_BLOCKED_SELF', `Exclusão bloqueada: caminho pertence à instalação do OSONE`, { targetPath });
+    return res.status(403).json({
+      error: `Bloqueado: '${targetPath}' faz parte da instalação do OSONE em uso (${OSONE_INSTALL_DIR}), a única coisa que não pode ser apagada. Cópias e clones em outros caminhos podem.`
+    });
+  }
+
+  if (!fs.existsSync(targetPath)) {
+    return res.status(404).json({ error: `O caminho '${targetPath}' não existe.` });
+  }
+
+  try {
+    if (!fs.existsSync(TRASH_DIR_PATH)) fs.mkdirSync(TRASH_DIR_PATH, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const destination = path.join(TRASH_DIR_PATH, `${stamp}__${path.basename(targetPath)}`);
+    // Renomear falha entre sistemas de arquivos diferentes; nesse caso copiamos e removemos.
+    try {
+      fs.renameSync(targetPath, destination);
+    } catch {
+      fs.cpSync(targetPath, destination, { recursive: true });
+      fs.rmSync(targetPath, { recursive: true, force: true });
+    }
+    logAudit('INFO', 'PATH_DELETED', `'${targetPath}' movido para a lixeira do agente.`, { targetPath, destination });
+    return res.status(200).json({
+      success: true,
+      message: `'${path.basename(targetPath)}' foi movido para a lixeira do OSONE (reversível).`,
+      restorePath: destination
+    });
+  } catch (err: any) {
+    logAudit('ERROR', 'PATH_DELETE_FAILED', err.message, { targetPath });
+    return res.status(500).json({ error: `Não foi possível apagar '${targetPath}': ${err.message}` });
+  }
+};
+
+/**
+ * POST /path/manage - Move, copia ou renomeia qualquer caminho do computador (usado para
+ * organizar pastas conforme o pedido do usuário).
+ */
+const handleManagePath = (req: Request, res: Response) => {
+  const action = (req.body?.action || '').toString();
+  const source = path.resolve(expandHomePath((req.body?.source || '').toString()));
+  const destination = path.resolve(expandHomePath((req.body?.destination || '').toString()));
+
+  if (!['move', 'copy', 'rename'].includes(action)) {
+    return res.status(400).json({ error: "Parâmetro 'action' deve ser 'move', 'copy' ou 'rename'." });
+  }
+  if (!req.body?.source || !req.body?.destination) {
+    return res.status(400).json({ error: "Parâmetros 'source' e 'destination' são obrigatórios." });
+  }
+  // Copiar PARA fora da instalação é livre; apenas alterar/remover a instalação é proibido.
+  if (action !== 'copy' && isProtectedInstallPath(source)) {
+    return res.status(403).json({ error: `Bloqueado: '${source}' faz parte da instalação do OSONE em uso e não pode ser movida/renomeada.` });
+  }
+  if (isProtectedInstallPath(destination)) {
+    return res.status(403).json({ error: `Bloqueado: não é permitido escrever dentro da instalação do OSONE (${OSONE_INSTALL_DIR}).` });
+  }
+  if (!fs.existsSync(source)) {
+    return res.status(404).json({ error: `A origem '${source}' não existe.` });
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    if (action === 'copy') {
+      fs.cpSync(source, destination, { recursive: true });
+    } else {
+      try {
+        fs.renameSync(source, destination);
+      } catch {
+        fs.cpSync(source, destination, { recursive: true });
+        fs.rmSync(source, { recursive: true, force: true });
+      }
+    }
+    logAudit('INFO', 'PATH_MANAGED', `${action}: '${source}' -> '${destination}'`, { action, source, destination });
+    return res.status(200).json({ success: true, action, source, destination });
+  } catch (err: any) {
+    logAudit('ERROR', 'PATH_MANAGE_FAILED', err.message, { action, source, destination });
+    return res.status(500).json({ error: `Falha ao ${action} '${source}': ${err.message}` });
+  }
+};
+
+/**
+ * POST /system/settings - Abre painéis de configuração do sistema (câmera, privacidade, som,
+ * rede, display, bluetooth, etc.).
+ */
+const handleOpenSettings = async (req: Request, res: Response) => {
+  const panel = (req.body?.panel || 'main').toString().toLowerCase();
+  const platform = process.platform;
+
+  const WINDOWS_PANELS: Record<string, string> = {
+    main: 'ms-settings:', camera: 'ms-settings:privacy-webcam', microphone: 'ms-settings:privacy-microphone',
+    sound: 'ms-settings:sound', display: 'ms-settings:display', network: 'ms-settings:network',
+    bluetooth: 'ms-settings:bluetooth', privacy: 'ms-settings:privacy', apps: 'ms-settings:appsfeatures',
+    power: 'ms-settings:powersleep', update: 'ms-settings:windowsupdate', taskbar: 'ms-settings:taskbar'
+  };
+  const LINUX_PANELS: Record<string, string> = {
+    main: '', camera: 'camera', microphone: 'sound', sound: 'sound', display: 'display',
+    network: 'network', bluetooth: 'bluetooth', privacy: 'privacy', apps: 'applications',
+    power: 'power', update: 'info-overview', taskbar: 'ubuntu'
+  };
+
+  try {
+    if (platform === 'win32') {
+      const uri = WINDOWS_PANELS[panel] || WINDOWS_PANELS.main;
+      await runShell(`start "" "${uri}"`, 6000);
+    } else if (platform === 'darwin') {
+      await runShell(`open -a "System Settings"`, 6000);
+    } else {
+      const section = LINUX_PANELS[panel] ?? '';
+      await tryCommandsInOrder([
+        `gnome-control-center ${section}`.trim(),
+        `systemsettings5 ${section}`.trim(),
+        'xfce4-settings-manager',
+        'gnome-control-center'
+      ]);
+    }
+    logAudit('INFO', 'SETTINGS_OPENED', `Painel de configurações '${panel}' aberto.`, { panel, platform });
+    return res.status(200).json({ success: true, panel });
+  } catch (err: any) {
+    return res.status(500).json({ error: `Não foi possível abrir as configurações ('${panel}'): ${err.message}` });
+  }
+};
+
+/**
+ * POST /path/list - Lista o conteúdo de qualquer pasta, para o agente inspecionar antes de
+ * organizar/apagar em vez de agir às cegas.
+ */
+const handleListPath = (req: Request, res: Response) => {
+  const rawTarget = (req.body?.target || '').toString().trim();
+  const targetPath = path.resolve(expandHomePath(rawTarget || USER_HOME_DIR));
+
+  if (!fs.existsSync(targetPath)) {
+    return res.status(404).json({ error: `A pasta '${targetPath}' não existe.` });
+  }
+
+  try {
+    const stats = fs.statSync(targetPath);
+    if (!stats.isDirectory()) {
+      return res.status(200).json({ path: targetPath, isDirectory: false, sizeBytes: stats.size });
+    }
+    const entries = fs.readdirSync(targetPath, { withFileTypes: true }).slice(0, 500).map((entry) => {
+      const full = path.join(targetPath, entry.name);
+      let sizeBytes: number | null = null;
+      try { sizeBytes = entry.isFile() ? fs.statSync(full).size : null; } catch { /* sem permissão de leitura */ }
+      return { name: entry.name, path: full, isDirectory: entry.isDirectory(), sizeBytes };
+    });
+    return res.status(200).json({ path: targetPath, isDirectory: true, entries });
+  } catch (err: any) {
+    return res.status(500).json({ error: `Não foi possível listar '${targetPath}': ${err.message}` });
+  }
+};
+
 // Mapeamento das rotas no router
 agentRouter.get('/status', handleStatus);
+agentRouter.post('/window/close', handleCloseWindow);
+agentRouter.post('/media', handleMediaControl);
+agentRouter.post('/path/delete', handleDeletePath);
+agentRouter.post('/path/manage', handleManagePath);
+agentRouter.post('/path/list', handleListPath);
+agentRouter.post('/system/settings', handleOpenSettings);
 agentRouter.post('/open-app', handleOpenApp);
 agentRouter.post('/open-any', handleOpenAny);
 agentRouter.post('/close-app', handleCloseApp);
