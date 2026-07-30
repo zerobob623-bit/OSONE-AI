@@ -106,6 +106,7 @@ import osoneOrbImage from './assets/images/osone_constellation_orb_1782154846239
 import { SoundEffect, DrawingObject, User } from './types';
 import { INTIMATE_QUESTIONS } from './constants/osoneConstants';
 import { useTuyaSmartHome } from './hooks/useTuyaSmartHome';
+import { useHierarchicalMemory } from './hooks/useHierarchicalMemory';
 import { buildCodeEditSystemInstruction, applyModelCodeResponse } from './lib/codeEdits';
 import { useLocalAgent } from './hooks/useLocalAgent';
 import { useTikTokLive } from './hooks/useTikTokLive';
@@ -3476,6 +3477,34 @@ export default function App() {
     ];
   });
 
+  // AGENTE DE CONSOLIDAÇÃO REFLEXIVA: ciclo de fundo que organiza a memória em camadas de
+  // tempo (dia/semana/mês/vida) e abstrai traços mais profundos do usuário, sem depender de
+  // nenhum clique — dispara sozinho conforme a conversa avança.
+  const activeUserIdForMemory = (() => {
+    try {
+      const savedUserStr = localStorage.getItem('osone_last_active_user');
+      if (savedUserStr) {
+        const parsed = JSON.parse(savedUserStr);
+        return parsed?.uid || 'guest';
+      }
+    } catch {}
+    return 'guest';
+  })();
+
+  const {
+    hierarchicalTiers,
+    maybeConsolidate,
+    resetHierarchicalMemory,
+    getHierarchicalContextForPrompt
+  } = useHierarchicalMemory(activeUserIdForMemory, apiKeys.gemini || '');
+
+  useEffect(() => {
+    const plainHistory = chatHistory
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => ({ role: m.role, content: m.content }));
+    maybeConsolidate(plainHistory);
+  }, [chatHistory.length]);
+
   const [chatSessions, setChatSessions] = useState<ChatSession[]>(() => {
     try {
       const savedUserStr = localStorage.getItem('osone_last_active_user');
@@ -3606,6 +3635,7 @@ ${upcomingDates.length > 0 ? upcomingDates.map(d => `- ${d}`).join('\n') : '(Nen
 
 MEMÓRIA SEMÂNTICA (CONCEITOS REGISTRADOS PELO USUÁRIO):
 ${semantic.length > 0 ? semantic.map(s => `- ${s}`).join('\n') : '(Nenhum conceito semântico registrado ainda.)'}
+${getHierarchicalContextForPrompt()}
 `;
   };
 
@@ -11543,6 +11573,8 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 }}
                 totalMsgs={chatHistory.length}
                 avgWords={Math.round(chatHistory.reduce((acc, m) => acc + (m.content ? m.content.split(/\s+/).length : 0), 0) / Math.max(1, chatHistory.length))}
+                hierarchicalTiers={hierarchicalTiers}
+                onResetHierarchicalMemory={resetHierarchicalMemory}
               />
             </motion.div>
           ) : workspaceMode === 'smarthome' || workspaceMode === 'local_control' ? (
