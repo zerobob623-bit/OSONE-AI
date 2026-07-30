@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Heart, Sparkles, Brain, Cpu, Flame, Sliders, Activity, 
-  RotateCw, Music, Lightbulb, User, Shield, Compass, ChevronLeft
+import {
+  Heart, Sparkles, Brain, Cpu, Flame, Sliders, Activity,
+  RotateCw, Music, Lightbulb, User, Shield, Compass, ChevronLeft,
+  Layers, CalendarDays, CalendarRange, Infinity as InfinityIcon, Eraser
 } from 'lucide-react';
+import { MemoryTier } from '../hooks/useHierarchicalMemory';
 
 interface SensusEvolutionPanelProps {
   onBack: () => void;
@@ -18,6 +20,8 @@ interface SensusEvolutionPanelProps {
   onTriggerSong: () => void;
   totalMsgs: number;
   avgWords: number;
+  hierarchicalTiers?: MemoryTier[];
+  onResetHierarchicalMemory?: () => void;
 }
 
 export const SensusEvolutionPanel: React.FC<SensusEvolutionPanelProps> = ({
@@ -32,7 +36,9 @@ export const SensusEvolutionPanel: React.FC<SensusEvolutionPanelProps> = ({
   onTriggerExistential,
   onTriggerSong,
   totalMsgs,
-  avgWords
+  avgWords,
+  hierarchicalTiers = [],
+  onResetHierarchicalMemory
 }) => {
   const [calibrating, setCalibrating] = useState(false);
 
@@ -363,6 +369,66 @@ export const SensusEvolutionPanel: React.FC<SensusEvolutionPanelProps> = ({
               </p>
               <div className="absolute bottom-1 right-5 text-amber-500/20 font-serif text-3xl">”</div>
             </div>
+          </div>
+
+          {/* Hierarchical Reflective Memory Card (Agente de Consolidação Reflexiva) */}
+          <div className="bg-white/[0.02] border border-white/[0.04] rounded-3xl p-6">
+            <div className="flex items-center justify-between border-b border-white/[0.02] pb-3 mb-4">
+              <h4 className="text-[10px] font-mono text-zinc-400 uppercase tracking-widest font-bold flex items-center gap-2">
+                <Layers size={14} className="text-emerald-500" /> Consolidação Reflexiva (Memória em Camadas)
+              </h4>
+              {onResetHierarchicalMemory && hierarchicalTiers.length > 0 && (
+                <button
+                  onClick={onResetHierarchicalMemory}
+                  className="text-[8px] font-mono text-zinc-500 hover:text-red-400 uppercase tracking-wider flex items-center gap-1 cursor-pointer transition-colors"
+                  title="Apaga toda a memória hierárquica consolidada (dia/semana/mês/vida) e recomeça do zero"
+                >
+                  <Eraser size={10} /> Resetar
+                </button>
+              )}
+            </div>
+
+            {hierarchicalTiers.length === 0 ? (
+              <p className="text-[11px] text-zinc-500 italic leading-relaxed">
+                Ainda sem consolidação. O OSONE reflete sozinho em segundo plano à medida que a conversa avança (a cada ~6 mensagens novas ou 10 minutos) e organiza o que aprende em camadas de dia, semana, mês e vida — sem precisar de nenhum clique.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {(['life', 'month', 'week', 'day'] as const).map((scope) => {
+                  const tiersOfScope = hierarchicalTiers
+                    .filter(t => t.scope === scope)
+                    .sort((a, b) => b.updatedAt - a.updatedAt);
+                  const tier = tiersOfScope[0];
+                  if (!tier) return null;
+
+                  const scopeConfig: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
+                    life: { label: 'Narrativa de Vida', icon: <InfinityIcon size={13} />, color: 'text-amber-400' },
+                    month: { label: `Mês (${tier.periodLabel})`, icon: <CalendarRange size={13} />, color: 'text-purple-400' },
+                    week: { label: `Semana (${tier.periodLabel})`, icon: <CalendarDays size={13} />, color: 'text-cyan-400' },
+                    day: { label: `Hoje (${tier.periodLabel})`, icon: <Sparkles size={13} />, color: 'text-emerald-400' }
+                  };
+                  const cfg = scopeConfig[scope];
+
+                  return (
+                    <div key={scope} className="bg-white/[0.015] border border-white/[0.03] rounded-2xl p-3.5">
+                      <div className={`flex items-center gap-1.5 text-[9.5px] font-mono uppercase tracking-wider font-bold mb-1.5 ${cfg.color}`}>
+                        {cfg.icon} {cfg.label}
+                      </div>
+                      <p className="text-[11px] text-zinc-300 leading-relaxed font-light">{tier.summary}</p>
+                      {tier.abstractTraits.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mt-2">
+                          {tier.abstractTraits.map((trait, i) => (
+                            <span key={i} className="text-[8.5px] font-mono bg-white/5 border border-white/5 text-zinc-400 px-2 py-0.5 rounded-full">
+                              {trait}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Evolutionary Action Portal */}
