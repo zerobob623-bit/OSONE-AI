@@ -101,6 +101,7 @@ import { SensusEvolutionPanel } from './components/SensusEvolutionPanel';
 import { PERSONAS, Persona } from './components/PersonaSwitcher';
 import { NotificationToast, NotificationType } from './components/NotificationToast';
 import { MemoryBookPanel } from './components/MemoryBookPanel';
+import { VisionControlPanel } from './components/VisionControlPanel';
 import { MemoryBookEntry } from './types';
 import osoneOrbImage from './assets/images/osone_constellation_orb_1782154846239.jpg';
 import { SoundEffect, DrawingObject, User } from './types';
@@ -522,6 +523,7 @@ const getFriendlyModeName = (mode: WorkspaceMode): string => {
     case 'rag': return 'RAG • Conector de Arquivos PC';
     case 'creator': return 'Estúdio de Criação Viral';
     case 'memory_book': return 'Livro de Memórias';
+    case 'vision_control': return 'Controle por Visão';
     default: return String(mode);
   }
 };
@@ -11670,6 +11672,20 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
               <MemoryBookPanel
                 onBack={() => setWorkspaceMode('home')}
                 onAddNotification={addNotification}
+              />
+            </motion.div>
+          ) : workspaceMode === 'vision_control' ? (
+            <motion.div
+              key="workspace-vision-control"
+              initial={{ opacity: 0, scale: 0.985 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.985 }}
+              className="w-full flex-1 flex flex-col min-h-0"
+            >
+              <VisionControlPanel
+                onBack={() => setWorkspaceMode('home')}
+                localAgentToken={apiKeys.localAgentToken || ''}
+                onNotification={addNotification}
               />
             </motion.div>
           ) : (
