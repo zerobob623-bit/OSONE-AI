@@ -21,7 +21,7 @@ import {
   getDeviceDetail, 
   sendDeviceCommand 
 } from "./src/tuyaService";
-import { agentRouter } from "./src/localAgentService";
+import { agentRouter, OSONE_INSTALL_DIR } from "./src/localAgentService";
 import {
   checkGoogleHomeConfig,
   issueAuthCode,
@@ -3892,17 +3892,11 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
       if (!allowed.includes(file)) {
         return res.status(400).json({ error: "Arquivo proibido ou não mapeado nas diretrizes." });
       }
-      // Arquivo estático pertencente à própria instalação do OSONE (não é dado do usuário),
-      // então usa __dirname (fixo, independe de process.chdir para o diretório de dados do
-      // usuário feito pelo Electron em builds empacotados) em vez de process.cwd(). A raiz do
-      // projeto fica um nível acima de __dirname quando rodando o bundle já compilado
-      // (dist/server.cjs) e no próprio __dirname quando rodando server.ts direto via tsx (dev),
-      // então tenta os dois caminhos possíveis.
-      const docsCandidates = [
-        path.join(__dirname, "src", "documentos_osone", file),
-        path.join(__dirname, "..", "src", "documentos_osone", file)
-      ];
-      const filePath = docsCandidates.find(p => fs.existsSync(p)) || docsCandidates[0];
+      // Arquivo estático da própria instalação do OSONE (não é dado do usuário), então parte
+      // de OSONE_INSTALL_DIR, que resolve a raiz da instalação de forma correta tanto no
+      // bundle de produção quanto em desenvolvimento — e, ao contrário de process.cwd(), não é
+      // afetado pelo chdir que o app empacotado faz para a pasta de dados do usuário.
+      const filePath = path.join(OSONE_INSTALL_DIR, "src", "documentos_osone", file);
       if (!fs.existsSync(filePath)) {
         return res.status(404).json({ error: `Arquivo ${file} não existe no diretório.` });
       }
@@ -4700,11 +4694,10 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
     app.use(vite.middlewares);
     console.log("Vite dev server mounted on Express middleware");
   } else {
-    // __dirname (não process.cwd()) porque este branch só roda com o bundle já compilado
-    // (dist/server.cjs), que vive dentro da própria pasta dist/ ao lado dos assets do
-    // frontend — diferente de process.cwd(), que em builds empacotados do Electron é trocado
-    // para o diretório de dados do usuário e não aponta mais para os arquivos da instalação.
-    const distPath = __dirname;
+    // Os assets compilados do frontend ficam em <instalação>/dist, ao lado do próprio bundle
+    // do servidor. Derivamos de OSONE_INSTALL_DIR em vez de process.cwd() porque o app
+    // empacotado troca o diretório de trabalho para a pasta de dados do usuário.
+    const distPath = path.join(OSONE_INSTALL_DIR, "dist");
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));

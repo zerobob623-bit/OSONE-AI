@@ -15,11 +15,19 @@ const TRASH_DIR_PATH = path.join(process.cwd(), 'trash');
 
 /**
  * Caminho real da instalação do OSONE que está rodando agora — a ÚNICA coisa que o agente é
- * proibido de apagar/sobrescrever. Derivado de __dirname (e não de process.cwd(), que o app
- * empacotado troca para a pasta de dados do usuário): no bundle compilado __dirname é
- * <instalação>/dist e em desenvolvimento é <projeto>/src, então subir um nível acerta os dois.
+ * proibido de apagar/sobrescrever.
+ *
+ * Precisa funcionar nos dois formatos em que este código roda, e eles não compartilham as
+ * mesmas variáveis: o bundle de produção é CommonJS (tem __dirname, e process.cwd() é inútil
+ * porque o app empacotado o aponta para a pasta de dados do usuário), enquanto em
+ * desenvolvimento o tsx executa como módulo ES, onde __dirname simplesmente não existe e
+ * referenciá-lo derruba o processo no carregamento. Por isso a verificação por typeof, e não
+ * um uso direto: em dev caímos em process.cwd(), que é a raiz do projeto (nada faz chdir
+ * nesse modo), e em produção usamos __dirname (<instalação>/dist) subindo um nível.
  */
-const OSONE_INSTALL_DIR = path.resolve(__dirname, '..');
+export const OSONE_INSTALL_DIR: string = typeof __dirname !== 'undefined'
+  ? path.resolve(__dirname, '..')
+  : process.cwd();
 
 /** Diretório onde comandos e aberturas devem acontecer por padrão: a casa do usuário. */
 const USER_HOME_DIR = os.homedir();
