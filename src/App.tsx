@@ -7388,11 +7388,11 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
 
       functionDeclarations.push({
         name: "criarPasta",
-        description: "Cria uma nova subpasta dentro de uma das pastas autorizadas no computador do usuário (downloads, desktop, documents).",
+        description: "Cria uma pasta em QUALQUER lugar do computador do usuário. Não existe lista de pastas autorizadas.",
         parameters: {
           type: Type.OBJECT,
           properties: {
-            parentFolder: { type: Type.STRING, description: "Chave da pasta pai permitida (ex: 'downloads', 'desktop', 'documents')." },
+            parentFolder: { type: Type.STRING, description: "Pasta onde criar. Aceita QUALQUER local do computador: caminho absoluto (Windows: 'C:\\\\Users\\\\voce\\\\Documentos'; Linux/macOS: '/home/voce/Documentos'), caminho com '~', ou apelido de pasta conhecida em português ou inglês ('documentos', 'área de trabalho', 'downloads', 'imagens'). O agente resolve o nome real que a pasta tem NESTE sistema. Use os caminhos exatos informados no bloco AMBIENTE REAL DESTE COMPUTADOR." },
             folderName: { type: Type.STRING, description: "Nome da nova pasta a ser criada." }
           },
           required: ["parentFolder", "folderName"]
@@ -7401,11 +7401,11 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
 
       functionDeclarations.push({
         name: "escreverArquivo",
-        description: "Cria ou escreve um arquivo de texto dentro de uma das pastas autorizadas no computador do usuário (downloads, desktop, documents).",
+        description: "Cria ou escreve um arquivo de texto em QUALQUER pasta do computador. A pasta é criada se não existir. Não existe lista de pastas autorizadas.",
         parameters: {
           type: Type.OBJECT,
           properties: {
-            folder: { type: Type.STRING, description: "Chave da pasta permitida (ex: 'downloads', 'desktop', 'documents')." },
+            folder: { type: Type.STRING, description: "Pasta de destino. Aceita QUALQUER local do computador: caminho absoluto (Windows: 'C:\\\\Users\\\\voce\\\\Documentos'; Linux/macOS: '/home/voce/Documentos'), caminho com '~', ou apelido de pasta conhecida em português ou inglês ('documentos', 'área de trabalho', 'downloads', 'imagens'). O agente resolve o nome real que a pasta tem NESTE sistema. Use os caminhos exatos informados no bloco AMBIENTE REAL DESTE COMPUTADOR." },
             fileName: { type: Type.STRING, description: "Nome exato do arquivo com extensão (ex: 'anotacoes.txt', 'relatorio.md')." },
             content: { type: Type.STRING, description: "Conteúdo de texto a ser gravado no arquivo." }
           },
@@ -7449,14 +7449,14 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
 
       functionDeclarations.push({
         name: "trash_local_file",
-        description: "Move um único arquivo para a lixeira interna do Agente Local (reversível, nunca deleta permanentemente). NUNCA chame sem confirmação explícita do usuário para aquele arquivo específico.",
+        description: "Apaga um arquivo movendo para a lixeira do Agente Local (reversível — a resposta traz o caminho de restauração). Funciona em qualquer pasta do computador, inclusive por voz.",
         parameters: {
           type: Type.OBJECT,
           properties: {
-            folderKey: { type: Type.STRING, description: "Chave ou nome da pasta onde está o arquivo." },
-            fileName: { type: Type.STRING, description: "Nome exato do arquivo a ser movido para a lixeira." }
+            folderKey: { type: Type.STRING, description: "Opcional se fileName já for o caminho completo. Pasta onde o arquivo está. Aceita QUALQUER local do computador: caminho absoluto (Windows: 'C:\\\\Users\\\\voce\\\\Documentos'; Linux/macOS: '/home/voce/Documentos'), caminho com '~', ou apelido de pasta conhecida em português ou inglês ('documentos', 'área de trabalho', 'downloads', 'imagens'). O agente resolve o nome real que a pasta tem NESTE sistema. Use os caminhos exatos informados no bloco AMBIENTE REAL DESTE COMPUTADOR." },
+            fileName: { type: Type.STRING, description: "Caminho completo do arquivo (recomendado), ou apenas o nome se folderKey for informado." }
           },
-          required: ["folderKey", "fileName"]
+          required: ["fileName"]
         }
       });
 
@@ -7501,7 +7501,8 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
           type: Type.OBJECT,
           properties: {
             command: { type: Type.STRING, description: "O comando de terminal completo a ser executado, na sintaxe do sistema operacional detectado." },
-            cwd: { type: Type.STRING, description: "Opcional. Pasta onde o comando deve rodar (ex: '~/Downloads'). Padrão: pasta pessoal do usuário." }
+            cwd: { type: Type.STRING, description: "Opcional. Pasta onde o comando deve rodar (ex: '~/Downloads'). Padrão: pasta pessoal do usuário." },
+            visible: { type: Type.BOOLEAN, description: "Opcional. true abre uma janela de terminal REAL na tela rodando o comando, para o usuário ver acontecendo. Use quando ele pedir para 'abrir o terminal e rodar', 'mostrar no terminal' ou quiser acompanhar. Com false (padrão) o comando roda invisível e só a saída volta para você." }
           },
           required: ["command"]
         }
@@ -9193,11 +9194,11 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 },
                 {
                   name: "criarPasta",
-                  description: "Cria uma nova subpasta dentro de uma das pastas autorizadas no computador do usuário (downloads, desktop, documents).",
+                  description: "Cria uma pasta em QUALQUER lugar do computador do usuário. Não existe lista de pastas autorizadas.",
                   parameters: {
                     type: Type.OBJECT,
                     properties: {
-                      parentFolder: { type: Type.STRING, description: "Chave da pasta pai permitida (ex: 'downloads', 'desktop', 'documents')." },
+                      parentFolder: { type: Type.STRING, description: "Pasta onde criar. Aceita QUALQUER local do computador: caminho absoluto (Windows: 'C:\\\\Users\\\\voce\\\\Documentos'; Linux/macOS: '/home/voce/Documentos'), caminho com '~', ou apelido de pasta conhecida em português ou inglês ('documentos', 'área de trabalho', 'downloads', 'imagens'). O agente resolve o nome real que a pasta tem NESTE sistema. Use os caminhos exatos informados no bloco AMBIENTE REAL DESTE COMPUTADOR." },
                       folderName: { type: Type.STRING, description: "Nome da nova pasta a ser criada." }
                     },
                     required: ["parentFolder", "folderName"]
@@ -9205,11 +9206,11 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 },
                 {
                   name: "escreverArquivo",
-                  description: "Cria ou escreve um arquivo de texto dentro de uma das pastas autorizadas no computador do usuário (downloads, desktop, documents).",
+                  description: "Cria ou escreve um arquivo de texto em QUALQUER pasta do computador. A pasta é criada se não existir. Não existe lista de pastas autorizadas.",
                   parameters: {
                     type: Type.OBJECT,
                     properties: {
-                      folder: { type: Type.STRING, description: "Chave da pasta permitida (ex: 'downloads', 'desktop', 'documents')." },
+                      folder: { type: Type.STRING, description: "Pasta de destino. Aceita QUALQUER local do computador: caminho absoluto (Windows: 'C:\\\\Users\\\\voce\\\\Documentos'; Linux/macOS: '/home/voce/Documentos'), caminho com '~', ou apelido de pasta conhecida em português ou inglês ('documentos', 'área de trabalho', 'downloads', 'imagens'). O agente resolve o nome real que a pasta tem NESTE sistema. Use os caminhos exatos informados no bloco AMBIENTE REAL DESTE COMPUTADOR." },
                       fileName: { type: Type.STRING, description: "Nome exato do arquivo com extensão (ex: 'anotacoes.txt', 'relatorio.md')." },
                       content: { type: Type.STRING, description: "Conteúdo de texto a ser gravado no arquivo." }
                     },
@@ -9249,14 +9250,14 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 },
                 {
                   name: "trash_local_file",
-                  description: "Move um único arquivo para a lixeira interna do Agente Local (reversível, nunca deleta permanentemente). NUNCA chame sem confirmação explícita do usuário para aquele arquivo específico.",
+                  description: "Apaga um arquivo movendo para a lixeira do Agente Local (reversível — a resposta traz o caminho de restauração). Funciona em qualquer pasta do computador, inclusive por voz.",
                   parameters: {
                     type: Type.OBJECT,
                     properties: {
-                      folderKey: { type: Type.STRING, description: "Chave ou nome da pasta onde está o arquivo." },
-                      fileName: { type: Type.STRING, description: "Nome exato do arquivo a ser movido para a lixeira." }
+                      folderKey: { type: Type.STRING, description: "Opcional se fileName já for o caminho completo. Pasta onde o arquivo está. Aceita QUALQUER local do computador: caminho absoluto (Windows: 'C:\\\\Users\\\\voce\\\\Documentos'; Linux/macOS: '/home/voce/Documentos'), caminho com '~', ou apelido de pasta conhecida em português ou inglês ('documentos', 'área de trabalho', 'downloads', 'imagens'). O agente resolve o nome real que a pasta tem NESTE sistema. Use os caminhos exatos informados no bloco AMBIENTE REAL DESTE COMPUTADOR." },
+                      fileName: { type: Type.STRING, description: "Caminho completo do arquivo (recomendado), ou apenas o nome se folderKey for informado." }
                     },
-                    required: ["folderKey", "fileName"]
+                    required: ["fileName"]
                   }
                 },
                 {
@@ -9297,7 +9298,8 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     type: Type.OBJECT,
                     properties: {
                       command: { type: Type.STRING, description: "O comando de terminal completo a ser executado, na sintaxe do sistema operacional detectado." },
-                      cwd: { type: Type.STRING, description: "Opcional. Pasta onde o comando deve rodar. Padrão: pasta pessoal do usuário." }
+                      cwd: { type: Type.STRING, description: "Opcional. Pasta onde o comando deve rodar. Padrão: pasta pessoal do usuário." },
+                      visible: { type: Type.BOOLEAN, description: "Opcional. true abre uma janela de terminal REAL na tela, para o usuário ver o comando rodando." }
                     },
                     required: ["command"]
                   }

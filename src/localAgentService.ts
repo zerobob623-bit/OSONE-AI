@@ -1186,7 +1186,7 @@ function isProtectedInstallPath(targetPath: string): boolean {
  * "importantes" por classifyCommandRisk() exigem 'confirmed: true' no corpo da requisição
  * (o cliente mostra um modal de confirmação para o usuário antes de reenviar com confirmed).
  */
-const handleExec = (req: Request, res: Response) => {
+const handleExec = async (req: Request, res: Response) => {
   const command = (req.body?.command || '').toString();
   const confirmed = req.body?.confirmed === true;
 
@@ -1208,7 +1208,42 @@ const handleExec = (req: Request, res: Response) => {
   // Sem cwd explícito, o comando herdaria o diretório do processo — que no app empacotado é a
   // pasta de dados do OSONE. Era por isso que o terminal abria sempre dentro da pasta do
   // próprio app em vez do lugar pedido. O padrão agora é a casa do usuário.
-  const requestedCwd = req.body?.cwd ? expandHomePath(String(req.body.cwd)) : USER_HOME_DIR;
+  const requestedCwd = req.body?.cwd ? resolveAnyPath(String(req.body.cwd)) : USER_HOME_DIR;
+
+  // Modo visível: abre um terminal DE VERDADE na tela rodando o comando, em vez de executá-lo
+  // escondido. Sem isto o comando roda de forma invisível — o agente lê a saída, mas o usuário
+  // não vê nada acontecendo e parece que nada foi feito. O terminal fica aberto no fim para
+  // que a saída possa ser lida com calma.
+  if (req.body?.visible === true) {
+    const workDir = fs.existsSync(requestedCwd) ? requestedCwd : USER_HOME_DIR;
+    try {
+      if (process.platform === 'win32') {
+        // /K mantém a janela aberta depois que o comando termina.
+        launchDetached(`start "OSONE" cmd /K "${command.replace(/"/g, '""')}"`, workDir);
+      } else if (process.platform === 'darwin') {
+        const escaped = command.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        launchDetached(`osascript -e 'tell application "Terminal" to do script "cd ${workDir} && ${escaped}"' -e 'tell application "Terminal" to activate'`, workDir);
+      } else {
+        const shellCmd = `${command}; echo; echo '[OSONE] Comando finalizado. Pressione Enter para fechar.'; read`;
+        const escaped = shellCmd.replace(/'/g, `'\\''`);
+        await tryCommandsInOrder([
+          `gnome-terminal --working-directory='${workDir}' -- bash -c '${escaped}'`,
+          `konsole --workdir '${workDir}' -e bash -c '${escaped}'`,
+          `xfce4-terminal --working-directory='${workDir}' -e "bash -c '${escaped}'"`,
+          `xterm -hold -e bash -c '${escaped}'`
+        ], workDir);
+      }
+      logAudit('INFO', 'EXEC_VISIBLE', `Comando aberto em terminal visível`, { command, cwd: workDir });
+      return res.status(200).json({
+        success: true,
+        visible: true,
+        message: `Comando aberto numa janela de terminal visível em '${workDir}'. A saída aparece na janela, não aqui.`
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: `Não foi possível abrir um terminal visível: ${err.message}` });
+    }
+  }
+
   const workingDir = fs.existsSync(requestedCwd) ? requestedCwd : USER_HOME_DIR;
 
   exec(command, { cwd: workingDir, timeout: 120000, maxBuffer: 1024 * 1024 * 20, windowsHide: true }, (error, stdout, stderr) => {
