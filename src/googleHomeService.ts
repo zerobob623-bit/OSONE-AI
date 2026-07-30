@@ -33,9 +33,33 @@ function loadTokenStore(): TokenStore {
   return { authCodes: {}, accessTokens: {}, refreshTokens: {} };
 }
 
+/**
+ * Descarta códigos de autorização e access_tokens que já não valem mais.
+ *
+ * Sem isso o arquivo só crescia: todo código emitido ficava guardado para sempre (mesmo já
+ * usado) e todo access_token vencido também. Como o arquivo é lido e interpretado a cada
+ * requisição de fulfillment do Google, ele ia ficando mais lento e maior indefinidamente.
+ */
+function pruneTokenStore(store: TokenStore): TokenStore {
+  const now = Date.now();
+  const AUTH_CODE_TTL = 10 * 60 * 1000;
+
+  for (const [code, entry] of Object.entries(store.authCodes)) {
+    if (entry.used || now - entry.createdAt > AUTH_CODE_TTL) {
+      delete store.authCodes[code];
+    }
+  }
+  for (const [token, entry] of Object.entries(store.accessTokens)) {
+    if (entry.expiresAt <= now) {
+      delete store.accessTokens[token];
+    }
+  }
+  return store;
+}
+
 function saveTokenStore(store: TokenStore): void {
   try {
-    fs.writeFileSync(TOKENS_PATH, JSON.stringify(store, null, 2), 'utf-8');
+    fs.writeFileSync(TOKENS_PATH, JSON.stringify(pruneTokenStore(store), null, 2), 'utf-8');
   } catch (e) {
     console.error('Erro ao salvar google-home-tokens.json:', e);
   }
@@ -151,19 +175,19 @@ function mapTuyaCategoryToGoogleType(category: string): string {
  * não só nos que usam "switch_1".
  */
 async function resolveDeviceSwitchCode(deviceId: string): Promise<{ code: string; currentValue: boolean } | null> {
-  try {
-    const status = await getDeviceStatus(deviceId);
-    const dps: any[] = Array.isArray(status) ? status : [];
-    const preferredOrder = ['switch_led', 'switch_1', 'switch', 'switch_one', 'power_switch_1'];
-    for (const preferred of preferredOrder) {
-      const match = dps.find((d: any) => d.code === preferred);
-      if (match) return { code: match.code, currentValue: !!match.value };
-    }
-    const generic = dps.find((d: any) => /switch/i.test(d.code) && typeof d.value === 'boolean');
-    if (generic) return { code: generic.code, currentValue: !!generic.value };
-  } catch {
-    // Se a consulta falhar, cai no fallback do chamador.
+  // Sem try/catch aqui de propósito: engolir o erro fazia o chamador não conseguir distinguir
+  // "o aparelho respondeu mas não tem um código de liga/desliga conhecido" de "não foi
+  // possível falar com o aparelho" — e ele acabava reportando ao Google que um dispositivo
+  // inalcançável estava online e desligado.
+  const status = await getDeviceStatus(deviceId);
+  const dps: any[] = Array.isArray(status) ? status : [];
+  const preferredOrder = ['switch_led', 'switch_1', 'switch', 'switch_one', 'power_switch_1'];
+  for (const preferred of preferredOrder) {
+    const match = dps.find((d: any) => d.code === preferred);
+    if (match) return { code: match.code, currentValue: !!match.value };
   }
+  const generic = dps.find((d: any) => /switch/i.test(d.code) && typeof d.value === 'boolean');
+  if (generic) return { code: generic.code, currentValue: !!generic.value };
   return null;
 }
 
@@ -188,10 +212,17 @@ export async function handleQuery(deviceIds: string[]): Promise<any> {
     try {
       const resolved = await resolveDeviceSwitchCode(id);
       devices[id] = resolved
-        ? { online: true, on: resolved.currentValue }
-        : { online: true, on: false };
-    } catch {
-      devices[id] = { online: false };
+        // Respondeu e tem liga/desliga: estado real.
+        ? { status: 'SUCCESS', online: true, on: resolved.currentValue }
+        // Respondeu, mas não expõe um liga/desliga que saibamos ler: está online, e dizemos
+        // que não conseguimos determinar o estado em vez de inventar "desligado".
+        : { status: 'ERROR', online: true, errorCode: 'functionNotSupported' };
+    } catch (err: any) {
+      // A consulta falhou de fato (aparelho fora do ar, erro de credencial, timeout). Antes
+      // este caso era praticamente inalcançável e o aparelho aparecia no Google Home como
+      // conectado e desligado, escondendo o problema real.
+      console.error(`[Google Home] Falha ao consultar o dispositivo ${id}:`, err?.message || err);
+      devices[id] = { status: 'OFFLINE', online: false };
     }
   }
   return { devices };
@@ -214,7 +245,17 @@ export async function handleExecute(commands: Array<{ devices: Array<{ id: strin
             commandResults.push({ ids: [device.id], status: 'ERROR', errorCode: 'functionNotSupported' });
           }
         } catch (err: any) {
-          commandResults.push({ ids: [device.id], status: 'ERROR', errorCode: 'deviceOffline' });
+          // Antes qualquer falha virava "deviceOffline", escondendo erro de credencial ou de
+          // configuração atrás de uma mensagem de aparelho desligado. Agora o motivo real é
+          // registrado e o código devolvido ao Google corresponde ao que de fato aconteceu.
+          const msg = String(err?.message || err);
+          console.error(`[Google Home] Falha ao executar comando em ${device.id}:`, msg);
+          const errorCode = /não configurad|credenciais|client_id|client_secret|TUYA_/i.test(msg)
+            ? 'authFailure'
+            : /timeout/i.test(msg)
+              ? 'deviceNotResponding'
+              : 'deviceOffline';
+          commandResults.push({ ids: [device.id], status: 'ERROR', errorCode });
         }
       }
     }

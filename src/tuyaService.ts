@@ -8,6 +8,27 @@ interface TuyaTokenInfo {
 
 let cachedToken: TuyaTokenInfo | null = null;
 
+/**
+ * Pedido de token em andamento. Sem isto, várias chamadas simultâneas com o token vencido
+ * disparam vários pedidos de token ao mesmo tempo — e a Tuya limita a frequência desse
+ * endpoint, fazendo os pedidos extras falharem.
+ */
+let tokenRequestInFlight: Promise<string> | null = null;
+
+/**
+ * Códigos que a Tuya retorna quando o access_token não vale mais (revogado, expirado antes do
+ * previsto, ou invalidado porque as credenciais mudaram). Como o token fica em cache por ~2h,
+ * sem tratar isso o OSONE continuaria mandando um token morto em toda chamada até o cache
+ * vencer sozinho — o aparelho simplesmente não responde e nada explica o porquê.
+ */
+const TUYA_INVALID_TOKEN_CODES = new Set([1010, 1011, 1012, 1004]);
+
+/** Descarta o token em cache, forçando uma nova autenticação na próxima chamada. */
+function invalidateTuyaToken(): void {
+  cachedToken = null;
+  tokenRequestInFlight = null;
+}
+
 // Safe helper to get env variables with fallback trimming
 function getTuyaEnv() {
   const clientId = (process.env.TUYA_CLIENT_ID || '').trim();
@@ -68,6 +89,27 @@ function hmacSha256Hex(key: string, data: string): string {
 /**
  * Executes an HTTP request to Tuya OpenAPI with HMAC-SHA256 signature and 10s timeout
  */
+/**
+ * Wrapper de tuyaFetch que, se a Tuya recusar o access_token, descarta o token em cache e
+ * tenta a chamada UMA vez com um token novo. Sem isso, um token invalidado do lado da Tuya
+ * quebrava silenciosamente todos os comandos até o cache expirar (até ~2h): as credenciais
+ * estavam certas, o painel dizia conectado, mas nenhum aparelho reagia.
+ */
+async function tuyaFetchWithTokenRetry(
+  method: string,
+  pathAndQuery: string,
+  bodyObj?: any
+): Promise<any> {
+  try {
+    return await tuyaFetch(method, pathAndQuery, bodyObj, true);
+  } catch (err: any) {
+    if (!TUYA_INVALID_TOKEN_CODES.has(err?.tuyaCode)) throw err;
+    console.warn(`[Tuya] Token recusado pela Tuya (código ${err.tuyaCode}). Reautenticando e tentando novamente...`);
+    invalidateTuyaToken();
+    return await tuyaFetch(method, pathAndQuery, bodyObj, true);
+  }
+}
+
 async function tuyaFetch(
   method: string,
   pathAndQuery: string,
@@ -141,7 +183,9 @@ async function tuyaFetch(
 
     if (json.success === false) {
       const codeMsg = json.code ? ` (código ${json.code})` : "";
-      throw new Error(`${json.msg || "Erro retornado pela Tuya Cloud API"}${codeMsg}`);
+      const err: any = new Error(`${json.msg || "Erro retornado pela Tuya Cloud API"}${codeMsg}`);
+      err.tuyaCode = json.code;
+      throw err;
     }
 
     return json.result;
@@ -164,22 +208,38 @@ async function getValidTuyaToken(): Promise<string> {
     return cachedToken.accessToken;
   }
 
-  // Request new token: GET /v1.0/token?grant_type=1
-  const pathAndQuery = "/v1.0/token?grant_type=1";
-  const result = await tuyaFetch("GET", pathAndQuery, undefined, false);
-
-  if (!result || !result.access_token) {
-    throw new Error("A Tuya API não retornou um access_token válido na autenticação.");
+  // Se já existe um pedido de token em andamento, todos aguardam o mesmo, em vez de cada
+  // chamada abrir o seu (a Tuya limita a frequência do endpoint de token).
+  if (tokenRequestInFlight) {
+    return tokenRequestInFlight;
   }
 
-  const expiresInSec = result.expire_time || 7200; // default 2 hours
-  cachedToken = {
-    accessToken: result.access_token,
-    refreshToken: result.refresh_token || "",
-    expireTime: Date.now() + (expiresInSec * 1000)
-  };
+  tokenRequestInFlight = (async () => {
+    // Request new token: GET /v1.0/token?grant_type=1
+    const pathAndQuery = "/v1.0/token?grant_type=1";
+    const result = await tuyaFetch("GET", pathAndQuery, undefined, false);
 
-  return cachedToken.accessToken;
+    if (!result || !result.access_token) {
+      throw new Error("A Tuya API não retornou um access_token válido na autenticação.");
+    }
+
+    const expiresInSec = result.expire_time || 7200; // default 2 hours
+    cachedToken = {
+      accessToken: result.access_token,
+      refreshToken: result.refresh_token || "",
+      expireTime: Date.now() + (expiresInSec * 1000)
+    };
+
+    return cachedToken.accessToken;
+  })();
+
+  try {
+    return await tokenRequestInFlight;
+  } finally {
+    // Libera o slot para que uma falha não deixe todas as chamadas seguintes presas a uma
+    // promise já rejeitada.
+    tokenRequestInFlight = null;
+  }
 }
 
 /**
@@ -195,7 +255,7 @@ export async function getTuyaDevices(uid?: string) {
   }
 
   const path = `/v1.0/users/${targetUid}/devices`;
-  return await tuyaFetch("GET", path);
+  return await tuyaFetchWithTokenRetry("GET", path);
 }
 
 /**
@@ -205,7 +265,7 @@ export async function getTuyaDevices(uid?: string) {
 export async function getDeviceStatus(deviceId: string) {
   if (!deviceId) throw new Error("ID do dispositivo é obrigatório.");
   const path = `/v1.0/devices/${deviceId}/status`;
-  return await tuyaFetch("GET", path);
+  return await tuyaFetchWithTokenRetry("GET", path);
 }
 
 /**
@@ -215,7 +275,7 @@ export async function getDeviceStatus(deviceId: string) {
 export async function getDeviceDetail(deviceId: string) {
   if (!deviceId) throw new Error("ID do dispositivo é obrigatório.");
   const path = `/v1.0/devices/${deviceId}`;
-  return await tuyaFetch("GET", path);
+  return await tuyaFetchWithTokenRetry("GET", path);
 }
 
 /**
@@ -229,5 +289,17 @@ export async function sendDeviceCommand(deviceId: string, commands: Array<{ code
   }
 
   const path = `/v1.0/devices/${deviceId}/commands`;
-  return await tuyaFetch("POST", path, { commands });
+  const result = await tuyaFetchWithTokenRetry("POST", path, { commands });
+
+  // A Tuya pode aceitar a requisição (success: true) e ainda assim REJEITAR o comando,
+  // devolvendo result: false — tipicamente quando o aparelho está offline ou o código do
+  // comando não existe naquele modelo. Sem checar isso, o OSONE anunciava que ligou a luz
+  // enquanto nada acontecia de fato.
+  if (result === false) {
+    throw new Error(
+      `A Tuya recebeu o comando mas o dispositivo o recusou (provavelmente está offline ou não aceita '${commands.map(c => c.code).join(", ")}'). Nada foi alterado.`
+    );
+  }
+
+  return result;
 }
