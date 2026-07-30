@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, shell, session, desktopCapturer } from 'electron';
 import electronUpdaterPkg from 'electron-updater';
 import path from 'path';
 import http from 'http';
@@ -299,7 +299,42 @@ function setupAutoUpdater() {
   });
 }
 
+/**
+ * Compartilhamento de tela dentro do app instalado.
+ *
+ * No navegador, getDisplayMedia() abre sozinho o seletor de janela/tela do próprio navegador.
+ * No Electron não existe esse seletor embutido: sem um handler registrado, a chamada
+ * simplesmente falha — era por isso que compartilhar a tela funcionava no navegador e não
+ * funcionava no .exe. Aqui entregamos a tela inteira diretamente, já que quem pede é a própria
+ * interface do OSONE rodando localmente.
+ */
+function setupScreenSharing() {
+  session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
+      const primaryScreen = sources.find((s) => s.id.startsWith('screen:')) || sources[0];
+      if (!primaryScreen) {
+        console.error('[ScreenShare] Nenhuma fonte de captura disponível.');
+        return callback({});
+      }
+      // audio: 'loopback' captura também o som do sistema no Windows; no Linux é ignorado.
+      callback({ video: primaryScreen, audio: process.platform === 'win32' ? 'loopback' : undefined });
+    } catch (err) {
+      console.error('[ScreenShare] Falha ao obter fontes de captura:', err);
+      callback({});
+    }
+  }, { useSystemPicker: true });
+
+  // A interface roda em http://127.0.0.1, uma origem local e confiável: concede câmera,
+  // microfone e captura de tela sem repetir prompts que travariam os recursos de voz/visão.
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    const allowed = ['media', 'display-capture', 'audioCapture', 'videoCapture', 'clipboard-read', 'notifications'];
+    callback(allowed.includes(permission));
+  });
+}
+
 app.whenReady().then(async () => {
+  setupScreenSharing();
   await startBackendServer();
 
   if (!startupError) {
