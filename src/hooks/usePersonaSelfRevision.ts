@@ -48,6 +48,7 @@ const EMPTY_STATE: PersonaSelfRevisionState = {
 const MIN_NEW_MESSAGES_TO_REVISE = 50;
 const MAX_ACTIVE_NOTES = 8;
 const MAX_NEW_NOTES_PER_CYCLE = 2;
+const MIN_MINUTES_BETWEEN_ATTEMPTS = 10;
 
 function getStorageKey(userId: string): string {
   return `osone_persona_selfrevision_${userId}`;
@@ -138,6 +139,10 @@ export function usePersonaSelfRevision(
     const s = stateRef.current;
     const newMessageCount = history.length - s.lastRevisionMessageCount;
     if (newMessageCount < MIN_NEW_MESSAGES_TO_REVISE) return;
+    // Depois de uma tentativa (mesmo que tenha falhado), aguarda um cooldown antes de tentar de
+    // novo, em vez de martelar a API a cada nova mensagem enquanto o erro persistir.
+    const minutesSinceLastAttempt = (Date.now() - s.lastRevisionAt) / 60000;
+    if (s.lastRevisionAt > 0 && minutesSinceLastAttempt < MIN_MINUTES_BETWEEN_ATTEMPTS) return;
 
     isRevisingRef.current = true;
     try {
@@ -228,6 +233,9 @@ Retorne ESTRITAMENTE este JSON, nada mais:
       }
     } catch (e) {
       console.error('Erro no Agente de Autorrevisão de Persona:', e);
+      // Marca a tentativa mesmo em falha, para não martelar a API a cada nova mensagem
+      // enquanto o erro persistir (ex: chave inválida, rate limit, rede instável).
+      persist({ ...s, lastRevisionAt: Date.now() });
     } finally {
       isRevisingRef.current = false;
     }
