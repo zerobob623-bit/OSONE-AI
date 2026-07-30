@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Cpu, Palette, Key, Smartphone, Info, Power, Activity, CheckCircle2, AlertCircle, Loader2, Home, UserCircle, Pin, Volume2, RefreshCw, Copy, Check, Image, Eye, EyeOff, Fingerprint, Sparkles } from 'lucide-react';
+import { X, Cpu, Palette, Key, Smartphone, Info, Power, Activity, CheckCircle2, AlertCircle, Loader2, Home, UserCircle, Pin, Volume2, RefreshCw, Copy, Check, Image, Eye, EyeOff, Fingerprint, Sparkles, KeyRound } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { ApiKeys, OrbStyle, AppTheme, AIProfile, VoiceModulation } from '../types';
 import { PERSONAS, Persona } from './PersonaSwitcher';
@@ -92,6 +92,7 @@ export const SettingsModal = ({
   // Local Agent Test States
   const [showLocalAgentToken, setShowLocalAgentToken] = useState(false);
   const [localAgentStatus, setLocalAgentStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const [isProvisioningToken, setIsProvisioningToken] = useState(false);
   const [localAgentMessage, setLocalAgentMessage] = useState('');
 
   // Tuya Cloud Integration Verification States
@@ -126,11 +127,44 @@ export const SettingsModal = ({
     }
   };
 
+  /**
+   * Busca o token do Agente Local direto do servidor que já está rodando nesta máquina,
+   * preenchendo o campo automaticamente. Antes, o usuário precisava localizar o config.json à
+   * mão — no app instalado (.exe) esse arquivo fica na pasta de dados do sistema e quase
+   * ninguém encontra, o que fazia o Agente Local parecer quebrado fora do modo de
+   * desenvolvimento. O endpoint só responde ao próprio computador (loopback).
+   */
+  const handleProvisionLocalAgentToken = async () => {
+    setIsProvisioningToken(true);
+    setLocalAgentStatus('testing');
+    setLocalAgentMessage('Obtendo o token desta instalação...');
+    try {
+      const res = await fetch('/api/agent/provision-token');
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.token) {
+        setLocalAgentStatus('error');
+        const errMsg = data?.error || `Não foi possível obter o token (HTTP ${res.status}).`;
+        setLocalAgentMessage(errMsg);
+        if (onAddNotification) onAddNotification(errMsg, 'error');
+        return;
+      }
+      setKeys({ ...keys, localAgentToken: data.token });
+      setLocalAgentStatus('success');
+      setLocalAgentMessage(`Token gerado e preenchido automaticamente${data.platform ? ` (sistema: ${data.platform})` : ''}. O Agente Local já está pronto para uso.`);
+      if (onAddNotification) onAddNotification('Token do Agente Local gerado automaticamente!', 'success');
+    } catch (err: any) {
+      setLocalAgentStatus('error');
+      setLocalAgentMessage('Erro de rede ao obter o token do Agente Local.');
+    } finally {
+      setIsProvisioningToken(false);
+    }
+  };
+
   const handleTestLocalAgent = async () => {
     const token = (keys.localAgentToken || '').trim();
     if (!token) {
       setLocalAgentStatus('error');
-      setLocalAgentMessage("Nenhum token configurado. Copie o token gerado em config.json (na pasta de instalação do OSONE) e cole no campo acima.");
+      setLocalAgentMessage("Nenhum token configurado. Clique em 'Gerar Token Automaticamente' acima.");
       return;
     }
 
@@ -1467,7 +1501,7 @@ export const SettingsModal = ({
                             Token do Agente Local (Authorization Bearer)
                           </label>
                           <p className="text-[10px] text-her-muted/60 leading-relaxed font-sans mb-2 pl-1">
-                            Copie o valor de <code className="font-mono text-emerald-400">token</code> no arquivo <code className="font-mono text-emerald-400">config.json</code> (gerado automaticamente na pasta do OSONE na primeira vez que o servidor liga) e cole abaixo.
+                            O token é gerado automaticamente para esta instalação. Clique em <strong className="text-emerald-400">Gerar Token Automaticamente</strong> — não é necessário abrir nenhum arquivo.
                           </p>
                           <div className="relative flex items-center">
                             <input
@@ -1475,7 +1509,7 @@ export const SettingsModal = ({
                               value={keys.localAgentToken || ''}
                               onChange={(e) => setKeys({ ...keys, localAgentToken: e.target.value })}
                               className="w-full bg-white/[0.02] border border-white/[0.05] rounded-2xl px-5 py-3 pr-12 focus:outline-none focus:border-emerald-500/30 transition-all text-xs font-mono text-white placeholder:text-her-muted/20"
-                              placeholder="Cole aqui o token gerado em config.json..."
+                              placeholder="Clique no botão abaixo para gerar automaticamente..."
                             />
                             <button
                               type="button"
@@ -1487,6 +1521,21 @@ export const SettingsModal = ({
                             </button>
                           </div>
                         </div>
+
+                        <button
+                          type="button"
+                          onClick={handleProvisionLocalAgentToken}
+                          disabled={isProvisioningToken}
+                          className={cn(
+                            "w-full py-3 rounded-2xl text-[10px] uppercase tracking-[0.15em] font-bold transition-all flex items-center justify-center gap-2 cursor-pointer",
+                            isProvisioningToken
+                              ? "bg-white/5 text-her-muted cursor-wait"
+                              : "bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25"
+                          )}
+                        >
+                          <KeyRound size={13} />
+                          {isProvisioningToken ? "Gerando..." : "Gerar Token Automaticamente"}
+                        </button>
 
                         <button
                           type="button"
