@@ -61,7 +61,10 @@ async function startServer() {
   // Create a WebSocket Server for ElevenLabs streaming input audio proxy
   const elWss = new WebSocketServer({ noServer: true });
 
-  const PORT = 3000;
+  // A porta vem do ambiente quando definida (o app desktop escolhe uma porta comprovadamente
+  // livre antes de subir o servidor e a informa por aqui). 3000 continua sendo o padrão para
+  // execução direta em desenvolvimento/self-host.
+  const PORT = Number(process.env.PORT) || 3000;
 
   // Safe helper to read the Gemini API key from environment
   const getSecretGeminiKey = (): string => {
@@ -1305,6 +1308,14 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       error: "Acesso ao OSONE ZAP (WhatsApp) negado. Esta área só é acessível localmente (a partir do próprio computador) ou com um WHATSAPP_ACCESS_TOKEN válido configurado no servidor."
     });
   };
+
+  // Health check com assinatura própria: permite ao app desktop confirmar que quem respondeu
+  // na porta é REALMENTE este servidor, e não algum outro programa que por acaso ocupava a
+  // mesma porta (qualquer resposta HTTP, inclusive um 404 alheio, enganaria uma checagem que
+  // só olhasse "respondeu ou não").
+  app.get("/api/health", (req, res) => {
+    res.json({ service: "osone-server", ok: true, pid: process.pid });
+  });
 
   app.use("/api/whatsapp", requireWhatsAppAccess);
 
@@ -4583,8 +4594,40 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
   }
 
   if (process.env.VERCEL !== "1") {
-    server.listen(PORT, "0.0.0.0", () => {
-      console.log(`Express Server connected and running on http://0.0.0.0:${PORT}`);
+    // Sem um handler de 'error' aqui, uma falha ao abrir a porta (EADDRINUSE quando outro
+    // programa já a ocupa, ou EACCES no Windows quando a porta cai numa faixa reservada pelo
+    // Hyper-V/WSL) vira uma exceção não tratada: o processo continua vivo por causa do
+    // handler global de uncaughtException, mas o servidor nunca passa a escutar — e o app
+    // desktop fica numa tela preta eterna tentando carregar um endereço que não responde.
+    // Então tratamos o erro e tentamos as portas seguintes antes de desistir.
+    const MAX_PORT_FALLBACK_ATTEMPTS = 10;
+    let attemptedPort = PORT;
+    let remainingAttempts = MAX_PORT_FALLBACK_ATTEMPTS;
+
+    server.on("error", (err: NodeJS.ErrnoException) => {
+      const isPortUnavailable = err.code === "EADDRINUSE" || err.code === "EACCES";
+      if (isPortUnavailable && remainingAttempts > 0) {
+        remainingAttempts--;
+        attemptedPort++;
+        console.warn(
+          `[Servidor] Porta ${attemptedPort - 1} indisponível (${err.code}). Tentando a porta ${attemptedPort}...`
+        );
+        server.listen(attemptedPort, "0.0.0.0");
+        return;
+      }
+      console.error(
+        `[Servidor] FALHA CRÍTICA: não foi possível abrir nenhuma porta a partir da ${PORT} (${err.code}). ${err.message}`
+      );
+    });
+
+    server.listen(attemptedPort, "0.0.0.0", () => {
+      const address = server.address();
+      const boundPort = typeof address === "object" && address ? address.port : attemptedPort;
+      // Publica a porta realmente aberta no ambiente do processo, para que o app desktop
+      // (que roda o servidor dentro do próprio processo via require) saiba em qual endereço
+      // carregar a interface mesmo quando houve fallback de porta.
+      process.env.OSONE_ACTIVE_PORT = String(boundPort);
+      console.log(`Express Server connected and running on http://0.0.0.0:${boundPort}`);
     });
   }
 

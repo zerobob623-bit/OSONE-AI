@@ -2,6 +2,7 @@ import { app, BrowserWindow, shell } from 'electron';
 import electronUpdaterPkg from 'electron-updater';
 import path from 'path';
 import http from 'http';
+import net from 'net';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
@@ -18,37 +19,109 @@ const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 
 let mainWindow = null;
-const PORT = process.env.PORT || 3000;
+const DEFAULT_PORT = Number(process.env.PORT) || 3000;
 
-// Function to check if server is already running on port
-function isServerRunning(port) {
+// A porta em que o servidor interno realmente subiu, e o último erro fatal de inicialização
+// (usado para mostrar uma tela de erro legível em vez de uma janela preta e muda).
+let activePort = DEFAULT_PORT;
+let startupError = null;
+
+// SEMPRE 127.0.0.1, nunca "localhost": no Windows, "localhost" costuma resolver primeiro para
+// ::1 (IPv6), enquanto o servidor interno escuta em 0.0.0.0 (somente IPv4) — a conexão é
+// recusada e a janela fica preta. No Linux "localhost" resolve para 127.0.0.1 primeiro, o que
+// mascarava esse bug inteiramente fora do Windows.
+const LOOPBACK_HOST = '127.0.0.1';
+
+/**
+ * Confirma que quem responde na porta é REALMENTE o servidor do OSONE, checando a assinatura
+ * de /api/health. Uma checagem que aceitasse qualquer resposta HTTP seria enganada por
+ * qualquer outro programa ocupando a porta (um 404 alheio também "responde").
+ */
+function isOsoneServerRunning(port) {
   return new Promise((resolve) => {
-    const req = http.get(`http://127.0.0.1:${port}/api/whatsapp/status`, (res) => {
-      resolve(true);
-    });
+    const req = http.get(
+      { host: LOOPBACK_HOST, port, path: '/api/health', timeout: 2000 },
+      (res) => {
+        if (res.statusCode !== 200) {
+          res.resume();
+          return resolve(false);
+        }
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => { body += chunk; });
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(body)?.service === 'osone-server');
+          } catch {
+            resolve(false);
+          }
+        });
+      }
+    );
+    req.on('timeout', () => { req.destroy(); resolve(false); });
     req.on('error', () => resolve(false));
-    req.end();
   });
 }
 
-// Function to wait until server is listening
-async function waitForServer(port, timeoutMs = 30000) {
+/** Espera o servidor interno ficar pronto. Retorna a porta ativa, ou null se desistiu. */
+async function waitForServer(timeoutMs = 60000) {
   const startTime = Date.now();
   while (Date.now() - startTime < timeoutMs) {
-    const running = await isServerRunning(port);
-    if (running) return true;
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    // O servidor publica a porta que conseguiu abrir (pode ter havido fallback se a porta
+    // preferida estivesse indisponível), então reconsultamos a cada tentativa.
+    const candidatePort = Number(process.env.OSONE_ACTIVE_PORT) || activePort;
+    if (await isOsoneServerRunning(candidatePort)) {
+      activePort = candidatePort;
+      return candidatePort;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 400));
   }
-  return false;
+  return null;
+}
+
+/**
+ * Procura uma porta realmente livre abrindo-a de verdade. Só tentar "ver se alguém responde"
+ * não basta no Windows: portas dentro das faixas reservadas pelo Hyper-V/WSL não têm ninguém
+ * escutando, mas mesmo assim recusam o bind (EACCES) — o que derrubava a inicialização do
+ * servidor em silêncio.
+ */
+function isPortBindable(port) {
+  return new Promise((resolve) => {
+    const tester = net.createServer();
+    tester.once('error', () => resolve(false));
+    tester.once('listening', () => tester.close(() => resolve(true)));
+    tester.listen(port, '0.0.0.0');
+  });
+}
+
+async function findFreePort(startPort, maxAttempts = 20) {
+  for (let port = startPort; port < startPort + maxAttempts; port++) {
+    if (await isPortBindable(port)) return port;
+  }
+  return null;
 }
 
 // Start the internal Express backend server
 async function startBackendServer() {
-  const running = await isServerRunning(PORT);
-  if (running) {
-    console.log(`Backend server already active on port ${PORT}`);
+  // Se já existe uma instância do OSONE servindo nesta porta, reaproveita em vez de subir outra.
+  if (await isOsoneServerRunning(DEFAULT_PORT)) {
+    console.log(`Backend server already active on port ${DEFAULT_PORT}`);
+    activePort = DEFAULT_PORT;
     return;
   }
+
+  const freePort = await findFreePort(DEFAULT_PORT);
+  if (freePort === null) {
+    startupError = `Não foi possível encontrar nenhuma porta de rede livre a partir da ${DEFAULT_PORT}. Verifique se outro programa está ocupando essas portas ou se o firewall está bloqueando o OSONE.`;
+    console.error(`[Startup] ${startupError}`);
+    return;
+  }
+  if (freePort !== DEFAULT_PORT) {
+    console.warn(`[Startup] Porta ${DEFAULT_PORT} indisponível; usando a porta livre ${freePort}.`);
+  }
+  activePort = freePort;
+  // O servidor lê a porta daqui (mesmo processo, pois é carregado via require abaixo).
+  process.env.PORT = String(freePort);
 
   // Handle data directory for packaged Electron app
   if (app.isPackaged) {
@@ -65,7 +138,7 @@ async function startBackendServer() {
     }
   }
 
-  console.log("Starting embedded Express server...");
+  console.log(`Starting embedded Express server on port ${freePort}...`);
 
   try {
     const serverBundlePath = path.join(__dirname, '../dist/server.cjs');
@@ -81,12 +154,40 @@ async function startBackendServer() {
         require('tsx/cli');
         require('../server.ts');
       } else {
+        startupError = 'Arquivos do servidor interno não encontrados na instalação (dist/server.cjs ausente). Reinstale o OSONE.';
         console.error("Server entry point not found!");
       }
     }
   } catch (err) {
+    startupError = `Falha ao iniciar o servidor interno: ${err?.message || err}`;
     console.error("Error starting internal Express server:", err);
   }
+}
+
+/**
+ * Tela de erro legível. Sem isto, qualquer falha de carregamento resultava numa janela preta e
+ * silenciosa, sem nenhuma pista do que deu errado nem do que fazer a respeito.
+ */
+function showErrorPage(reason) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const logPath = path.join(app.getPath('userData'), 'logs');
+  const html = `<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><title>OSONE G5 — Erro ao iniciar</title></head>
+<body style="margin:0;background:#0d0c0b;color:#e8e3dd;font-family:system-ui,-apple-system,Segoe UI,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh">
+  <div style="max-width:640px;padding:40px;line-height:1.6">
+    <h1 style="font-weight:300;font-size:22px;color:#ff6b35;margin:0 0 18px">O OSONE não conseguiu iniciar</h1>
+    <p style="color:#b8b0a8;font-size:14px;margin:0 0 18px">${String(reason).replace(/[<>&]/g, '')}</p>
+    <p style="color:#8a827a;font-size:13px;margin:0 0 8px">O que costuma resolver:</p>
+    <ul style="color:#8a827a;font-size:13px;margin:0 0 22px;padding-left:20px">
+      <li>Fechar o OSONE completamente (inclusive na bandeja do sistema) e abrir de novo.</li>
+      <li>Liberar o OSONE no firewall / antivírus do Windows, se ele pediu permissão.</li>
+      <li>Reiniciar o computador, caso outro programa esteja travando a porta de rede.</li>
+    </ul>
+    <p style="color:#5e5851;font-size:12px;margin:0">Dados e registros do app: ${logPath}</p>
+  </div>
+</body></html>`;
+  mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+  if (!mainWindow.isVisible()) mainWindow.show();
 }
 
 function createWindow() {
@@ -112,12 +213,47 @@ function createWindow() {
   // Remove default menu bar
   mainWindow.setMenu(null);
 
-  const serverUrl = `http://localhost:${PORT}`;
-  mainWindow.loadURL(serverUrl);
+  if (startupError) {
+    // A janela precisa existir antes de conseguirmos mostrar qualquer coisa, então a tela de
+    // erro é carregada aqui, e não abortamos a criação da janela.
+    mainWindow.show();
+    showErrorPage(startupError);
+  } else {
+    mainWindow.loadURL(`http://${LOOPBACK_HOST}:${activePort}`);
+  }
+
+  // Rede local/servidor podem demorar um instante a mais que o esperado para aceitar conexões;
+  // em vez de deixar a janela preta para sempre, tentamos recarregar algumas vezes e só então
+  // mostramos um erro explicando a situação.
+  let reloadAttempts = 0;
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame || validatedURL.startsWith('data:')) return;
+    if (reloadAttempts < 5) {
+      reloadAttempts++;
+      console.warn(`[Janela] Falha ao carregar (${errorCode} ${errorDescription}). Tentativa ${reloadAttempts}/5...`);
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.loadURL(`http://${LOOPBACK_HOST}:${activePort}`);
+        }
+      }, 1000);
+      return;
+    }
+    showErrorPage(
+      `Não foi possível carregar a interface em http://${LOOPBACK_HOST}:${activePort} (${errorDescription}). O servidor interno do OSONE não respondeu.`
+    );
+  });
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
   });
+
+  // Rede de segurança: se por qualquer motivo a janela não tiver aparecido, mostramos assim
+  // mesmo — uma janela visível com erro é sempre melhor que nenhuma janela ou uma tela preta.
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      mainWindow.show();
+    }
+  }, 10000);
 
   // Open external links in user's default browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -165,7 +301,18 @@ function setupAutoUpdater() {
 
 app.whenReady().then(async () => {
   await startBackendServer();
-  await waitForServer(PORT);
+
+  if (!startupError) {
+    // O retorno era descartado: mesmo quando o servidor nunca subia, a janela era criada e
+    // carregava um endereço morto — exatamente o cenário da tela preta. Agora um servidor que
+    // não responde vira uma mensagem de erro explicando o que aconteceu.
+    const readyPort = await waitForServer();
+    if (readyPort === null) {
+      startupError = `O servidor interno do OSONE não respondeu na porta ${activePort} dentro do tempo esperado. Isso costuma acontecer quando o firewall/antivírus bloqueia o app ou outro programa está ocupando a porta.`;
+      console.error(`[Startup] ${startupError}`);
+    }
+  }
+
   createWindow();
 
   if (app.isPackaged) {
