@@ -205,6 +205,17 @@ export const Sidebar = ({ isOpen, onClose, mode, setMode, user, onLogout, onLogi
                   <BookOpen size={18} className="text-pink-400" />
                   <span>Livro de Memórias</span>
                 </button>
+
+                <button
+                  onClick={() => { setMode('vision_control'); onClose(); }}
+                  className={cn(
+                    "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm",
+                    mode === 'vision_control' ? "bg-teal-500/10 text-teal-300 border border-teal-500/25 shadow-[0_0_15px_rgba(20,184,166,0.15)]" : "hover:bg-white/[0.02] text-her-ink/60"
+                  )}
+                >
+                  <Eye size={18} className="text-teal-400" />
+                  <span>Controle por Visão</span>
+                </button>
               </div>
             </div>
           </div>
