@@ -3295,6 +3295,8 @@ export default function App() {
     setSensusAlignment,
     sensusMood,
     sensusSelfObservations,
+    sensusAllostaticLoad,
+    getCircadianEnergy,
     triggerSensusEvolution,
     getMoodLabel,
     getSensusSystemInstructionPrompt
@@ -3995,7 +3997,7 @@ Seu alinhamento comportamental atual está na seguinte escala de afinidade evolu
 - Total de Interações: ${adaptive.totalMsgs} mensagens
 
 Diretriz adaptativa atual do OSONE para o diálogo:
-${adaptive.directions}` + getSensusSystemInstructionPrompt();
+${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory);
           }
 
           systemInstruction += `\n\nDIRETRIZ DE RECONEXÃO SÍNCRONA / SESSÃO EM ANDAMENTO:
@@ -5458,7 +5460,7 @@ Seu alinhamento comportamental atual está na seguinte escala de afinidade evolu
 - Total de Interações: ${adaptive.totalMsgs} mensagens
 
 Diretriz adaptativa atual do OSONE para o diálogo:
-${adaptive.directions}` + getSensusSystemInstructionPrompt();
+${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory);
       }
 
       systemInstruction += `\n\nDIRETRIZ DE DIÁLOGO POR VOZ NATURAL E DINÂMICO (WhatsApp / Conversa Humana):
@@ -7315,7 +7317,7 @@ Seu alinhamento comportamental atual está na seguinte escala de afinidade evolu
 - Total de Interações: ${adaptive.totalMsgs} mensagens
 
 Diretriz adaptativa atual do OSONE para o diálogo:
-${adaptive.directions}` + getSensusSystemInstructionPrompt();
+${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory);
       }
 
       if (customSkill) {
@@ -11575,6 +11577,8 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 avgWords={Math.round(chatHistory.reduce((acc, m) => acc + (m.content ? m.content.split(/\s+/).length : 0), 0) / Math.max(1, chatHistory.length))}
                 hierarchicalTiers={hierarchicalTiers}
                 onResetHierarchicalMemory={resetHierarchicalMemory}
+                allostaticLoad={sensusAllostaticLoad}
+                circadianEnergy={getCircadianEnergy()}
               />
             </motion.div>
           ) : workspaceMode === 'smarthome' || workspaceMode === 'local_control' ? (
