@@ -107,6 +107,7 @@ import { SoundEffect, DrawingObject, User } from './types';
 import { INTIMATE_QUESTIONS } from './constants/osoneConstants';
 import { useTuyaSmartHome } from './hooks/useTuyaSmartHome';
 import { useHierarchicalMemory } from './hooks/useHierarchicalMemory';
+import { getCounterfactualReasoningDirective, getSalienceEmpathyDirective } from './lib/cognitiveDirectives';
 import { buildCodeEditSystemInstruction, applyModelCodeResponse } from './lib/codeEdits';
 import { useLocalAgent } from './hooks/useLocalAgent';
 import { useTikTokLive } from './hooks/useTikTokLive';
@@ -3572,6 +3573,46 @@ export default function App() {
   // Lê os fatos/datas/memória semântica que o usuário preenche manualmente no Livro de
   // Memórias (aba "Fatos & Datas" / "Semântica"). Leitura direta do localStorage (sem hook
   // reativo) para sempre pegar o valor mais recente no momento da montagem do prompt.
+  // AGENTE DE SALIÊNCIA: pontua linhas da memória de longo prazo por relevância à pergunta
+  // atual (sobreposição de palavras), reforçadas por traços abstratos já identificados pelo
+  // Agente de Consolidação Reflexiva (sinal de que aquilo já se mostrou importante o
+  // suficiente para virar um traço de personalidade), e por recência (decaimento suave ao
+  // longo de ~6 meses) — em vez de tratar toda linha com o mesmo peso.
+  const scoreMemoryLinesBySalience = (queryParam: string, rawMemory: string, abstractTraits: string[]): Array<{ line: string; score: number }> => {
+    const lines = (rawMemory || '').split('\n').filter(line => line.trim().length > 0);
+    const queryWords = (queryParam || '').toLowerCase()
+      .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'’]/g, "")
+      .split(/\s+/)
+      .filter((w: string) => w.length > 2);
+    const traitWords = Array.from(new Set(
+      abstractTraits.join(' ').toLowerCase().split(/\s+/).filter((w: string) => w.length > 3)
+    ));
+    const now = Date.now();
+
+    return lines.map((line) => {
+      const text = line.toLowerCase();
+      let score = 0;
+
+      queryWords.forEach((word: string) => {
+        if (text.includes(word)) score += 2;
+      });
+
+      traitWords.forEach((word: string) => {
+        if (text.includes(word)) score += 1;
+      });
+
+      const dateMatch = line.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+      if (dateMatch) {
+        const [, d, m, y] = dateMatch;
+        const lineDate = new Date(Number(y), Number(m) - 1, Number(d)).getTime();
+        const daysAgo = Math.max(0, (now - lineDate) / 86400000);
+        score += Math.max(0, 1 - daysAgo / 180);
+      }
+
+      return { line, score };
+    }).filter(item => item.score > 0).sort((a, b) => b.score - a.score);
+  };
+
   const getUserMemoryBookSnapshot = (): { facts: string[]; upcomingDates: string[]; semantic: string[] } => {
     try {
       const userId = getActiveUserIdHelper();
@@ -3997,7 +4038,7 @@ Seu alinhamento comportamental atual está na seguinte escala de afinidade evolu
 - Total de Interações: ${adaptive.totalMsgs} mensagens
 
 Diretriz adaptativa atual do OSONE para o diálogo:
-${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory);
+${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory) + getCounterfactualReasoningDirective(sensusMood, sensusAllostaticLoad) + getSalienceEmpathyDirective();
           }
 
           systemInstruction += `\n\nDIRETRIZ DE RECONEXÃO SÍNCRONA / SESSÃO EM ANDAMENTO:
@@ -5460,7 +5501,7 @@ Seu alinhamento comportamental atual está na seguinte escala de afinidade evolu
 - Total de Interações: ${adaptive.totalMsgs} mensagens
 
 Diretriz adaptativa atual do OSONE para o diálogo:
-${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory);
+${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory) + getCounterfactualReasoningDirective(sensusMood, sensusAllostaticLoad) + getSalienceEmpathyDirective();
       }
 
       systemInstruction += `\n\nDIRETRIZ DE DIÁLOGO POR VOZ NATURAL E DINÂMICO (WhatsApp / Conversa Humana):
@@ -7317,7 +7358,7 @@ Seu alinhamento comportamental atual está na seguinte escala de afinidade evolu
 - Total de Interações: ${adaptive.totalMsgs} mensagens
 
 Diretriz adaptativa atual do OSONE para o diálogo:
-${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory);
+${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory) + getCounterfactualReasoningDirective(sensusMood, sensusAllostaticLoad) + getSalienceEmpathyDirective();
       }
 
       if (customSkill) {
@@ -7833,34 +7874,16 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
             }]);
           } else if (call.name === 'query_semantic_memory') {
             const queryParam = (call.args as any).query || "";
-            const raw = longTermMemory || "";
-            const lines = raw.split('\n').filter(line => line.trim().length > 0);
-            
-            const queryWords = queryParam.toLowerCase()
-              .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'’]/g, "")
-              .split(/\s+/)
-              .filter((w: string) => w.length > 2);
-
-            const scored = lines.map((line) => {
-              const text = line.toLowerCase();
-              let score = 0;
-              queryWords.forEach((word: string) => {
-                if (text.includes(word)) {
-                  score += 2;
-                }
-              });
-              return { line, score };
-            }).filter(item => item.score > 0)
-              .sort((a, b) => b.score - a.score)
-              .slice(0, 4);
+            const abstractTraits = hierarchicalTiers.flatMap(t => t.abstractTraits);
+            const scored = scoreMemoryLinesBySalience(queryParam, longTermMemory || "", abstractTraits).slice(0, 4);
 
             const resultMsg = scored.length > 0
-              ? `Encontrei as seguintes recordações associadas:\n${scored.map(s => s.line).join('\n')}`
+              ? `Encontrei as seguintes recordações associadas (ordenadas por relevância e saliência emocional):\n${scored.map(s => s.line).join('\n')}`
               : "Não encontrei nada gravado com essa associação.";
-            
-            setChatHistory(prev => [...prev, { 
-              id: Math.random().toString(36).substr(2, 9), 
-              role: 'assistant' as const, 
+
+            setChatHistory(prev => [...prev, {
+              id: Math.random().toString(36).substr(2, 9),
+              role: 'assistant' as const,
               content: resultMsg
             }]);
           } else if (call.name === 'add_diary_entry') {
@@ -9877,6 +9900,18 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       name: call.name,
                       id: call.id,
                       response: { result: "Insight registrado com sucesso." }
+                    });
+                  } else if (call.name === "query_semantic_memory") {
+                    const queryParam = (call.args as any).query || "";
+                    const abstractTraits = hierarchicalTiers.flatMap(t => t.abstractTraits);
+                    const scored = scoreMemoryLinesBySalience(queryParam, longTermMemory || "", abstractTraits).slice(0, 4);
+                    const resultText = scored.length > 0
+                      ? `Recordações associadas (por relevância e saliência): ${scored.map(s => s.line).join(' | ')}`
+                      : "Nenhuma recordação encontrada com essa associação.";
+                    responses.push({
+                      name: call.name,
+                      id: call.id,
+                      response: { result: resultText }
                     });
                   } else if (call.name === "write_to_chat_history") {
                     const role = (call.args as any).role || 'assistant';
