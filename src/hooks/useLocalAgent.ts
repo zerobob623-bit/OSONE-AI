@@ -194,115 +194,27 @@ export function useLocalAgent() {
       }
 
       if (toolName === 'trash_local_file') {
-        const { folderKey, fileName, baseDir } = args || {};
-        if (!folderKey || !fileName) return { error: "Parâmetros 'folderKey' e 'fileName' são obrigatórios." };
+        const { folderKey, fileName } = args || {};
+        if (!fileName) return { error: "Parâmetro 'fileName' é obrigatório (caminho completo do arquivo, ou nome do arquivo junto de folderKey)." };
 
-        // SEGURANÇA: Se for sessão de voz, bloqueia execução direta
-        if (isVoiceSession) {
-          return {
-            error: "Por razões de segurança, mover arquivos para a lixeira não pode ser executado via comandos de voz. Por favor, acione a ação no chat de texto para visualizar o painel de confirmação."
-          };
-        }
-
-        // Se já existia uma confirmação pendente, cancela a anterior de forma limpa antes de abrir a nova
-        if (pendingLocalAgentResolveRef.current) {
-          if (pendingLocalAgentTimerRef.current) clearTimeout(pendingLocalAgentTimerRef.current);
-          pendingLocalAgentResolveRef.current({ error: "Solicitação de confirmação anterior foi cancelada pois uma nova ação foi solicitada." });
-          pendingLocalAgentResolveRef.current = null;
-        }
-
-        // INTERCEPTAÇÃO REAL VIA MODAL NA UI REACT COM TIMEOUT DE SEGURANÇA (3 MINUTOS)
-        return new Promise((resolve) => {
-          const resolveOnce = (val: any) => {
-            if (pendingLocalAgentTimerRef.current) {
-              clearTimeout(pendingLocalAgentTimerRef.current);
-              pendingLocalAgentTimerRef.current = null;
-            }
-            setPendingLocalAgentConfirmation(null);
-            if (pendingLocalAgentResolveRef.current === resolveOnce) {
-              pendingLocalAgentResolveRef.current = null;
-            }
-            resolve(val);
-          };
-
-          pendingLocalAgentResolveRef.current = resolveOnce;
-
-          // Timeout de segurança: 180s
-          pendingLocalAgentTimerRef.current = setTimeout(() => {
-            resolveOnce({ error: "A confirmação do Agente Local expirou por tempo limite (3 minutos sem resposta do usuário no painel)." });
-          }, 180000);
-
-          setPendingLocalAgentConfirmation({
-            id: Math.random().toString(36).substring(2, 9),
-            type: 'trash_local_file',
-            folderKey,
-            baseDir,
-            fileName,
-            onConfirm: async () => {
-              try {
-                const res = await fetch(`${LOCAL_AGENT_URL}/file/trash`, {
-                  method: 'POST',
-                  headers,
-                  body: JSON.stringify({ folderKey, fileName, confirmed: true })
-                });
-                const data = await res.json().catch(() => null);
-                if (!res.ok) {
-                  resolveOnce({ error: data?.error || `Erro ao mover o arquivo '${fileName}' para a lixeira.` });
-                } else {
-                  resolveOnce(data || { message: `Arquivo '${fileName}' movido para a lixeira do Agente Local após confirmação do usuário no painel.`, status: 'trashed' });
-                }
-              } catch (err) {
-                resolveOnce({ error: "Erro de conexão ao mover arquivo para a lixeira." });
-              }
-            },
-            onCancel: () => {
-              resolveOnce({ error: "Ação de mover para a lixeira cancelada pelo usuário no painel de confirmação da interface." });
-            }
-          });
-        });
-      }
-
-      if (toolName === 'open_any_path' || toolName === 'open_local_path') {
-        const { target } = args || {};
-        if (!target) return { error: "Parâmetro 'target' é obrigatório (nome de app, caminho de arquivo/pasta ou URL)." };
-        const res = await fetch(`${LOCAL_AGENT_URL}/open-any`, {
+        // Execução direta, inclusive por voz. Antes isto abria um modal de confirmação e era
+        // recusado em sessões de voz — o que, na prática, tornava impossível apagar qualquer
+        // coisa falando. O dono da máquina concedeu acesso total e a exclusão é reversível
+        // (o arquivo vai para a lixeira do agente, que devolve o caminho de restauração).
+        const res = await fetch(`${LOCAL_AGENT_URL}/file/trash`, {
           method: 'POST',
           headers,
-          body: JSON.stringify({ target })
+          body: JSON.stringify({ folderKey, fileName })
         });
         const data = await res.json().catch(() => null);
         if (!res.ok) {
-          return { error: data?.error || `Não foi possível abrir '${target}'.` };
+          return { error: data?.error || `Não foi possível apagar '${fileName}'.` };
         }
-        return data || { message: `'${target}' aberto com sucesso.` };
-      }
-
-      if (toolName === 'set_system_volume') {
-        const { action, value } = args || {};
-        if (!action) return { error: "Parâmetro 'action' é obrigatório ('set', 'up', 'down', 'mute' ou 'unmute')." };
-        const res = await fetch(`${LOCAL_AGENT_URL}/volume`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ action, value })
-        });
-        const data = await res.json().catch(() => null);
-        if (!res.ok) {
-          return { error: data?.error || 'Erro ao ajustar o volume do sistema.' };
-        }
-        return data || { message: `Volume ajustado (${action}).` };
-      }
-
-      if (toolName === 'system_health_check') {
-        const res = await fetch(`${LOCAL_AGENT_URL}/system-check`, { method: 'GET', headers });
-        const data = await res.json().catch(() => null);
-        if (!res.ok) {
-          return { error: data?.error || 'Erro ao checar o estado do sistema.' };
-        }
-        return data || {};
+        return data || { success: true };
       }
 
       if (toolName === 'run_terminal_command') {
-        const { command, cwd } = args || {};
+        const { command, cwd, visible } = args || {};
         if (!command) return { error: "Parâmetro 'command' é obrigatório." };
 
         // Execução direta: o dono da máquina liberou explicitamente o controle total do
@@ -312,7 +224,7 @@ export function useLocalAgent() {
         const res = await fetch(`${LOCAL_AGENT_URL}/exec`, {
           method: 'POST',
           headers,
-          body: JSON.stringify({ command, cwd })
+          body: JSON.stringify({ command, cwd, visible: visible === true })
         });
         const data = await res.json().catch(() => null);
         if (!res.ok) {
