@@ -22,6 +22,16 @@ import {
   sendDeviceCommand 
 } from "./src/tuyaService";
 import { agentRouter } from "./src/localAgentService";
+import {
+  checkGoogleHomeConfig,
+  issueAuthCode,
+  exchangeToken,
+  isValidAccessToken,
+  revokeAllTokens,
+  handleSync as googleHomeSync,
+  handleQuery as googleHomeQuery,
+  handleExecute as googleHomeExecute
+} from "./src/googleHomeService";
 
 dotenv.config();
 logTuyaStartupCheck();
@@ -3847,6 +3857,126 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
       console.error("Erro no POST /api/tuya/command:", err);
       res.status(500).json({ error: err.message || "Erro ao enviar comando para o dispositivo Tuya." });
     }
+  });
+
+  // ====== GOOGLE HOME (ACTIONS ON GOOGLE / SMART HOME ACTION) ======
+  // Ponte real: o Google Assistant fala com estas rotas (OAuth de vínculo de conta +
+  // webhook de fulfillment SYNC/QUERY/EXECUTE), que por sua vez comandam os MESMOS
+  // dispositivos Tuya reais já usados pelo painel/chat do OSONE. A configuração externa no
+  // Actions on Google Console (criar o projeto, colar estas URLs, publicar em teste) só pode
+  // ser feita pelo próprio usuário — aqui só existe o código do lado do servidor.
+  app.get("/api/google-home/status", (req, res) => {
+    res.json(checkGoogleHomeConfig());
+  });
+
+  // Tela de consentimento simples exibida no navegador durante o fluxo "Vincular Conta" do
+  // Google. Em vez de embutir HTML solto no servidor, delega para uma página estática servida
+  // pelo Vite/dist, repassando os parâmetros originais do Google via querystring.
+  app.get("/api/google-home/authorize", (req, res) => {
+    const { client_id, redirect_uri, state, response_type } = req.query;
+    const expectedId = (process.env.GOOGLE_HOME_CLIENT_ID || "").trim();
+    if (response_type !== "code") {
+      return res.status(400).send("response_type deve ser 'code'.");
+    }
+    if (!client_id || client_id !== expectedId) {
+      return res.status(400).send("client_id inválido ou não configurado no servidor (GOOGLE_HOME_CLIENT_ID).");
+    }
+    if (!redirect_uri || typeof redirect_uri !== "string") {
+      return res.status(400).send("redirect_uri é obrigatório.");
+    }
+
+    const params = new URLSearchParams({
+      redirect_uri: redirect_uri as string,
+      state: (state as string) || ""
+    });
+    res.redirect(`/google-home-consent.html?${params.toString()}`);
+  });
+
+  // Chamado pela tela de consentimento quando o usuário clica em "Autorizar". Gera o código
+  // de autorização e redireciona de volta para o Google com ele.
+  app.post("/api/google-home/approve", (req, res) => {
+    const { redirect_uri, state } = req.body || {};
+    if (!redirect_uri || typeof redirect_uri !== "string") {
+      return res.status(400).json({ error: "redirect_uri é obrigatório." });
+    }
+    const code = issueAuthCode();
+    const params = new URLSearchParams({ code, state: state || "" });
+    return res.json({ redirectTo: `${redirect_uri}?${params.toString()}` });
+  });
+
+  app.post("/api/google-home/token", (req, res) => {
+    try {
+      const body = req.body || {};
+      const authHeader = req.headers["authorization"] || "";
+      let clientId = body.client_id;
+      let clientSecret = body.client_secret;
+
+      // O Google pode enviar client_id/secret via Basic Auth em vez do corpo.
+      if (!clientId && authHeader.startsWith("Basic ")) {
+        const decoded = Buffer.from(authHeader.slice(6), "base64").toString("utf-8");
+        const [id, secret] = decoded.split(":");
+        clientId = id;
+        clientSecret = secret;
+      }
+
+      const tokens = exchangeToken({
+        grantType: body.grant_type,
+        code: body.code,
+        refreshToken: body.refresh_token,
+        clientId: clientId || "",
+        clientSecret: clientSecret || ""
+      });
+
+      res.json(tokens);
+    } catch (err: any) {
+      res.status(400).json({ error: "invalid_grant", error_description: err.message });
+    }
+  });
+
+  // Webhook de fulfillment: recebe as intents SYNC/QUERY/EXECUTE/DISCONNECT do Google
+  // Assistant e as traduz em chamadas reais à Tuya Cloud.
+  app.post("/api/google-home/fulfillment", async (req, res) => {
+    try {
+      const authHeader = (req.headers["authorization"] || "").toString();
+      const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+      if (!isValidAccessToken(token)) {
+        return res.status(401).json({ error: "Token de acesso inválido, expirado ou ausente." });
+      }
+
+      const { requestId, inputs } = req.body || {};
+      const input = Array.isArray(inputs) ? inputs[0] : null;
+      const intent = input?.intent;
+
+      if (intent === "action.devices.SYNC") {
+        const result = await googleHomeSync();
+        return res.json({ requestId, payload: { agentUserId: "osone-user", ...result } });
+      }
+
+      if (intent === "action.devices.QUERY") {
+        const deviceIds = (input.payload?.devices || []).map((d: any) => d.id);
+        const result = await googleHomeQuery(deviceIds);
+        return res.json({ requestId, payload: result });
+      }
+
+      if (intent === "action.devices.EXECUTE") {
+        const result = await googleHomeExecute(input.payload?.commands || []);
+        return res.json({ requestId, payload: result });
+      }
+
+      if (intent === "action.devices.DISCONNECT") {
+        return res.json({ requestId, payload: {} });
+      }
+
+      return res.status(400).json({ requestId, payload: { errorCode: "notSupported" } });
+    } catch (err: any) {
+      console.error("Erro no webhook de fulfillment do Google Home:", err);
+      res.status(500).json({ error: err.message || "Erro no webhook de fulfillment do Google Home." });
+    }
+  });
+
+  app.post("/api/google-home/revoke", (req, res) => {
+    revokeAllTokens();
+    res.json({ success: true, message: "Todos os tokens do Google Home foram revogados." });
   });
 
   // ====== TIKTOK LIVE CO-PILOT API ENDPOINTS ======
