@@ -677,6 +677,52 @@ Comentário de @${user}: "${text}"`;
     return conversationsMap[cleanKey];
   }
 
+  /**
+   * Número do criador do OSONE (Henrique Rodrigues / @henryzinhooo). Mensagens vindas deste
+   * número são tratadas como ordens ao sistema, e não como atendimento — é assim que o
+   * desenvolvedor controla o OSONE pelo próprio celular. Configurável por variável de
+   * ambiente para quem instalar o OSONE por conta própria.
+   */
+  const DEVELOPER_WHATSAPP_NUMBER = (process.env.OSONE_DEVELOPER_WHATSAPP || "558499259368").replace(/\D/g, "");
+
+  /**
+   * Compara apenas os dígitos, porque o WhatsApp entrega o remetente como JID
+   * ("5584999259368@c.us") e números brasileiros aparecem com ou sem o nono dígito
+   * dependendo de como o contato foi salvo — comparar a string crua erraria nesses casos.
+   */
+  function isDeveloperNumber(senderJid: string): boolean {
+    const digits = String(senderJid || "").replace(/\D/g, "");
+    if (!digits || !DEVELOPER_WHATSAPP_NUMBER) return false;
+    if (digits === DEVELOPER_WHATSAPP_NUMBER) return true;
+    // Tolera a variação do nono dígito comparando os últimos 8 dígitos junto com o país/DDD.
+    const tail = (n: string) => n.slice(-8);
+    const areaAndCountry = (n: string) => n.slice(0, 4);
+    return tail(digits) === tail(DEVELOPER_WHATSAPP_NUMBER)
+      && areaAndCountry(digits) === areaAndCountry(DEVELOPER_WHATSAPP_NUMBER);
+  }
+
+  /** Prompt usado quando quem escreve é o próprio criador do OSONE, dando ordens ao sistema. */
+  function buildDeveloperPrompt(senderName?: string): string {
+    const contactHistory = getContactHistory(DEVELOPER_WHATSAPP_NUMBER);
+    const historyText = contactHistory.length > 0
+      ? contactHistory.slice(-12).map(m => `${m.role === "user" ? "Henrique" : "OSONE"}: ${m.text}`).join("\n")
+      : "(primeira mensagem desta conversa)";
+
+    return `Você é o OSONE, e quem está falando com você agora pelo WhatsApp é HENRIQUE RODRIGUES (@henryzinhooo), seu criador e dono — não é um cliente.
+
+MODO DESENVOLVEDOR ATIVO. Ele está te comandando do próprio celular, então:
+- Trate cada mensagem como uma ORDEM ou PERGUNTA direta a você, nunca como atendimento de vendas. Nunca ofereça produtos, nunca use script comercial, nunca o trate como lead.
+- Responda de forma direta, técnica e sem enrolação. Ele conhece o sistema por dentro — pode falar de arquitetura, erros, configuração e detalhes internos abertamente.
+- Se ele pedir informação sobre seu próprio estado (o que você consegue fazer, o que está ligado, o que deu errado), responda com o que você realmente sabe. Se não souber ou não tiver como verificar dali, diga isso claramente em vez de inventar.
+- Se ele pedir uma ação que você não tem como executar por esta via (WhatsApp), diga exatamente isso e explique por onde ele consegue fazer — nunca finja que executou.
+- Trate-o com a intimidade de quem te construiu: pode ser informal e direto, sem formalidade de atendimento.
+
+HISTÓRICO RECENTE DA CONVERSA COM ELE:
+${historyText}
+
+Responda em português do Brasil, de forma natural para leitura no WhatsApp (sem markdown pesado, sem listas longas).`;
+  }
+
   function buildSalesPrompt(senderJid: string, senderName?: string): string {
     const kbContent = loadKnowledgeBase();
     const contactHistory = getContactHistory(senderJid);
@@ -1166,7 +1212,23 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
 
             // Build Context-Rich Sales Prompt with Knowledge Base + History
             const senderName = msg._data?.notifyName || sender;
-            const systemPrompt = buildSalesPrompt(sender, senderName);
+            // O desenvolvedor comanda o OSONE pelo próprio celular: as mensagens dele não são
+            // atendimento de vendas, são ordens ao sistema. Qualquer outro número continua
+            // recebendo normalmente a auto-resposta de atendimento.
+            const systemPrompt = isDeveloperNumber(sender)
+              ? buildDeveloperPrompt(senderName)
+              : buildSalesPrompt(sender, senderName);
+
+            if (isDeveloperNumber(sender)) {
+              whatsappLogs.unshift({
+                id: Math.random().toString(36).substring(2, 11),
+                timestamp: Date.now(),
+                type: "info",
+                sender,
+                message: `[MODO DESENVOLVEDOR] Mensagem reconhecida como comando do criador do OSONE.`
+              });
+              if (whatsappLogs.length > 100) whatsappLogs.pop();
+            }
 
             let replyText = "";
             try {
@@ -1850,10 +1912,63 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       });
       if (whatsappLogs.length > 100) whatsappLogs.pop();
 
-      const sentResult = await wwebjsClient.sendMessage(formattedJid, messageText);
-      const msgId = sentResult?.id?._serialized || sentResult?.id || "ok";
+      // Modo de envio: texto (padrão), voz, ou ambos. Quando o pedido é de áudio, o texto é
+      // convertido em fala e enviado como mensagem de voz (o mesmo caminho já usado pela
+      // auto-resposta), para que o modelo possa mandar áudio de verdade e não apenas texto.
+      const asAudio = req.body.asAudio === true || req.body.sendAsAudio === true;
+      const alsoText = req.body.alsoText !== false; // por padrão o texto acompanha o áudio
 
-      console.log(`[WhatsApp Send] Mensagem enviada com sucesso! ID: ${msgId}`);
+      let msgId: string = "ok";
+      let audioSent = false;
+      let audioError: string | null = null;
+
+      if (!asAudio || alsoText) {
+        const sentResult = await wwebjsClient.sendMessage(formattedJid, messageText);
+        msgId = sentResult?.id?._serialized || sentResult?.id || "ok";
+        console.log(`[WhatsApp Send] Mensagem de texto enviada com sucesso! ID: ${msgId}`);
+      }
+
+      if (asAudio) {
+        try {
+          const speech = await synthesizeWhatsAppVoiceReply(messageText, {
+            engine: req.body.ttsEngine || whatsappConfig.ttsEngine,
+            geminiApiKey: req.body.geminiApiKey || whatsappConfig.geminiApiKey || getSecretGeminiKey(),
+            voice: req.body.ttsVoice || whatsappConfig.ttsVoice,
+            elevenLabsApiKey: req.body.elevenLabsApiKey || whatsappConfig.elevenLabsApiKey,
+            elevenLabsVoiceId: req.body.elevenLabsVoiceId || whatsappConfig.elevenLabsVoiceId
+          });
+
+          if (speech && WWebMessageMedia) {
+            const audioMedia = new WWebMessageMedia(
+              speech.mimeType,
+              speech.buffer.toString("base64"),
+              `mensagem.${speech.extension}`
+            );
+            const audioResult = await wwebjsClient.sendMessage(formattedJid, audioMedia, { sendAudioAsVoice: true });
+            audioSent = true;
+            if (msgId === "ok") msgId = audioResult?.id?._serialized || audioResult?.id || "ok";
+            console.log(`[WhatsApp Send] Áudio (mensagem de voz) enviado com sucesso para ${formattedJid}.`);
+          } else {
+            audioError = "Não foi possível gerar o áudio (verifique a chave de voz configurada nos Ajustes).";
+          }
+        } catch (ttsErr: any) {
+          audioError = `Falha ao gerar/enviar o áudio: ${ttsErr?.message || ttsErr}`;
+          console.error("[WhatsApp Send] Erro no envio de áudio:", ttsErr);
+        }
+
+        // Áudio pedido mas nenhuma das duas formas saiu: é falha real, não sucesso parcial.
+        if (!audioSent && asAudio && !alsoText) {
+          whatsappLogs.unshift({
+            id: Math.random().toString(36).substring(2, 11),
+            timestamp: Date.now(),
+            type: "error",
+            sender: `Para: ${cleanDigits}`,
+            message: audioError || "Falha ao enviar áudio."
+          });
+          if (whatsappLogs.length > 100) whatsappLogs.pop();
+          return res.status(500).json({ status: "error", error: audioError || "Falha ao enviar o áudio." });
+        }
+      }
 
       // Add to contact history
       addMessageToHistory(formattedJid, "assistant", messageText);
@@ -1863,15 +1978,19 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
         timestamp: Date.now(),
         type: "sent",
         sender: `Para: ${cleanDigits}`,
-        message: messageText
+        message: audioSent ? `${messageText} [+ áudio enviado]` : messageText
       });
       if (whatsappLogs.length > 100) whatsappLogs.pop();
 
       return res.json({
         status: "success",
-        message: "Mensagem enviada com sucesso via WhatsApp Web!",
+        message: audioSent
+          ? `Mensagem enviada com sucesso via WhatsApp${alsoText ? " (texto + áudio)" : " (áudio)"}!`
+          : "Mensagem enviada com sucesso via WhatsApp Web!",
         messageId: msgId,
-        to: formattedJid
+        to: formattedJid,
+        audioSent,
+        audioError
       });
     } catch (sendErr: any) {
       const errMsg = sendErr?.message || String(sendErr);
