@@ -43,7 +43,8 @@
     "publish": {
       "provider": "github",
       "owner": "zerobob623-bit",
-      "repo": "OSONE-AI"
+      "repo": "OSONE-AI",
+      "releaseType": "release"
     },
     "win": {
       "target": [
