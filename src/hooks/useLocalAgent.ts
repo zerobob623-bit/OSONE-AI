@@ -63,9 +63,27 @@ export function useLocalAgent() {
           }
           case 'listar':
             return post('/path/list', { target: caminho || '' });
-          case 'criar_pasta':
+          case 'criar_pasta': {
             if (!caminho) return { error: "Informe 'caminho' com a pasta a criar (ex: '~/Documentos/Projeto')." };
-            return post('/create-folder', { parentFolder: caminho.replace(/[\\/]+[^\\/]+$/, '') || caminho, folderName: caminho.split(/[\\/]/).filter(Boolean).pop() });
+            // Se o caminho não tiver nenhuma barra (ex: "Testes", só o nome, sem dizer onde),
+            // usar a pasta pessoal do usuário como padrão. Antes, sem separador nenhum, o
+            // parentFolder virava o MESMO texto do folderName (ex: parentFolder: "Testes",
+            // folderName: "Testes"), tentando criar "Testes" dentro de "Testes" — pasta
+            // inexistente, então a criação falhava ou ia parar num lugar errado sem avisar.
+            const temSeparador = /[\\/]/.test(caminho);
+            let parentFolder: string;
+            let folderName: string;
+            if (temSeparador) {
+              const partes = caminho.split(/[\\/]/).filter(Boolean);
+              folderName = partes.pop() || caminho;
+              const resto = caminho.replace(/[\\/]+[^\\/]+\/?$/, '');
+              parentFolder = resto || (caminho.startsWith('/') ? '/' : '~');
+            } else {
+              folderName = caminho;
+              parentFolder = '~';
+            }
+            return post('/create-folder', { parentFolder, folderName });
+          }
           case 'escrever_arquivo': {
             if (!caminho) return { error: "Informe 'caminho' com o arquivo a escrever (ex: '~/Documentos/nota.txt')." };
             const partes = caminho.split(/[\\/]/).filter(Boolean);
