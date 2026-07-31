@@ -216,6 +216,22 @@ export const ProfileModal = ({
                   </div>
                 </div>
               )}
+
+              {(!currentUser || currentUser.isLocal) && (
+                <button
+                  type="button"
+                  onClick={onGoogleLogin}
+                  disabled={isAuthLoading}
+                  className="w-full p-2.5 rounded-2xl border border-emerald-500/20 hover:border-emerald-500/40 bg-emerald-500/5 hover:bg-emerald-500/10 text-emerald-400 text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+                >
+                  {isAuthLoading ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <Cloud size={14} />
+                  )}
+                  Entrar com Google (sincronizar na nuvem)
+                </button>
+              )}
             </div>
 
             {/* Dossiê de Personalidade do OSONE (IA) */}
@@ -464,7 +480,7 @@ export const ProfileModal = ({
             <div className="border-t border-white/5 pt-5 space-y-3">
               <span className="text-[9px] font-mono uppercase tracking-widest text-zinc-500">Privacidade OSONE</span>
               <p className="text-[10px] text-zinc-400 bg-cyan-950/20 border border-cyan-500/15 p-3 rounded-2xl leading-relaxed">
-                🚀 **Modo 100% Offline Ativo:** Seus perfis, históricos teatrais, memórias e logs do OSONE são gravados e processados exclusivamente nas engrenagens locais do seu navegador, garantindo privacidade absoluta e velocidade instantânea no ecossistema sem nuvem.
+                🚀 <strong>Perfis Locais:</strong> ficam 100% no seu navegador (localStorage), nunca saem deste aparelho. <strong>Perfis com Google:</strong> sincronizam suas memórias, histórico e configurações com sua conta na nuvem (Firestore), disponíveis em qualquer dispositivo que você fizer login.
               </p>
             </div>
           </div>
