@@ -8622,7 +8622,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
               functionDeclarations: [
                 {
                   name: "start_screen_share",
-                  description: "Inicia o compartilhamento de tela técnica do usuário para que o assistente possa ver o que o usuário está fazendo e auxiliá-lo em tempo real.",
+                  description: "Tenta iniciar o compartilhamento de tela do usuário. IMPORTANTE: o navegador pode recusar essa permissão quando ativada por voz (exige clique manual). Só confie que está vendo a tela se a resposta desta função confirmar sucesso explicitamente; se vier erro, informe ao usuário que ele precisa clicar no botão de compartilhar tela, e nunca diga que está vendo a tela nesse caso.",
                   parameters: {
                     type: Type.OBJECT,
                     properties: {}
@@ -9561,16 +9561,28 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
 
                 for (const call of calls) {
                   if (call.name === "start_screen_share") {
-                    startScreenSharing().then(() => {
+                    // getDisplayMedia() exige um clique real do usuário (transient user activation);
+                    // uma chamada disparada por comando de voz não conta, então o navegador recusa
+                    // silenciosamente (NotAllowedError, sem exibir o seletor). Por isso é essencial
+                    // aguardar o resultado real antes de responder ao modelo — se sempre respondermos
+                    // "sucesso" de antemão, o modelo alucina que está vendo a tela quando na verdade
+                    // o compartilhamento nunca foi ativado.
+                    try {
+                      await startScreenSharing();
                       addNotification("Compartilhamento de tela iniciado com sucesso", "success");
-                    }).catch(err => {
+                      responses.push({
+                        name: call.name,
+                        id: call.id,
+                        response: { result: "Compartilhamento de tela iniciado com sucesso. Você já pode ver a tela do usuário." }
+                      });
+                    } catch (err) {
                       addNotification("Não foi possível iniciar o compartilhamento de tela", "error");
-                    });
-                    responses.push({
-                      name: call.name,
-                      id: call.id,
-                      response: { result: "Processo de compartilhamento de tela iniciado. O usuário verá a janela de seleção." }
-                    });
+                      responses.push({
+                        name: call.name,
+                        id: call.id,
+                        response: { error: "Falha ao iniciar o compartilhamento de tela: o navegador exige um clique manual do usuário para liberar essa permissão por voz. Peça ao usuário para clicar no botão de compartilhar tela na interface. Não diga que está vendo a tela." }
+                      });
+                    }
                   } else if (call.name === "stop_screen_share") {
                     stopScreenSharing();
                     addNotification("Compartilhamento de tela finalizado", "info");
