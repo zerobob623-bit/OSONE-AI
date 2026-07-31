@@ -73,6 +73,23 @@ async function startServer() {
   // execução direta em desenvolvimento/self-host.
   const PORT = Number(process.env.PORT) || 3000;
 
+  // Funções serverless da Vercel não têm processo persistente: não há WebSocket de longa
+  // duração (upgrade de conexão não funciona) nem disco gravável de verdade fora de /tmp
+  // (que também não sobrevive entre invocações/instâncias). Recursos que dependem de uma
+  // sessão contínua e mantida (WhatsApp, Agente Local, TikTok Live) não podem funcionar de
+  // forma confiável lá — em vez de deixá-los falhar em silêncio (trava lendo QR Code que nunca
+  // chega, comando no PC que nunca executa), recusamos com uma mensagem clara explicando a
+  // limitação e o que fazer. Voz em tempo real (Gemini Live / ElevenLabs Live) já tem fallback
+  // próprio para conexão direta no cliente (ver src/lib/live-bridge.ts) e não precisa deste bloqueio.
+  const isVercel = process.env.VERCEL === "1";
+  const blockOnVercel = (featureLabel: string) => (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (!isVercel) return next();
+    return res.status(501).json({
+      error: `${featureLabel} exige um servidor com processo persistente (conexão contínua e disco gravável) e não funciona nesta implantação na Vercel (funções serverless são efêmeras). Rode o OSONE localmente (npm run dev / npm start) ou use o app desktop para esta função.`,
+      unavailableOnVercel: true
+    });
+  };
+
   // Safe helper to read the Gemini API key from environment
   const getSecretGeminiKey = (): string => {
     if (process.env.GEMINI_API_KEY) {
@@ -136,9 +153,11 @@ async function startServer() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
-  // Rotas do Agente Local Unificado no Servidor Express Principal
-  app.use("/api/agent", agentRouter);
-  app.use("/agent", agentRouter);
+  // Rotas do Agente Local Unificado no Servidor Express Principal. Na Vercel, "a máquina que
+  // o servidor está rodando" é o contêiner efêmero da função serverless, não o PC do usuário —
+  // então, além de não persistir nada, controlar "o PC" ali seria simplesmente a máquina errada.
+  app.use("/api/agent", blockOnVercel("O Agente Local"), agentRouter);
+  app.use("/agent", blockOnVercel("O Agente Local"), agentRouter);
 
   // Middleware to intercept all outgoing JSON and string responses and sanitize potential leaks of API keys
   app.use((req, res, next) => {
@@ -1409,10 +1428,24 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   // mesma porta (qualquer resposta HTTP, inclusive um 404 alheio, enganaria uma checagem que
   // só olhasse "respondeu ou não").
   app.get("/api/health", (req, res) => {
-    res.json({ service: "osone-server", ok: true, pid: process.pid });
+    res.json({
+      service: "osone-server",
+      ok: true,
+      pid: process.pid,
+      environment: isVercel ? "vercel" : "persistent",
+      // Recursos que exigem processo persistente (conexão contínua/disco gravável). O
+      // frontend pode usar isto para avisar de antemão em vez de deixar o usuário descobrir
+      // clicando num botão que vai falhar.
+      capabilities: {
+        whatsapp: !isVercel,
+        localAgent: !isVercel,
+        tiktokLive: !isVercel,
+        persistentStorage: !isVercel
+      }
+    });
   });
 
-  app.use("/api/whatsapp", requireWhatsAppAccess);
+  app.use("/api/whatsapp", blockOnVercel("O OSONE ZAP (WhatsApp)"), requireWhatsAppAccess);
 
   // WhatsApp Web API routes
   app.get("/api/whatsapp/status", (req, res) => {
@@ -4183,6 +4216,11 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
   });
 
   // ====== TIKTOK LIVE CO-PILOT API ENDPOINTS ======
+  // Mantém uma conexão ao vivo em memória entre requisições — não sobrevive a funções
+  // serverless efêmeras da Vercel, então recusamos com mensagem clara em vez de "conectar"
+  // sem nunca receber evento nenhum.
+  app.use("/api/tiktok", blockOnVercel("O TikTok Live Co-Pilot"));
+
   app.get("/api/tiktok/state", (req, res) => {
     res.json({
       status: tiktokStatus,
