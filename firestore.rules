@@ -1,0 +1,22 @@
+rules_version = '2';
+
+// Regras de segurança do Firestore para o OSONE. Sem isto, um projeto Firebase novo fica em
+// "modo de teste" por padrão — qualquer pessoa na internet, autenticada ou não, pode ler e
+// escrever em QUALQUER documento do banco (inclusive os dados de outros usuários). Como o
+// OSONE vai ser distribuído publicamente, isso é obrigatório, não opcional.
+//
+// Regra: cada usuário autenticado só pode ler/escrever o PRÓPRIO documento
+// (users/{seu-uid}), nunca o de outra pessoa. Ninguém não-autenticado tem acesso a nada.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Nega tudo o mais por padrão (comportamento implícito do Firestore quando nenhuma regra
+    // casa, mas deixamos explícito aqui para não haver dúvida).
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
