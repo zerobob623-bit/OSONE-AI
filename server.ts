@@ -81,13 +81,26 @@ async function startServer() {
     return "";
   };
 
+  // Safe helper to read the OpenRouter API key from environment. Usada apenas pelo motor de
+  // geração de código do OSONE CODE (DeepSeek-R1) — o resto do OSONE (texto, PDF, voz) continua
+  // 100% no Gemini.
+  const getSecretOpenRouterKey = (): string => {
+    if (process.env.OPENROUTER_API_KEY) {
+      return process.env.OPENROUTER_API_KEY;
+    }
+    return "";
+  };
+
   // Helper to sanitize any occurrence of sensitive API keys from messages returned to the client
   const sanitizeMessageOfKeys = (message: string): string => {
     if (!message) return "";
     
     // 1. Mask Google Gemini API keys (starts with AIzaSy followed by 33 characters)
     let sanitized = message.replace(/AIzaSy[A-Za-z0-9_-]{33}/g, "[CHAVE_REMOVIDA]");
-    
+
+    // 1b. Mask OpenRouter API keys (formato sk-or-v1-...)
+    sanitized = sanitized.replace(/sk-or-v1-[A-Za-z0-9]{20,}/g, "[CHAVE_REMOVIDA]");
+
     // 2. Mask generic key/token patterns (such as api_key=..., key=..., xi-api-key, etc.)
     sanitized = sanitized.replace(/(key|api_key|apikey|xi-api-key|token)(?:["'\s:=]+)([A-Za-z0-9_-]{10,60})/gi, "$1=[REMOVED]");
     
@@ -105,7 +118,15 @@ async function startServer() {
       const envKeyRegex = new RegExp(escapedEnvKey, 'g');
       sanitized = sanitized.replace(envKeyRegex, "[CHAVE_REMOVIDA]");
     }
-    
+
+    // 5. Mask the OpenRouter server-side fallback key, if loaded
+    const secretOrKey = getSecretOpenRouterKey();
+    if (secretOrKey && secretOrKey.length > 5) {
+      const escapedOrKey = secretOrKey.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+      const orKeyRegex = new RegExp(escapedOrKey, 'g');
+      sanitized = sanitized.replace(orKeyRegex, "[CHAVE_REMOVIDA]");
+    }
+
     return sanitized;
   };
 
@@ -149,12 +170,14 @@ async function startServer() {
           const str = JSON.stringify(obj);
           const fallbackKey = getSecretGeminiKey();
           const envKey = process.env.GEMINI_API_KEY || "";
-          
+          const fallbackOrKey = getSecretOpenRouterKey();
+
           const hasGoogleKey = str.includes("AIzaSy");
           const hasFallbackKey = !!(fallbackKey && str.includes(fallbackKey));
           const hasEnvKey = !!(envKey && str.includes(envKey));
-          
-          if (hasGoogleKey || hasFallbackKey || hasEnvKey) {
+          const hasOpenRouterKey = str.includes("sk-or-v1-") || !!(fallbackOrKey && str.includes(fallbackOrKey));
+
+          if (hasGoogleKey || hasFallbackKey || hasEnvKey || hasOpenRouterKey) {
             const sanitizedStr = sanitizeMessageOfKeys(str);
             return originalJson.call(this, JSON.parse(sanitizedStr));
           }
@@ -171,11 +194,13 @@ async function startServer() {
         const fallbackKey = getSecretGeminiKey();
         const envKey = process.env.GEMINI_API_KEY || "";
         
+        const fallbackOrKey = getSecretOpenRouterKey();
         const hasGoogleKey = body.includes("AIzaSy");
         const hasFallbackKey = !!(fallbackKey && body.includes(fallbackKey));
         const hasEnvKey = !!(envKey && body.includes(envKey));
-        
-        if (hasGoogleKey || hasFallbackKey || hasEnvKey) {
+        const hasOpenRouterKey = body.includes("sk-or-v1-") || !!(fallbackOrKey && body.includes(fallbackOrKey));
+
+        if (hasGoogleKey || hasFallbackKey || hasEnvKey || hasOpenRouterKey) {
           const sanitizedBody = sanitizeMessageOfKeys(body);
           return originalSend.call(this, sanitizedBody);
         }
@@ -2844,6 +2869,100 @@ ${processedChunk}`;
     } catch (err: any) {
       console.error("Error inside /api/generate endpoint:", err);
       return res.status(500).json({ error: formatGeminiError(err) });
+    }
+  });
+
+  // Motor de geração/edição de código do OSONE CODE — roda via OpenRouter (DeepSeek-R1) em vez
+  // do Gemini. Só esta aba usa este endpoint; texto, leitura de PDF e o Gemini Live de voz
+  // continuam 100% no Gemini através do /api/generate e demais rotas.
+  app.post("/api/code/generate", async (req, res) => {
+    try {
+      const { prompt, systemInstruction, clientApiKey, model, responseMimeType } = req.body;
+      const apiKey = clientApiKey || getSecretOpenRouterKey();
+
+      if (!apiKey) {
+        return res.status(400).json({ error: "Chave API da OpenRouter não definida. Cole a sua em Ajustes > Motor de Código do OSONE CODE, ou defina OPENROUTER_API_KEY no servidor." });
+      }
+
+      // O prompt chega como string simples (texto puro) ou, quando há imagens de referência
+      // anexadas, como um array no formato "Content" do Gemini ({ role, parts: [...] }). O
+      // DeepSeek-R1 não é multimodal, então extraímos só o texto e avisamos explicitamente se
+      // havia imagem — em vez de descartá-la em silêncio e o modelo "inventar" que a viu.
+      let userText = "";
+      let hadImages = false;
+      if (typeof prompt === "string") {
+        userText = prompt;
+      } else if (Array.isArray(prompt)) {
+        for (const item of prompt) {
+          const parts = item?.parts || [];
+          for (const part of parts) {
+            if (typeof part?.text === "string") userText += (userText ? "\n" : "") + part.text;
+            if (part?.inlineData) hadImages = true;
+          }
+        }
+      }
+      if (hadImages) {
+        userText += "\n\n[Aviso do sistema: o usuário anexou imagem(ns) de referência visual, mas o modelo DeepSeek-R1 usado aqui não processa imagens — elas foram ignoradas. Avise o usuário disso no seu resumo.]";
+      }
+
+      const messages: Array<{ role: string; content: string }> = [];
+      if (systemInstruction) messages.push({ role: "system", content: String(systemInstruction) });
+      messages.push({ role: "user", content: userText });
+
+      const selectedModel = model || "deepseek/deepseek-r1";
+
+      const callOpenRouter = (useResponseFormat: boolean) => fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+          "HTTP-Referer": "https://osone.app",
+          "X-Title": "OSONE CODE"
+        },
+        body: JSON.stringify({
+          model: selectedModel,
+          messages,
+          ...(useResponseFormat && responseMimeType === "application/json" ? { response_format: { type: "json_object" } } : {})
+        })
+      });
+
+      let orResponse = await callOpenRouter(true);
+      // Nem todo provedor do DeepSeek-R1 disponível na OpenRouter aceita response_format
+      // estrito — se for rejeitado só por causa disso, tentamos de novo sem o parâmetro em vez
+      // de falhar; os prompts do OSONE CODE já pedem JSON estrito por instrução de texto.
+      if (!orResponse.ok && responseMimeType === "application/json" && (orResponse.status === 400 || orResponse.status === 422)) {
+        orResponse = await callOpenRouter(false);
+      }
+
+      if (!orResponse.ok) {
+        const rawErrBody = await orResponse.text().catch(() => "");
+        let errMsg = `OpenRouter respondeu com erro ${orResponse.status}.`;
+        try {
+          const parsedErr = JSON.parse(rawErrBody);
+          if (parsedErr?.error?.message) errMsg = parsedErr.error.message;
+        } catch (_) {}
+        if (orResponse.status === 401) {
+          errMsg = "Chave API da OpenRouter inválida ou expirada. Verifique o valor colado em Ajustes > Motor de Código do OSONE CODE.";
+        } else if (orResponse.status === 402) {
+          errMsg = "Créditos insuficientes na conta OpenRouter para usar o DeepSeek-R1. Adicione créditos em openrouter.ai/settings/credits.";
+        } else if (orResponse.status === 429) {
+          errMsg = "Limite de requisições da OpenRouter excedido. Aguarde um pouco e tente novamente.";
+        }
+        console.error("[OSONE CODE / OpenRouter] Erro na chamada:", orResponse.status, rawErrBody);
+        return res.status(orResponse.status >= 400 && orResponse.status < 600 ? orResponse.status : 500).json({ error: errMsg });
+      }
+
+      const data: any = await orResponse.json();
+      let text: string = data?.choices?.[0]?.message?.content || "";
+      // Alguns provedores do DeepSeek-R1 na OpenRouter embutem o raciocínio bruto do modelo
+      // direto no conteúdo entre tags <think>...</think> — removemos, pois só o resultado final
+      // (código/JSON) interessa para o restante do pipeline do OSONE CODE.
+      text = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+
+      return res.json({ text });
+    } catch (err: any) {
+      console.error("Error inside /api/code/generate endpoint:", err);
+      return res.status(500).json({ error: sanitizeMessageOfKeys(err?.message || String(err)) });
     }
   });
 
