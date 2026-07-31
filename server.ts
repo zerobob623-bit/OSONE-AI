@@ -2905,8 +2905,18 @@ ${processedChunk}`;
         userText += "\n\n[Aviso do sistema: o usuário anexou imagem(ns) de referência visual, mas o modelo DeepSeek-R1 usado aqui não processa imagens — elas foram ignoradas. Avise o usuário disso no seu resumo.]";
       }
 
+      // O DeepSeek-R1 é sabidamente inconsistente em seguir a mensagem "system" isolada
+      // (dependendo do provedor que a OpenRouter roteia a requisição, ela pode ser
+      // parcialmente ignorada) — por isso repetimos as instruções também embutidas no início
+      // da mensagem "user", que é a parte que todo provedor sempre respeita, além de mandá-las
+      // no campo "system" normal (não custa nada e ajuda nos provedores que o suportam bem).
       const messages: Array<{ role: string; content: string }> = [];
-      if (systemInstruction) messages.push({ role: "system", content: String(systemInstruction) });
+      if (systemInstruction) {
+        messages.push({ role: "system", content: String(systemInstruction) });
+        // Reforça no início E no fim da mensagem (não só no meio) — modelos tendem a prestar
+        // menos atenção ao que fica "no meio" de um contexto longo ("lost in the middle").
+        userText = `INSTRUÇÕES OBRIGATÓRIAS QUE VOCÊ DEVE SEGUIR À RISCA (não são sugestões — são requisitos):\n${systemInstruction}\n\n---\n\n${userText}\n\n---\n\nLEMBRETE FINAL: cumpra TODOS os requisitos técnicos e visuais listados nas instruções acima (bibliotecas exigidas, efeitos sonoros, telas obrigatórias, qualidade visual, etc.) — não entregue uma versão simplificada que ignore algum deles.`;
+      }
       messages.push({ role: "user", content: userText });
 
       const selectedModel = model || "deepseek/deepseek-r1";
@@ -2922,6 +2932,11 @@ ${processedChunk}`;
         body: JSON.stringify({
           model: selectedModel,
           messages,
+          // DeepSeek-R1 é um modelo de raciocínio: gasta parte do orçamento de tokens
+          // "pensando" antes de escrever a resposta final. Sem um teto alto aqui, a resposta
+          // (um app/jogo HTML5 completo em um arquivo só) pode ser cortada no meio, produzindo
+          // código incompleto e sem estilo — por isso o limite generoso.
+          max_tokens: 32000,
           ...(useResponseFormat && responseMimeType === "application/json" ? { response_format: { type: "json_object" } } : {})
         })
       });
@@ -2959,7 +2974,13 @@ ${processedChunk}`;
       // (código/JSON) interessa para o restante do pipeline do OSONE CODE.
       text = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
 
-      return res.json({ text });
+      const finishReason = data?.choices?.[0]?.finish_reason;
+      const truncated = finishReason === "length";
+      if (truncated) {
+        console.warn(`[OSONE CODE / OpenRouter] Resposta cortada por limite de tokens (finish_reason=length). Tamanho do texto retornado: ${text.length} chars.`);
+      }
+
+      return res.json({ text, truncated });
     } catch (err: any) {
       console.error("Error inside /api/code/generate endpoint:", err);
       return res.status(500).json({ error: sanitizeMessageOfKeys(err?.message || String(err)) });
