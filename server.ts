@@ -9,15 +9,6 @@ import { WebSocketServer, WebSocket } from "ws";
 import { GoogleGenAI, Modality } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
-import {
-  makeWASocket,
-  useMultiFileAuthState,
-  fetchLatestBaileysVersion,
-  downloadMediaMessage,
-  DisconnectReason,
-  Browsers
-} from "@whiskeysockets/baileys";
-import pino from "pino";
 import QRCode from "qrcode";
 import * as cheerio from "cheerio";
 import { 
@@ -581,6 +572,27 @@ Comentário de @${user}: "${text}"`;
   // endpoint /api/whatsapp/wa-contacts com o que já foi visto desde que o servidor iniciou.
   const waContactsCache = new Map<string, { name?: string }>();
 
+  // Carrega o Baileys e o pino sob demanda, só quando o WhatsApp é realmente inicializado —
+  // nunca na Vercel, onde a rota inteira já é recusada por blockOnVercel antes de chegar
+  // aqui. Import estático dessas duas bibliotecas no topo do arquivo derrubava o servidor
+  // INTEIRO na Vercel (inclusive rotas sem nada a ver com WhatsApp, como Tuya), porque o pino
+  // é conhecido por não empacotar bem em funções serverless (usa transporte por worker
+  // threads/require dinâmico que o bundler da Vercel não consegue resolver em build). As
+  // promises ficam em cache para não reimportar a cada chamada.
+  let baileysModulePromise: Promise<typeof import("@whiskeysockets/baileys")> | null = null;
+  const loadBaileys = (): Promise<typeof import("@whiskeysockets/baileys")> => {
+    if (!baileysModulePromise) baileysModulePromise = import("@whiskeysockets/baileys");
+    return baileysModulePromise;
+  };
+  // Tipado como any de propósito: o pacote "pino" usa "export =" (interop CJS/ESM), e o
+  // shape exato que o import() dinâmico devolve em tempo de tipo diverge do que o TypeScript
+  // infere para "import pino from 'pino'" estático — não vale a pena brigar com isso aqui.
+  let pinoModulePromise: Promise<any> | null = null;
+  const loadPino = (): Promise<any> => {
+    if (!pinoModulePromise) pinoModulePromise = import("pino");
+    return pinoModulePromise;
+  };
+
   interface WhatsappLog {
     id: string;
     timestamp: number;
@@ -933,7 +945,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   // Traduz o código de desconexão do Baileys (erro Boom com statusCode equivalente a um
   // DisconnectReason) em uma mensagem que explica ao usuário o que aconteceu, em vez de só
   // mostrar o código bruto.
-  function explainWhatsAppDisconnect(statusCode: number | undefined, rawMessage: string): string {
+  function explainWhatsAppDisconnect(statusCode: number | undefined, rawMessage: string, DisconnectReason: Awaited<ReturnType<typeof loadBaileys>>["DisconnectReason"]): string {
     const msg = rawMessage || "";
     switch (statusCode) {
       case DisconnectReason.loggedOut:
@@ -1008,6 +1020,8 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       }
 
       try {
+        const { downloadMediaMessage } = await loadBaileys();
+        const { default: pino } = await loadPino();
         const mediaBuffer = await downloadMediaMessage(msg, "buffer", {}, { logger: pino({ level: "silent" }) as any, reuploadRequest: waSocket.updateMediaMessage });
         if (!mediaBuffer || !(mediaBuffer as Buffer).length) {
           body = mediaType === "image" ? "[Imagem recebida, mas o download falhou]" : "[Áudio recebido, mas o download falhou]";
@@ -1246,6 +1260,9 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     waLastError = "";
 
     try {
+      const { makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason, Browsers } = await loadBaileys();
+      const { default: pino } = await loadPino();
+
       if (!fs.existsSync(WA_AUTH_DIR)) fs.mkdirSync(WA_AUTH_DIR, { recursive: true });
       const { state, saveCreds } = await useMultiFileAuthState(WA_AUTH_DIR);
       const { version } = await fetchLatestBaileysVersion();
@@ -1329,7 +1346,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
 
           const boomError = lastDisconnect?.error;
           const statusCode = boomError?.output?.statusCode;
-          const reasonText = explainWhatsAppDisconnect(statusCode, boomError?.message || "");
+          const reasonText = explainWhatsAppDisconnect(statusCode, boomError?.message || "", DisconnectReason);
 
           // "restartRequired" é esperado e inofensivo: o Baileys sempre encerra e pede um
           // reinício logo após uma sessão nova terminar de parear (escanear o QR Code) — não é
