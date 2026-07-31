@@ -6230,7 +6230,9 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
         localStorage.setItem('osone_code_repository_files', JSON.stringify(repoFiles));
         window.dispatchEvent(new Event('osone_repository_updated'));
 
-        if (hadFailures) {
+        if (data.truncated) {
+          addNotification("⚠️ O DeepSeek-R1 cortou a resposta por limite de tokens — o código pode estar incompleto. Tente pedir novamente ou dividir o pedido em partes menores.", "info");
+        } else if (hadFailures) {
           addNotification(`Código atualizado com ressalvas: ${summary}`, "info");
         } else {
           addNotification(summary ? `Código atualizado! ${summary}` : "Código gerado e atualizado no Repositório do OSONE!", "success");

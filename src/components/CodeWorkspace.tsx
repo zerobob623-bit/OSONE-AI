@@ -26,7 +26,7 @@ const OSONE_CODE_BEST_MODEL = "deepseek/deepseek-r1";
 async function generateWithRetry(
   body: Record<string, unknown>,
   retries: number = 2
-): Promise<{ ok: boolean; text: string; error?: string }> {
+): Promise<{ ok: boolean; text: string; error?: string; truncated?: boolean }> {
   let lastError = '';
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -37,7 +37,7 @@ async function generateWithRetry(
       });
       const data = await response.json().catch(() => ({} as any));
       if (response.ok) {
-        return { ok: true, text: data.text || '' };
+        return { ok: true, text: data.text || '', truncated: !!data.truncated };
       }
       lastError = data?.error || `HTTP ${response.status}`;
     } catch (e: any) {
@@ -938,7 +938,8 @@ ${currentCode}`;
           correctedCode = content;
         }
 
-        const finalSummary = [summary || "Código auditado.", editSummaryNote].filter(Boolean).join(' — ');
+        const truncationNote = data.truncated ? "⚠️ A resposta foi cortada por limite de tokens — revise o código, pode estar incompleto." : "";
+        const finalSummary = [summary || "Código auditado.", editSummaryNote, truncationNote].filter(Boolean).join(' — ');
         setHunterReport(finalSummary || "Código auditado e 100% alinhado com as especificações solicitadas!");
 
         if (correctedCode && correctedCode.trim().length > 0) {
@@ -1128,6 +1129,9 @@ O código DEVE conter:
         // para que o usuário NUNCA fique sem resultado mesmo se uma etapa seguinte falhar.
         applyCodeToRepository(lastCode, 'index.html');
 
+        if (coderResult.truncated) {
+          addSwarmLog('💻 Agente de Engenharia', `⚠️ O DeepSeek-R1 cortou a resposta por limite de tokens — o código desta iteração (${lastCode.length} chars) pode estar incompleto. O QA vai avaliar e pode reprovar para uma nova tentativa.`, 'warn');
+        }
         addSwarmLog('💻 Agente de Engenharia', editSummary
           ? `${editSummary} (${lastCode.length} chars). Progresso salvo no repositório.`
           : `Código gerado (${lastCode.length} chars) na Iteração ${currentIter}. Progresso salvo no repositório.`,
