@@ -36,7 +36,6 @@ export interface ApiKeys {
   googleCustomSearchCx?: string;
   tavilyApiKey?: string;
   localAgentToken?: string;
-  openrouterApiKey?: string;
 }
 
 export type OrbStyle = 'classic' | 'superintelligence' | 'neural' | 'shadow' | 'wave' | 'jarvis' | 'smoke';
