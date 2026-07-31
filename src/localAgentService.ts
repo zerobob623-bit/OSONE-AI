@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
-import { exec, spawn } from 'child_process';
+import { exec, execFile, spawn } from 'child_process';
 import { Request, Response, NextFunction, Router } from 'express';
 
 // ============================================================================
@@ -869,6 +869,21 @@ function runShell(cmd: string, timeoutMs: number = 10000, cwd: string = USER_HOM
 }
 
 /**
+ * Como runShell, mas roda o binário direto (sem passar por um shell), com argumentos como
+ * array. Usado quando o texto envolvido vem de linguagem natural do usuário/IA e não pode ser
+ * interpolado numa string de comando de shell (aspas, '$()', ';' etc. quebrariam o comando ou,
+ * pior, seriam interpretados como injeção de shell).
+ */
+function execFileShellSafe(bin: string, args: string[], timeoutMs: number = 10000): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(bin, args, { timeout: timeoutMs, windowsHide: true }, (error, stdout, stderr) => {
+      if (error) return reject(new Error(stderr?.toString().trim() || error.message));
+      resolve({ stdout: stdout?.toString() || '', stderr: stderr?.toString() || '' });
+    });
+  });
+}
+
+/**
  * Nomes "conceito" de aplicativo (o jeito que um usuário ou a IA naturalmente pede, ex:
  * "notepad", "explorer", "calculadora") mapeados para candidatos reais por plataforma. Sem
  * isso, um pedido para abrir o "notepad" ou o "explorer" em uma máquina Linux tentaria abrir
@@ -1384,6 +1399,241 @@ const handleMouseButton = async (req: Request, res: Response) => {
   }
 };
 
+/** Monta o comando PowerShell que dispara a roda do mouse (scroll) via mouse_event/MOUSEEVENTF_WHEEL. */
+function winMouseWheelCommand(wheelData: number, x?: number, y?: number): string {
+  const moveCmd = (x !== undefined && y !== undefined)
+    ? `[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${Math.round(x)},${Math.round(y)}); `
+    : '';
+  const script = `Add-Type -AssemblyName System.Windows.Forms; Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public class OsoneWheel { [DllImport("user32.dll")] public static extern void mouse_event(int flags, int dx, int dy, int data, int extra); }'; ${moveCmd}[OsoneWheel]::mouse_event(0x0800,0,0,${Math.round(wheelData)},0);`;
+  return `powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`;
+}
+
+/**
+ * POST /mouse/scroll - Rola a página/janela sob o cursor (ou nas coordenadas opcionais x,y).
+ * direction: 'up' | 'down'. amount: quantos "cliques" de roda (padrão 3, como um giro normal de
+ * roda de mouse físico). Complementa /mouse/move e /mouse/button para o agente de visão navegar
+ * em páginas e documentos longos sem depender de atalhos de teclado.
+ */
+const handleMouseScroll = async (req: Request, res: Response) => {
+  const direction = (req.body?.direction || '').toString();
+  const rawAmount = Number(req.body?.amount);
+  const amount = Number.isFinite(rawAmount) ? Math.max(1, Math.min(50, Math.round(rawAmount))) : 3;
+  const x = req.body?.x !== undefined ? Number(req.body.x) : undefined;
+  const y = req.body?.y !== undefined ? Number(req.body.y) : undefined;
+
+  if (!['up', 'down'].includes(direction)) {
+    return res.status(400).json({ error: "Parâmetro 'direction' deve ser 'up' ou 'down'." });
+  }
+  if ((x !== undefined && !Number.isFinite(x)) || (y !== undefined && !Number.isFinite(y))) {
+    return res.status(400).json({ error: "Parâmetros 'x' e 'y', quando informados, devem ser numéricos." });
+  }
+
+  const platform = process.platform;
+  try {
+    if (platform === 'linux') {
+      if (x !== undefined && y !== undefined) {
+        await runShell(`xdotool mousemove ${Math.round(x)} ${Math.round(y)}`, 3000);
+      }
+      const xdotoolButton = direction === 'up' ? '4' : '5';
+      await runShell(`xdotool click --repeat ${amount} --delay 40 ${xdotoolButton}`, 6000);
+    } else if (platform === 'win32') {
+      const wheelData = (direction === 'up' ? 1 : -1) * 120 * amount;
+      await runShell(winMouseWheelCommand(wheelData, x, y), 3000);
+    } else {
+      return res.status(501).json({ error: `Controle de mouse ainda não suportado na plataforma '${platform}'.` });
+    }
+    return res.status(200).json({ success: true, direction, amount });
+  } catch (err: any) {
+    return res.status(500).json({ error: `Falha ao rolar a página: ${err.message}` });
+  }
+};
+
+const MAX_TYPE_TEXT_LENGTH = 4000;
+
+/**
+ * Gera o comando PowerShell que digita texto arbitrário via SendInput/KEYEVENTF_UNICODE,
+ * caractere a caractere. Evita por completo as regras de escape do SendKeys (que trata
+ * +^%~(){} como caracteres especiais) — essencial aqui porque o texto vem de linguagem natural
+ * do usuário/IA e pode conter qualquer um desses caracteres, além de acentos e emojis. O texto
+ * chega em base64 (UTF-16LE) para não precisar de nenhum escape de aspas/shell na montagem do
+ * comando: o payload só contém caracteres do alfabeto base64, que são inofensivos em qualquer
+ * contexto de shell ou string do PowerShell.
+ */
+function winTypeUnicodeCommand(base64Utf16Text: string): string {
+  const csharp = [
+    'using System;',
+    'using System.Runtime.InteropServices;',
+    'public class OsoneKeyboard {',
+    '  [StructLayout(LayoutKind.Sequential)]',
+    '  struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }',
+    '  [StructLayout(LayoutKind.Explicit)]',
+    '  struct INPUTUNION { [FieldOffset(0)] public KEYBDINPUT ki; }',
+    '  struct INPUT { public uint type; public INPUTUNION u; }',
+    '  [DllImport("user32.dll")] static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);',
+    '  const uint KEYEVENTF_UNICODE = 0x0004;',
+    '  const uint KEYEVENTF_KEYUP = 0x0002;',
+    '  public static void TypeText(string text) {',
+    '    int size = Marshal.SizeOf(typeof(INPUT));',
+    '    foreach (char c in text) {',
+    '      var down = new INPUT { type = 1, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = 0, wScan = c, dwFlags = KEYEVENTF_UNICODE, time = 0, dwExtraInfo = IntPtr.Zero } } };',
+    '      var up = down; up.u.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;',
+    '      SendInput(1, new INPUT[] { down }, size);',
+    '      SendInput(1, new INPUT[] { up }, size);',
+    '      System.Threading.Thread.Sleep(8);',
+    '    }',
+    '  }',
+    '}'
+  ].join(' ');
+  const script = `Add-Type -TypeDefinition '${csharp}'; $bytes = [Convert]::FromBase64String("${base64Utf16Text}"); $s = [System.Text.Encoding]::Unicode.GetString($bytes); [OsoneKeyboard]::TypeText($s);`;
+  return `powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`;
+}
+
+/**
+ * POST /keyboard/type - Digita texto livre no campo atualmente em foco (o que estiver com o
+ * cursor de texto ativo na tela: uma barra de busca, um formulário, um editor). Junto de
+ * /mouse/move, /mouse/button e /keyboard/key, fecha o conjunto de ações que faltava para o
+ * agente de visão não só ver a tela, mas também interagir com ela como um usuário faria.
+ */
+const handleKeyboardType = async (req: Request, res: Response) => {
+  const text = (req.body?.text ?? '').toString();
+  if (!text) {
+    return res.status(400).json({ error: "Parâmetro 'text' é obrigatório." });
+  }
+  if (text.length > MAX_TYPE_TEXT_LENGTH) {
+    return res.status(400).json({ error: `Texto muito longo (máx. ${MAX_TYPE_TEXT_LENGTH} caracteres por chamada).` });
+  }
+
+  const platform = process.platform;
+  try {
+    if (platform === 'linux') {
+      await execFileShellSafe('xdotool', ['type', '--clearmodifiers', '--delay', '12', '--', text], 20000);
+    } else if (platform === 'win32') {
+      const base64Text = Buffer.from(text, 'utf16le').toString('base64');
+      await runShell(winTypeUnicodeCommand(base64Text), 20000);
+    } else {
+      return res.status(501).json({ error: `Digitação por teclado ainda não suportada na plataforma '${platform}'.` });
+    }
+    return res.status(200).json({ success: true, length: text.length });
+  } catch (err: any) {
+    logAudit('ERROR', 'KEYBOARD_TYPE_FAILED', err.message, { platform, length: text.length });
+    return res.status(500).json({ error: `Falha ao digitar texto: ${err.message}. No Linux é necessário ter o pacote 'xdotool' instalado.` });
+  }
+};
+
+/** Teclas nomeadas aceitas por /keyboard/key, mapeadas para o nome esperado por xdotool (Linux)
+ * e pela sintaxe do SendKeys (Windows). */
+const KEY_NAME_MAP: Record<string, { xdotool: string; sendkeys: string }> = {
+  enter: { xdotool: 'Return', sendkeys: '{ENTER}' },
+  tab: { xdotool: 'Tab', sendkeys: '{TAB}' },
+  escape: { xdotool: 'Escape', sendkeys: '{ESC}' },
+  backspace: { xdotool: 'BackSpace', sendkeys: '{BACKSPACE}' },
+  delete: { xdotool: 'Delete', sendkeys: '{DELETE}' },
+  arrowup: { xdotool: 'Up', sendkeys: '{UP}' },
+  arrowdown: { xdotool: 'Down', sendkeys: '{DOWN}' },
+  arrowleft: { xdotool: 'Left', sendkeys: '{LEFT}' },
+  arrowright: { xdotool: 'Right', sendkeys: '{RIGHT}' },
+  home: { xdotool: 'Home', sendkeys: '{HOME}' },
+  end: { xdotool: 'End', sendkeys: '{END}' },
+  pageup: { xdotool: 'Prior', sendkeys: '{PGUP}' },
+  pagedown: { xdotool: 'Next', sendkeys: '{PGDN}' },
+};
+
+/**
+ * POST /keyboard/key - Pressiona uma tecla nomeada (enter, tab, escape, setas, backspace...) ou
+ * um único caractere alfanumérico, com modificadores opcionais (ctrl/alt/shift). Complementa
+ * /keyboard/type (texto livre): usado para atalhos e navegação — Enter para enviar um
+ * formulário, Ctrl+A para selecionar tudo, Tab para mudar de campo, setas para navegar em
+ * listas/menus. 'key' e 'modifiers' são validados contra uma lista fechada antes de montar
+ * qualquer comando, então não há risco de injeção mesmo repassando o texto vindo do modelo.
+ */
+const handleKeyboardKey = async (req: Request, res: Response) => {
+  const rawKey = (req.body?.key || '').toString();
+  const key = rawKey.toLowerCase();
+  const modifiersInput: any[] = Array.isArray(req.body?.modifiers) ? req.body.modifiers : [];
+  const modifiers = modifiersInput
+    .map((m) => String(m).toLowerCase())
+    .filter((m) => ['ctrl', 'alt', 'shift'].includes(m));
+
+  const named = KEY_NAME_MAP[key];
+  const isSingleChar = /^[a-z0-9]$/.test(key);
+  if (!named && !isSingleChar) {
+    return res.status(400).json({ error: `Tecla '${rawKey}' não reconhecida. Use uma tecla nomeada (${Object.keys(KEY_NAME_MAP).join(', ')}) ou um único caractere alfanumérico.` });
+  }
+
+  const platform = process.platform;
+  try {
+    if (platform === 'linux') {
+      const keysym = named ? named.xdotool : key;
+      const combo = [...modifiers, keysym].join('+');
+      await runShell(`xdotool key ${combo}`, 5000);
+    } else if (platform === 'win32') {
+      const prefix = modifiers.map(m => m === 'ctrl' ? '^' : m === 'alt' ? '%' : '+').join('');
+      const token = named ? named.sendkeys : key;
+      const script = `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('${prefix}${token}')`;
+      await runShell(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`, 5000);
+    } else {
+      return res.status(501).json({ error: `Controle de teclado ainda não suportado na plataforma '${platform}'.` });
+    }
+    return res.status(200).json({ success: true, key: rawKey, modifiers });
+  } catch (err: any) {
+    return res.status(500).json({ error: `Falha ao pressionar a tecla '${rawKey}': ${err.message}` });
+  }
+};
+
+/**
+ * GET /screen/capture - Tira uma captura de tela (todos os monitores) e devolve como base64.
+ * Diferente do compartilhamento de tela via WebRTC no navegador (que exige clique manual do
+ * usuário por restrição do próprio navegador), esta captura roda direto no sistema operacional,
+ * então pode ser chamada sob demanda a qualquer momento — inclusive fora de uma sessão de voz
+ * com compartilhamento ativo — para o agente conferir o estado atual da tela.
+ */
+const handleScreenCapture = async (_req: Request, res: Response) => {
+  const platform = process.platform;
+  const tmpFile = path.join(os.tmpdir(), `osone-screenshot-${crypto.randomBytes(6).toString('hex')}.png`);
+  try {
+    if (platform === 'win32') {
+      const winPath = tmpFile.replace(/'/g, "''");
+      const script = `Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen; $bmp = New-Object System.Drawing.Bitmap($vs.Width, $vs.Height); $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($vs.X, $vs.Y, 0, 0, $bmp.Size); $bmp.Save('${winPath}', [System.Drawing.Imaging.ImageFormat]::Png); $g.Dispose(); $bmp.Dispose();`;
+      await runShell(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`, 15000);
+    } else if (platform === 'linux') {
+      const candidates = [
+        `import -window root -silent "${tmpFile}"`,
+        `scrot -o "${tmpFile}"`,
+        `gnome-screenshot -f "${tmpFile}"`,
+      ];
+      let lastError = '';
+      let captured = false;
+      for (const cmd of candidates) {
+        try {
+          await runShell(cmd, 15000);
+          if (fs.existsSync(tmpFile) && fs.statSync(tmpFile).size > 0) {
+            captured = true;
+            break;
+          }
+        } catch (err: any) {
+          lastError = err.message;
+        }
+      }
+      if (!captured) {
+        throw new Error(`Nenhuma ferramenta de captura de tela disponível no sistema (tentado: ImageMagick 'import', 'scrot', 'gnome-screenshot'). ${lastError}`);
+      }
+    } else {
+      return res.status(501).json({ error: `Captura de tela ainda não suportada na plataforma '${platform}'.` });
+    }
+
+    if (!fs.existsSync(tmpFile) || fs.statSync(tmpFile).size === 0) {
+      throw new Error('A captura de tela retornou vazia.');
+    }
+    const buffer = fs.readFileSync(tmpFile);
+    fs.unlink(tmpFile, () => {});
+    return res.status(200).json({ image: `data:image/png;base64,${buffer.toString('base64')}`, mimeType: 'image/png' });
+  } catch (err: any) {
+    fs.unlink(tmpFile, () => {});
+    logAudit('ERROR', 'SCREEN_CAPTURE_FAILED', err.message, { platform });
+    return res.status(500).json({ error: `Não foi possível capturar a tela: ${err.message}. No Linux é necessário ter 'ImageMagick' (import), 'scrot' ou 'gnome-screenshot' instalado.` });
+  }
+};
+
 // ============================================================================
 // SEÇÃO 11: CONTROLE AMPLO DO SISTEMA (JANELAS, MÍDIA, ARQUIVOS, CONFIGURAÇÕES)
 // ============================================================================
@@ -1680,4 +1930,8 @@ agentRouter.post('/exec', handleExec);
 agentRouter.get('/screen-info', handleGetScreenInfo);
 agentRouter.post('/mouse/move', handleMouseMove);
 agentRouter.post('/mouse/button', handleMouseButton);
+agentRouter.post('/mouse/scroll', handleMouseScroll);
+agentRouter.post('/keyboard/type', handleKeyboardType);
+agentRouter.post('/keyboard/key', handleKeyboardKey);
+agentRouter.get('/screen/capture', handleScreenCapture);
 agentRouter.get('/audit/logs', handleAuditLogs);
