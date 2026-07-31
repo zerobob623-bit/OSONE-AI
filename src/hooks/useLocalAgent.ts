@@ -120,8 +120,51 @@ export function useLocalAgent() {
             if (!res.ok) return { error: data?.error || 'Falha ao checar o sistema.' };
             return data;
           }
+          case 'mover_mouse': {
+            const x = Number(args?.x);
+            const y = Number(args?.y);
+            if (!Number.isFinite(x) || !Number.isFinite(y)) return { error: "Informe 'x' e 'y' (coordenadas numéricas de tela) para mover_mouse." };
+            return post('/mouse/move', { x, y });
+          }
+          case 'clicar': {
+            const x = args?.x !== undefined ? Number(args.x) : undefined;
+            const y = args?.y !== undefined ? Number(args.y) : undefined;
+            if ((x !== undefined && !Number.isFinite(x)) || (y !== undefined && !Number.isFinite(y))) {
+              return { error: "Parâmetros 'x' e 'y', quando informados, devem ser numéricos." };
+            }
+            if (x !== undefined && y !== undefined) {
+              const moveResult = await post('/mouse/move', { x, y });
+              if (moveResult?.error) return moveResult;
+            }
+            const botao = args?.botao === 'right' ? 'right' : 'left';
+            return post('/mouse/button', { action: 'click', button: botao, double: args?.duplo === true });
+          }
+          case 'rolar': {
+            const direcao = args?.direcao === 'up' || args?.direcao === 'down' ? args.direcao : null;
+            if (!direcao) return { error: "Informe 'direcao' como 'up' ou 'down' para rolar." };
+            const body: any = { direction: direcao };
+            if (args?.quantidade !== undefined) body.amount = Number(args.quantidade);
+            if (args?.x !== undefined) body.x = Number(args.x);
+            if (args?.y !== undefined) body.y = Number(args.y);
+            return post('/mouse/scroll', body);
+          }
+          case 'digitar': {
+            if (!args?.texto) return { error: "Informe 'texto' com o conteúdo a digitar no campo em foco." };
+            return post('/keyboard/type', { text: String(args.texto) });
+          }
+          case 'tecla': {
+            if (!args?.tecla) return { error: "Informe 'tecla' (ex: 'enter', 'tab', 'escape', 'a')." };
+            const modificadores = Array.isArray(args?.modificadores) ? args.modificadores : [];
+            return post('/keyboard/key', { key: String(args.tecla), modifiers: modificadores });
+          }
+          case 'capturar_tela': {
+            const res = await fetch(`${LOCAL_AGENT_URL}/screen/capture`, { method: 'GET', headers });
+            const data = await res.json().catch(() => null);
+            if (!res.ok) return { error: data?.error || 'Não foi possível capturar a tela.' };
+            return data;
+          }
           default:
-            return { error: `Ação '${acao}' desconhecida. Use: status, listar, criar_pasta, escrever_arquivo, apagar, mover, copiar, renomear, abrir, fechar, terminal, volume, midia, configuracoes, checar_sistema.` };
+            return { error: `Ação '${acao}' desconhecida. Use: status, listar, criar_pasta, escrever_arquivo, apagar, mover, copiar, renomear, abrir, fechar, terminal, volume, midia, configuracoes, checar_sistema, mover_mouse, clicar, rolar, digitar, tecla, capturar_tela.` };
         }
       }
 
