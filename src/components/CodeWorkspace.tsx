@@ -1164,7 +1164,10 @@ FORMATO OBRIGATÓRIO (JSON estrito):
         const qaResult = await generateWithRetry({
           clientApiKey: effectiveApiKey,
           model: currentModel,
-          prompt: `CÓDIGO GERADO PELO ENGENHEIRO:\n\n${lastCode.slice(0, 15000)}`,
+          // Sem cortar o código: o DeepSeek-R1 suporta contexto grande (128K), e um corte fixo
+          // (antes 15000 chars) deixava o final do arquivo — telas de Game Over, efeitos sonoros,
+          // fechamento de tags — fora da revisão do QA justamente nos projetos maiores/melhores.
+          prompt: `CÓDIGO GERADO PELO ENGENHEIRO:\n\n${lastCode}`,
           systemInstruction: qaSystemInstruction,
           responseMimeType: "application/json"
         });
