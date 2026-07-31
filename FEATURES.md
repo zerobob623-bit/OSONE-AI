@@ -39,7 +39,7 @@ Este documento registra todas as funcionalidades, rotas e módulos ativos no eco
 - **Canvas Interativo (`InteractiveCanvas.tsx`)**: Renderizador visual dinâmico.
 - **Lousa do Tutor / Educador (`TeacherWhiteboard.tsx`)**: Lousa interativa para explicações acadêmicas e mentoria.
 - **Central de Saúde e Bem-Estar (`WellnessCenter.tsx`)**: Acompanhamento de dados de saúde, metas e evolução do usuário.
-- **Integração OSONE ZAP (`WhatsAppConnect.tsx`, `WhatsAppIntegration.tsx`)**: Conexão nativa via `whatsapp-web.js` (Puppeteer local), auto-resposta inteligente com Gemini 3.5-flash-lite, e disparo de mensagens diretas (`POST /api/whatsapp/send-message`) com validação estrita do objeto `pupPage`.
+- **Integração OSONE ZAP (`WhatsAppConnect.tsx`, `WhatsAppIntegration.tsx`)**: Conexão nativa via `Baileys` (WebSocket direto, sem navegador/Puppeteer), auto-resposta inteligente com Gemini 3.5-flash-lite, e disparo de mensagens diretas (`POST /api/whatsapp/send-message`) com validação estrita da sessão conectada.
   - **Barra de 5 Abas Estruturadas (Tema Emerald Green)**: "1. Conectar & Disparar", "2. Histórico de Mensagens", "3. Lista de Contatos", "4. Documentação & Base do Produto" e "5. Ajustes de IA".
   - **Histórico Real de Conversas & Feed de Auditoria**: Leitura de mensagens enviadas e recebidas gravadas no servidor (`conversations.json`) lado a lado com o feed de logs e auditoria em tempo real (`logs`).
   - **Agenda e Leitura de Contatos do WhatsApp (`GET /api/whatsapp/wa-contacts`, `POST /api/whatsapp/import-contacts`)**: Busca direta via `wwebjsClient.getContacts()` trazendo nome e número real da conta pareada, gravando em `contacts.json` com tag visual ("WhatsApp" vs "Manual") e atalho direto para disparo real e histórico.

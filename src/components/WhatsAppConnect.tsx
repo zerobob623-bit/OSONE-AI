@@ -140,7 +140,7 @@ export function WhatsAppConnect({ onStatusChange, className = '' }: WhatsAppConn
                 Sessão Local
               </span>
             </h3>
-            <p className="text-xs text-zinc-400">whatsapp-web.js via Puppeteer local</p>
+            <p className="text-xs text-zinc-400">Baileys — conexão direta local (sem navegador)</p>
           </div>
         </div>
 
