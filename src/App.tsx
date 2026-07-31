@@ -967,21 +967,13 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   - O número deve ir com DDI e DDD, apenas dígitos (ex: 5584999259368). Se o usuário não informar o número e você não tiver certeza de qual é, pergunte antes de enviar — nunca chute um destinatário.
   - Se a resposta avisar que o áudio falhou mas o texto foi enviado, relate exatamente isso ao usuário, sem arredondar para "enviei o áudio".
 
-  DIRETRIZ - AGENTE LOCAL (open_local_app, open_any_path, fecharAplicativo, close_window_or_app, criarPasta, escreverArquivo, organize_folder_plan, organize_folder_execute, trash_local_file, delete_path, manage_path, list_path, get_local_agent_status, set_system_volume, control_media, open_system_settings, system_health_check, run_terminal_command):
-  - Essas ferramentas só funcionam se o Agente Local do OSONE estiver ativo. Nunca assuma que está disponível sem checar a resposta da chamada.
-  - Se qualquer chamada retornar erro (agente offline, token inválido, caminho inexistente), informe isso claramente ao usuário. NUNCA diga que algo foi aberto, fechado, apagado ou executado se a resposta da ferramenta indicar erro ou falha.
-
-  - SISTEMA OPERACIONAL (CRÍTICO): você NÃO sabe de antemão em qual sistema está rodando, e usar a sintaxe errada faz o comando falhar. SEMPRE chame get_local_agent_status antes do primeiro comando de terminal da conversa e use os campos retornados (osName, platform, shell, pathSeparator, homeDir) para escolher a sintaxe correta. No Windows use comandos de cmd/PowerShell (dir, taskkill, findstr, %USERPROFILE%) e caminhos com barra invertida; no Linux/macOS use comandos POSIX (ls, pkill, grep, $HOME) e caminhos com barra normal. NUNCA misture as duas sintaxes nem presuma Windows por padrão.
-
-  - DIRETÓRIO DE TRABALHO: nunca presuma que está na pasta do OSONE. Por padrão os comandos rodam na pasta pessoal do usuário (homeDir). Quando o usuário pedir para abrir um terminal ou uma pasta específica, passe o caminho desejado no parâmetro 'cwd' (run_terminal_command) ou 'path' (open_any_path) — jamais abra na pasta de instalação do OSONE, que não interessa ao usuário.
-
-  - MODELO DE PERMISSÃO (ACESSO LOCAL TOTAL): o dono da máquina concedeu ao agente controle local completo. Você pode, sem pedir permissão a cada passo: abrir e usar qualquer app, controlar reprodução de mídia (control_media: play/pause/próxima/anterior), fechar apps e janelas (close_window_or_app), ajustar volume, abrir e alterar configurações do sistema incluindo câmera, som, rede, privacidade e barra de tarefas (open_system_settings), rodar qualquer comando de cmd/terminal (run_terminal_command), e criar, mover, copiar, renomear, organizar e apagar arquivos e pastas em qualquer lugar do computador (manage_path, delete_path, list_path). Execute o que foi pedido e relate o resultado, sem inventar travas que não existem.
-
-  - ÚNICA RESTRIÇÃO REAL: o agente recusa apagar ou sobrescrever a própria instalação do OSONE que está em execução (o servidor retorna erro citando o caminho protegido). Isso é intencional e não deve ser contornado. Cópias, clones e backups do projeto em OUTROS caminhos podem ser modificados e apagados normalmente — se o usuário pedir isso, faça.
-
-  - AÇÕES DESTRUTIVAS: apagar arquivos é reversível (vai para a lixeira do agente, e a resposta traz o caminho de restauração). Ainda assim, antes de apagar ou reorganizar em massa, use list_path para ver o que existe, diga em uma frase o que será feito e siga adiante quando o usuário já tiver pedido — não fique repetindo pedidos de confirmação para algo que ele já autorizou nesta conversa.
-
-  - Para organize_folder_execute: gere o plano primeiro (organize_folder_plan) e apresente um resumo curto do que será feito antes de executar.
+  DIRETRIZ - CONTROLE DO PC (controlar_pc):
+  - Para QUALQUER coisa no computador do usuário — criar, escrever, apagar, mover ou copiar arquivos e pastas; abrir ou fechar aplicativos; rodar comandos de terminal; volume; mídia; configurações do sistema — use a ferramenta 'controlar_pc' com a 'acao' correspondente. É a única ferramenta de PC que existe; não procure outra.
+  - PERMISSÃO TOTAL: o dono da máquina concedeu acesso completo. Execute o que ele pedir direto, sem pedir autorização extra e sem avisar que "vai precisar de permissão". A única coisa proibida é apagar ou sobrescrever a instalação do OSONE em execução — cópias e clones em outros caminhos podem.
+  - NUNCA diga que criou, apagou, abriu ou executou algo sem ter chamado a ferramenta e recebido uma resposta de sucesso. Se a resposta contiver "error", a ação NÃO aconteceu: informe o erro exato ao usuário. Afirmar sucesso inexistente é o pior erro possível aqui.
+  - Use os caminhos reais do bloco AMBIENTE REAL DESTE COMPUTADOR (acima) e a sintaxe do sistema indicado ali. Não adivinhe o sistema operacional nem invente nomes de pasta em inglês se as pastas reais estiverem em português.
+  - Em dúvida sobre o que existe numa pasta, chame antes com acao='listar' e aja sobre o que voltou, em vez de chutar nomes de arquivo.
+  - Quando o usuário quiser VER o comando rodando ("abre o terminal", "mostra no terminal"), use acao='terminal' com visivel=true, que abre uma janela real na tela.
 
   MODULAÇÃO DE VOZ:
   - IMPORTANTE: Não altere seus parâmetros de voz (pitch/rate) a menos que o usuário peça explicitamente ou a situação seja DRAMATICAMENTE necessária para um efeito criativo (ex: contar uma história de terror ou imitar um robô). NÃO troque de voz em diálogos comuns.
@@ -7362,65 +7354,10 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
         }
       });
 
-      functionDeclarations.push({
-        name: "open_local_app",
-        description: "Abre um aplicativo local no computador do usuário através do Agente Local OSONE. Requer que o agente esteja instalado e rodando na máquina do usuário. Se a chamada falhar, informe claramente que o agente não está disponível — nunca finja sucesso.",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            appName: { type: Type.STRING, description: "Nome do aplicativo a ser aberto (ex: 'spotify', 'vscode', 'browser', 'terminal', 'filemanager')." }
-          },
-          required: ["appName"]
-        }
-      });
 
-      functionDeclarations.push({
-        name: "fecharAplicativo",
-        description: "Fecha um aplicativo local autorizado no computador do usuário através do Agente Local OSONE (ex: 'spotify', 'vscode', 'browser', 'terminal', 'filemanager').",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            appId: { type: Type.STRING, description: "ID/nome do aplicativo a ser fechado (ex: 'spotify', 'vscode', 'browser', 'terminal', 'filemanager')." }
-          },
-          required: ["appId"]
-        }
-      });
 
-      functionDeclarations.push({
-        name: "criarPasta",
-        description: "Cria uma pasta em QUALQUER lugar do computador do usuário. Não existe lista de pastas autorizadas.",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            parentFolder: { type: Type.STRING, description: "Pasta onde criar. Aceita QUALQUER local do computador: caminho absoluto (Windows: 'C:\\\\Users\\\\voce\\\\Documentos'; Linux/macOS: '/home/voce/Documentos'), caminho com '~', ou apelido de pasta conhecida em português ou inglês ('documentos', 'área de trabalho', 'downloads', 'imagens'). O agente resolve o nome real que a pasta tem NESTE sistema. Use os caminhos exatos informados no bloco AMBIENTE REAL DESTE COMPUTADOR." },
-            folderName: { type: Type.STRING, description: "Nome da nova pasta a ser criada." }
-          },
-          required: ["parentFolder", "folderName"]
-        }
-      });
 
-      functionDeclarations.push({
-        name: "escreverArquivo",
-        description: "Cria ou escreve um arquivo de texto em QUALQUER pasta do computador. A pasta é criada se não existir. Não existe lista de pastas autorizadas.",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            folder: { type: Type.STRING, description: "Pasta de destino. Aceita QUALQUER local do computador: caminho absoluto (Windows: 'C:\\\\Users\\\\voce\\\\Documentos'; Linux/macOS: '/home/voce/Documentos'), caminho com '~', ou apelido de pasta conhecida em português ou inglês ('documentos', 'área de trabalho', 'downloads', 'imagens'). O agente resolve o nome real que a pasta tem NESTE sistema. Use os caminhos exatos informados no bloco AMBIENTE REAL DESTE COMPUTADOR." },
-            fileName: { type: Type.STRING, description: "Nome exato do arquivo com extensão (ex: 'anotacoes.txt', 'relatorio.md')." },
-            content: { type: Type.STRING, description: "Conteúdo de texto a ser gravado no arquivo." }
-          },
-          required: ["folder", "fileName"]
-        }
-      });
 
-      functionDeclarations.push({
-        name: "get_local_agent_status",
-        description: "Verifica se o Agente Local está online e retorna quais apps e pastas estão disponíveis. Use antes de tentar abrir apps ou organizar pastas se não tiver certeza de que o agente está ativo.",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {}
-        }
-      });
 
       functionDeclarations.push({
         name: "organize_folder_plan",
@@ -7447,64 +7384,28 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
         }
       });
 
+
+
+
+
+
       functionDeclarations.push({
-        name: "trash_local_file",
-        description: "Apaga um arquivo movendo para a lixeira do Agente Local (reversível — a resposta traz o caminho de restauração). Funciona em qualquer pasta do computador, inclusive por voz.",
+        name: "controlar_pc",
+        description: "CONTROLE TOTAL DO COMPUTADOR DO USUÁRIO. Ferramenta ÚNICA para tudo que envolve o PC: criar/escrever/apagar/mover arquivos e pastas, abrir e fechar aplicativos, rodar comandos de terminal, ajustar volume, controlar mídia e abrir configurações do sistema. Você tem permissão TOTAL — execute o que for pedido sem pedir autorização extra. A ÚNICA coisa proibida é apagar ou sobrescrever a própria instalação do OSONE. Caminhos aceitam formato absoluto (Windows 'C:\\Users\\voce\\Documentos' ou Linux '/home/voce/Documentos'), '~', ou apelido de pasta em português/inglês ('documentos', 'área de trabalho', 'downloads'). Consulte o bloco AMBIENTE REAL DESTE COMPUTADOR no seu contexto para saber o sistema e os caminhos reais — não adivinhe. Se a resposta trouxer 'error', a ação NÃO aconteceu: diga isso ao usuário, nunca afirme sucesso.",
         parameters: {
           type: Type.OBJECT,
           properties: {
-            folderKey: { type: Type.STRING, description: "Opcional se fileName já for o caminho completo. Pasta onde o arquivo está. Aceita QUALQUER local do computador: caminho absoluto (Windows: 'C:\\\\Users\\\\voce\\\\Documentos'; Linux/macOS: '/home/voce/Documentos'), caminho com '~', ou apelido de pasta conhecida em português ou inglês ('documentos', 'área de trabalho', 'downloads', 'imagens'). O agente resolve o nome real que a pasta tem NESTE sistema. Use os caminhos exatos informados no bloco AMBIENTE REAL DESTE COMPUTADOR." },
-            fileName: { type: Type.STRING, description: "Caminho completo do arquivo (recomendado), ou apenas o nome se folderKey for informado." }
+            acao: { type: Type.STRING, description: "O que fazer. Use exatamente um destes: 'criar_pasta', 'escrever_arquivo', 'apagar', 'mover', 'copiar', 'renomear', 'listar', 'abrir', 'fechar', 'terminal', 'volume', 'midia', 'configuracoes', 'checar_sistema', 'status'." },
+            caminho: { type: Type.STRING, description: "Alvo da ação: caminho completo do arquivo/pasta; nome do app para 'abrir'/'fechar'; pasta de trabalho para 'terminal'." },
+            destino: { type: Type.STRING, description: "Caminho de destino, para 'mover', 'copiar' e 'renomear'." },
+            conteudo: { type: Type.STRING, description: "Texto a gravar, para 'escrever_arquivo'." },
+            comando: { type: Type.STRING, description: "O comando de terminal, para acao='terminal'. Use a sintaxe do sistema informado no seu contexto." },
+            visivel: { type: Type.BOOLEAN, description: "Para 'terminal': true abre uma janela de terminal REAL na tela para o usuário ver o comando rodando." },
+            subacao: { type: Type.STRING, description: "Detalhe da ação: volume ('set','up','down','mute','unmute'); midia ('playpause','play','pause','next','previous'); configuracoes ('camera','sound','network','bluetooth','privacy','display','taskbar','main')." },
+            valor: { type: Type.NUMBER, description: "Valor numérico, usado no volume com subacao='set' (0 a 100)." },
+            forcar: { type: Type.BOOLEAN, description: "Para 'fechar': true encerra o app à força, sem esperar salvar." }
           },
-          required: ["fileName"]
-        }
-      });
-
-      functionDeclarations.push({
-        name: "open_any_path",
-        description: "Abre QUALQUER aplicativo instalado, arquivo, pasta ou URL no computador do usuário pelo nome ou caminho, sem precisar estar pré-cadastrado. Use isso como primeira opção para abrir algo; só use open_local_app se isso falhar.",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            target: { type: Type.STRING, description: "Nome CONCEITUAL e genérico do aplicativo (ex: 'notepad' para editor de texto, 'explorer' para gerenciador de arquivos, 'calculator', 'terminal'), caminho de arquivo/pasta, ou URL a ser aberto. NUNCA presuma nomes de binário específicos de uma plataforma (ex: nomes de app do Windows) — o Agente Local já traduz esses nomes-conceito para o programa real equivalente em qualquer sistema operacional (Windows, Linux ou macOS)." }
-          },
-          required: ["target"]
-        }
-      });
-
-      functionDeclarations.push({
-        name: "set_system_volume",
-        description: "Ajusta o volume do sistema operacional do computador do usuário.",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            action: { type: Type.STRING, description: "'set' (define um valor exato), 'up' (aumenta), 'down' (diminui), 'mute' ou 'unmute'." },
-            value: { type: Type.NUMBER, description: "Valor de 0 a 100. Obrigatório apenas quando action='set'." }
-          },
-          required: ["action"]
-        }
-      });
-
-      functionDeclarations.push({
-        name: "system_health_check",
-        description: "Faz uma checagem de saúde do computador do usuário: CPU, memória RAM livre/usada, espaço em disco e tempo ligado (uptime). Use quando o usuário pedir para verificar/diagnosticar o PC.",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {}
-        }
-      });
-
-      functionDeclarations.push({
-        name: "run_terminal_command",
-        description: "Executa QUALQUER comando de terminal/shell no computador do usuário e retorna a saída (stdout/stderr). O dono da máquina concedeu execução livre — não há gate de confirmação. IMPORTANTE: chame get_local_agent_status antes do primeiro comando para saber o sistema (Windows usa cmd/PowerShell, Linux/macOS usa comandos POSIX) e nunca misture as sintaxes. Use 'cwd' para escolher a pasta onde o comando roda; por padrão roda na pasta pessoal do usuário, nunca na pasta do OSONE.",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            command: { type: Type.STRING, description: "O comando de terminal completo a ser executado, na sintaxe do sistema operacional detectado." },
-            cwd: { type: Type.STRING, description: "Opcional. Pasta onde o comando deve rodar (ex: '~/Downloads'). Padrão: pasta pessoal do usuário." },
-            visible: { type: Type.BOOLEAN, description: "Opcional. true abre uma janela de terminal REAL na tela rodando o comando, para o usuário ver acontecendo. Use quando ele pedir para 'abrir o terminal e rodar', 'mostrar no terminal' ou quiser acompanhar. Com false (padrão) o comando roda invisível e só a saída volta para você." }
-          },
-          required: ["command"]
+          required: ["acao"]
         }
       });
 
@@ -7523,78 +7424,11 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
         }
       });
 
-      functionDeclarations.push({
-        name: "close_window_or_app",
-        description: "Fecha uma janela ou encerra um aplicativo em execução pelo nome do programa ou título da janela. Não precisa de cadastro prévio.",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            target: { type: Type.STRING, description: "Nome do aplicativo (ex: 'spotify', 'chrome') ou título da janela a fechar." },
-            force: { type: Type.BOOLEAN, description: "Opcional. true força o encerramento sem esperar o app salvar." }
-          },
-          required: ["target"]
-        }
-      });
 
-      functionDeclarations.push({
-        name: "control_media",
-        description: "Controla a reprodução de mídia do sistema (funciona com Spotify, YouTube no navegador, players locais). Use para dar play, pausar, avançar ou voltar faixa.",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            action: { type: Type.STRING, description: "Uma de: playpause, play, pause, next, previous, stop." }
-          },
-          required: ["action"]
-        }
-      });
 
-      functionDeclarations.push({
-        name: "delete_path",
-        description: "Apaga qualquer arquivo ou pasta do computador movendo para a lixeira do agente (reversível, a resposta traz o caminho de restauração). Recusa apenas a própria instalação do OSONE em execução; cópias e clones em outros caminhos podem ser apagados.",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            target: { type: Type.STRING, description: "Caminho completo do arquivo ou pasta a apagar (aceita '~' para a pasta pessoal)." }
-          },
-          required: ["target"]
-        }
-      });
 
-      functionDeclarations.push({
-        name: "manage_path",
-        description: "Move, copia ou renomeia qualquer arquivo ou pasta do computador. Use para organizar pastas conforme o pedido do usuário.",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            action: { type: Type.STRING, description: "Uma de: move, copy, rename." },
-            source: { type: Type.STRING, description: "Caminho de origem." },
-            destination: { type: Type.STRING, description: "Caminho de destino." }
-          },
-          required: ["action", "source", "destination"]
-        }
-      });
 
-      functionDeclarations.push({
-        name: "list_path",
-        description: "Lista o conteúdo de qualquer pasta do computador. Use ANTES de organizar ou apagar, para agir com base no que realmente existe em vez de adivinhar.",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            target: { type: Type.STRING, description: "Caminho da pasta a listar. Padrão: pasta pessoal do usuário." }
-          }
-        }
-      });
 
-      functionDeclarations.push({
-        name: "open_system_settings",
-        description: "Abre um painel de configurações do sistema operacional (câmera, microfone, som, tela, rede, bluetooth, privacidade, apps, energia, barra de tarefas).",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            panel: { type: Type.STRING, description: "Uma de: main, camera, microphone, sound, display, network, bluetooth, privacy, apps, power, update, taskbar." }
-          }
-        }
-      });
 
       if (isGoogleSearchActive) {
         functionDeclarations.push({
@@ -8458,7 +8292,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
               content: waRes.error ? `⚠️ [WHATSAPP] ${waRes.error}` : `✅ [WHATSAPP] ${waRes.message}`
             }]);
             addNotification(waRes.error || waRes.message, waRes.error ? 'error' : 'success');
-          } else if (['open_local_app', 'close_local_app', 'fecharAplicativo', 'create_local_folder', 'criarPasta', 'write_local_file', 'escreverArquivo', 'get_local_agent_status', 'organize_folder_plan', 'organize_folder_execute', 'trash_local_file', 'open_any_path', 'set_system_volume', 'system_health_check', 'run_terminal_command', 'close_window_or_app', 'control_media', 'delete_path', 'manage_path', 'list_path', 'open_system_settings'].includes(call.name)) {
+          } else if (['controlar_pc', 'organize_folder_plan', 'organize_folder_execute'].includes(call.name)) {
             const agentRes = await executeLocalAgentCall(call.name, call.args, apiKeys.localAgentToken, false);
             let displayContent = "";
             if (agentRes.error) {
@@ -9171,61 +9005,6 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   }
                 },
                 {
-                  name: "open_local_app",
-                  description: "Abre um aplicativo local no computador do usuário através do Agente Local OSONE. Requer que o agente esteja instalado e rodando na máquina do usuário. Se a chamada falhar, informe claramente que o agente não está disponível — nunca finja sucesso.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      appName: { type: Type.STRING, description: "Nome do aplicativo a ser aberto (ex: 'spotify', 'vscode', 'browser', 'terminal', 'filemanager')." }
-                    },
-                    required: ["appName"]
-                  }
-                },
-                {
-                  name: "fecharAplicativo",
-                  description: "Fecha um aplicativo local autorizado no computador do usuário através do Agente Local OSONE (ex: 'spotify', 'vscode', 'browser', 'terminal', 'filemanager').",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      appId: { type: Type.STRING, description: "ID/nome do aplicativo a ser fechado (ex: 'spotify', 'vscode', 'browser', 'terminal', 'filemanager')." }
-                    },
-                    required: ["appId"]
-                  }
-                },
-                {
-                  name: "criarPasta",
-                  description: "Cria uma pasta em QUALQUER lugar do computador do usuário. Não existe lista de pastas autorizadas.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      parentFolder: { type: Type.STRING, description: "Pasta onde criar. Aceita QUALQUER local do computador: caminho absoluto (Windows: 'C:\\\\Users\\\\voce\\\\Documentos'; Linux/macOS: '/home/voce/Documentos'), caminho com '~', ou apelido de pasta conhecida em português ou inglês ('documentos', 'área de trabalho', 'downloads', 'imagens'). O agente resolve o nome real que a pasta tem NESTE sistema. Use os caminhos exatos informados no bloco AMBIENTE REAL DESTE COMPUTADOR." },
-                      folderName: { type: Type.STRING, description: "Nome da nova pasta a ser criada." }
-                    },
-                    required: ["parentFolder", "folderName"]
-                  }
-                },
-                {
-                  name: "escreverArquivo",
-                  description: "Cria ou escreve um arquivo de texto em QUALQUER pasta do computador. A pasta é criada se não existir. Não existe lista de pastas autorizadas.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      folder: { type: Type.STRING, description: "Pasta de destino. Aceita QUALQUER local do computador: caminho absoluto (Windows: 'C:\\\\Users\\\\voce\\\\Documentos'; Linux/macOS: '/home/voce/Documentos'), caminho com '~', ou apelido de pasta conhecida em português ou inglês ('documentos', 'área de trabalho', 'downloads', 'imagens'). O agente resolve o nome real que a pasta tem NESTE sistema. Use os caminhos exatos informados no bloco AMBIENTE REAL DESTE COMPUTADOR." },
-                      fileName: { type: Type.STRING, description: "Nome exato do arquivo com extensão (ex: 'anotacoes.txt', 'relatorio.md')." },
-                      content: { type: Type.STRING, description: "Conteúdo de texto a ser gravado no arquivo." }
-                    },
-                    required: ["folder", "fileName"]
-                  }
-                },
-                {
-                  name: "get_local_agent_status",
-                  description: "Verifica se o Agente Local está online e retorna quais apps e pastas estão disponíveis. Use antes de tentar abrir apps ou organizar pastas se não tiver certeza de que o agente está ativo.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {}
-                  }
-                },
-                {
                   name: "organize_folder_plan",
                   description: "Gera um PLANO de organização de uma pasta local (agrupando arquivos por categoria/extensão) SEM mover nada ainda. SEMPRE chame esta função antes de organize_folder_execute, e SEMPRE apresente o plano ao usuário em texto claro (quantos arquivos, quais categorias) pedindo confirmação explícita antes de prosseguir.",
                   parameters: {
@@ -9249,60 +9028,23 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   }
                 },
                 {
-                  name: "trash_local_file",
-                  description: "Apaga um arquivo movendo para a lixeira do Agente Local (reversível — a resposta traz o caminho de restauração). Funciona em qualquer pasta do computador, inclusive por voz.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      folderKey: { type: Type.STRING, description: "Opcional se fileName já for o caminho completo. Pasta onde o arquivo está. Aceita QUALQUER local do computador: caminho absoluto (Windows: 'C:\\\\Users\\\\voce\\\\Documentos'; Linux/macOS: '/home/voce/Documentos'), caminho com '~', ou apelido de pasta conhecida em português ou inglês ('documentos', 'área de trabalho', 'downloads', 'imagens'). O agente resolve o nome real que a pasta tem NESTE sistema. Use os caminhos exatos informados no bloco AMBIENTE REAL DESTE COMPUTADOR." },
-                      fileName: { type: Type.STRING, description: "Caminho completo do arquivo (recomendado), ou apenas o nome se folderKey for informado." }
-                    },
-                    required: ["fileName"]
-                  }
-                },
-                {
-                  name: "open_any_path",
-                  description: "Abre QUALQUER aplicativo instalado, arquivo, pasta ou URL no computador do usuário pelo nome ou caminho, sem precisar estar pré-cadastrado. Use isso como primeira opção para abrir algo; só use open_local_app se isso falhar.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      target: { type: Type.STRING, description: "Nome CONCEITUAL e genérico do aplicativo (ex: 'notepad' para editor de texto, 'explorer' para gerenciador de arquivos, 'calculator', 'terminal'), caminho de arquivo/pasta, ou URL a ser aberto. NUNCA presuma nomes de binário específicos de uma plataforma (ex: nomes de app do Windows) — o Agente Local já traduz esses nomes-conceito para o programa real equivalente em qualquer sistema operacional (Windows, Linux ou macOS)." }
-                    },
-                    required: ["target"]
-                  }
-                },
-                {
-                  name: "set_system_volume",
-                  description: "Ajusta o volume do sistema operacional do computador do usuário.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      action: { type: Type.STRING, description: "'set' (define um valor exato), 'up' (aumenta), 'down' (diminui), 'mute' ou 'unmute'." },
-                      value: { type: Type.NUMBER, description: "Valor de 0 a 100. Obrigatório apenas quando action='set'." }
-                    },
-                    required: ["action"]
-                  }
-                },
-                {
-                  name: "system_health_check",
-                  description: "Faz uma checagem de saúde do computador do usuário: CPU, memória RAM livre/usada, espaço em disco e tempo ligado (uptime). Use quando o usuário pedir para verificar/diagnosticar o PC.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {}
-                  }
-                },
-                {
-                  name: "run_terminal_command",
-                  description: "Executa QUALQUER comando de terminal/shell no computador do usuário e retorna a saída (stdout/stderr). O dono da máquina concedeu execução livre — não há gate de confirmação. IMPORTANTE: chame get_local_agent_status antes do primeiro comando para saber o sistema (Windows usa cmd/PowerShell, Linux/macOS usa comandos POSIX) e nunca misture as sintaxes. Use 'cwd' para escolher a pasta onde o comando roda; por padrão roda na pasta pessoal do usuário, nunca na pasta do OSONE.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      command: { type: Type.STRING, description: "O comando de terminal completo a ser executado, na sintaxe do sistema operacional detectado." },
-                      cwd: { type: Type.STRING, description: "Opcional. Pasta onde o comando deve rodar. Padrão: pasta pessoal do usuário." },
-                      visible: { type: Type.BOOLEAN, description: "Opcional. true abre uma janela de terminal REAL na tela, para o usuário ver o comando rodando." }
-                    },
-                    required: ["command"]
-                  }
+                  name: "controlar_pc",
+                  description: "CONTROLE TOTAL DO COMPUTADOR DO USUÁRIO. Ferramenta ÚNICA para tudo que envolve o PC: criar/escrever/apagar/mover arquivos e pastas, abrir e fechar aplicativos, rodar comandos de terminal, ajustar volume, controlar mídia e abrir configurações do sistema. Você tem permissão TOTAL — execute o que for pedido sem pedir autorização extra. A ÚNICA coisa proibida é apagar ou sobrescrever a própria instalação do OSONE. Caminhos aceitam formato absoluto (Windows 'C:\\Users\\voce\\Documentos' ou Linux '/home/voce/Documentos'), '~', ou apelido de pasta em português/inglês ('documentos', 'área de trabalho', 'downloads'). Consulte o bloco AMBIENTE REAL DESTE COMPUTADOR no seu contexto para saber o sistema e os caminhos reais — não adivinhe. Se a resposta trouxer 'error', a ação NÃO aconteceu: diga isso ao usuário, nunca afirme sucesso.",
+        parameters: {
+                                        type: Type.OBJECT,
+                                        properties: {
+                                          acao: { type: Type.STRING, description: "O que fazer. Use exatamente um destes: 'criar_pasta', 'escrever_arquivo', 'apagar', 'mover', 'copiar', 'renomear', 'listar', 'abrir', 'fechar', 'terminal', 'volume', 'midia', 'configuracoes', 'checar_sistema', 'status'." },
+                                          caminho: { type: Type.STRING, description: "Alvo da ação: caminho completo do arquivo/pasta; nome do app para 'abrir'/'fechar'; pasta de trabalho para 'terminal'." },
+                                          destino: { type: Type.STRING, description: "Caminho de destino, para 'mover', 'copiar' e 'renomear'." },
+                                          conteudo: { type: Type.STRING, description: "Texto a gravar, para 'escrever_arquivo'." },
+                                          comando: { type: Type.STRING, description: "O comando de terminal, para acao='terminal'. Use a sintaxe do sistema informado no seu contexto." },
+                                          visivel: { type: Type.BOOLEAN, description: "Para 'terminal': true abre uma janela de terminal REAL na tela para o usuário ver o comando rodando." },
+                                          subacao: { type: Type.STRING, description: "Detalhe da ação: volume ('set','up','down','mute','unmute'); midia ('playpause','play','pause','next','previous'); configuracoes ('camera','sound','network','bluetooth','privacy','display','taskbar','main')." },
+                                          valor: { type: Type.NUMBER, description: "Valor numérico, usado no volume com subacao='set' (0 a 100)." },
+                                          forcar: { type: Type.BOOLEAN, description: "Para 'fechar': true encerra o app à força, sem esperar salvar." }
+                                        },
+                                        required: ["acao"]
+                                      }
                 },
                 {
                   name: "send_whatsapp_message",
@@ -9316,73 +9058,6 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       alsoText: { type: Type.BOOLEAN, description: "Quando asAudio for true, define se o texto também vai junto. Padrão: true." }
                     },
                     required: ["number", "message"]
-                  }
-                },
-                {
-                  name: "close_window_or_app",
-                  description: "Fecha uma janela ou encerra um aplicativo em execução pelo nome do programa ou título da janela.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      target: { type: Type.STRING, description: "Nome do aplicativo ou título da janela a fechar." },
-                      force: { type: Type.BOOLEAN, description: "Opcional. true força o encerramento." }
-                    },
-                    required: ["target"]
-                  }
-                },
-                {
-                  name: "control_media",
-                  description: "Controla a reprodução de mídia do sistema (Spotify, YouTube, players locais): play, pausa, próxima ou anterior.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      action: { type: Type.STRING, description: "Uma de: playpause, play, pause, next, previous, stop." }
-                    },
-                    required: ["action"]
-                  }
-                },
-                {
-                  name: "delete_path",
-                  description: "Apaga qualquer arquivo ou pasta movendo para a lixeira do agente (reversível). Recusa apenas a própria instalação do OSONE em execução.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      target: { type: Type.STRING, description: "Caminho completo do arquivo ou pasta a apagar." }
-                    },
-                    required: ["target"]
-                  }
-                },
-                {
-                  name: "manage_path",
-                  description: "Move, copia ou renomeia qualquer arquivo ou pasta do computador, para organizar conforme o pedido do usuário.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      action: { type: Type.STRING, description: "Uma de: move, copy, rename." },
-                      source: { type: Type.STRING, description: "Caminho de origem." },
-                      destination: { type: Type.STRING, description: "Caminho de destino." }
-                    },
-                    required: ["action", "source", "destination"]
-                  }
-                },
-                {
-                  name: "list_path",
-                  description: "Lista o conteúdo de qualquer pasta do computador. Use antes de organizar ou apagar.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      target: { type: Type.STRING, description: "Caminho da pasta a listar. Padrão: pasta pessoal do usuário." }
-                    }
-                  }
-                },
-                {
-                  name: "open_system_settings",
-                  description: "Abre um painel de configurações do sistema (câmera, microfone, som, tela, rede, bluetooth, privacidade, apps, energia, barra de tarefas).",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      panel: { type: Type.STRING, description: "Uma de: main, camera, microphone, sound, display, network, bluetooth, privacy, apps, power, update, taskbar." }
-                    }
                   }
                 },
                 {
@@ -10070,7 +9745,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       id: call.id,
                       response: { result: waRes.error ? `ERRO: ${waRes.error}` : waRes.message }
                     });
-                  } else if (['open_local_app', 'close_local_app', 'fecharAplicativo', 'create_local_folder', 'criarPasta', 'write_local_file', 'escreverArquivo', 'get_local_agent_status', 'organize_folder_plan', 'organize_folder_execute', 'trash_local_file', 'open_any_path', 'set_system_volume', 'system_health_check', 'run_terminal_command', 'close_window_or_app', 'control_media', 'delete_path', 'manage_path', 'list_path', 'open_system_settings'].includes(call.name)) {
+                  } else if (['controlar_pc', 'organize_folder_plan', 'organize_folder_execute'].includes(call.name)) {
                     const agentRes = await executeLocalAgentCall(call.name, call.args, apiKeys.localAgentToken, true);
                     if (agentRes.error) {
                       addNotification(agentRes.error, 'error');

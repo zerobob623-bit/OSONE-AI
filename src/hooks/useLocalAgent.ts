@@ -30,6 +30,83 @@ export function useLocalAgent() {
     };
 
     try {
+      /**
+       * FERRAMENTA ÚNICA DE CONTROLE DO PC.
+       *
+       * Antes existiam 16 ferramentas separadas e sobrepostas para mexer no computador
+       * (criarPasta, escreverArquivo, trash_local_file, delete_path, manage_path,
+       * open_any_path, open_local_app, fecharAplicativo, close_window_or_app...). O modelo
+       * tinha de escolher entre várias quase idênticas a cada pedido, e escolher errado era
+       * fácil — o agente parecia burro por excesso de opção, não por falta de capacidade.
+       * Uma ferramenta só, com uma ação nomeada, elimina a ambiguidade.
+       */
+      if (toolName === 'controlar_pc') {
+        const acao = String(args?.acao || '').trim();
+        const caminho = args?.caminho;
+        const destino = args?.destino;
+        const conteudo = args?.conteudo;
+        const valor = args?.valor;
+
+        const post = async (path: string, body: any) => {
+          const res = await fetch(`${LOCAL_AGENT_URL}${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+          const data = await res.json().catch(() => null);
+          if (!res.ok) return { error: data?.error || `Falha na ação '${acao}' (HTTP ${res.status}).` };
+          return data || { success: true };
+        };
+
+        switch (acao) {
+          case 'status': {
+            const res = await fetch(`${LOCAL_AGENT_URL}/status`, { method: 'GET', headers });
+            const data = await res.json().catch(() => null);
+            if (!res.ok) return { error: data?.error || 'Agente Local indisponível.' };
+            return data;
+          }
+          case 'listar':
+            return post('/path/list', { target: caminho || '' });
+          case 'criar_pasta':
+            if (!caminho) return { error: "Informe 'caminho' com a pasta a criar (ex: '~/Documentos/Projeto')." };
+            return post('/create-folder', { parentFolder: caminho.replace(/[\\/]+[^\\/]+$/, '') || caminho, folderName: caminho.split(/[\\/]/).filter(Boolean).pop() });
+          case 'escrever_arquivo': {
+            if (!caminho) return { error: "Informe 'caminho' com o arquivo a escrever (ex: '~/Documentos/nota.txt')." };
+            const partes = caminho.split(/[\\/]/).filter(Boolean);
+            const nomeArquivo = partes.pop() || 'arquivo.txt';
+            const pasta = caminho.startsWith('/') ? '/' + partes.join('/') : partes.join('/') || '~';
+            return post('/write-file', { folder: pasta, fileName: nomeArquivo, content: conteudo ?? '' });
+          }
+          case 'apagar':
+            if (!caminho) return { error: "Informe 'caminho' do arquivo ou pasta a apagar." };
+            return post('/path/delete', { target: caminho });
+          case 'mover':
+          case 'copiar':
+          case 'renomear':
+            if (!caminho || !destino) return { error: "Informe 'caminho' (origem) e 'destino'." };
+            return post('/path/manage', { action: acao === 'mover' ? 'move' : acao === 'copiar' ? 'copy' : 'rename', source: caminho, destination: destino });
+          case 'abrir':
+            if (!caminho) return { error: "Informe 'caminho' com o app, arquivo, pasta ou site a abrir." };
+            return post('/open-any', { target: caminho, path: destino });
+          case 'fechar':
+            if (!caminho) return { error: "Informe 'caminho' com o nome do app ou janela a fechar." };
+            return post('/window/close', { target: caminho, force: args?.forcar === true });
+          case 'terminal':
+            if (!args?.comando) return { error: "Informe 'comando' com o comando de terminal." };
+            return post('/exec', { command: args.comando, cwd: caminho, visible: args?.visivel === true });
+          case 'volume':
+            return post('/volume', { action: args?.subacao || 'set', value: valor });
+          case 'midia':
+            return post('/media', { action: args?.subacao || 'playpause' });
+          case 'configuracoes':
+            return post('/system/settings', { panel: args?.subacao || 'main' });
+          case 'checar_sistema': {
+            const res = await fetch(`${LOCAL_AGENT_URL}/system-check`, { method: 'GET', headers });
+            const data = await res.json().catch(() => null);
+            if (!res.ok) return { error: data?.error || 'Falha ao checar o sistema.' };
+            return data;
+          }
+          default:
+            return { error: `Ação '${acao}' desconhecida. Use: status, listar, criar_pasta, escrever_arquivo, apagar, mover, copiar, renomear, abrir, fechar, terminal, volume, midia, configuracoes, checar_sistema.` };
+        }
+      }
+
       if (toolName === 'get_local_agent_status') {
         const res = await fetch(`${LOCAL_AGENT_URL}/status`, { method: 'GET', headers });
         const data = await res.json().catch(() => null);
