@@ -976,10 +976,25 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     const formattedJid = remoteJid;
     const geminiApiKeyToUse = whatsappConfig.geminiApiKey || getSecretGeminiKey();
 
-    let body: string = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
+    // O WhatsApp envelopa o conteúdo real em uma camada extra quando "mensagens temporárias"
+    // (disappearing messages) ou "ver uma vez" estão ativas no chat — sem desembrulhar aqui,
+    // essas mensagens (cada vez mais comuns, já que muita gente ativa isso por padrão) ficavam
+    // com "body" vazio e eram silenciosamente ignoradas, sem log de erro nenhum.
+    let innerMessage: any = msg.message;
+    for (let i = 0; i < 5; i++) {
+      const unwrap = innerMessage?.ephemeralMessage?.message
+        || innerMessage?.viewOnceMessage?.message
+        || innerMessage?.viewOnceMessageV2?.message
+        || innerMessage?.viewOnceMessageV2Extension?.message
+        || innerMessage?.documentWithCaptionMessage?.message;
+      if (!unwrap) break;
+      innerMessage = unwrap;
+    }
 
-    const imageMsg = msg.message.imageMessage;
-    const audioMsg = msg.message.audioMessage;
+    let body: string = innerMessage.conversation || innerMessage.extendedTextMessage?.text || "";
+
+    const imageMsg = innerMessage.imageMessage;
+    const audioMsg = innerMessage.audioMessage;
     const mediaType: "image" | "audio" | null = imageMsg ? "image" : audioMsg ? "audio" : null;
 
     // Mensagens de imagem/áudio não têm "body" de texto: usamos o Gemini para descrever a
@@ -1321,6 +1336,24 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
           const boomError = lastDisconnect?.error;
           const statusCode = boomError?.output?.statusCode;
           const reasonText = explainWhatsAppDisconnect(statusCode, boomError?.message || "");
+
+          // "restartRequired" é esperado e inofensivo: o Baileys sempre encerra e pede um
+          // reinício logo após uma sessão nova terminar de parear (escanear o QR Code) — não é
+          // uma falha real, então nem entra como log de erro nem passa pelo backoff/contador de
+          // tentativas do reconector (senão o usuário veria um "erro" e esperaria segundos à toa
+          // logo depois de escanear o QR).
+          if (statusCode === DisconnectReason.restartRequired) {
+            whatsappLogs.unshift({
+              id: Math.random().toString(36).substring(2, 11),
+              timestamp: Date.now(),
+              type: "info",
+              sender: "WhatsApp",
+              message: "Pareamento concluído, finalizando a conexão..."
+            });
+            if (whatsappLogs.length > 100) whatsappLogs.pop();
+            initializeWhatsAppWebClient();
+            return;
+          }
 
           whatsappLogs.unshift({
             id: Math.random().toString(36).substring(2, 11),
