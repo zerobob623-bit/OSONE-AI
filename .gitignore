@@ -1,6 +1,7 @@
 node_modules
 dist
 dist-desktop
+server-build
 .env
 .env.local
 .env.*.local
