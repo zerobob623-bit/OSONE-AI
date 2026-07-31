@@ -1595,7 +1595,6 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
       elevenLabsModel: 'eleven_multilingual_v2',
       geminiModel: 'gemini-3.6-flash',
       localAgentToken: '',
-      openrouterApiKey: '',
     };
     try {
       const saved = localStorage.getItem('osone_api_keys');
@@ -6157,7 +6156,7 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
     referenceImages?: Array<{ mimeType: string; data: string }>,
     maxEffort?: boolean
   ) => {
-    const effectiveApiKey = apiKeys.openrouterApiKey || '';
+    const effectiveApiKey = apiKeys.gemini || '';
     if (!promptText.trim()) return;
 
     setIsGenerating(true);
@@ -6189,26 +6188,36 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
           }]
         : contentsText;
 
-      const response = await fetch("/api/code/generate", {
+      const response = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           clientApiKey: effectiveApiKey,
-          // Geração/edição de código no OSONE CODE roda no DeepSeek-R1 via OpenRouter — não no
-          // Gemini. O Gemini continua sendo o motor de todo o resto do OSONE (texto, PDF, voz).
-          model: "deepseek/deepseek-r1",
+          // Geração de código sempre usa o melhor modelo GRATUITO disponível para código
+          // (gemini-3.6-flash: mais recente, líder em benchmarks de código como SWE-Bench Pro
+          // entre os modelos gratuitos), independente do modelo configurado nos Ajustes para o
+          // chat geral — qualidade de código não pode ficar refém de um modelo lite mais fraco.
+          model: "gemini-3.6-flash",
           prompt: promptPayload,
-          systemInstruction
+          systemInstruction,
+          maxEffort: !!maxEffort,
+          // Tira as travas de qualidade especificamente para geração de código: nunca cai
+          // silenciosamente para um modelo mais fraco, sempre raciocínio máximo, e afrouxa os
+          // filtros de segurança ajustáveis que costumam bloquear conteúdo comum de jogo (tiro,
+          // dano, combate) sem necessidade — só nesta chamada, não no resto do app.
+          unrestricted: true
         })
       });
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({} as any));
-        throw new Error(errData?.error || "Falha na comunicação com a API do OSONE CODE (OpenRouter).");
+        throw new Error(errData?.error || "Falha na comunicação com a API");
       }
 
       const data = await response.json();
-      if (data.text) {
+      if (data.blocked) {
+        addNotification("⚠️ O Gemini bloqueou a resposta pelo filtro de segurança (finishReason: " + data.finishReason + "). Tente reformular o pedido.", "error");
+      } else if (data.text) {
         const { content: newContent, summary, hadFailures } = applyModelCodeResponse(data.text, currentCode);
 
         if (!Array.isArray(repoFiles) || repoFiles.length === 0) {
@@ -6231,7 +6240,7 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
         window.dispatchEvent(new Event('osone_repository_updated'));
 
         if (data.truncated) {
-          addNotification("⚠️ O DeepSeek-R1 cortou a resposta por limite de tokens — o código pode estar incompleto. Tente pedir novamente ou dividir o pedido em partes menores.", "info");
+          addNotification("⚠️ A resposta foi cortada por limite de tokens — o código pode estar incompleto. Tente pedir novamente ou dividir o pedido em partes menores.", "info");
         } else if (hadFailures) {
           addNotification(`Código atualizado com ressalvas: ${summary}`, "info");
         } else {

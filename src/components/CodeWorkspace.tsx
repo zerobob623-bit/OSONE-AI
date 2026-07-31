@@ -13,31 +13,35 @@ import { CodePreview } from './CodePreview';
 import { CodeRepositoryFile } from '../types';
 import { buildCodeEditSystemInstruction, applyModelCodeResponse, parseSections } from '../lib/codeEdits';
 
-// Geração/edição de código (Hunter e Enxame/Swarm) roda no DeepSeek-R1 via OpenRouter — não no
-// Gemini. O Gemini continua sendo o motor de todo o resto do OSONE (texto, PDF, voz/Live).
-const OSONE_CODE_BEST_MODEL = "deepseek/deepseek-r1";
+// Geração/edição de código (Hunter e Enxame/Swarm) sempre usa o melhor modelo GRATUITO
+// disponível para código (gemini-3.6-flash: mais recente, líder em benchmarks de código como
+// SWE-Bench Pro entre os modelos gratuitos), independente do modelo configurado nos Ajustes
+// gerais do chat — qualidade de código não pode ficar refém de um modelo lite mais fraco.
+const OSONE_CODE_BEST_MODEL = "gemini-3.6-flash";
 
 /**
- * Chama /api/code/generate (motor DeepSeek-R1 via OpenRouter) com retentativas automáticas
- * (backoff simples) para falhas transitórias de rede/servidor. Evita que um único agente do
- * Swarm derrube o pipeline inteiro por causa de uma falha passageira em uma das várias
- * chamadas sequenciais.
+ * Chama /api/generate com retentativas automáticas (backoff simples) para falhas
+ * transitórias de rede/servidor. Evita que um único agente do Swarm derrube o
+ * pipeline inteiro por causa de uma falha passageira em uma das várias chamadas
+ * sequenciais. Sempre manda "unrestricted: true" para tirar as travas de qualidade
+ * (sem downgrade silencioso de modelo, raciocínio máximo, filtros de segurança
+ * ajustáveis afrouxados) — só nas chamadas do OSONE CODE, não no resto do app.
  */
 async function generateWithRetry(
   body: Record<string, unknown>,
   retries: number = 2
-): Promise<{ ok: boolean; text: string; error?: string; truncated?: boolean }> {
+): Promise<{ ok: boolean; text: string; error?: string; truncated?: boolean; blocked?: boolean }> {
   let lastError = '';
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const response = await fetch('/api/code/generate', {
+      const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
+        body: JSON.stringify({ unrestricted: true, ...body })
       });
       const data = await response.json().catch(() => ({} as any));
       if (response.ok) {
-        return { ok: true, text: data.text || '', truncated: !!data.truncated };
+        return { ok: true, text: data.text || '', truncated: !!data.truncated, blocked: !!data.blocked };
       }
       lastError = data?.error || `HTTP ${response.status}`;
     } catch (e: any) {
@@ -860,7 +864,7 @@ export const CodeWorkspace: React.FC<{
 
     try {
       setHunterProgress(50);
-      const effectiveApiKey = apiKeys?.openrouterApiKey || '';
+      const effectiveApiKey = apiKeys?.gemini || '';
       const currentCode = activeFile ? activeFile.content : '';
 
       const systemInstruction = `Você é o HUNTER, o Caçador e Examinador Agêntico de Código do OSONE Studio.
@@ -899,20 +903,24 @@ Se o arquivo estiver vazio ou for necessário recriar do zero, em vez de blocos 
 CÓDIGO ATUAL NO ARQUIVO ("${activeFile?.name || 'código'}"):
 ${currentCode}`;
 
-      const response = await fetch("/api/code/generate", {
+      const response = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           clientApiKey: effectiveApiKey,
           model: OSONE_CODE_BEST_MODEL,
           prompt: userContentPayload,
-          systemInstruction
+          systemInstruction,
+          unrestricted: true
         })
       });
 
       const data = await response.json().catch(() => ({} as any));
       if (!response.ok) {
         throw new Error(data?.error || "Erro na comunicação com a API do Hunter.");
+      }
+      if (data.blocked) {
+        throw new Error(`O Gemini bloqueou a resposta pelo filtro de segurança (finishReason: ${data.finishReason}). Tente reformular o pedido.`);
       }
 
       const rawText = data.text || "";
@@ -984,7 +992,7 @@ ${currentCode}`;
       setSwarmLogs(prev => [...prev, { agent, message, timestamp: timeStr, type }]);
     };
 
-    const effectiveApiKey = apiKeys?.openrouterApiKey || '';
+    const effectiveApiKey = apiKeys?.gemini || '';
     const currentModel = OSONE_CODE_BEST_MODEL;
 
     try {
@@ -1129,8 +1137,11 @@ O código DEVE conter:
         // para que o usuário NUNCA fique sem resultado mesmo se uma etapa seguinte falhar.
         applyCodeToRepository(lastCode, 'index.html');
 
+        if (coderResult.blocked) {
+          addSwarmLog('💻 Agente de Engenharia', `⚠️ O Gemini bloqueou a resposta pelo filtro de segurança nesta iteração. O QA vai avaliar o que sobrou e pode reprovar para uma nova tentativa com um pedido reformulado.`, 'warn');
+        }
         if (coderResult.truncated) {
-          addSwarmLog('💻 Agente de Engenharia', `⚠️ O DeepSeek-R1 cortou a resposta por limite de tokens — o código desta iteração (${lastCode.length} chars) pode estar incompleto. O QA vai avaliar e pode reprovar para uma nova tentativa.`, 'warn');
+          addSwarmLog('💻 Agente de Engenharia', `⚠️ A resposta foi cortada por limite de tokens — o código desta iteração (${lastCode.length} chars) pode estar incompleto. O QA vai avaliar e pode reprovar para uma nova tentativa.`, 'warn');
         }
         addSwarmLog('💻 Agente de Engenharia', editSummary
           ? `${editSummary} (${lastCode.length} chars). Progresso salvo no repositório.`
@@ -1164,9 +1175,9 @@ FORMATO OBRIGATÓRIO (JSON estrito):
         const qaResult = await generateWithRetry({
           clientApiKey: effectiveApiKey,
           model: currentModel,
-          // Sem cortar o código: o DeepSeek-R1 suporta contexto grande (128K), e um corte fixo
-          // (antes 15000 chars) deixava o final do arquivo — telas de Game Over, efeitos sonoros,
-          // fechamento de tags — fora da revisão do QA justamente nos projetos maiores/melhores.
+          // Sem cortar o código: o Gemini suporta contexto grande, e um corte fixo (antes 15000
+          // chars) deixava o final do arquivo — telas de Game Over, efeitos sonoros, fechamento
+          // de tags — fora da revisão do QA justamente nos projetos maiores/melhores.
           prompt: `CÓDIGO GERADO PELO ENGENHEIRO:\n\n${lastCode}`,
           systemInstruction: qaSystemInstruction,
           responseMimeType: "application/json"

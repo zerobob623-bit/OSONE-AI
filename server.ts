@@ -81,25 +81,12 @@ async function startServer() {
     return "";
   };
 
-  // Safe helper to read the OpenRouter API key from environment. Usada apenas pelo motor de
-  // geração de código do OSONE CODE (DeepSeek-R1) — o resto do OSONE (texto, PDF, voz) continua
-  // 100% no Gemini.
-  const getSecretOpenRouterKey = (): string => {
-    if (process.env.OPENROUTER_API_KEY) {
-      return process.env.OPENROUTER_API_KEY;
-    }
-    return "";
-  };
-
   // Helper to sanitize any occurrence of sensitive API keys from messages returned to the client
   const sanitizeMessageOfKeys = (message: string): string => {
     if (!message) return "";
-    
+
     // 1. Mask Google Gemini API keys (starts with AIzaSy followed by 33 characters)
     let sanitized = message.replace(/AIzaSy[A-Za-z0-9_-]{33}/g, "[CHAVE_REMOVIDA]");
-
-    // 1b. Mask OpenRouter API keys (formato sk-or-v1-...)
-    sanitized = sanitized.replace(/sk-or-v1-[A-Za-z0-9]{20,}/g, "[CHAVE_REMOVIDA]");
 
     // 2. Mask generic key/token patterns (such as api_key=..., key=..., xi-api-key, etc.)
     sanitized = sanitized.replace(/(key|api_key|apikey|xi-api-key|token)(?:["'\s:=]+)([A-Za-z0-9_-]{10,60})/gi, "$1=[REMOVED]");
@@ -117,14 +104,6 @@ async function startServer() {
       const escapedEnvKey = process.env.GEMINI_API_KEY.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
       const envKeyRegex = new RegExp(escapedEnvKey, 'g');
       sanitized = sanitized.replace(envKeyRegex, "[CHAVE_REMOVIDA]");
-    }
-
-    // 5. Mask the OpenRouter server-side fallback key, if loaded
-    const secretOrKey = getSecretOpenRouterKey();
-    if (secretOrKey && secretOrKey.length > 5) {
-      const escapedOrKey = secretOrKey.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-      const orKeyRegex = new RegExp(escapedOrKey, 'g');
-      sanitized = sanitized.replace(orKeyRegex, "[CHAVE_REMOVIDA]");
     }
 
     return sanitized;
@@ -170,14 +149,12 @@ async function startServer() {
           const str = JSON.stringify(obj);
           const fallbackKey = getSecretGeminiKey();
           const envKey = process.env.GEMINI_API_KEY || "";
-          const fallbackOrKey = getSecretOpenRouterKey();
 
           const hasGoogleKey = str.includes("AIzaSy");
           const hasFallbackKey = !!(fallbackKey && str.includes(fallbackKey));
           const hasEnvKey = !!(envKey && str.includes(envKey));
-          const hasOpenRouterKey = str.includes("sk-or-v1-") || !!(fallbackOrKey && str.includes(fallbackOrKey));
 
-          if (hasGoogleKey || hasFallbackKey || hasEnvKey || hasOpenRouterKey) {
+          if (hasGoogleKey || hasFallbackKey || hasEnvKey) {
             const sanitizedStr = sanitizeMessageOfKeys(str);
             return originalJson.call(this, JSON.parse(sanitizedStr));
           }
@@ -193,14 +170,12 @@ async function startServer() {
       if (typeof body === 'string') {
         const fallbackKey = getSecretGeminiKey();
         const envKey = process.env.GEMINI_API_KEY || "";
-        
-        const fallbackOrKey = getSecretOpenRouterKey();
+
         const hasGoogleKey = body.includes("AIzaSy");
         const hasFallbackKey = !!(fallbackKey && body.includes(fallbackKey));
         const hasEnvKey = !!(envKey && body.includes(envKey));
-        const hasOpenRouterKey = body.includes("sk-or-v1-") || !!(fallbackOrKey && body.includes(fallbackOrKey));
 
-        if (hasGoogleKey || hasFallbackKey || hasEnvKey || hasOpenRouterKey) {
+        if (hasGoogleKey || hasFallbackKey || hasEnvKey) {
           const sanitizedBody = sanitizeMessageOfKeys(body);
           return originalSend.call(this, sanitizedBody);
         }
@@ -2688,24 +2663,26 @@ ${processedChunk}`;
   });
 
   // Helper to run content generation with automated fallbacks
-  async function generateContentWithFallback(ai: GoogleGenAI, params: { model: string; contents: any; config?: any }) {
+  async function generateContentWithFallback(ai: GoogleGenAI, params: { model: string; contents: any; config?: any }, options?: { allowDowngrade?: boolean }) {
     const primaryModel = params.model || "gemini-3.6-flash";
+    // Alguns fluxos (ex: geração de código no OSONE CODE) não podem aceitar em silêncio um
+    // modelo "lite" mais fraco no lugar do pedido — a qualidade do código cairia sem o usuário
+    // saber o motivo. Quando allowDowngrade é false, insiste só no modelo pedido (com mais
+    // tentativas) em vez de cair para os candidatos mais fracos.
+    const allowDowngrade = options?.allowDowngrade !== false;
 
     // Tiered candidates using standard highly-available Gemini 3.x models
-    const modelsToTry = [
-      primaryModel,
-      "gemini-3.6-flash",
-      "gemini-3.5-flash-lite",
-      "gemini-3.1-flash-lite",
-      "gemini-3.5-flash"
-    ];
-    
+    const modelsToTry = allowDowngrade
+      ? [primaryModel, "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash"]
+      : [primaryModel];
+
     // Remove duplicates keeping order
     const uniqueModels = Array.from(new Set(modelsToTry));
-    
+    const attemptsPerModel = allowDowngrade ? 2 : 4;
+
     let lastError: any = null;
     for (const modelName of uniqueModels) {
-      for (let attempt = 1; attempt <= 2; attempt++) {
+      for (let attempt = 1; attempt <= attemptsPerModel; attempt++) {
         try {
           console.log(`Trying Gemini content generation (Model: ${modelName}, Attempt: ${attempt})`);
           const response = await ai.models.generateContent({
@@ -2719,13 +2696,22 @@ ${processedChunk}`;
           const errMsg = err?.message || String(err);
           const isQuota = errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.toLowerCase().includes("quota") || errMsg.toLowerCase().includes("limit");
           const isTransient = (errMsg.includes("503") || errMsg.includes("UNAVAILABLE") || errMsg.toLowerCase().includes("high demand")) && !isQuota;
-          
-          if (isQuota || (isTransient && attempt >= 1)) {
-            // For quota or transient high demand errors, immediately try next model candidate
-            console.warn(`[Fallback Log] Model ${modelName} encountered transient/quota issue. Switching to next candidate model...`);
+
+          if (isQuota) {
+            // Cota esgotada: repetir no mesmo modelo não resolve nada, passa direto pro próximo.
+            console.warn(`[Fallback Log] Model ${modelName} encountered a quota issue. Switching to next candidate model...`);
             break;
           }
-          
+
+          if (isTransient && attempt < attemptsPerModel) {
+            // Instabilidade passageira (ex: 503/alta demanda): vale a pena insistir no MESMO
+            // modelo antes de desistir dele — antes este retry nunca acontecia de verdade
+            // porque o código sempre saía do loop no primeiro erro, mesmo com "attempt <= N".
+            console.warn(`[Fallback Log] Model ${modelName} hit a transient issue (attempt ${attempt}/${attemptsPerModel}). Retrying same model shortly...`);
+            await new Promise(resolve => setTimeout(resolve, 700 * attempt));
+            continue;
+          }
+
           console.log(`[Fallback Log] Model ${modelName} attempt ${attempt} returned exception:`, errMsg);
           break; // Move to next candidate model
         }
@@ -2863,10 +2849,15 @@ ${processedChunk}`;
     }
   });
 
-  // Generic and robust POST endpoint for server-side Gemini 3.6-flash content generation 
+  // Generic and robust POST endpoint for server-side Gemini 3.6-flash content generation.
+  // Também é o motor usado pelo OSONE CODE (geração/edição de código, Hunter, Enxame/Swarm) —
+  // essas chamadas mandam "unrestricted: true" para tirar as travas de qualidade: nunca cair
+  // silenciosamente para um modelo mais fraco, sempre usar o raciocínio máximo e afrouxar os
+  // filtros de segurança ajustáveis que costumam bloquear conteúdo comum de jogo (tiro, dano,
+  // combate) sem necessidade nenhuma.
   app.post("/api/generate", async (req, res) => {
     try {
-      const { prompt, systemInstruction, clientApiKey, model, responseMimeType, maxEffort } = req.body;
+      const { prompt, systemInstruction, clientApiKey, model, responseMimeType, maxEffort, unrestricted } = req.body;
       const apiKey = clientApiKey || getSecretGeminiKey();
 
       if (!apiKey) {
@@ -2890,133 +2881,40 @@ ${processedChunk}`;
       if (responseMimeType) config.responseMimeType = responseMimeType;
       // "Esforço máximo": eleva o orçamento de raciocínio do modelo ao nível mais alto
       // suportado pela API, em vez de deixá-lo no padrão rápido/econômico.
-      if (maxEffort) config.thinkingConfig = { thinkingLevel: "HIGH" };
+      if (maxEffort || unrestricted) config.thinkingConfig = { thinkingLevel: "HIGH" };
+      if (unrestricted) {
+        // Afrouxa só as categorias ajustáveis pela API (violência/assédio/discurso de ódio/
+        // conteúdo sexual) — isso NÃO desliga as proteções centrais do modelo contra conteúdo
+        // realmente grave (ex: exploração infantil, instruções de armas), que não são
+        // configuráveis por este parâmetro em nenhuma hipótese. Escopo: só o gerador de código,
+        // não o chat geral nem o WhatsApp.
+        config.safetySettings = [
+          { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+          { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+          { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+          { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+        ];
+      }
 
       const response = await generateContentWithFallback(ai, {
         model: selectedModel,
         contents: prompt,
         config: config
-      });
+      }, { allowDowngrade: !unrestricted });
 
-      return res.json({ text: response.text || "" });
+      const finishReason = (response as any)?.candidates?.[0]?.finishReason;
+      const blocked = finishReason === "SAFETY" || finishReason === "PROHIBITED_CONTENT" || finishReason === "BLOCKLIST" || finishReason === "SPII";
+      const truncated = finishReason === "MAX_TOKENS";
+      if (blocked) {
+        console.warn(`[/api/generate] Resposta bloqueada pelo filtro de segurança (finishReason=${finishReason}).`);
+      } else if (truncated) {
+        console.warn(`[/api/generate] Resposta cortada por limite de tokens (finishReason=MAX_TOKENS).`);
+      }
+
+      return res.json({ text: response.text || "", finishReason, blocked, truncated });
     } catch (err: any) {
       console.error("Error inside /api/generate endpoint:", err);
       return res.status(500).json({ error: formatGeminiError(err) });
-    }
-  });
-
-  // Motor de geração/edição de código do OSONE CODE — roda via OpenRouter (DeepSeek-R1) em vez
-  // do Gemini. Só esta aba usa este endpoint; texto, leitura de PDF e o Gemini Live de voz
-  // continuam 100% no Gemini através do /api/generate e demais rotas.
-  app.post("/api/code/generate", async (req, res) => {
-    try {
-      const { prompt, systemInstruction, clientApiKey, model, responseMimeType } = req.body;
-      const apiKey = clientApiKey || getSecretOpenRouterKey();
-
-      if (!apiKey) {
-        return res.status(400).json({ error: "Chave API da OpenRouter não definida. Cole a sua em Ajustes > Motor de Código do OSONE CODE, ou defina OPENROUTER_API_KEY no servidor." });
-      }
-
-      // O prompt chega como string simples (texto puro) ou, quando há imagens de referência
-      // anexadas, como um array no formato "Content" do Gemini ({ role, parts: [...] }). O
-      // DeepSeek-R1 não é multimodal, então extraímos só o texto e avisamos explicitamente se
-      // havia imagem — em vez de descartá-la em silêncio e o modelo "inventar" que a viu.
-      let userText = "";
-      let hadImages = false;
-      if (typeof prompt === "string") {
-        userText = prompt;
-      } else if (Array.isArray(prompt)) {
-        for (const item of prompt) {
-          const parts = item?.parts || [];
-          for (const part of parts) {
-            if (typeof part?.text === "string") userText += (userText ? "\n" : "") + part.text;
-            if (part?.inlineData) hadImages = true;
-          }
-        }
-      }
-      if (hadImages) {
-        userText += "\n\n[Aviso do sistema: o usuário anexou imagem(ns) de referência visual, mas o modelo DeepSeek-R1 usado aqui não processa imagens — elas foram ignoradas. Avise o usuário disso no seu resumo.]";
-      }
-
-      // O DeepSeek-R1 é sabidamente inconsistente em seguir a mensagem "system" isolada
-      // (dependendo do provedor que a OpenRouter roteia a requisição, ela pode ser
-      // parcialmente ignorada) — por isso repetimos as instruções também embutidas no início
-      // da mensagem "user", que é a parte que todo provedor sempre respeita, além de mandá-las
-      // no campo "system" normal (não custa nada e ajuda nos provedores que o suportam bem).
-      const messages: Array<{ role: string; content: string }> = [];
-      if (systemInstruction) {
-        messages.push({ role: "system", content: String(systemInstruction) });
-        // Reforça no início E no fim da mensagem (não só no meio) — modelos tendem a prestar
-        // menos atenção ao que fica "no meio" de um contexto longo ("lost in the middle").
-        userText = `INSTRUÇÕES OBRIGATÓRIAS QUE VOCÊ DEVE SEGUIR À RISCA (não são sugestões — são requisitos):\n${systemInstruction}\n\n---\n\n${userText}\n\n---\n\nLEMBRETE FINAL: cumpra TODOS os requisitos técnicos e visuais listados nas instruções acima (bibliotecas exigidas, efeitos sonoros, telas obrigatórias, qualidade visual, etc.) — não entregue uma versão simplificada que ignore algum deles.`;
-      }
-      messages.push({ role: "user", content: userText });
-
-      const selectedModel = model || "deepseek/deepseek-r1";
-
-      const callOpenRouter = (useResponseFormat: boolean) => fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`,
-          "HTTP-Referer": "https://osone.app",
-          "X-Title": "OSONE CODE"
-        },
-        body: JSON.stringify({
-          model: selectedModel,
-          messages,
-          // DeepSeek-R1 é um modelo de raciocínio: gasta parte do orçamento de tokens
-          // "pensando" antes de escrever a resposta final. Sem um teto alto aqui, a resposta
-          // (um app/jogo HTML5 completo em um arquivo só) pode ser cortada no meio, produzindo
-          // código incompleto e sem estilo — por isso o limite generoso.
-          max_tokens: 32000,
-          ...(useResponseFormat && responseMimeType === "application/json" ? { response_format: { type: "json_object" } } : {})
-        })
-      });
-
-      let orResponse = await callOpenRouter(true);
-      // Nem todo provedor do DeepSeek-R1 disponível na OpenRouter aceita response_format
-      // estrito — se for rejeitado só por causa disso, tentamos de novo sem o parâmetro em vez
-      // de falhar; os prompts do OSONE CODE já pedem JSON estrito por instrução de texto.
-      if (!orResponse.ok && responseMimeType === "application/json" && (orResponse.status === 400 || orResponse.status === 422)) {
-        orResponse = await callOpenRouter(false);
-      }
-
-      if (!orResponse.ok) {
-        const rawErrBody = await orResponse.text().catch(() => "");
-        let errMsg = `OpenRouter respondeu com erro ${orResponse.status}.`;
-        try {
-          const parsedErr = JSON.parse(rawErrBody);
-          if (parsedErr?.error?.message) errMsg = parsedErr.error.message;
-        } catch (_) {}
-        if (orResponse.status === 401) {
-          errMsg = "Chave API da OpenRouter inválida ou expirada. Verifique o valor colado em Ajustes > Motor de Código do OSONE CODE.";
-        } else if (orResponse.status === 402) {
-          errMsg = "Créditos insuficientes na conta OpenRouter para usar o DeepSeek-R1. Adicione créditos em openrouter.ai/settings/credits.";
-        } else if (orResponse.status === 429) {
-          errMsg = "Limite de requisições da OpenRouter excedido. Aguarde um pouco e tente novamente.";
-        }
-        console.error("[OSONE CODE / OpenRouter] Erro na chamada:", orResponse.status, rawErrBody);
-        return res.status(orResponse.status >= 400 && orResponse.status < 600 ? orResponse.status : 500).json({ error: errMsg });
-      }
-
-      const data: any = await orResponse.json();
-      let text: string = data?.choices?.[0]?.message?.content || "";
-      // Alguns provedores do DeepSeek-R1 na OpenRouter embutem o raciocínio bruto do modelo
-      // direto no conteúdo entre tags <think>...</think> — removemos, pois só o resultado final
-      // (código/JSON) interessa para o restante do pipeline do OSONE CODE.
-      text = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-
-      const finishReason = data?.choices?.[0]?.finish_reason;
-      const truncated = finishReason === "length";
-      if (truncated) {
-        console.warn(`[OSONE CODE / OpenRouter] Resposta cortada por limite de tokens (finish_reason=length). Tamanho do texto retornado: ${text.length} chars.`);
-      }
-
-      return res.json({ text, truncated });
-    } catch (err: any) {
-      console.error("Error inside /api/code/generate endpoint:", err);
-      return res.status(500).json({ error: sanitizeMessageOfKeys(err?.message || String(err)) });
     }
   });
 
