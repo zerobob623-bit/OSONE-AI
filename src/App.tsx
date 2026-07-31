@@ -1595,6 +1595,7 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
       elevenLabsModel: 'eleven_multilingual_v2',
       geminiModel: 'gemini-3.6-flash',
       localAgentToken: '',
+      openrouterApiKey: '',
     };
     try {
       const saved = localStorage.getItem('osone_api_keys');
@@ -6156,7 +6157,7 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
     referenceImages?: Array<{ mimeType: string; data: string }>,
     maxEffort?: boolean
   ) => {
-    const effectiveApiKey = apiKeys.gemini || '';
+    const effectiveApiKey = apiKeys.openrouterApiKey || '';
     if (!promptText.trim()) return;
 
     setIsGenerating(true);
@@ -6188,24 +6189,22 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
           }]
         : contentsText;
 
-      const response = await fetch("/api/generate", {
+      const response = await fetch("/api/code/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           clientApiKey: effectiveApiKey,
-          // Geração de código sempre usa o melhor modelo GRATUITO disponível para código
-          // (gemini-3.6-flash: mais recente, líder em benchmarks de código como SWE-Bench Pro
-          // entre os modelos gratuitos), independente do modelo configurado nos Ajustes para o
-          // chat geral — qualidade de código não pode ficar refém de um modelo lite mais fraco.
-          model: "gemini-3.6-flash",
+          // Geração/edição de código no OSONE CODE roda no DeepSeek-R1 via OpenRouter — não no
+          // Gemini. O Gemini continua sendo o motor de todo o resto do OSONE (texto, PDF, voz).
+          model: "deepseek/deepseek-r1",
           prompt: promptPayload,
-          systemInstruction,
-          maxEffort: !!maxEffort
+          systemInstruction
         })
       });
 
       if (!response.ok) {
-        throw new Error("Falha na comunicação com a API");
+        const errData = await response.json().catch(() => ({} as any));
+        throw new Error(errData?.error || "Falha na comunicação com a API do OSONE CODE (OpenRouter).");
       }
 
       const data = await response.json();
