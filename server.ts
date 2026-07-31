@@ -9,8 +9,15 @@ import { WebSocketServer, WebSocket } from "ws";
 import { GoogleGenAI, Modality } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
-import pkgWhatsapp from "whatsapp-web.js";
-const { Client: WWebClient, LocalAuth: WWebLocalAuth, MessageMedia: WWebMessageMedia } = pkgWhatsapp;
+import {
+  makeWASocket,
+  useMultiFileAuthState,
+  fetchLatestBaileysVersion,
+  downloadMediaMessage,
+  DisconnectReason,
+  Browsers
+} from "@whiskeysockets/baileys";
+import pino from "pino";
 import QRCode from "qrcode";
 import * as cheerio from "cheerio";
 import { 
@@ -524,7 +531,7 @@ Comentário de @${user}: "${text}"`;
     geminiApiKey: "",
     // Auto-resposta funciona 100% de forma independente de qualquer sessão de voz em tempo
     // real (Gemini Live/ElevenLabs Live) — ela roda direto no listener de mensagens do
-    // whatsapp-web.js sempre que "enabled" está true, mesmo com o app fechado no navegador.
+    // Baileys sempre que "enabled" está true, mesmo sem nenhum app aberto na tela.
     sendAudioReplies: true,
     ttsEngine: "gemini" as "gemini" | "elevenlabs",
     ttsVoice: "Kore",
@@ -534,19 +541,26 @@ Comentário de @${user}: "${text}"`;
 
   let virtualConnectionState = "DISCONNECTED";
 
-  // ====== WHATSAPP-WEB.JS LOCAL CLIENT STATE ======
-  let wwebjsClient: any = null;
-  let wwebjsStatus: "desconectado" | "iniciando" | "aguardando_qr" | "conectado" | "erro" = "desconectado";
-  let wwebjsQrRaw = "";
-  let wwebjsQrBase64 = "";
-  let wwebjsPhoneInfo: { number?: string; name?: string } = {};
-  let wwebjsLastError = "";
-  // Controla a reconexão automática: some fica true quando o próprio usuário desconecta/reseta
-  // de propósito, para não brigar com a intenção dele; caso contrário, toda queda de conexão
-  // (crash do Chromium, sessão derrubada pelo celular, etc.) tenta reconectar sozinha.
-  let wwebjsIntentionalDisconnect = false;
-  let wwebjsReconnectAttempts = 0;
-  let wwebjsReconnectTimer: NodeJS.Timeout | null = null;
+  // ====== ESTADO DO CLIENTE WHATSAPP (Baileys — conexão direta ao WhatsApp via WebSocket,
+  // sem navegador/Puppeteer embutido) ======
+  let waSocket: any = null;
+  let waStatus: "desconectado" | "iniciando" | "aguardando_qr" | "conectado" | "erro" = "desconectado";
+  let waQrRaw = "";
+  let waQrBase64 = "";
+  let waPhoneInfo: { number?: string; name?: string } = {};
+  let waLastError = "";
+  // Controla a reconexão automática: fica true quando o próprio usuário desconecta/reseta de
+  // propósito, para não brigar com a intenção dele; caso contrário, toda queda de conexão
+  // (internet, sessão derrubada pelo celular, etc.) tenta reconectar sozinha.
+  let waIntentionalDisconnect = false;
+  let waReconnectAttempts = 0;
+  let waReconnectTimer: NodeJS.Timeout | null = null;
+  const WA_AUTH_DIR = path.join(process.cwd(), ".baileys_auth");
+  // Baileys não expõe um "getContacts()" pronto como o whatsapp-web.js — os contatos chegam
+  // aos poucos por eventos ("contacts.upsert"/"contacts.update") e pelo nome de exibição
+  // ("pushName") de cada mensagem recebida. Mantemos este cache em memória para alimentar o
+  // endpoint /api/whatsapp/wa-contacts com o que já foi visto desde que o servidor iniciou.
+  const waContactsCache = new Map<string, { name?: string }>();
 
   interface WhatsappLog {
     id: string;
@@ -897,50 +911,255 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     return { buffer: pcmToWav(finalBuffer, 24000), mimeType: "audio/wav", extension: "wav" };
   }
 
-  // Em algumas distros Linux o Chromium baixado automaticamente pelo Puppeteer não roda
-  // (bibliotecas do sistema ausentes, download bloqueado por proxy/firewall no npm install,
-  // etc.). Se isso acontecer, tentamos usar um Chrome/Chromium já instalado no sistema em vez
-  // de depender só do binário embutido do Puppeteer.
-  function resolvePuppeteerExecutablePath(): string | undefined {
-    const envPath = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_PATH;
-    if (envPath && fs.existsSync(envPath)) return envPath;
-
-    const candidates = [
-      "/usr/bin/google-chrome-stable",
-      "/usr/bin/google-chrome",
-      "/usr/bin/chromium-browser",
-      "/usr/bin/chromium",
-      "/snap/bin/chromium",
-      "/usr/bin/microsoft-edge-stable"
-    ];
-    for (const candidate of candidates) {
-      if (fs.existsSync(candidate)) return candidate;
-    }
-    return undefined;
-  }
-
-  // Traduz os erros mais comuns de inicialização do Puppeteer/Chromium no Linux em uma
-  // mensagem que explica ao usuário o que instalar/fazer, em vez de só mostrar a stack trace.
-  function explainWhatsAppLaunchError(rawMessage: string): string {
+  // Traduz o código de desconexão do Baileys (erro Boom com statusCode equivalente a um
+  // DisconnectReason) em uma mensagem que explica ao usuário o que aconteceu, em vez de só
+  // mostrar o código bruto.
+  function explainWhatsAppDisconnect(statusCode: number | undefined, rawMessage: string): string {
     const msg = rawMessage || "";
-    if (/error while loading shared libraries|libnss3|libatk|libgtk|libgbm|libasound|cannot open shared object file/i.test(msg)) {
-      return `${msg}\n\nDica: faltam bibliotecas do sistema que o Chromium precisa para rodar no Linux. Instale-as com:\nsudo apt-get install -y libnss3 libatk-bridge2.0-0 libgtk-3-0 libgbm1 libasound2 libxss1 libxshmfence1\n(No Fedora/RHEL: sudo dnf install -y nss atk at-spi2-atk gtk3 mesa-libgbm alsa-lib)\nDepois clique em "Tentar Novamente".`;
+    switch (statusCode) {
+      case DisconnectReason.loggedOut:
+        return "A sessão foi encerrada pelo próprio celular (logout no app do WhatsApp). É necessário escanear um novo QR Code.";
+      case DisconnectReason.badSession:
+        return "A sessão salva ficou corrompida. Resete a sessão e escaneie um novo QR Code.";
+      case DisconnectReason.connectionReplaced:
+        return "Outra sessão do WhatsApp Web foi aberta em outro lugar e substituiu esta conexão.";
+      case DisconnectReason.multideviceMismatch:
+        return "Este WhatsApp não está com o modo multi-dispositivo compatível. Atualize o app do WhatsApp no celular.";
+      case DisconnectReason.forbidden:
+        return "O WhatsApp recusou a conexão (403). Tente resetar a sessão e conectar novamente.";
+      case DisconnectReason.restartRequired:
+        return "Reinício de conexão necessário (normal logo após escanear o QR Code) — reconectando automaticamente...";
+      case DisconnectReason.timedOut:
+        return "A conexão expirou por inatividade/rede. Tentando reconectar automaticamente...";
+      case DisconnectReason.unavailableService:
+        return "O serviço do WhatsApp está indisponível no momento. Tentando reconectar automaticamente...";
+      default:
+        return msg || `Conexão encerrada (código ${statusCode ?? "desconhecido"}).`;
     }
-    if (/Failed to launch the browser process|spawn .*ENOENT|no usable sandbox/i.test(msg)) {
-      return `${msg}\n\nDica: o Chromium do Puppeteer pode não ter sido baixado corretamente durante o "npm install" (rede/proxy bloqueando o download). Tente instalar o Google Chrome ou Chromium do sistema (ex: sudo apt-get install -y chromium-browser) e reiniciar o servidor — o OSONE detecta e usa automaticamente um Chrome/Chromium já instalado no sistema.`;
-    }
-    return msg;
   }
 
-  // Reconecta sozinho depois de uma queda não intencional (crash do Chromium, sessão derrubada
+  // Processa uma mensagem recebida via Baileys: extrai texto/mídia, gera a resposta com a IA
+  // (respeitando o Modo Desenvolvedor para o número do criador) e envia de volta por texto e,
+  // se habilitado, também por voz.
+  async function handleIncomingWhatsAppMessage(msg: any) {
+    const remoteJid: string = msg?.key?.remoteJid || "";
+    if (!remoteJid || msg.key?.fromMe) return;
+    if (remoteJid === "status@broadcast" || remoteJid.endsWith("@g.us") || remoteJid.endsWith("@broadcast")) return;
+    if (!msg.message) return; // mensagem de protocolo (ex.: revogação/recibo), sem conteúdo real
+
+    const sender = remoteJid;
+    const formattedJid = remoteJid;
+    const geminiApiKeyToUse = whatsappConfig.geminiApiKey || getSecretGeminiKey();
+
+    let body: string = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
+
+    const imageMsg = msg.message.imageMessage;
+    const audioMsg = msg.message.audioMessage;
+    const mediaType: "image" | "audio" | null = imageMsg ? "image" : audioMsg ? "audio" : null;
+
+    // Mensagens de imagem/áudio não têm "body" de texto: usamos o Gemini para descrever a
+    // imagem ou transcrever o áudio, e tratamos o resultado como se fosse o texto da mensagem
+    // dali em diante (histórico, auto-resposta, etc.).
+    if (!body && mediaType) {
+      if (!geminiApiKeyToUse) {
+        whatsappLogs.unshift({
+          id: Math.random().toString(36).substring(2, 11),
+          timestamp: Date.now(),
+          type: "error",
+          sender,
+          message: `Recebida mensagem de ${mediaType === "image" ? "imagem" : "áudio"}, mas nenhuma chave Gemini está configurada para analisá-la.`
+        });
+        if (whatsappLogs.length > 100) whatsappLogs.pop();
+        return;
+      }
+
+      try {
+        const mediaBuffer = await downloadMediaMessage(msg, "buffer", {}, { logger: pino({ level: "silent" }) as any, reuploadRequest: waSocket.updateMediaMessage });
+        if (!mediaBuffer || !(mediaBuffer as Buffer).length) {
+          body = mediaType === "image" ? "[Imagem recebida, mas o download falhou]" : "[Áudio recebido, mas o download falhou]";
+        } else {
+          const mimeType = (mediaType === "image" ? imageMsg?.mimetype : audioMsg?.mimetype) || (mediaType === "image" ? "image/jpeg" : "audio/ogg");
+          const base64Data = (mediaBuffer as Buffer).toString("base64");
+          const mediaAi = new GoogleGenAI({ apiKey: geminiApiKeyToUse, vertexai: false });
+          if (mediaType === "image") {
+            const caption = imageMsg?.caption || "";
+            const visionPrompt = `Você está examinando uma imagem enviada por um cliente no WhatsApp para um atendimento de vendas. Descreva objetivamente o que aparece (produto, defeito, print de conversa, comprovante, etc.), incluindo qualquer texto, preço ou detalhe visível que ajude a responder o cliente.${caption ? ` O cliente também escreveu esta legenda: "${caption}"` : ''}`;
+            const visionResult = await generateContentWithFallback(mediaAi, {
+              model: "gemini-3.5-flash-lite",
+              contents: [{ parts: [{ inlineData: { data: base64Data, mimeType } }, { text: visionPrompt }] }]
+            });
+            const description = (visionResult.text || "").trim() || "Não foi possível identificar o conteúdo da imagem.";
+            body = `[Imagem enviada pelo cliente]${caption ? ` Legenda: "${caption}".` : ''} Conteúdo identificado pela IA: ${description}`;
+          } else {
+            const transcribePrompt = "Transcreva literalmente, em português, o que a pessoa está falando neste áudio. Responda APENAS com a transcrição, sem comentários adicionais. Se não conseguir entender, responda apenas com: [áudio incompreensível]";
+            const transcribeResult = await generateContentWithFallback(mediaAi, {
+              model: "gemini-3.5-flash-lite",
+              contents: [{ parts: [{ inlineData: { data: base64Data, mimeType } }, { text: transcribePrompt }] }]
+            });
+            const transcript = (transcribeResult.text || "").trim();
+            body = transcript && transcript !== "[áudio incompreensível]"
+              ? `[Mensagem de voz do cliente]: ${transcript}`
+              : "[Áudio recebido do cliente, mas não foi possível transcrever]";
+          }
+        }
+      } catch (mediaErr: any) {
+        console.error("[WhatsApp] Erro ao processar mídia recebida:", mediaErr);
+        body = mediaType === "image" ? "[Imagem recebida, mas houve erro ao analisá-la]" : "[Áudio recebido, mas houve erro ao transcrevê-lo]";
+        whatsappLogs.unshift({
+          id: Math.random().toString(36).substring(2, 11),
+          timestamp: Date.now(),
+          type: "error",
+          sender,
+          message: `Falha ao analisar mídia recebida: ${mediaErr?.message || mediaErr}`
+        });
+        if (whatsappLogs.length > 100) whatsappLogs.pop();
+      }
+    }
+
+    if (!body) return;
+
+    // Always add received message to contact history
+    addMessageToHistory(sender, "user", body);
+
+    whatsappLogs.unshift({
+      id: Math.random().toString(36).substring(2, 11),
+      timestamp: Date.now(),
+      type: "received",
+      sender: sender,
+      message: body
+    });
+    if (whatsappLogs.length > 100) whatsappLogs.pop();
+
+    if (!whatsappConfig.enabled) return;
+
+    if (!geminiApiKeyToUse) {
+      whatsappLogs.unshift({
+        id: Math.random().toString(36).substring(2, 11),
+        timestamp: Date.now(),
+        type: "error",
+        sender,
+        message: "Auto-resposta está ativada, mas nenhuma chave Gemini está configurada (nem nos Ajustes do OSONE ZAP, nem no servidor). A resposta não pôde ser gerada."
+      });
+      if (whatsappLogs.length > 100) whatsappLogs.pop();
+      return;
+    }
+
+    const ai = new GoogleGenAI({ apiKey: geminiApiKeyToUse, vertexai: false });
+
+    // Build Context-Rich Sales Prompt with Knowledge Base + History
+    const senderName = msg.pushName || waContactsCache.get(sender)?.name || sender;
+    // O desenvolvedor comanda o OSONE pelo próprio celular: as mensagens dele não são
+    // atendimento de vendas, são ordens ao sistema. Qualquer outro número continua
+    // recebendo normalmente a auto-resposta de atendimento.
+    const systemPrompt = isDeveloperNumber(sender)
+      ? buildDeveloperPrompt(senderName)
+      : buildSalesPrompt(sender, senderName);
+
+    if (isDeveloperNumber(sender)) {
+      whatsappLogs.unshift({
+        id: Math.random().toString(36).substring(2, 11),
+        timestamp: Date.now(),
+        type: "info",
+        sender,
+        message: `[MODO DESENVOLVEDOR] Mensagem reconhecida como comando do criador do OSONE.`
+      });
+      if (whatsappLogs.length > 100) whatsappLogs.pop();
+    }
+
+    let replyText = "";
+    try {
+      const gResult = await generateContentWithFallback(ai, {
+        model: "gemini-3.5-flash-lite",
+        contents: body,
+        config: { systemInstruction: systemPrompt }
+      });
+      replyText = (gResult.text || "").trim() || "Olá! Agradeço sua mensagem. Como posso te ajudar com nossos produtos hoje?";
+    } catch (genErr: any) {
+      console.error("[WhatsApp] Erro ao gerar resposta da IA:", genErr);
+      whatsappLogs.unshift({
+        id: Math.random().toString(36).substring(2, 11),
+        timestamp: Date.now(),
+        type: "error",
+        sender,
+        message: `Falha ao gerar resposta com a IA: ${genErr?.message || genErr}`
+      });
+      if (whatsappLogs.length > 100) whatsappLogs.pop();
+      return;
+    }
+
+    // Send reply directly back to contact
+    try {
+      await waSocket.sendMessage(formattedJid, { text: replyText });
+    } catch (sendErr: any) {
+      console.error("[WhatsApp] Erro ao enviar resposta de texto:", sendErr);
+      whatsappLogs.unshift({
+        id: Math.random().toString(36).substring(2, 11),
+        timestamp: Date.now(),
+        type: "error",
+        sender,
+        message: `A IA gerou uma resposta, mas o envio via WhatsApp falhou: ${sendErr?.message || sendErr}`
+      });
+      if (whatsappLogs.length > 100) whatsappLogs.pop();
+      return;
+    }
+
+    // Add AI response to contact history
+    addMessageToHistory(sender, "assistant", replyText);
+
+    whatsappLogs.unshift({
+      id: Math.random().toString(36).substring(2, 11),
+      timestamp: Date.now(),
+      type: "sent",
+      sender: sender,
+      message: replyText
+    });
+    if (whatsappLogs.length > 100) whatsappLogs.pop();
+
+    // Também responde por áudio (voz), além do texto, se habilitado nas configurações.
+    if (whatsappConfig.sendAudioReplies) {
+      try {
+        const speech = await synthesizeWhatsAppVoiceReply(replyText, {
+          engine: whatsappConfig.ttsEngine,
+          geminiApiKey: geminiApiKeyToUse,
+          voice: whatsappConfig.ttsVoice,
+          elevenLabsApiKey: whatsappConfig.elevenLabsApiKey,
+          elevenLabsVoiceId: whatsappConfig.elevenLabsVoiceId
+        });
+        if (speech) {
+          await waSocket.sendMessage(formattedJid, { audio: speech.buffer, mimetype: speech.mimeType, ptt: true });
+        } else {
+          whatsappLogs.unshift({
+            id: Math.random().toString(36).substring(2, 11),
+            timestamp: Date.now(),
+            type: "error",
+            sender,
+            message: "Não foi possível gerar o áudio da resposta (a resposta em texto já foi enviada normalmente)."
+          });
+          if (whatsappLogs.length > 100) whatsappLogs.pop();
+        }
+      } catch (ttsErr: any) {
+        console.error("[WhatsApp] Erro ao gerar/enviar áudio de resposta:", ttsErr);
+        whatsappLogs.unshift({
+          id: Math.random().toString(36).substring(2, 11),
+          timestamp: Date.now(),
+          type: "error",
+          sender,
+          message: `Falha ao enviar o áudio da resposta (o texto já foi enviado): ${ttsErr?.message || ttsErr}`
+        });
+        if (whatsappLogs.length > 100) whatsappLogs.pop();
+      }
+    }
+  }
+
+  // Reconecta sozinho depois de uma queda não intencional (queda de rede, sessão derrubada
   // pelo celular, conflito de outra sessão, etc.), com backoff crescente, em vez de deixar o
   // usuário precisar clicar em "Iniciar Conexão" toda vez que a conexão cai.
   function scheduleWhatsAppReconnect(reason: string) {
-    if (wwebjsIntentionalDisconnect || wwebjsReconnectTimer) return;
+    if (waIntentionalDisconnect || waReconnectTimer) return;
 
-    wwebjsReconnectAttempts++;
+    waReconnectAttempts++;
     const maxAttempts = 8;
-    if (wwebjsReconnectAttempts > maxAttempts) {
+    if (waReconnectAttempts > maxAttempts) {
       whatsappLogs.unshift({
         id: Math.random().toString(36).substring(2, 11),
         timestamp: Date.now(),
@@ -952,395 +1171,176 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       return;
     }
 
-    const delayMs = Math.min(5000 * wwebjsReconnectAttempts, 60000);
+    const delayMs = Math.min(5000 * waReconnectAttempts, 60000);
     whatsappLogs.unshift({
       id: Math.random().toString(36).substring(2, 11),
       timestamp: Date.now(),
       type: "info",
       sender: "Sistema",
-      message: `Conexão caiu (motivo: ${reason}). Tentando reconectar automaticamente em ${Math.round(delayMs / 1000)}s (tentativa ${wwebjsReconnectAttempts}/${maxAttempts})...`
+      message: `Conexão caiu (motivo: ${reason}). Tentando reconectar automaticamente em ${Math.round(delayMs / 1000)}s (tentativa ${waReconnectAttempts}/${maxAttempts})...`
     });
     if (whatsappLogs.length > 100) whatsappLogs.pop();
 
-    wwebjsReconnectTimer = setTimeout(() => {
-      wwebjsReconnectTimer = null;
+    waReconnectTimer = setTimeout(() => {
+      waReconnectTimer = null;
       initializeWhatsAppWebClient();
     }, delayMs);
   }
 
-  // Helper function to initialize WhatsApp Web Client via Puppeteer
+  // Inicializa a conexão do WhatsApp via Baileys — WebSocket direto ao WhatsApp, sem
+  // Chromium/Puppeteer embutido. Elimina a fragilidade de crashes de navegador que o
+  // whatsapp-web.js sofria (dependência de libs do sistema, downloads de Chromium bloqueados,
+  // travas de lockfile, etc.).
   const initializeWhatsAppWebClient = async () => {
-    if (wwebjsReconnectTimer) {
-      clearTimeout(wwebjsReconnectTimer);
-      wwebjsReconnectTimer = null;
+    if (waReconnectTimer) {
+      clearTimeout(waReconnectTimer);
+      waReconnectTimer = null;
     }
-    wwebjsIntentionalDisconnect = false;
+    waIntentionalDisconnect = false;
 
-    if (wwebjsClient) {
+    if (waSocket) {
       try {
-        await wwebjsClient.destroy();
+        waSocket.ev.removeAllListeners();
+        waSocket.end(undefined);
       } catch (_) {}
-      wwebjsClient = null;
+      waSocket = null;
     }
 
-    wwebjsStatus = "iniciando";
-    wwebjsQrRaw = "";
-    wwebjsQrBase64 = "";
-    wwebjsLastError = "";
-
-    // Clean up lingering Chromium lock files before start
-    try {
-      const sessionDir = path.join(process.cwd(), ".wwebjs_auth", "session-osone_copilot_session");
-      if (fs.existsSync(sessionDir)) {
-        const lockFiles = ["SingletonLock", "SingletonSocket", "SingletonCookie", "DevToolsActivePort"];
-        for (const file of lockFiles) {
-          const filePath = path.join(sessionDir, file);
-          if (fs.existsSync(filePath)) {
-            try { fs.unlinkSync(filePath); } catch (_) {}
-          }
-        }
-      }
-    } catch (_) {}
+    waStatus = "iniciando";
+    waQrRaw = "";
+    waQrBase64 = "";
+    waLastError = "";
 
     try {
-      const detectedExecutablePath = resolvePuppeteerExecutablePath();
-      if (detectedExecutablePath) {
-        console.log(`[WhatsApp] Usando Chrome/Chromium do sistema: ${detectedExecutablePath}`);
-      }
+      if (!fs.existsSync(WA_AUTH_DIR)) fs.mkdirSync(WA_AUTH_DIR, { recursive: true });
+      const { state, saveCreds } = await useMultiFileAuthState(WA_AUTH_DIR);
+      const { version } = await fetchLatestBaileysVersion();
 
-      wwebjsClient = new WWebClient({
-        authStrategy: new WWebLocalAuth({
-          clientId: "osone_copilot_session",
-          dataPath: path.join(process.cwd(), ".wwebjs_auth")
-        }),
-        // Um Chrome mais recente evita que o WhatsApp trate a sessão como "navegador não
-        // suportado" e derrube a conexão sozinha. "takeoverOnConflict" evita quedas quando
-        // o WhatsApp Web é aberto em outro lugar (ex: no navegador do próprio celular/PC),
-        // assumindo a sessão em vez de simplesmente cair.
-        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        takeoverOnConflict: true,
-        takeoverTimeoutMs: 10000,
-        puppeteer: {
-          headless: true,
-          ...(detectedExecutablePath ? { executablePath: detectedExecutablePath } : {}),
-          args: [
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-accelerated-2d-canvas",
-            "--no-first-run",
-            "--no-zygote",
-            "--disable-gpu"
-          ]
+      const socket = makeWASocket({
+        auth: state,
+        version,
+        logger: pino({ level: "silent" }) as any,
+        browser: Browsers.ubuntu("OSONE"),
+        // Não precisamos do histórico completo de conversas do celular ao conectar — só das
+        // mensagens novas a partir de agora. Reduz tráfego/tempo de conexão inicial.
+        syncFullHistory: false,
+        markOnlineOnConnect: false
+      });
+      waSocket = socket;
+
+      socket.ev.on("creds.update", saveCreds);
+
+      socket.ev.on("contacts.upsert", (contacts: any[]) => {
+        for (const c of contacts || []) {
+          if (c?.id) waContactsCache.set(c.id, { name: c.name || c.notify || waContactsCache.get(c.id)?.name });
         }
       });
-
-      wwebjsClient.on("qr", async (qr: string) => {
-        wwebjsStatus = "aguardando_qr";
-        wwebjsQrRaw = qr;
-        try {
-          wwebjsQrBase64 = await QRCode.toDataURL(qr, { margin: 2, scale: 6 });
-        } catch (e: any) {
-          console.error("[WhatsApp] Erro ao converter QR Code:", e);
-        }
-        whatsappLogs.unshift({
-          id: Math.random().toString(36).substring(2, 11),
-          timestamp: Date.now(),
-          type: "info",
-          sender: "WhatsApp Web",
-          message: "Novo QR Code gerado. Prontos para escanear no app do WhatsApp!"
-        });
-        if (whatsappLogs.length > 100) whatsappLogs.pop();
-      });
-
-      wwebjsClient.on("authenticated", () => {
-        wwebjsStatus = "iniciando";
-        wwebjsQrRaw = "";
-        wwebjsQrBase64 = "";
-        whatsappLogs.unshift({
-          id: Math.random().toString(36).substring(2, 11),
-          timestamp: Date.now(),
-          type: "info",
-          sender: "WhatsApp Web",
-          message: "Sessão autenticada via WhatsApp Web com sucesso."
-        });
-        if (whatsappLogs.length > 100) whatsappLogs.pop();
-      });
-
-      wwebjsClient.on("ready", () => {
-        wwebjsStatus = "conectado";
-        virtualConnectionState = "CONNECTED";
-        wwebjsQrRaw = "";
-        wwebjsQrBase64 = "";
-        wwebjsReconnectAttempts = 0;
-        wwebjsPhoneInfo = {
-          number: wwebjsClient.info?.wid?.user || "Conectado",
-          name: wwebjsClient.info?.pushname || "OSONE WhatsApp"
-        };
-        whatsappLogs.unshift({
-          id: Math.random().toString(36).substring(2, 11),
-          timestamp: Date.now(),
-          type: "info",
-          sender: "WhatsApp Web",
-          message: `Conexão WhatsApp Ativa! Telefone/Conta: ${wwebjsPhoneInfo.name} (${wwebjsPhoneInfo.number})`
-        });
-        if (whatsappLogs.length > 100) whatsappLogs.pop();
-      });
-
-      wwebjsClient.on("auth_failure", (msg: string) => {
-        wwebjsStatus = "erro";
-        wwebjsLastError = `Falha de Autenticação: ${msg}`;
-        whatsappLogs.unshift({
-          id: Math.random().toString(36).substring(2, 11),
-          timestamp: Date.now(),
-          type: "error",
-          sender: "WhatsApp Web",
-          message: `Falha na autenticação do WhatsApp: ${msg}`
-        });
-        if (whatsappLogs.length > 100) whatsappLogs.pop();
-      });
-
-      wwebjsClient.on("disconnected", (reason: string) => {
-        wwebjsStatus = "desconectado";
-        virtualConnectionState = "DISCONNECTED";
-        wwebjsQrRaw = "";
-        wwebjsQrBase64 = "";
-        wwebjsPhoneInfo = {};
-        whatsappLogs.unshift({
-          id: Math.random().toString(36).substring(2, 11),
-          timestamp: Date.now(),
-          type: "error",
-          sender: "WhatsApp Web",
-          message: `WhatsApp Web desconectado: ${reason}`
-        });
-        if (whatsappLogs.length > 100) whatsappLogs.pop();
-
-        scheduleWhatsAppReconnect(reason || "desconhecido");
-      });
-
-      wwebjsClient.on("message", async (msg: any) => {
-        try {
-          if (msg.isStatus || msg.from.endsWith("@g.us")) return;
-          const sender = msg.from;
-          const geminiApiKeyToUse = whatsappConfig.geminiApiKey || getSecretGeminiKey();
-          let body = msg.body || "";
-
-          // Mensagens de imagem/áudio não têm "body" de texto: usamos o Gemini para
-          // descrever a imagem ou transcrever o áudio, e tratamos o resultado como se
-          // fosse o texto da mensagem dali em diante (histórico, auto-resposta, etc.).
-          if (!body && msg.hasMedia && (msg.type === "image" || msg.type === "audio" || msg.type === "ptt")) {
-            if (!geminiApiKeyToUse) {
-              whatsappLogs.unshift({
-                id: Math.random().toString(36).substring(2, 11),
-                timestamp: Date.now(),
-                type: "error",
-                sender,
-                message: `Recebida mensagem de ${msg.type === "image" ? "imagem" : "áudio"}, mas nenhuma chave Gemini está configurada para analisá-la.`
-              });
-              if (whatsappLogs.length > 100) whatsappLogs.pop();
-              return;
-            }
-
-            try {
-              const media = await msg.downloadMedia();
-              if (!media || !media.data) {
-                body = msg.type === "image" ? "[Imagem recebida, mas o download falhou]" : "[Áudio recebido, mas o download falhou]";
-              } else {
-                const mediaAi = new GoogleGenAI({ apiKey: geminiApiKeyToUse, vertexai: false });
-                if (msg.type === "image") {
-                  const visionPrompt = `Você está examinando uma imagem enviada por um cliente no WhatsApp para um atendimento de vendas. Descreva objetivamente o que aparece (produto, defeito, print de conversa, comprovante, etc.), incluindo qualquer texto, preço ou detalhe visível que ajude a responder o cliente.${msg._data?.caption ? ` O cliente também escreveu esta legenda: "${msg._data.caption}"` : ''}`;
-                  const visionResult = await generateContentWithFallback(mediaAi, {
-                    model: "gemini-3.5-flash-lite",
-                    contents: [{ parts: [{ inlineData: { data: media.data, mimeType: media.mimetype } }, { text: visionPrompt }] }]
-                  });
-                  const description = (visionResult.text || "").trim() || "Não foi possível identificar o conteúdo da imagem.";
-                  body = `[Imagem enviada pelo cliente]${msg._data?.caption ? ` Legenda: "${msg._data.caption}".` : ''} Conteúdo identificado pela IA: ${description}`;
-                } else {
-                  const transcribePrompt = "Transcreva literalmente, em português, o que a pessoa está falando neste áudio. Responda APENAS com a transcrição, sem comentários adicionais. Se não conseguir entender, responda apenas com: [áudio incompreensível]";
-                  const transcribeResult = await generateContentWithFallback(mediaAi, {
-                    model: "gemini-3.5-flash-lite",
-                    contents: [{ parts: [{ inlineData: { data: media.data, mimeType: media.mimetype } }, { text: transcribePrompt }] }]
-                  });
-                  const transcript = (transcribeResult.text || "").trim();
-                  body = transcript && transcript !== "[áudio incompreensível]"
-                    ? `[Mensagem de voz do cliente]: ${transcript}`
-                    : "[Áudio recebido do cliente, mas não foi possível transcrever]";
-                }
-              }
-            } catch (mediaErr: any) {
-              console.error("[WhatsApp] Erro ao processar mídia recebida:", mediaErr);
-              body = msg.type === "image" ? "[Imagem recebida, mas houve erro ao analisá-la]" : "[Áudio recebido, mas houve erro ao transcrevê-lo]";
-              whatsappLogs.unshift({
-                id: Math.random().toString(36).substring(2, 11),
-                timestamp: Date.now(),
-                type: "error",
-                sender,
-                message: `Falha ao analisar mídia recebida: ${mediaErr?.message || mediaErr}`
-              });
-              if (whatsappLogs.length > 100) whatsappLogs.pop();
-            }
+      socket.ev.on("contacts.update", (updates: any[]) => {
+        for (const c of updates || []) {
+          if (c?.id) {
+            const prev = waContactsCache.get(c.id) || {};
+            waContactsCache.set(c.id, { name: c.name || c.notify || prev.name });
           }
+        }
+      });
 
-          if (!body) return;
+      socket.ev.on("connection.update", async (update: any) => {
+        const { connection, lastDisconnect, qr } = update || {};
 
-          // Always add received message to contact history
-          addMessageToHistory(sender, "user", body);
-
+        if (qr) {
+          waStatus = "aguardando_qr";
+          waQrRaw = qr;
+          try {
+            waQrBase64 = await QRCode.toDataURL(qr, { margin: 2, scale: 6 });
+          } catch (e: any) {
+            console.error("[WhatsApp] Erro ao converter QR Code:", e);
+          }
           whatsappLogs.unshift({
             id: Math.random().toString(36).substring(2, 11),
             timestamp: Date.now(),
-            type: "received",
-            sender: sender,
-            message: body
+            type: "info",
+            sender: "WhatsApp",
+            message: "Novo QR Code gerado. Prontos para escanear no app do WhatsApp!"
           });
           if (whatsappLogs.length > 100) whatsappLogs.pop();
+        }
 
-          if (whatsappConfig.enabled) {
-            if (!geminiApiKeyToUse) {
-              whatsappLogs.unshift({
-                id: Math.random().toString(36).substring(2, 11),
-                timestamp: Date.now(),
-                type: "error",
-                sender,
-                message: "Auto-resposta está ativada, mas nenhuma chave Gemini está configurada (nem nos Ajustes do OSONE ZAP, nem no servidor). A resposta não pôde ser gerada."
-              });
-              if (whatsappLogs.length > 100) whatsappLogs.pop();
-              return;
-            }
+        if (connection === "open") {
+          waStatus = "conectado";
+          virtualConnectionState = "CONNECTED";
+          waQrRaw = "";
+          waQrBase64 = "";
+          waLastError = "";
+          waReconnectAttempts = 0;
+          waPhoneInfo = {
+            number: String(socket.user?.id || "").split(":")[0].replace(/\D/g, "") || "Conectado",
+            name: socket.user?.name || (socket.user as any)?.notify || "OSONE WhatsApp"
+          };
+          whatsappLogs.unshift({
+            id: Math.random().toString(36).substring(2, 11),
+            timestamp: Date.now(),
+            type: "info",
+            sender: "WhatsApp",
+            message: `Conexão WhatsApp Ativa! Telefone/Conta: ${waPhoneInfo.name} (${waPhoneInfo.number})`
+          });
+          if (whatsappLogs.length > 100) whatsappLogs.pop();
+        }
 
-            const ai = new GoogleGenAI({ apiKey: geminiApiKeyToUse, vertexai: false });
+        if (connection === "close") {
+          waStatus = "desconectado";
+          virtualConnectionState = "DISCONNECTED";
+          waQrRaw = "";
+          waQrBase64 = "";
+          waPhoneInfo = {};
 
-            // Build Context-Rich Sales Prompt with Knowledge Base + History
-            const senderName = msg._data?.notifyName || sender;
-            // O desenvolvedor comanda o OSONE pelo próprio celular: as mensagens dele não são
-            // atendimento de vendas, são ordens ao sistema. Qualquer outro número continua
-            // recebendo normalmente a auto-resposta de atendimento.
-            const systemPrompt = isDeveloperNumber(sender)
-              ? buildDeveloperPrompt(senderName)
-              : buildSalesPrompt(sender, senderName);
+          const boomError = lastDisconnect?.error;
+          const statusCode = boomError?.output?.statusCode;
+          const reasonText = explainWhatsAppDisconnect(statusCode, boomError?.message || "");
 
-            if (isDeveloperNumber(sender)) {
-              whatsappLogs.unshift({
-                id: Math.random().toString(36).substring(2, 11),
-                timestamp: Date.now(),
-                type: "info",
-                sender,
-                message: `[MODO DESENVOLVEDOR] Mensagem reconhecida como comando do criador do OSONE.`
-              });
-              if (whatsappLogs.length > 100) whatsappLogs.pop();
-            }
-
-            let replyText = "";
-            try {
-              const gResult = await generateContentWithFallback(ai, {
-                model: "gemini-3.5-flash-lite",
-                contents: body,
-                config: { systemInstruction: systemPrompt }
-              });
-              replyText = (gResult.text || "").trim() || "Olá! Agradeço sua mensagem. Como posso te ajudar com nossos produtos hoje?";
-            } catch (genErr: any) {
-              console.error("[WhatsApp] Erro ao gerar resposta da IA:", genErr);
-              whatsappLogs.unshift({
-                id: Math.random().toString(36).substring(2, 11),
-                timestamp: Date.now(),
-                type: "error",
-                sender,
-                message: `Falha ao gerar resposta com a IA: ${genErr?.message || genErr}`
-              });
-              if (whatsappLogs.length > 100) whatsappLogs.pop();
-              return;
-            }
-
-            // Send reply directly back to contact
-            const cleanDigits = sender.replace(/\D/g, "");
-            const formattedJid = sender.endsWith("@c.us") ? sender : `${cleanDigits}@c.us`;
-
-            try {
-              await wwebjsClient.sendMessage(formattedJid, replyText);
-            } catch (sendErr: any) {
-              console.error("[WhatsApp] Erro ao enviar resposta de texto:", sendErr);
-              whatsappLogs.unshift({
-                id: Math.random().toString(36).substring(2, 11),
-                timestamp: Date.now(),
-                type: "error",
-                sender,
-                message: `A IA gerou uma resposta, mas o envio via WhatsApp falhou: ${sendErr?.message || sendErr}`
-              });
-              if (whatsappLogs.length > 100) whatsappLogs.pop();
-              return;
-            }
-
-            // Add AI response to contact history
-            addMessageToHistory(sender, "assistant", replyText);
-
-            whatsappLogs.unshift({
-              id: Math.random().toString(36).substring(2, 11),
-              timestamp: Date.now(),
-              type: "sent",
-              sender: sender,
-              message: replyText
-            });
-            if (whatsappLogs.length > 100) whatsappLogs.pop();
-
-            // Também responde por áudio (voz), além do texto, se habilitado nas configurações.
-            if (whatsappConfig.sendAudioReplies) {
-              try {
-                const speech = await synthesizeWhatsAppVoiceReply(replyText, {
-                  engine: whatsappConfig.ttsEngine,
-                  geminiApiKey: geminiApiKeyToUse,
-                  voice: whatsappConfig.ttsVoice,
-                  elevenLabsApiKey: whatsappConfig.elevenLabsApiKey,
-                  elevenLabsVoiceId: whatsappConfig.elevenLabsVoiceId
-                });
-                if (speech && WWebMessageMedia) {
-                  const audioMedia = new WWebMessageMedia(speech.mimeType, speech.buffer.toString("base64"), `resposta.${speech.extension}`);
-                  await wwebjsClient.sendMessage(formattedJid, audioMedia, { sendAudioAsVoice: true });
-                } else {
-                  whatsappLogs.unshift({
-                    id: Math.random().toString(36).substring(2, 11),
-                    timestamp: Date.now(),
-                    type: "error",
-                    sender,
-                    message: "Não foi possível gerar o áudio da resposta (a resposta em texto já foi enviada normalmente)."
-                  });
-                  if (whatsappLogs.length > 100) whatsappLogs.pop();
-                }
-              } catch (ttsErr: any) {
-                console.error("[WhatsApp] Erro ao gerar/enviar áudio de resposta:", ttsErr);
-                whatsappLogs.unshift({
-                  id: Math.random().toString(36).substring(2, 11),
-                  timestamp: Date.now(),
-                  type: "error",
-                  sender,
-                  message: `Falha ao enviar o áudio da resposta (o texto já foi enviado): ${ttsErr?.message || ttsErr}`
-                });
-                if (whatsappLogs.length > 100) whatsappLogs.pop();
-              }
-            }
-          }
-        } catch (err: any) {
-          console.error("[WhatsApp] Erro no listener de mensagem com IA e Vendas:", err);
           whatsappLogs.unshift({
             id: Math.random().toString(36).substring(2, 11),
             timestamp: Date.now(),
             type: "error",
-            sender: "Sistema",
-            message: `Erro inesperado ao processar mensagem recebida: ${err?.message || err}`
+            sender: "WhatsApp",
+            message: `WhatsApp desconectado: ${reasonText}`
           });
           if (whatsappLogs.length > 100) whatsappLogs.pop();
+
+          // Logout feito pelo próprio celular: a sessão foi invalidada de propósito, então
+          // reconectar automaticamente não vai funcionar — é preciso escanear um novo QR Code.
+          if (statusCode === DisconnectReason.loggedOut) {
+            waIntentionalDisconnect = true;
+            waLastError = reasonText;
+            try { fs.rmSync(WA_AUTH_DIR, { recursive: true, force: true }); } catch (_) {}
+            return;
+          }
+
+          scheduleWhatsAppReconnect(reasonText);
         }
       });
 
-      wwebjsClient.initialize().catch((err: any) => {
-        wwebjsStatus = "erro";
-        wwebjsLastError = explainWhatsAppLaunchError(err?.message || String(err));
-        console.error("[WhatsApp] Erro na inicialização do Client:", err);
-        scheduleWhatsAppReconnect("falha ao inicializar");
+      socket.ev.on("messages.upsert", async ({ messages, type }: { messages: any[]; type: string }) => {
+        if (type !== "notify") return;
+        for (const msg of messages || []) {
+          try {
+            await handleIncomingWhatsAppMessage(msg);
+          } catch (err: any) {
+            console.error("[WhatsApp] Erro no listener de mensagem com IA e Vendas:", err);
+            whatsappLogs.unshift({
+              id: Math.random().toString(36).substring(2, 11),
+              timestamp: Date.now(),
+              type: "error",
+              sender: "Sistema",
+              message: `Erro inesperado ao processar mensagem recebida: ${err?.message || err}`
+            });
+            if (whatsappLogs.length > 100) whatsappLogs.pop();
+          }
+        }
       });
     } catch (err: any) {
-      wwebjsStatus = "erro";
-      wwebjsLastError = explainWhatsAppLaunchError(err?.message || String(err));
-      console.error("[WhatsApp] Erro no setup do Client:", err);
+      waStatus = "erro";
+      waLastError = err?.message || String(err);
+      console.error("[WhatsApp] Erro no setup do socket Baileys:", err);
       scheduleWhatsAppReconnect("falha no setup");
     }
   };
@@ -1384,75 +1384,79 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   // WhatsApp Web API routes
   app.get("/api/whatsapp/status", (req, res) => {
     res.json({
-      status: wwebjsStatus,
-      phone: wwebjsPhoneInfo,
-      error: wwebjsLastError,
-      qrAvailable: !!wwebjsQrBase64,
+      status: waStatus,
+      phone: waPhoneInfo,
+      error: waLastError,
+      qrAvailable: !!waQrBase64,
       virtualState: virtualConnectionState
     });
   });
 
   app.get("/api/whatsapp/qr", (req, res) => {
     res.json({
-      qr: wwebjsQrBase64,
-      status: wwebjsStatus
+      qr: waQrBase64,
+      status: waStatus
     });
   });
 
   app.post("/api/whatsapp/connect", async (req, res) => {
-    if (wwebjsStatus === "conectado") {
+    if (waStatus === "conectado") {
       return res.json({ status: "conectado", message: "WhatsApp já está conectado!" });
     }
     initializeWhatsAppWebClient();
-    res.json({ status: "iniciando", message: "Inicializando WhatsApp Web via Puppeteer..." });
+    res.json({ status: "iniciando", message: "Inicializando conexão com o WhatsApp..." });
   });
 
   app.post("/api/whatsapp/disconnect", async (req, res) => {
-    wwebjsIntentionalDisconnect = true;
-    if (wwebjsReconnectTimer) {
-      clearTimeout(wwebjsReconnectTimer);
-      wwebjsReconnectTimer = null;
+    waIntentionalDisconnect = true;
+    if (waReconnectTimer) {
+      clearTimeout(waReconnectTimer);
+      waReconnectTimer = null;
     }
-    wwebjsReconnectAttempts = 0;
+    waReconnectAttempts = 0;
 
-    if (wwebjsClient) {
+    if (waSocket) {
       try {
-        await wwebjsClient.destroy();
+        waSocket.ev.removeAllListeners();
+        waSocket.end(undefined);
       } catch (_) {}
-      wwebjsClient = null;
+      waSocket = null;
     }
-    wwebjsStatus = "desconectado";
+    waStatus = "desconectado";
     virtualConnectionState = "DISCONNECTED";
-    wwebjsQrRaw = "";
-    wwebjsQrBase64 = "";
-    wwebjsPhoneInfo = {};
+    waQrRaw = "";
+    waQrBase64 = "";
+    waPhoneInfo = {};
     res.json({ status: "desconectado", message: "Sessão do WhatsApp encerrada." });
   });
 
   app.post("/api/whatsapp/reset-session", async (req, res) => {
     try {
-      wwebjsIntentionalDisconnect = true;
-      if (wwebjsReconnectTimer) {
-        clearTimeout(wwebjsReconnectTimer);
-        wwebjsReconnectTimer = null;
+      waIntentionalDisconnect = true;
+      if (waReconnectTimer) {
+        clearTimeout(waReconnectTimer);
+        waReconnectTimer = null;
       }
-      wwebjsReconnectAttempts = 0;
+      waReconnectAttempts = 0;
 
-      if (wwebjsClient) {
-        try { await wwebjsClient.destroy(); } catch (_) {}
-        wwebjsClient = null;
-      }
-      wwebjsStatus = "desconectado";
-      virtualConnectionState = "DISCONNECTED";
-      wwebjsQrRaw = "";
-      wwebjsQrBase64 = "";
-      wwebjsPhoneInfo = {};
-      wwebjsLastError = "";
-
-      const authDir = path.join(process.cwd(), ".wwebjs_auth");
-      if (fs.existsSync(authDir)) {
+      if (waSocket) {
         try {
-          fs.rmSync(authDir, { recursive: true, force: true });
+          waSocket.ev.removeAllListeners();
+          waSocket.end(undefined);
+        } catch (_) {}
+        waSocket = null;
+      }
+      waStatus = "desconectado";
+      virtualConnectionState = "DISCONNECTED";
+      waQrRaw = "";
+      waQrBase64 = "";
+      waPhoneInfo = {};
+      waLastError = "";
+      waContactsCache.clear();
+
+      if (fs.existsSync(WA_AUTH_DIR)) {
+        try {
+          fs.rmSync(WA_AUTH_DIR, { recursive: true, force: true });
         } catch (rmErr) {
           console.log("[WhatsApp Reset] Aviso ao apagar pasta de sessão:", rmErr);
         }
@@ -1460,7 +1464,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
 
       initializeWhatsAppWebClient();
 
-      return res.json({ status: "iniciando", message: "Sessão e travas do Puppeteer resetadas com sucesso. Novo QR Code será gerado!" });
+      return res.json({ status: "iniciando", message: "Sessão resetada com sucesso. Novo QR Code será gerado!" });
     } catch (err: any) {
       return res.status(500).json({ error: `Erro ao resetar sessão: ${err?.message || err}` });
     }
@@ -1665,32 +1669,32 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     }
   });
 
-  // Fetch Real Contacts from Connected WhatsApp Account (getContacts)
+  // Retorna os contatos reais vistos nesta sessão do WhatsApp. Diferente do whatsapp-web.js,
+  // o Baileys não oferece um "getContacts()" pronto que devolva a agenda inteira do celular —
+  // os contatos vão chegando aos poucos por eventos ("contacts.upsert"/"contacts.update") e
+  // pelo nome de quem manda mensagem. Por isso a lista cresce conforme o uso, em vez de vir
+  // completa na primeira chamada.
   app.get("/api/whatsapp/wa-contacts", async (req, res) => {
     try {
-      const hasPupPage = Boolean(wwebjsClient && (wwebjsClient as any).pupPage);
-      if (!wwebjsClient || wwebjsStatus !== "conectado" || !hasPupPage) {
-        return res.status(400).json({ 
-          error: "Sessão do WhatsApp não está conectada. Conecte primeiro no Monitor Central escaneando o QR Code." 
+      if (!waSocket || waStatus !== "conectado") {
+        return res.status(400).json({
+          error: "Sessão do WhatsApp não está conectada. Conecte primeiro no Monitor Central escaneando o QR Code."
         });
       }
 
-      const rawContacts = await wwebjsClient.getContacts();
-      console.log(`[WhatsApp Contacts] ${rawContacts.length} contatos brutos obtidos via getContacts().`);
-
-      const formatted = rawContacts
-        .filter(c => !c.isGroup && (c.number || c.id?.user))
-        .map(c => {
-          const cleanPhone = (c.number || c.id?.user || "").replace(/\D/g, "");
-          const name = c.name || c.pushname || c.shortName || `Contato ${cleanPhone}`;
+      const formatted = Array.from(waContactsCache.entries())
+        .filter(([jid]) => jid.endsWith("@s.whatsapp.net"))
+        .map(([jid, info]) => {
+          const cleanPhone = jid.split("@")[0].replace(/\D/g, "");
           return {
-            name: name.trim(),
+            name: (info.name || `Contato ${cleanPhone}`).trim(),
             phone: cleanPhone,
             source: "wa" as const
           };
         })
         .filter(c => c.phone.length >= 8);
 
+      console.log(`[WhatsApp Contacts] ${formatted.length} contatos vistos nesta sessão.`);
       return res.json({ status: "success", count: formatted.length, contacts: formatted });
     } catch (err: any) {
       console.error("[WhatsApp Contacts] Erro ao obter contatos:", err);
@@ -1842,7 +1846,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     }
   });
 
-  // Send Outbound Message via WhatsApp Web Puppeteer (client.sendMessage)
+  // Send Outbound Message via WhatsApp (Baileys — waSocket.sendMessage)
   app.post("/api/whatsapp/send-message", async (req, res) => {
     const rawNumber = req.body.number || req.body.to || "";
     const messageText = req.body.message || req.body.text || "";
@@ -1872,13 +1876,8 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       return res.status(400).json({ status: "error", error: errorMsg });
     }
 
-    const hasPupPage = Boolean(wwebjsClient && (wwebjsClient as any).pupPage);
-    if (!wwebjsClient || wwebjsStatus !== "conectado" || !hasPupPage) {
-      if (wwebjsStatus === "conectado" && !hasPupPage) {
-        wwebjsStatus = "desconectado";
-        wwebjsLastError = "A página do Puppeteer do WhatsApp não está pronta ou foi fechada.";
-      }
-      const errorMsg = `Sessão do WhatsApp não está pronta/conectada (Status atual: ${wwebjsStatus}, Navegador: ${hasPupPage ? 'OK' : 'Ausente'}). Por favor, clique em 'Iniciar Conexão' ou escaneie o QR Code no Monitor Central.`;
+    if (!waSocket || waStatus !== "conectado") {
+      const errorMsg = `Sessão do WhatsApp não está pronta/conectada (Status atual: ${waStatus}). Por favor, clique em 'Iniciar Conexão' ou escaneie o QR Code no Monitor Central.`;
       console.error("[WhatsApp Send] Erro de prontidão do client:", errorMsg);
       whatsappLogs.unshift({
         id: Math.random().toString(36).substring(2, 11),
@@ -1897,18 +1896,18 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
         throw new Error(`Número de telefone inválido: '${rawNumber}' (${cleanDigits.length} dígitos)`);
       }
 
-      const formattedJid = rawNumber.endsWith("@c.us") || rawNumber.endsWith("@g.us")
+      const formattedJid = rawNumber.endsWith("@s.whatsapp.net") || rawNumber.endsWith("@g.us")
         ? rawNumber
-        : `${cleanDigits}@c.us`;
+        : `${cleanDigits}@s.whatsapp.net`;
 
-      console.log(`[WhatsApp Send] Executando wwebjsClient.sendMessage() para ${formattedJid}...`);
+      console.log(`[WhatsApp Send] Executando waSocket.sendMessage() para ${formattedJid}...`);
 
       whatsappLogs.unshift({
         id: Math.random().toString(36).substring(2, 11),
         timestamp: Date.now(),
         type: "info",
-        sender: "WhatsApp Web",
-        message: `Disparando mensagem para ${formattedJid} via WhatsApp Web Puppeteer...`
+        sender: "WhatsApp",
+        message: `Disparando mensagem para ${formattedJid} via WhatsApp...`
       });
       if (whatsappLogs.length > 100) whatsappLogs.pop();
 
@@ -1923,8 +1922,8 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       let audioError: string | null = null;
 
       if (!asAudio || alsoText) {
-        const sentResult = await wwebjsClient.sendMessage(formattedJid, messageText);
-        msgId = sentResult?.id?._serialized || sentResult?.id || "ok";
+        const sentResult = await waSocket.sendMessage(formattedJid, { text: messageText });
+        msgId = sentResult?.key?.id || "ok";
         console.log(`[WhatsApp Send] Mensagem de texto enviada com sucesso! ID: ${msgId}`);
       }
 
@@ -1938,15 +1937,14 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
             elevenLabsVoiceId: req.body.elevenLabsVoiceId || whatsappConfig.elevenLabsVoiceId
           });
 
-          if (speech && WWebMessageMedia) {
-            const audioMedia = new WWebMessageMedia(
-              speech.mimeType,
-              speech.buffer.toString("base64"),
-              `mensagem.${speech.extension}`
-            );
-            const audioResult = await wwebjsClient.sendMessage(formattedJid, audioMedia, { sendAudioAsVoice: true });
+          if (speech) {
+            const audioResult = await waSocket.sendMessage(formattedJid, {
+              audio: speech.buffer,
+              mimetype: speech.mimeType,
+              ptt: true
+            });
             audioSent = true;
-            if (msgId === "ok") msgId = audioResult?.id?._serialized || audioResult?.id || "ok";
+            if (msgId === "ok") msgId = audioResult?.key?.id || "ok";
             console.log(`[WhatsApp Send] Áudio (mensagem de voz) enviado com sucesso para ${formattedJid}.`);
           } else {
             audioError = "Não foi possível gerar o áudio (verifique a chave de voz configurada nos Ajustes).";
@@ -1986,7 +1984,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
         status: "success",
         message: audioSent
           ? `Mensagem enviada com sucesso via WhatsApp${alsoText ? " (texto + áudio)" : " (áudio)"}!`
-          : "Mensagem enviada com sucesso via WhatsApp Web!",
+          : "Mensagem enviada com sucesso via WhatsApp!",
         messageId: msgId,
         to: formattedJid,
         audioSent,
@@ -1994,11 +1992,11 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       });
     } catch (sendErr: any) {
       const errMsg = sendErr?.message || String(sendErr);
-      console.error("[WhatsApp Send] Erro durante wwebjsClient.sendMessage():", sendErr);
+      console.error("[WhatsApp Send] Erro durante waSocket.sendMessage():", sendErr);
 
-      if (errMsg.includes("evaluate") || errMsg.includes("null") || errMsg.includes("Session closed")) {
-        wwebjsStatus = "desconectado";
-        wwebjsLastError = "A página do Puppeteer caiu ou perdeu a conexão. Clique em 'Iniciar Conexão' para reconectar.";
+      if (errMsg.includes("Connection Closed") || errMsg.includes("Timed Out") || errMsg.includes("not open")) {
+        waStatus = "desconectado";
+        waLastError = "A conexão com o WhatsApp caiu ou perdeu a sessão. Clique em 'Iniciar Conexão' para reconectar.";
       }
 
       whatsappLogs.unshift({
@@ -2236,9 +2234,9 @@ Retorne SOMENTE o objeto JSON conforme o esquema.
     }
   });
 
-  // Legacy Webhook route (Evolution API fully removed - active driver is whatsapp-web.js)
+  // Legacy Webhook route (Evolution API fully removed - active driver is Baileys)
   app.post("/api/whatsapp/webhook", (req, res) => {
-    res.json({ status: "deprecated", message: "Integração Evolution API foi removida. A integração ativa é whatsapp-web.js local." });
+    res.json({ status: "deprecated", message: "Integração Evolution API foi removida. A integração ativa é Baileys (conexão direta local)." });
   });
 
   // Helper to construct a standard WAV container header for raw 16-bit Mono PCM streams

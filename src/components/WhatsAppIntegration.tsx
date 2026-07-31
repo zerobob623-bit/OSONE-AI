@@ -64,7 +64,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
   const [isRefreshingLogs, setIsRefreshingLogs] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'history' | 'contacts' | 'docs' | 'settings'>('dashboard');
 
-  // Manual Outbound Sending State (whatsapp-web.js)
+  // Manual Outbound Sending State (Baileys)
   const [sendNumber, setSendNumber] = useState('');
   const [sendMessageText, setSendMessageText] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -380,7 +380,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
     }
   };
 
-  // Direct Outbound Message Sending via whatsapp-web.js
+  // Direct Outbound Message Sending via Baileys
   const handleSendDirectMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!sendNumber || !sendMessageText) return;
@@ -439,11 +439,11 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
               <div className="flex items-center gap-3">
                 <h1 className="text-2xl font-bold tracking-tight text-white">OSONE ZAP</h1>
                 <span className="text-[10px] uppercase tracking-widest px-2.5 py-1 rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30 font-bold">
-                  puppeteer local
+                  baileys local
                 </span>
               </div>
               <p className="text-xs text-zinc-400 mt-1 max-w-xl">
-                Automação nativa via whatsapp-web.js com respostas orientadas pelo Gemini 3.5-flash-lite e disparo direto de mensagens.
+                Automação nativa via Baileys (conexão direta por WebSocket, sem navegador) com respostas orientadas pelo Gemini 3.5-flash-lite e disparo direto de mensagens.
               </p>
             </div>
           </div>
@@ -1201,10 +1201,10 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                   <div className="space-y-3 text-xs">
                     <div className="p-3.5 bg-white/5 rounded-2xl border border-white/10">
                       <h4 className="font-bold text-emerald-400 mb-1 flex items-center gap-1.5">
-                        <CheckCircle size={13} /> 1. Conexão Real via Puppeteer
+                        <CheckCircle size={13} /> 1. Conexão Real via Baileys
                       </h4>
                       <p className="text-zinc-400 text-[11px] leading-relaxed">
-                        O OSONE inicializa um navegador chromium com <code className="text-emerald-300 font-mono">whatsapp-web.js</code>. O QR Code gerado é capturado em tempo real e a sessão autenticada é mantida na pasta segura <code className="text-zinc-300 font-mono">.wwebjs_auth</code>.
+                        O OSONE conecta direto ao WhatsApp por WebSocket com <code className="text-emerald-300 font-mono">Baileys</code>, sem abrir navegador nenhum. O QR Code gerado é capturado em tempo real e a sessão autenticada é mantida na pasta segura <code className="text-zinc-300 font-mono">.baileys_auth</code>.
                       </p>
                     </div>
 
