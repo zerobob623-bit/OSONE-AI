@@ -13,17 +13,15 @@ import { CodePreview } from './CodePreview';
 import { CodeRepositoryFile } from '../types';
 import { buildCodeEditSystemInstruction, applyModelCodeResponse, parseSections } from '../lib/codeEdits';
 
-// Geração/edição de código (Hunter e Enxame/Swarm) sempre usa o melhor modelo GRATUITO
-// disponível para código (gemini-3.6-flash: mais recente, líder em benchmarks de código como
-// SWE-Bench Pro entre os modelos gratuitos), independente do modelo configurado nos Ajustes
-// gerais do chat — qualidade de código não pode ficar refém de um modelo lite mais fraco.
-const OSONE_CODE_BEST_MODEL = "gemini-3.6-flash";
+// Geração/edição de código (Hunter e Enxame/Swarm) roda no DeepSeek-R1 via OpenRouter — não no
+// Gemini. O Gemini continua sendo o motor de todo o resto do OSONE (texto, PDF, voz/Live).
+const OSONE_CODE_BEST_MODEL = "deepseek/deepseek-r1";
 
 /**
- * Chama /api/generate com retentativas automáticas (backoff simples) para falhas
- * transitórias de rede/servidor. Evita que um único agente do Swarm derrube o
- * pipeline inteiro por causa de uma falha passageira em uma das várias chamadas
- * sequenciais.
+ * Chama /api/code/generate (motor DeepSeek-R1 via OpenRouter) com retentativas automáticas
+ * (backoff simples) para falhas transitórias de rede/servidor. Evita que um único agente do
+ * Swarm derrube o pipeline inteiro por causa de uma falha passageira em uma das várias
+ * chamadas sequenciais.
  */
 async function generateWithRetry(
   body: Record<string, unknown>,
@@ -32,16 +30,16 @@ async function generateWithRetry(
   let lastError = '';
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const response = await fetch('/api/generate', {
+      const response = await fetch('/api/code/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
+      const data = await response.json().catch(() => ({} as any));
       if (response.ok) {
-        const data = await response.json();
         return { ok: true, text: data.text || '' };
       }
-      lastError = `HTTP ${response.status}`;
+      lastError = data?.error || `HTTP ${response.status}`;
     } catch (e: any) {
       lastError = e?.message || String(e);
     }
@@ -862,7 +860,7 @@ export const CodeWorkspace: React.FC<{
 
     try {
       setHunterProgress(50);
-      const effectiveApiKey = apiKeys?.gemini || '';
+      const effectiveApiKey = apiKeys?.openrouterApiKey || '';
       const currentCode = activeFile ? activeFile.content : '';
 
       const systemInstruction = `Você é o HUNTER, o Caçador e Examinador Agêntico de Código do OSONE Studio.
@@ -901,7 +899,7 @@ Se o arquivo estiver vazio ou for necessário recriar do zero, em vez de blocos 
 CÓDIGO ATUAL NO ARQUIVO ("${activeFile?.name || 'código'}"):
 ${currentCode}`;
 
-      const response = await fetch("/api/generate", {
+      const response = await fetch("/api/code/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -912,11 +910,11 @@ ${currentCode}`;
         })
       });
 
+      const data = await response.json().catch(() => ({} as any));
       if (!response.ok) {
-        throw new Error("Erro na comunicação com a API do Hunter.");
+        throw new Error(data?.error || "Erro na comunicação com a API do Hunter.");
       }
 
-      const data = await response.json();
       const rawText = data.text || "";
       const sections = parseSections(rawText);
       const hasDoubt = /^true$/i.test((sections.HAS_DOUBT || '').trim());
@@ -985,7 +983,7 @@ ${currentCode}`;
       setSwarmLogs(prev => [...prev, { agent, message, timestamp: timeStr, type }]);
     };
 
-    const effectiveApiKey = apiKeys?.gemini || '';
+    const effectiveApiKey = apiKeys?.openrouterApiKey || '';
     const currentModel = OSONE_CODE_BEST_MODEL;
 
     try {

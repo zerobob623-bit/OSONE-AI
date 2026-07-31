@@ -89,6 +89,9 @@ export const SettingsModal = ({
   const [geminiVerificationStatus, setGeminiVerificationStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [geminiVerificationMessage, setGeminiVerificationMessage] = useState('');
 
+  // OSONE CODE (OpenRouter / DeepSeek-R1) Test States
+  const [showOpenRouterKey, setShowOpenRouterKey] = useState(false);
+
   // Local Agent Test States
   const [showLocalAgentToken, setShowLocalAgentToken] = useState(false);
   const [localAgentStatus, setLocalAgentStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
@@ -655,6 +658,37 @@ export const SettingsModal = ({
                       </div>
                       <p className="mt-2 text-[10px] text-her-muted/40 italic leading-relaxed">
                         Este é o modelo generativo multimídia mais avançado do ecossistema Gemini para criação e edição de imagens de alta fidelidade e resolução.
+                      </p>
+                    </div>
+
+                    {/* OSONE CODE Engine (OpenRouter / DeepSeek-R1) Section */}
+                    <div className="mt-5 border-t border-white/5 pt-4 space-y-4">
+                      <div className="flex items-center gap-2">
+                        <Sparkles size={12} className="text-orange-400" />
+                        <label className="block text-[9px] uppercase tracking-[0.2em] text-her-muted font-bold">Motor de Código do OSONE CODE (OpenRouter)</label>
+                      </div>
+                      <p className="text-[10px] text-her-muted/60 leading-relaxed font-sans">
+                        Somente a aba <strong>OSONE CODE</strong> (geração/edição de código, Hunter e Enxame/Swarm) usa esta chave, rodando no modelo <strong className="text-orange-300">DeepSeek-R1</strong> via OpenRouter. O restante do OSONE (texto, leitura de PDF, voz/Gemini Live) continua 100% no Gemini, sem nenhuma mudança.
+                      </p>
+                      <div className="relative flex items-center">
+                        <input
+                          type={showOpenRouterKey ? "text" : "password"}
+                          value={keys.openrouterApiKey || ''}
+                          onChange={(e) => setKeys({ ...keys, openrouterApiKey: e.target.value })}
+                          className="w-full bg-white/[0.02] border border-white/[0.05] rounded-2xl px-5 py-3 pr-12 focus:outline-none focus:border-orange-500/30 transition-all text-xs font-mono text-white placeholder:text-her-muted/20"
+                          placeholder="Ex: sk-or-v1-..."
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowOpenRouterKey(!showOpenRouterKey)}
+                          className="absolute right-3 p-1.5 text-her-muted/50 hover:text-white transition-colors cursor-pointer"
+                          title={showOpenRouterKey ? "Ocultar Chave" : "Mostrar Chave"}
+                        >
+                          {showOpenRouterKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-her-muted/40 italic leading-relaxed">
+                        Crie sua chave gratuitamente em <span className="font-mono text-orange-300/80">openrouter.ai/keys</span> (formato <span className="font-mono">sk-or-v1-...</span>).
                       </p>
                     </div>
 
