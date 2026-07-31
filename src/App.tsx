@@ -974,6 +974,7 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   - Use os caminhos reais do bloco AMBIENTE REAL DESTE COMPUTADOR (acima) e a sintaxe do sistema indicado ali. Não adivinhe o sistema operacional nem invente nomes de pasta em inglês se as pastas reais estiverem em português.
   - Em dúvida sobre o que existe numa pasta, chame antes com acao='listar' e aja sobre o que voltou, em vez de chutar nomes de arquivo.
   - Quando o usuário quiser VER o comando rodando ("abre o terminal", "mostra no terminal"), use acao='terminal' com visivel=true, que abre uma janela real na tela.
+  - CONTROLE DE MOUSE/TECLADO ('mover_mouse', 'clicar', 'rolar', 'digitar', 'tecla', 'capturar_tela'): use para agir sobre o que estiver na tela (navegador, qualquer app), como um usuário faria. Você só sabe ONDE clicar/rolar olhando a imagem do compartilhamento de tela (quando ativo) ou o resultado de 'capturar_tela' — nunca invente coordenadas sem ter visto a tela antes. Para preencher um campo: primeiro 'clicar' nele (x,y do que você viu), depois 'digitar' o texto. 'tecla' serve para atalhos e navegação (enter para enviar, tab para trocar de campo, ctrl+a para selecionar tudo). Essas ações dependem do sistema operacional ter as ferramentas necessárias instaladas (ex: xdotool no Linux) — se vier 'error', diga exatamente o que faltou, nunca finja que a ação aconteceu.
 
   MODULAÇÃO DE VOZ:
   - IMPORTANTE: Não altere seus parâmetros de voz (pitch/rate) a menos que o usuário peça explicitamente ou a situação seja DRAMATICAMENTE necessária para um efeito criativo (ex: contar uma história de terror ou imitar um robô). NÃO troque de voz em diálogos comuns.
@@ -7401,11 +7402,11 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
 
       functionDeclarations.push({
         name: "controlar_pc",
-        description: "CONTROLE TOTAL DO COMPUTADOR DO USUÁRIO. Ferramenta ÚNICA para tudo que envolve o PC: criar/escrever/apagar/mover arquivos e pastas, abrir e fechar aplicativos, rodar comandos de terminal, ajustar volume, controlar mídia e abrir configurações do sistema. Você tem permissão TOTAL — execute o que for pedido sem pedir autorização extra. A ÚNICA coisa proibida é apagar ou sobrescrever a própria instalação do OSONE. Caminhos aceitam formato absoluto (Windows 'C:\\Users\\voce\\Documentos' ou Linux '/home/voce/Documentos'), '~', ou apelido de pasta em português/inglês ('documentos', 'área de trabalho', 'downloads'). Consulte o bloco AMBIENTE REAL DESTE COMPUTADOR no seu contexto para saber o sistema e os caminhos reais — não adivinhe. Se a resposta trouxer 'error', a ação NÃO aconteceu: diga isso ao usuário, nunca afirme sucesso.",
+        description: "CONTROLE TOTAL DO COMPUTADOR DO USUÁRIO. Ferramenta ÚNICA para tudo que envolve o PC: criar/escrever/apagar/mover arquivos e pastas, abrir e fechar aplicativos, rodar comandos de terminal, ajustar volume, controlar mídia, abrir configurações do sistema, mover o mouse, clicar, rolar a tela, digitar texto no campo em foco, pressionar teclas/atalhos e capturar uma screenshot da tela atual. Use as ações de mouse/teclado/captura junto do compartilhamento de tela por voz (quando ativo) para agir como um usuário faria: veja o que está na tela e depois clique/digite/role. Você tem permissão TOTAL — execute o que for pedido sem pedir autorização extra. A ÚNICA coisa proibida é apagar ou sobrescrever a própria instalação do OSONE. Caminhos aceitam formato absoluto (Windows 'C:\\Users\\voce\\Documentos' ou Linux '/home/voce/Documentos'), '~', ou apelido de pasta em português/inglês ('documentos', 'área de trabalho', 'downloads'). Consulte o bloco AMBIENTE REAL DESTE COMPUTADOR no seu contexto para saber o sistema e os caminhos reais — não adivinhe. Se a resposta trouxer 'error', a ação NÃO aconteceu: diga isso ao usuário, nunca afirme sucesso.",
         parameters: {
           type: Type.OBJECT,
           properties: {
-            acao: { type: Type.STRING, description: "O que fazer. Use exatamente um destes: 'criar_pasta', 'escrever_arquivo', 'apagar', 'mover', 'copiar', 'renomear', 'listar', 'abrir', 'fechar', 'terminal', 'volume', 'midia', 'configuracoes', 'checar_sistema', 'status'." },
+            acao: { type: Type.STRING, description: "O que fazer. Use exatamente um destes: 'criar_pasta', 'escrever_arquivo', 'apagar', 'mover', 'copiar', 'renomear', 'listar', 'abrir', 'fechar', 'terminal', 'volume', 'midia', 'configuracoes', 'checar_sistema', 'status', 'mover_mouse', 'clicar', 'rolar', 'digitar', 'tecla', 'capturar_tela'." },
             caminho: { type: Type.STRING, description: "Alvo da ação: caminho completo do arquivo/pasta; nome do app para 'abrir'/'fechar'; pasta de trabalho para 'terminal'." },
             destino: { type: Type.STRING, description: "Caminho de destino, para 'mover', 'copiar' e 'renomear'." },
             conteudo: { type: Type.STRING, description: "Texto a gravar, para 'escrever_arquivo'." },
@@ -7413,7 +7414,16 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
             visivel: { type: Type.BOOLEAN, description: "Para 'terminal': true abre uma janela de terminal REAL na tela para o usuário ver o comando rodando." },
             subacao: { type: Type.STRING, description: "Detalhe da ação: volume ('set','up','down','mute','unmute'); midia ('playpause','play','pause','next','previous'); configuracoes ('camera','sound','network','bluetooth','privacy','display','taskbar','main')." },
             valor: { type: Type.NUMBER, description: "Valor numérico, usado no volume com subacao='set' (0 a 100)." },
-            forcar: { type: Type.BOOLEAN, description: "Para 'fechar': true encerra o app à força, sem esperar salvar." }
+            forcar: { type: Type.BOOLEAN, description: "Para 'fechar': true encerra o app à força, sem esperar salvar." },
+            x: { type: Type.NUMBER, description: "Coordenada X de tela (pixels), para 'mover_mouse', 'clicar' e opcionalmente 'rolar'. Use o que você vê pelo compartilhamento de tela para estimar a posição." },
+            y: { type: Type.NUMBER, description: "Coordenada Y de tela (pixels), para 'mover_mouse', 'clicar' e opcionalmente 'rolar'." },
+            botao: { type: Type.STRING, description: "Para 'clicar': 'left' (padrão) ou 'right'." },
+            duplo: { type: Type.BOOLEAN, description: "Para 'clicar': true faz duplo-clique." },
+            direcao: { type: Type.STRING, description: "Para 'rolar': 'up' ou 'down'." },
+            quantidade: { type: Type.NUMBER, description: "Para 'rolar': quantos 'cliques' de roda de mouse (padrão 3, como um giro normal de roda física)." },
+            texto: { type: Type.STRING, description: "Para 'digitar': o texto a digitar no campo/elemento que está em foco na tela agora (não abre nem seleciona o campo — clique nele primeiro com acao='clicar')." },
+            tecla: { type: Type.STRING, description: "Para 'tecla': nome da tecla ('enter', 'tab', 'escape', 'backspace', 'delete', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'home', 'end', 'pageup', 'pagedown') ou um único caractere alfanumérico." },
+            modificadores: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Para 'tecla': lista de modificadores a segurar junto, ex: ['ctrl'] para Ctrl+C." }
           },
           required: ["acao"]
         }
@@ -8304,19 +8314,32 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
             addNotification(waRes.error || waRes.message, waRes.error ? 'error' : 'success');
           } else if (['controlar_pc', 'organize_folder_plan', 'organize_folder_execute'].includes(call.name)) {
             const agentRes = await executeLocalAgentCall(call.name, call.args, apiKeys.localAgentToken, false);
-            let displayContent = "";
+            // 'capturar_tela' devolve uma imagem base64 potencialmente grande demais para virar
+            // texto no chat (JSON.stringify jogaria megabytes de base64 na tela) — vira uma
+            // mensagem com imageUrl, igual às demais imagens já exibidas no chat.
             if (agentRes.error) {
-              displayContent = `⚠️ [AGENTE LOCAL] ${agentRes.error}`;
               addNotification(agentRes.error, 'error');
+              setChatHistory(prev => [...prev, {
+                id: Math.random().toString(36).substr(2, 9),
+                role: 'assistant' as const,
+                content: `⚠️ [AGENTE LOCAL] ${agentRes.error}`
+              }]);
+            } else if (agentRes.image) {
+              addNotification("Captura de tela obtida.", "success");
+              setChatHistory(prev => [...prev, {
+                id: Math.random().toString(36).substr(2, 9),
+                role: 'assistant' as const,
+                content: "📸 Captura de tela obtida.",
+                imageUrl: agentRes.image
+              }]);
             } else {
-              displayContent = typeof agentRes === 'string' ? agentRes : JSON.stringify(agentRes, null, 2);
               addNotification("Ação do Agente Local processada.", "success");
+              setChatHistory(prev => [...prev, {
+                id: Math.random().toString(36).substr(2, 9),
+                role: 'assistant' as const,
+                content: typeof agentRes === 'string' ? agentRes : JSON.stringify(agentRes, null, 2)
+              }]);
             }
-            setChatHistory(prev => [...prev, {
-              id: Math.random().toString(36).substr(2, 9),
-              role: 'assistant' as const,
-              content: displayContent
-            }]);
           }
         }
       } else {
@@ -9039,11 +9062,11 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 },
                 {
                   name: "controlar_pc",
-                  description: "CONTROLE TOTAL DO COMPUTADOR DO USUÁRIO. Ferramenta ÚNICA para tudo que envolve o PC: criar/escrever/apagar/mover arquivos e pastas, abrir e fechar aplicativos, rodar comandos de terminal, ajustar volume, controlar mídia e abrir configurações do sistema. Você tem permissão TOTAL — execute o que for pedido sem pedir autorização extra. A ÚNICA coisa proibida é apagar ou sobrescrever a própria instalação do OSONE. Caminhos aceitam formato absoluto (Windows 'C:\\Users\\voce\\Documentos' ou Linux '/home/voce/Documentos'), '~', ou apelido de pasta em português/inglês ('documentos', 'área de trabalho', 'downloads'). Consulte o bloco AMBIENTE REAL DESTE COMPUTADOR no seu contexto para saber o sistema e os caminhos reais — não adivinhe. Se a resposta trouxer 'error', a ação NÃO aconteceu: diga isso ao usuário, nunca afirme sucesso.",
+                  description: "CONTROLE TOTAL DO COMPUTADOR DO USUÁRIO. Ferramenta ÚNICA para tudo que envolve o PC: criar/escrever/apagar/mover arquivos e pastas, abrir e fechar aplicativos, rodar comandos de terminal, ajustar volume, controlar mídia, abrir configurações do sistema, mover o mouse, clicar, rolar a tela, digitar texto no campo em foco, pressionar teclas/atalhos e capturar uma screenshot da tela atual. Use as ações de mouse/teclado/captura junto do compartilhamento de tela por voz (quando ativo) para agir como um usuário faria: veja o que está na tela e depois clique/digite/role. Você tem permissão TOTAL — execute o que for pedido sem pedir autorização extra. A ÚNICA coisa proibida é apagar ou sobrescrever a própria instalação do OSONE. Caminhos aceitam formato absoluto (Windows 'C:\\Users\\voce\\Documentos' ou Linux '/home/voce/Documentos'), '~', ou apelido de pasta em português/inglês ('documentos', 'área de trabalho', 'downloads'). Consulte o bloco AMBIENTE REAL DESTE COMPUTADOR no seu contexto para saber o sistema e os caminhos reais — não adivinhe. Se a resposta trouxer 'error', a ação NÃO aconteceu: diga isso ao usuário, nunca afirme sucesso.",
         parameters: {
                                         type: Type.OBJECT,
                                         properties: {
-                                          acao: { type: Type.STRING, description: "O que fazer. Use exatamente um destes: 'criar_pasta', 'escrever_arquivo', 'apagar', 'mover', 'copiar', 'renomear', 'listar', 'abrir', 'fechar', 'terminal', 'volume', 'midia', 'configuracoes', 'checar_sistema', 'status'." },
+                                          acao: { type: Type.STRING, description: "O que fazer. Use exatamente um destes: 'criar_pasta', 'escrever_arquivo', 'apagar', 'mover', 'copiar', 'renomear', 'listar', 'abrir', 'fechar', 'terminal', 'volume', 'midia', 'configuracoes', 'checar_sistema', 'status', 'mover_mouse', 'clicar', 'rolar', 'digitar', 'tecla', 'capturar_tela'." },
                                           caminho: { type: Type.STRING, description: "Alvo da ação: caminho completo do arquivo/pasta; nome do app para 'abrir'/'fechar'; pasta de trabalho para 'terminal'." },
                                           destino: { type: Type.STRING, description: "Caminho de destino, para 'mover', 'copiar' e 'renomear'." },
                                           conteudo: { type: Type.STRING, description: "Texto a gravar, para 'escrever_arquivo'." },
@@ -9051,7 +9074,16 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                                           visivel: { type: Type.BOOLEAN, description: "Para 'terminal': true abre uma janela de terminal REAL na tela para o usuário ver o comando rodando." },
                                           subacao: { type: Type.STRING, description: "Detalhe da ação: volume ('set','up','down','mute','unmute'); midia ('playpause','play','pause','next','previous'); configuracoes ('camera','sound','network','bluetooth','privacy','display','taskbar','main')." },
                                           valor: { type: Type.NUMBER, description: "Valor numérico, usado no volume com subacao='set' (0 a 100)." },
-                                          forcar: { type: Type.BOOLEAN, description: "Para 'fechar': true encerra o app à força, sem esperar salvar." }
+                                          forcar: { type: Type.BOOLEAN, description: "Para 'fechar': true encerra o app à força, sem esperar salvar." },
+                                          x: { type: Type.NUMBER, description: "Coordenada X de tela (pixels), para 'mover_mouse', 'clicar' e opcionalmente 'rolar'. Use o que você vê pelo compartilhamento de tela para estimar a posição." },
+                                          y: { type: Type.NUMBER, description: "Coordenada Y de tela (pixels), para 'mover_mouse', 'clicar' e opcionalmente 'rolar'." },
+                                          botao: { type: Type.STRING, description: "Para 'clicar': 'left' (padrão) ou 'right'." },
+                                          duplo: { type: Type.BOOLEAN, description: "Para 'clicar': true faz duplo-clique." },
+                                          direcao: { type: Type.STRING, description: "Para 'rolar': 'up' ou 'down'." },
+                                          quantidade: { type: Type.NUMBER, description: "Para 'rolar': quantos 'cliques' de roda de mouse (padrão 3, como um giro normal de roda física)." },
+                                          texto: { type: Type.STRING, description: "Para 'digitar': o texto a digitar no campo/elemento que está em foco na tela agora (não abre nem seleciona o campo — clique nele primeiro com acao='clicar')." },
+                                          tecla: { type: Type.STRING, description: "Para 'tecla': nome da tecla ('enter', 'tab', 'escape', 'backspace', 'delete', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'home', 'end', 'pageup', 'pagedown') ou um único caractere alfanumérico." },
+                                          modificadores: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Para 'tecla': lista de modificadores a segurar junto, ex: ['ctrl'] para Ctrl+C." }
                                         },
                                         required: ["acao"]
                                       }
@@ -9771,14 +9803,31 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     const agentRes = await executeLocalAgentCall(call.name, call.args, apiKeys.localAgentToken, true);
                     if (agentRes.error) {
                       addNotification(agentRes.error, 'error');
+                      responses.push({ name: call.name, id: call.id, response: { error: agentRes.error } });
+                    } else if (agentRes.image) {
+                      // 'capturar_tela': em vez de devolver a imagem base64 dentro da resposta de
+                      // função (que a API Live não trata como conteúdo visual), ela é injetada
+                      // diretamente no mesmo canal de vídeo usado pelo compartilhamento de tela —
+                      // o modelo passa a "ver" o frame imediatamente após a chamada, sem depender
+                      // de o usuário estar com o compartilhamento de tela via navegador ativo.
+                      const base64Png = String(agentRes.image).split(',')[1] || '';
+                      if (liveSessionRef.current && base64Png) {
+                        liveSessionRef.current.sendRealtimeInput({ video: { data: base64Png, mimeType: 'image/png' } });
+                      }
+                      addNotification("Captura de tela enviada ao modelo.", "success");
+                      responses.push({
+                        name: call.name,
+                        id: call.id,
+                        response: { result: "Captura de tela obtida e enviada como imagem. Você já pode ver e descrever o que está na tela agora." }
+                      });
                     } else {
                       addNotification("Ação do Agente Local processada.", "success");
+                      responses.push({
+                        name: call.name,
+                        id: call.id,
+                        response: { result: agentRes }
+                      });
                     }
-                    responses.push({
-                      name: call.name,
-                      id: call.id,
-                      response: { result: agentRes }
-                    });
                   } else if (call.name === "add_diary_entry") {
                     const { content, mood } = call.args as any;
                     addDiaryEntryHelper(content, mood);
