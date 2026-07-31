@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "buildCommand": "vite build",
+  "buildCommand": "npm run build:vercel",
   "outputDirectory": "dist",
   "rewrites": [
     {
