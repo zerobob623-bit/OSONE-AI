@@ -1927,7 +1927,11 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
       // o modelo não afirmar que mandou o áudio quando só o texto chegou.
       const partialAudioWarning = (args?.asAudio === true && !data?.audioSent && data?.audioError)
         ? ` ATENÇÃO: o áudio NÃO foi enviado (${data.audioError}) — apenas o texto chegou.`
-        : '';
+        // O áudio chegou, mas como arquivo em vez da bolinha de voz (falta ffmpeg na máquina).
+        // Vale dizer, senão o usuário estranha o formato e acha que deu errado.
+        : (data?.audioFormat === 'arquivo')
+          ? ' Obs: o áudio foi entregue como arquivo de áudio, e não como mensagem de voz, porque o ffmpeg não está instalado nesta máquina. O destinatário consegue ouvir normalmente.'
+          : '';
       return { message: `${data?.message || 'Mensagem enviada com sucesso pelo WhatsApp.'}${partialAudioWarning}` };
     } catch (err: any) {
       return { message: '', error: `Erro de conexão ao enviar pelo WhatsApp: ${err?.message || err}. A mensagem NÃO foi entregue.` };
