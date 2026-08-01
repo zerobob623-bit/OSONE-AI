@@ -543,6 +543,12 @@ Comentário de @${user}: "${text}"`;
     // real (Gemini Live/ElevenLabs Live) — ela roda direto no listener de mensagens do
     // Baileys sempre que "enabled" está true, mesmo sem nenhum app aberto na tela.
     sendAudioReplies: true,
+    // Quando true (padrão), o robô só responde a quem está cadastrado na lista de contatos do
+    // OSONE ZAP (contacts.json). Vem ligado de propósito: com o robô rodando sozinho o dia
+    // inteiro, responder automaticamente a QUALQUER número que escrever significa atender spam,
+    // golpes e desconhecidos sem ninguém olhando. Mensagens de números não cadastrados continuam
+    // sendo registradas no histórico e nos logs — só não recebem resposta automática.
+    onlyKnownContacts: true,
     ttsEngine: "gemini" as "gemini" | "elevenlabs",
     ttsVoice: "Kore",
     elevenLabsApiKey: "",
@@ -768,18 +774,29 @@ ${historyText}
 Responda em português do Brasil, de forma natural para leitura no WhatsApp (sem markdown pesado, sem listas longas).`;
   }
 
+  /**
+   * Encontra o contato salvo em contacts.json correspondente a um remetente do WhatsApp.
+   * Compara só os dígitos e tolera diferenças de prefixo (nono dígito, DDI presente ou não),
+   * porque o WhatsApp entrega o remetente como JID ("5584999259368@s.whatsapp.net") enquanto o
+   * contato pode ter sido cadastrado num formato mais curto.
+   */
+  function findSavedContact(senderJid: string): ContactItem | undefined {
+    const cleanDigits = String(senderJid || "").replace(/\D/g, "");
+    if (!cleanDigits) return undefined;
+    return loadContacts().find(c =>
+      c.phone === cleanDigits ||
+      (cleanDigits.length >= 8 && c.phone.endsWith(cleanDigits)) ||
+      (c.phone.length >= 8 && cleanDigits.endsWith(c.phone))
+    );
+  }
+
   function buildSalesPrompt(senderJid: string, senderName?: string): string {
     const kbContent = loadKnowledgeBase();
     const contactHistory = getContactHistory(senderJid);
     const cleanDigits = senderJid.replace(/\D/g, "");
 
     // Look up contact details in contacts.json
-    const allContacts = loadContacts();
-    const matchContact = allContacts.find(c => 
-      c.phone === cleanDigits || 
-      (cleanDigits.length >= 8 && c.phone.endsWith(cleanDigits)) || 
-      (c.phone.length >= 8 && cleanDigits.endsWith(c.phone))
-    );
+    const matchContact = findSavedContact(senderJid);
 
     let contactProfileStr = "";
     if (matchContact) {
@@ -1079,6 +1096,24 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     if (whatsappLogs.length > 100) whatsappLogs.pop();
 
     if (!whatsappConfig.enabled) return;
+
+    // Filtro de contatos: com o robô rodando sozinho, só responde a quem está cadastrado.
+    // O número do desenvolvedor passa sempre — caso contrário o dono do sistema ficaria
+    // trancado para fora do próprio modo desenvolvedor por não estar em contacts.json.
+    if (whatsappConfig.onlyKnownContacts && !isDeveloperNumber(sender)) {
+      const knownContact = findSavedContact(sender);
+      if (!knownContact) {
+        whatsappLogs.unshift({
+          id: Math.random().toString(36).substring(2, 11),
+          timestamp: Date.now(),
+          type: "info",
+          sender,
+          message: `Mensagem recebida de um número NÃO cadastrado (${msg.pushName || sender}). Nenhuma resposta automática foi enviada, porque o modo "responder apenas contatos salvos" está ativo. Para que o robô atenda este número, cadastre-o na aba Contatos do OSONE ZAP.`
+        });
+        if (whatsappLogs.length > 100) whatsappLogs.pop();
+        return;
+      }
+    }
 
     if (!geminiApiKeyToUse) {
       whatsappLogs.unshift({
@@ -1559,11 +1594,12 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   });
 
   app.post("/api/whatsapp/config", (req, res) => {
-    const { enabled, geminiApiKey, sendAudioReplies, ttsEngine, ttsVoice, elevenLabsApiKey, elevenLabsVoiceId } = req.body;
+    const { enabled, geminiApiKey, sendAudioReplies, onlyKnownContacts, ttsEngine, ttsVoice, elevenLabsApiKey, elevenLabsVoiceId } = req.body;
 
     if (enabled !== undefined) whatsappConfig.enabled = enabled;
     if (geminiApiKey !== undefined) whatsappConfig.geminiApiKey = geminiApiKey;
     if (sendAudioReplies !== undefined) whatsappConfig.sendAudioReplies = !!sendAudioReplies;
+    if (onlyKnownContacts !== undefined) whatsappConfig.onlyKnownContacts = !!onlyKnownContacts;
     if (ttsEngine === "gemini" || ttsEngine === "elevenlabs") whatsappConfig.ttsEngine = ttsEngine;
     if (ttsVoice !== undefined) whatsappConfig.ttsVoice = ttsVoice;
     if (elevenLabsApiKey !== undefined) whatsappConfig.elevenLabsApiKey = elevenLabsApiKey;
@@ -1880,6 +1916,21 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
         });
         if (whatsappLogs.length > 100) whatsappLogs.pop();
         return res.json({ status: "ignored", reason: "Autoresponder is disabled" });
+      }
+
+      // Mesmo filtro de contatos da recepção real: se a simulação respondesse a um número que o
+      // WhatsApp de verdade ignoraria, ela mentiria justamente sobre o comportamento que o
+      // usuário está testando antes de deixar o robô sozinho no ar.
+      if (whatsappConfig.onlyKnownContacts && !isDeveloperNumber(cleanJid) && !findSavedContact(cleanJid)) {
+        whatsappLogs.unshift({
+          id: Math.random().toString(36).substring(2, 11),
+          timestamp: Date.now(),
+          type: "info",
+          sender: `${cleanSender} (${cleanJid})`,
+          message: `Simulação: número NÃO cadastrado. Nenhuma resposta foi gerada, porque o modo "responder apenas contatos salvos" está ativo. Cadastre o número na aba Contatos para que o robô atenda.`
+        });
+        if (whatsappLogs.length > 100) whatsappLogs.pop();
+        return res.json({ status: "ignored", reason: "Sender is not a saved contact" });
       }
 
       const geminiApiKeyToUse = whatsappConfig.geminiApiKey || getSecretGeminiKey();
