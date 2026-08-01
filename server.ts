@@ -4143,11 +4143,19 @@ ${processedChunk}`;
 
       const response = await fetch("https://api.tavily.com/search", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          // A Tavily passou a autenticar por cabeçalho Bearer; o api_key no corpo continua
+          // aceito por compatibilidade. Mandar os dois funciona nas duas versões da API.
+          "Authorization": `Bearer ${tavilyKey}`
+        },
         body: JSON.stringify({
           api_key: tavilyKey,
           query: query,
-          search_depth: "smart",
+          // "smart" não existe na API da Tavily — os únicos valores aceitos são "basic" e
+          // "advanced". Qualquer outro faz a requisição voltar como 400 Bad Request, que era
+          // exatamente o erro que aparecia no console a cada busca.
+          search_depth: "basic",
           include_answer: true,
           max_results: 5
         })
