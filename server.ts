@@ -1088,8 +1088,10 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     voice?: string;
     elevenLabsApiKey?: string;
     elevenLabsVoiceId?: string;
+    /** Uso interno: marca a chamada de revezamento, para não repetir a troca de motor em ciclo. */
+    jaTentouFallback?: boolean;
   }): Promise<{ buffer: Buffer; mimeType: string; extension: string } | null> {
-    ultimoErroTts = "";
+    if (!opts.jaTentouFallback) ultimoErroTts = "";
     const cleanText = (text || "").trim();
     if (!cleanText) return null;
 
@@ -1213,8 +1215,28 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
         // Tradutor. Ele salvava o envio, mas com a voz robótica de leitor de texto — e, pior,
         // só para os trechos em que o Gemini falhava. O resultado era um mesmo áudio alternando
         // entre a voz natural e a robótica no meio da frase, sem nada explicando o porquê.
-        // Preferimos falhar de forma clara: sem voz natural, o áudio não sai, e o log diz isso.
-        console.error("[OSONE ZAP] O Gemini TTS não gerou áudio para um trecho — nenhum áudio será enviado (a voz robótica de emergência foi removida de propósito).");
+        // Antes havia aqui um recurso de emergência com a voz robótica do Google Tradutor.
+        // Foi removido: ele salvava o envio, mas alternando entre a voz natural e a robótica no
+        // meio da mesma frase. O revezamento agora é para a ElevenLabs, que tem voz boa.
+        console.error("[OSONE ZAP] O Gemini TTS não gerou áudio para um trecho.");
+
+        // Troca automática de motor: a cota gratuita de voz do Gemini é de poucos áudios por
+        // DIA, então ela acaba no meio do expediente e o robô emudece justamente quando está
+        // sendo usado. Havendo chave da ElevenLabs, o áudio continua saindo por lá sem que
+        // ninguém precise mexer em nada. 'jaTentouFallback' evita recursão infinita caso a
+        // ElevenLabs também falhe.
+        const chaveEleven = opts.elevenLabsApiKey || process.env.ELEVENLABS_API_KEY;
+        if (chaveEleven && !opts.jaTentouFallback) {
+          console.log("[OSONE ZAP] Trocando automaticamente para a ElevenLabs para não ficar sem áudio.");
+          const porEleven = await synthesizeWhatsAppVoiceReply(text, { ...opts, engine: "elevenlabs", jaTentouFallback: true });
+          if (porEleven) {
+            ultimoErroTts = "";
+            return porEleven;
+          }
+          ultimoErroTts = `${ultimoErroTts} A troca automática para a ElevenLabs também não funcionou — confira a chave dela nos Ajustes.`;
+        } else if (!chaveEleven) {
+          ultimoErroTts = `${ultimoErroTts} Dica: configure uma chave da ElevenLabs nos Ajustes e o OSONE passa a usá-la sozinho quando a cota do Gemini acabar.`;
+        }
         return null;
       }
     }
