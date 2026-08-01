@@ -1,0 +1,89 @@
+name: Publicar Release (.exe e AppImage)
+
+# Dispara ao empurrar uma tag de versão (ex: v1.1.0), ou manualmente pelo botão
+# "Run workflow" na aba Actions do GitHub.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# Necessário para o electron-builder criar a Release e subir os instaladores.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      # Um de cada vez de propósito: os dois jobs publicam na MESMA Release do GitHub, e
+      # rodando em paralelo os dois tentam criá-la ao mesmo tempo, o que pode gerar release
+      # duplicada ou erro de conflito. Em série, o segundo job encontra a Release já criada.
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            nome: Windows (.exe)
+            alvo: --win
+          - os: ubuntu-latest
+            nome: Linux (AppImage)
+            alvo: --linux
+
+    name: ${{ matrix.nome }}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Instalar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Construir o app (frontend + servidor)
+        # As chaves do Firebase precisam existir AQUI, neste passo: o Vite embute os valores
+        # de import.meta.env.VITE_* dentro do bundle no momento do build, não em tempo de
+        # execução. Sem elas o app é publicado com o login Google e a sincronização em nuvem
+        # desligados, mesmo com tudo o mais funcionando.
+        run: npm run build
+        env:
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+          VITE_FIREBASE_MEASUREMENT_ID: ${{ secrets.VITE_FIREBASE_MEASUREMENT_ID }}
+          VITE_FIREBASE_FIRESTORE_DATABASE_ID: ${{ secrets.VITE_FIREBASE_FIRESTORE_DATABASE_ID }}
+
+      - name: Conferir se o Firebase entrou no build
+        # Trava de segurança: se um secret estiver faltando ou escrito errado, o build passa
+        # normalmente e só se descobre o problema quando um usuário tenta entrar com o Google
+        # no app já distribuído. Aqui a publicação para antes disso acontecer.
+        shell: bash
+        run: |
+          PROJETO="${{ secrets.VITE_FIREBASE_PROJECT_ID }}"
+          if [ -z "$PROJETO" ]; then
+            echo "ERRO: o secret VITE_FIREBASE_PROJECT_ID não está definido no repositório."
+            echo "Cadastre os secrets em Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          if grep -rq "$PROJETO" dist/assets/; then
+            echo "OK: as chaves do Firebase foram embutidas no build."
+          else
+            echo "ERRO: o build saiu SEM as chaves do Firebase."
+            echo "O app seria publicado sem login Google e sem sincronização em nuvem."
+            exit 1
+          fi
+
+      - name: Gerar instalador e publicar na Release
+        run: npx electron-builder ${{ matrix.alvo }} --publish always
+        env:
+          # Token que o próprio GitHub Actions fornece; é o que o electron-builder usa para
+          # criar a Release e anexar os instaladores. Não precisa cadastrar nada.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
