@@ -1323,9 +1323,25 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     // Filtro de contatos: com o robô rodando sozinho, só responde a quem está cadastrado.
     // O número do desenvolvedor passa sempre — caso contrário o dono do sistema ficaria
     // trancado para fora do próprio modo desenvolvedor por não estar em contacts.json.
+    // Quem escreveu o comando está claramente falando COM o robô. Se mesmo assim alguma trava
+    // barrar a mensagem, isso precisa aparecer no log: era exatamente o caso em que o usuário
+    // mandava "/osone", não recebia nada, e não havia nenhuma pista do motivo.
+    const chamouORobo = matchTriggerCommand(body).triggered;
+
     if (whatsappConfig.onlyKnownContacts && !isDeveloperNumber(sender)) {
       const knownContact = findSavedContact(sender);
       if (!knownContact) {
+        if (chamouORobo) {
+          whatsappLogs.unshift({
+            id: Math.random().toString(36).substring(2, 11),
+            timestamp: Date.now(),
+            type: "error",
+            sender,
+            message: `${msg.pushName || sender} chamou o OSONE com "${whatsappConfig.triggerCommand}", mas NÃO recebeu resposta: a opção "responder apenas contatos salvos" está LIGADA e este número não está na aba Contatos. Desligue essa opção no painel, ou cadastre o número.`
+          });
+          if (whatsappLogs.length > 100) whatsappLogs.pop();
+          return;
+        }
         whatsappLogs.unshift({
           id: Math.random().toString(36).substring(2, 11),
           timestamp: Date.now(),
@@ -1871,6 +1887,87 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     } catch (e: any) {
       return res.status(500).json({ ok: false, erro: e?.message || String(e) });
     }
+  });
+
+  /**
+   * Diagnóstico da recepção: simula uma mensagem chegando de um número e diz exatamente qual
+   * verificação a barraria — ou confirma que ela seria respondida.
+   *
+   * Existe porque a recusa é silenciosa por natureza: o robô precisa ficar quieto nas conversas
+   * que não são para ele, então mensagens sem o gatilho saem sem deixar rastro. Isso é o certo
+   * em operação e péssimo para diagnosticar — quando alguém escreve "/osone" e não recebe nada,
+   * não há nenhuma pista de qual das portas fechou.
+   *
+   * Uso: /api/whatsapp/diagnostico-recepcao?numero=5511999999999&texto=/osone oi
+   */
+  app.get("/api/whatsapp/diagnostico-recepcao", (req, res) => {
+    const numero = String(req.query.numero || "").replace(/\D/g, "");
+    const texto = String(req.query.texto || "/osone teste");
+    if (!numero) {
+      return res.status(400).json({ erro: "Informe o número: ?numero=5511999999999&texto=/osone oi" });
+    }
+
+    const jid = `${numero}@s.whatsapp.net`;
+    const ehDesenvolvedor = isDeveloperNumber(jid);
+    const contatoSalvo = findSavedContact(jid);
+    const gatilho = matchTriggerCommand(texto);
+
+    const portas: { porta: string; passa: boolean; detalhe: string }[] = [
+      {
+        porta: "Robô ligado",
+        passa: whatsappConfig.enabled,
+        detalhe: whatsappConfig.enabled ? "ligado" : "DESLIGADO — ligue o chatbot no painel do OSONE ZAP"
+      },
+      {
+        porta: "Filtro de contatos salvos",
+        passa: !whatsappConfig.onlyKnownContacts || ehDesenvolvedor || !!contatoSalvo,
+        detalhe: !whatsappConfig.onlyKnownContacts
+          ? "desligado — qualquer número passa"
+          : ehDesenvolvedor
+            ? "é o número do desenvolvedor, passa sempre"
+            : contatoSalvo
+              ? `cadastrado como '${contatoSalvo.name}'`
+              : "BLOQUEADO — número não está na aba Contatos e o filtro está LIGADO"
+      },
+      {
+        porta: "Comando de ativação",
+        passa: !whatsappConfig.requireTriggerCommand || ehDesenvolvedor || gatilho.triggered,
+        detalhe: !whatsappConfig.requireTriggerCommand
+          ? "desligado — qualquer texto passa"
+          : ehDesenvolvedor
+            ? "é o número do desenvolvedor, não precisa do comando"
+            : gatilho.triggered
+              ? `encontrou '${whatsappConfig.triggerCommand}'; a IA vai ler: "${gatilho.cleanedText || "Olá!"}"`
+              : `BLOQUEADO — o texto não contém '${whatsappConfig.triggerCommand}'`
+      },
+      {
+        porta: "Chave do Gemini",
+        passa: !!(whatsappConfig.geminiApiKey || getSecretGeminiKey()),
+        detalhe: (whatsappConfig.geminiApiKey || getSecretGeminiKey()) ? "configurada" : "AUSENTE — configure nos Ajustes"
+      },
+      {
+        porta: "WhatsApp conectado",
+        passa: waStatus === "conectado",
+        detalhe: `status atual: ${waStatus}`
+      }
+    ];
+
+    const bloqueio = portas.find(p => !p.passa);
+    return res.json({
+      responderia: !bloqueio,
+      motivoDoBloqueio: bloqueio ? `${bloqueio.porta}: ${bloqueio.detalhe}` : null,
+      // Lembrete útil: mensagens que VOCÊ envia para o seu próprio número nunca chegam ao robô,
+      // porque o WhatsApp as marca como "fromMe" e elas são ignoradas para evitar que o robô
+      // responda às próprias respostas num laço infinito.
+      avisoTesteConsigoMesmo: "Mandar mensagem para o seu PRÓPRIO número nunca funciona: o WhatsApp marca como 'enviada por mim' e o robô ignora, senão ele responderia a si mesmo em laço. Teste com o celular de outra pessoa.",
+      configuracaoAtual: {
+        roboLigado: whatsappConfig.enabled,
+        somenteContatosSalvos: whatsappConfig.onlyKnownContacts,
+        exigeComando: whatsappConfig.requireTriggerCommand,
+        comando: whatsappConfig.triggerCommand
+      },
+      portas
+    });
   });
 
   app.get("/api/whatsapp/config", (req, res) => {
