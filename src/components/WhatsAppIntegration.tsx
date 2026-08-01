@@ -1296,9 +1296,23 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                   onChange={(e) => setConfig({ ...config, geminiApiKey: e.target.value })}
                   className="w-full px-3.5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500/50 font-mono"
                 />
-                <p className="text-[10px] text-zinc-500 mt-1">
-                  Se deixado em branco, o sistema usará a chave de ambiente configurada no OSONE.
-                </p>
+                {/* Campo de senha esconde o conteúdo, então uma chave colada pela metade parece
+                    idêntica a uma completa — e o Google recusa as duas com o mesmo "API key not
+                    valid". Mostrar o comprimento revela na hora que a cópia veio cortada. */}
+                {config.geminiApiKey ? (
+                  <p className={`text-[10px] mt-1 ${
+                    config.geminiApiKey.length === 39 ? 'text-emerald-400' : 'text-amber-400'
+                  }`}>
+                    {config.geminiApiKey.length} caracteres
+                    {config.geminiApiKey.length === 39
+                      ? ' — tamanho correto de uma chave do Gemini.'
+                      : ' — uma chave do Gemini tem 39. Apague o campo e cole de novo; provavelmente a cópia veio incompleta.'}
+                  </p>
+                ) : (
+                  <p className="text-[10px] text-zinc-500 mt-1">
+                    Se deixado em branco, o sistema usará a chave de ambiente configurada no OSONE.
+                  </p>
+                )}
               </div>
 
               {/* Trigger Command Toggle */}
