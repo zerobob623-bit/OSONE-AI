@@ -966,6 +966,8 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   - Para enviar áudio (mensagem de voz), chame a mesma ferramenta com asAudio: true — o texto que você escrever será convertido em voz e enviado como áudio no WhatsApp. Use alsoText: false se o usuário quiser SOMENTE o áudio, sem o texto junto.
   - O número deve ir com DDI e DDD, apenas dígitos (ex: 5584999259368). Se o usuário não informar o número e você não tiver certeza de qual é, pergunte antes de enviar — nunca chute um destinatário.
   - Se a resposta avisar que o áudio falhou mas o texto foi enviado, relate exatamente isso ao usuário, sem arredondar para "enviei o áudio".
+  - Para mandar ARQUIVOS (PDF, imagem, vídeo, planilha, documento), use a mesma ferramenta com fileUrl (link público do arquivo) ou fileBase64 (conteúdo do arquivo), junto de fileName com a extensão correta. O texto em 'message' vira a legenda do arquivo. Para mandar apenas um LINK (site, vídeo, catálogo online), não precisa de arquivo nenhum: coloque a URL dentro de 'message' e o WhatsApp gera a pré-visualização sozinho.
+  - Links internos (localhost, 127.0.0.1, rede local) são recusados por segurança ao anexar arquivos. Se precisar mandar algo que só existe no computador do usuário, gere o conteúdo em base64 e use fileBase64.
 
   DIRETRIZ - CONTROLE DO PC (controlar_pc):
   - Para QUALQUER coisa no computador do usuário — criar, escrever, apagar, mover ou copiar arquivos e pastas; abrir ou fechar aplicativos; rodar comandos de terminal; volume; mídia; configurações do sistema — use a ferramenta 'controlar_pc' com a 'acao' correspondente. É a única ferramenta de PC que existe; não procure outra.
@@ -1881,11 +1883,24 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
     const number = String(args?.number || '').replace(/\D/g, '');
     const message = String(args?.message || '').trim();
 
+    // Arquivo (PDF, imagem, vídeo, planilha...) por link público ou por conteúdo em base64.
+    const fileUrl = String(args?.fileUrl || '').trim();
+    const fileBase64 = String(args?.fileBase64 || '').trim();
+    const hasMedia = !!(fileUrl || fileBase64);
+    const media = hasMedia
+      ? {
+          ...(fileUrl ? { url: fileUrl } : { data: fileBase64 }),
+          type: args?.fileType || undefined,
+          fileName: args?.fileName || undefined,
+          mimeType: args?.fileMimeType || undefined
+        }
+      : null;
+
     if (!number || number.length < 8) {
       return { message: '', error: `Número de destino inválido: '${args?.number}'. Informe com DDI e DDD (ex: 5584999259368).` };
     }
-    if (!message) {
-      return { message: '', error: 'A mensagem está vazia — nada foi enviado.' };
+    if (!message && !hasMedia) {
+      return { message: '', error: 'A mensagem está vazia e nenhum arquivo foi informado — nada foi enviado.' };
     }
 
     try {
@@ -1897,6 +1912,7 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
           message,
           asAudio: args?.asAudio === true,
           alsoText: args?.alsoText !== false,
+          ...(media ? { media } : {}),
           geminiApiKey: apiKeys.gemini || '',
           elevenLabsApiKey: apiKeys.elevenLabsApiKey || '',
           elevenLabsVoiceId: getActiveElevenLabsVoiceId()
@@ -7431,16 +7447,21 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
 
       functionDeclarations.push({
         name: "send_whatsapp_message",
-        description: "Envia uma mensagem de WhatsApp REAL para um contato, pelo WhatsApp conectado no OSONE ZAP. Use SEMPRE esta ferramenta quando o usuário pedir para mandar mensagem para alguém — você não tem nenhuma outra forma de enviar. Pode enviar como texto, como áudio (mensagem de voz gerada a partir do texto) ou ambos. Só afirme que a mensagem foi enviada se a resposta desta ferramenta confirmar o sucesso.",
+        description: "Envia uma mensagem de WhatsApp REAL para um contato, pelo WhatsApp conectado no OSONE ZAP. Use SEMPRE esta ferramenta quando o usuário pedir para mandar mensagem para alguém — você não tem nenhuma outra forma de enviar. Pode enviar texto, áudio (mensagem de voz gerada a partir do texto), e também ARQUIVOS: PDF, imagem, vídeo, planilha ou qualquer documento, por link público (fileUrl) ou por conteúdo em base64 (fileBase64). Para mandar um link normal (site, YouTube), basta colocar a URL dentro de 'message' — o WhatsApp gera a pré-visualização sozinho. Só afirme que a mensagem foi enviada se a resposta desta ferramenta confirmar o sucesso.",
         parameters: {
           type: Type.OBJECT,
           properties: {
             number: { type: Type.STRING, description: "Número de telefone do destinatário com DDI e DDD, apenas dígitos (ex: '5584999259368')." },
-            message: { type: Type.STRING, description: "O texto da mensagem a enviar. Se asAudio for true, este texto é convertido em voz." },
+            message: { type: Type.STRING, description: "O texto da mensagem a enviar. Se asAudio for true, este texto é convertido em voz. Se houver arquivo junto, este texto vira a legenda do arquivo. Pode ficar vazio quando você só quer mandar um arquivo." },
             asAudio: { type: Type.BOOLEAN, description: "true para enviar como mensagem de voz (áudio) no WhatsApp. Padrão: false (só texto)." },
-            alsoText: { type: Type.BOOLEAN, description: "Quando asAudio for true, define se o texto também é enviado junto. Padrão: true." }
+            alsoText: { type: Type.BOOLEAN, description: "Quando asAudio for true, define se o texto também é enviado junto. Padrão: true." },
+            fileUrl: { type: Type.STRING, description: "Link público (http/https) do arquivo a anexar — PDF, imagem, vídeo, planilha, etc. Precisa ser um endereço acessível na internet; links internos/localhost são recusados por segurança." },
+            fileBase64: { type: Type.STRING, description: "Alternativa a fileUrl: o conteúdo do arquivo em base64 (aceita data URI). Use quando você mesmo gerou o arquivo e ele não está publicado em nenhum link." },
+            fileName: { type: Type.STRING, description: "Nome do arquivo como o destinatário vai vê-lo, com extensão (ex: 'orcamento.pdf'). Importante para PDFs e documentos." },
+            fileType: { type: Type.STRING, description: "Como o WhatsApp deve exibir: 'document' (PDF/planilha/arquivo genérico), 'image', 'video' ou 'audio'. Se omitido, é deduzido do tipo do arquivo." },
+            fileMimeType: { type: Type.STRING, description: "Tipo MIME do arquivo (ex: 'application/pdf'), caso você saiba e o nome do arquivo não deixe claro." }
           },
-          required: ["number", "message"]
+          required: ["number"]
         }
       });
 
@@ -9090,16 +9111,21 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 },
                 {
                   name: "send_whatsapp_message",
-                  description: "Envia uma mensagem de WhatsApp REAL para um contato, pelo WhatsApp conectado no OSONE ZAP. Use SEMPRE esta ferramenta quando o usuário pedir para mandar mensagem para alguém — você não tem nenhuma outra forma de enviar. Pode enviar como texto, como áudio (mensagem de voz gerada a partir do texto) ou ambos. Só afirme que a mensagem foi enviada se a resposta desta ferramenta confirmar o sucesso.",
+                  description: "Envia uma mensagem de WhatsApp REAL para um contato, pelo WhatsApp conectado no OSONE ZAP. Use SEMPRE esta ferramenta quando o usuário pedir para mandar mensagem para alguém — você não tem nenhuma outra forma de enviar. Pode enviar texto, áudio (mensagem de voz), e também ARQUIVOS: PDF, imagem, vídeo, planilha ou qualquer documento, por link público (fileUrl) ou base64 (fileBase64). Para mandar um link normal (site, YouTube), basta colocar a URL dentro de 'message'. Só afirme que a mensagem foi enviada se a resposta desta ferramenta confirmar o sucesso.",
                   parameters: {
                     type: Type.OBJECT,
                     properties: {
                       number: { type: Type.STRING, description: "Número do destinatário com DDI e DDD, apenas dígitos." },
-                      message: { type: Type.STRING, description: "O texto da mensagem a enviar." },
+                      message: { type: Type.STRING, description: "O texto da mensagem. Se houver arquivo junto, vira a legenda dele. Pode ficar vazio quando você só quer mandar um arquivo." },
                       asAudio: { type: Type.BOOLEAN, description: "true para enviar como mensagem de voz (áudio)." },
-                      alsoText: { type: Type.BOOLEAN, description: "Quando asAudio for true, define se o texto também vai junto. Padrão: true." }
+                      alsoText: { type: Type.BOOLEAN, description: "Quando asAudio for true, define se o texto também vai junto. Padrão: true." },
+                      fileUrl: { type: Type.STRING, description: "Link público (http/https) do arquivo a anexar — PDF, imagem, vídeo, planilha, etc. Links internos/localhost são recusados por segurança." },
+                      fileBase64: { type: Type.STRING, description: "Alternativa a fileUrl: conteúdo do arquivo em base64 (aceita data URI)." },
+                      fileName: { type: Type.STRING, description: "Nome do arquivo como o destinatário vai vê-lo, com extensão (ex: 'orcamento.pdf')." },
+                      fileType: { type: Type.STRING, description: "Como exibir: 'document', 'image', 'video' ou 'audio'. Se omitido, é deduzido do arquivo." },
+                      fileMimeType: { type: Type.STRING, description: "Tipo MIME do arquivo (ex: 'application/pdf'), se você souber." }
                     },
-                    required: ["number", "message"]
+                    required: ["number"]
                   }
                 },
                 {
