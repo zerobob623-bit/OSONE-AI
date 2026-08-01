@@ -12,6 +12,8 @@ firebase-applet-config.json
 contacts.json
 conversations.json
 knowledge-base.json
+# Guarda as escolhas do painel do OSONE ZAP, incluindo chaves de API (Gemini/ElevenLabs)
+whatsapp-config.json
 
 # OSONE Local Agent — config.json holds the auto-generated bearer token that guards
 # app-opening/volume/terminal access to this machine; audit.log/trash are local runtime data
