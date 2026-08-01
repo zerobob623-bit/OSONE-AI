@@ -543,12 +543,12 @@ Comentário de @${user}: "${text}"`;
     // real (Gemini Live/ElevenLabs Live) — ela roda direto no listener de mensagens do
     // Baileys sempre que "enabled" está true, mesmo sem nenhum app aberto na tela.
     sendAudioReplies: true,
-    // Quando true (padrão), o robô só responde a quem está cadastrado na lista de contatos do
-    // OSONE ZAP (contacts.json). Vem ligado de propósito: com o robô rodando sozinho o dia
-    // inteiro, responder automaticamente a QUALQUER número que escrever significa atender spam,
-    // golpes e desconhecidos sem ninguém olhando. Mensagens de números não cadastrados continuam
-    // sendo registradas no histórico e nos logs — só não recebem resposta automática.
-    onlyKnownContacts: true,
+    // Desligado por padrão: qualquer pessoa pode perguntar ao OSONE, desde que chame pelo
+    // comando de gatilho abaixo. Quem protege contra spam e desconhecidos passou a ser o
+    // gatilho, não a lista de contatos — mensagem automática de golpe ou propaganda não vai
+    // escrever "/osone". Ligue esta opção para restringir o atendimento apenas a quem estiver
+    // cadastrado na aba Contatos.
+    onlyKnownContacts: false,
     // Quando true (padrão), o robô só responde a mensagens que chamem o OSONE pelo comando
     // abaixo — como quem diz "ei, OSONE, me responde aqui". Sem isso, o robô entraria no meio
     // de qualquer conversa em andamento com o dono do número, respondendo coisas que eram para
@@ -561,6 +561,43 @@ Comentário de @${user}: "${text}"`;
     elevenLabsApiKey: "",
     elevenLabsVoiceId: ""
   };
+
+  /**
+   * Onde as escolhas do painel do OSONE ZAP ficam guardadas.
+   *
+   * Sem este arquivo, a configuração vivia só na memória do processo: bastava fechar o OSONE
+   * (ou o computador reiniciar) para tudo voltar ao padrão de fábrica — inclusive o
+   * "enabled: false", que DESLIGA o robô. Quem deixasse o atendimento no ar o dia inteiro
+   * descobria, depois de um reinício qualquer, que o robô estava mudo desde então, sem
+   * nenhum aviso.
+   *
+   * Guarda chaves de API (Gemini/ElevenLabs), por isso entra no .gitignore junto dos demais
+   * arquivos de dados locais.
+   */
+  const WHATSAPP_CONFIG_PATH = path.join(process.cwd(), "whatsapp-config.json");
+
+  function loadWhatsAppConfig(): void {
+    try {
+      if (!fs.existsSync(WHATSAPP_CONFIG_PATH)) return;
+      const salvo = JSON.parse(fs.readFileSync(WHATSAPP_CONFIG_PATH, "utf-8"));
+      // Mescla sobre os padrões em vez de substituir: assim uma opção nova criada numa versão
+      // futura nasce com o valor padrão dela, em vez de virar undefined num arquivo antigo.
+      whatsappConfig = { ...whatsappConfig, ...salvo };
+      console.log("[OSONE ZAP] Configuração restaurada de whatsapp-config.json.");
+    } catch (e) {
+      console.error("[OSONE ZAP] Não foi possível ler whatsapp-config.json (usando os padrões):", e);
+    }
+  }
+
+  function saveWhatsAppConfig(): void {
+    try {
+      fs.writeFileSync(WHATSAPP_CONFIG_PATH, JSON.stringify(whatsappConfig, null, 2), "utf-8");
+    } catch (e) {
+      console.error("[OSONE ZAP] Não foi possível salvar whatsapp-config.json:", e);
+    }
+  }
+
+  loadWhatsAppConfig();
 
   let virtualConnectionState = "DISCONNECTED";
 
@@ -1652,6 +1689,9 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     if (ttsVoice !== undefined) whatsappConfig.ttsVoice = ttsVoice;
     if (elevenLabsApiKey !== undefined) whatsappConfig.elevenLabsApiKey = elevenLabsApiKey;
     if (elevenLabsVoiceId !== undefined) whatsappConfig.elevenLabsVoiceId = elevenLabsVoiceId;
+
+    // Grava em disco para que a escolha sobreviva a reinícios do OSONE.
+    saveWhatsAppConfig();
 
     whatsappLogs.unshift({
       id: Math.random().toString(36).substring(2, 11),
