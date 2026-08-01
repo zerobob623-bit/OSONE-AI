@@ -4,7 +4,9 @@ import http from "http";
 import path from "path";
 import fs from "fs";
 import os from "os";
+import crypto from "crypto";
 import dns from "dns";
+import { execFile } from "child_process";
 import { WebSocketServer, WebSocket } from "ws";
 import { GoogleGenAI, Modality } from "@google/genai";
 import { createServer as createViteServer } from "vite";
@@ -914,6 +916,69 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   // Sintetiza uma resposta em áudio para o OSONE ZAP (voz do vendedor IA), usada pelo listener
   // de auto-resposta do WhatsApp para enviar tanto texto quanto áudio. Independente/isolada da
   // rota /api/tts (usada pela Prosa/Sensus) para não arriscar alterar aquele fluxo já existente.
+  /**
+   * Converte o áudio gerado (WAV do Gemini, MP3 do ElevenLabs) para OGG/Opus — o único formato
+   * que o WhatsApp aceita numa mensagem de VOZ de verdade (ptt).
+   *
+   * Sem esta conversão, o envio "dá certo" e mesmo assim o áudio nunca chega: o servidor do
+   * WhatsApp aceita o upload de um WAV/MP3 marcado como ptt sem reclamar, e simplesmente
+   * descarta o áudio na entrega. Como nenhuma exceção é lançada, o OSONE registrava "áudio
+   * enviado" no log enquanto o destinatário recebia só o texto — a falha mais confusa possível,
+   * porque não deixava rastro nenhum.
+   *
+   * Depende do ffmpeg instalado no sistema. Devolve null quando ele não existe ou a conversão
+   * falha, e nesse caso quem chama envia o áudio como ARQUIVO comum (que toca normalmente no
+   * WhatsApp), em vez de uma mensagem de voz que não chegaria.
+   */
+  async function converterAudioParaOpus(buffer: Buffer, extensaoOrigem: string): Promise<Buffer | null> {
+    const base = path.join(os.tmpdir(), `osone-voz-${crypto.randomBytes(6).toString("hex")}`);
+    const entrada = `${base}.${extensaoOrigem || "wav"}`;
+    const saida = `${base}.ogg`;
+    try {
+      fs.writeFileSync(entrada, buffer);
+      // Parâmetros da mensagem de voz do WhatsApp: Opus, mono, 48 kHz, em contêiner OGG.
+      await new Promise<void>((resolve, reject) => {
+        execFile(
+          "ffmpeg",
+          ["-hide_banner", "-loglevel", "error", "-y", "-i", entrada,
+           "-c:a", "libopus", "-b:a", "32k", "-ar", "48000", "-ac", "1", "-f", "ogg", saida],
+          { timeout: 60000 },
+          (erro) => (erro ? reject(erro) : resolve())
+        );
+      });
+      if (!fs.existsSync(saida) || fs.statSync(saida).size === 0) return null;
+      return fs.readFileSync(saida);
+    } catch (e: any) {
+      const semFfmpeg = e?.code === "ENOENT";
+      console.warn(
+        semFfmpeg
+          ? "[OSONE ZAP] ffmpeg não encontrado: o áudio será enviado como arquivo, não como mensagem de voz. Instale o ffmpeg para ter o áudio na bolinha de voz."
+          : `[OSONE ZAP] Falha ao converter o áudio para Opus: ${e?.message || e}`
+      );
+      return null;
+    } finally {
+      fs.unlink(entrada, () => {});
+      fs.unlink(saida, () => {});
+    }
+  }
+
+  /**
+   * Envia o áudio pelo WhatsApp no melhor formato disponível e conta a verdade sobre o que
+   * saiu: mensagem de voz (quando há ffmpeg) ou arquivo de áudio (quando não há). Os dois
+   * tocam no WhatsApp — o que muda é a aparência.
+   */
+  async function enviarAudioWhatsApp(jid: string, speech: { buffer: Buffer; mimeType: string; extension: string }): Promise<"voz" | "arquivo"> {
+    const opus = await converterAudioParaOpus(speech.buffer, speech.extension);
+    if (opus) {
+      await waSocket.sendMessage(jid, { audio: opus, mimetype: "audio/ogg; codecs=opus", ptt: true });
+      return "voz";
+    }
+    // ptt:false de propósito: marcar um WAV/MP3 como mensagem de voz faz o WhatsApp descartá-lo
+    // silenciosamente. Como arquivo de áudio ele chega e toca normalmente.
+    await waSocket.sendMessage(jid, { audio: speech.buffer, mimetype: speech.mimeType, ptt: false });
+    return "arquivo";
+  }
+
   async function synthesizeWhatsAppVoiceReply(text: string, opts: {
     engine?: "gemini" | "elevenlabs";
     geminiApiKey?: string;
@@ -1288,7 +1353,17 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
           elevenLabsVoiceId: whatsappConfig.elevenLabsVoiceId
         });
         if (speech) {
-          await waSocket.sendMessage(formattedJid, { audio: speech.buffer, mimetype: speech.mimeType, ptt: true });
+          const formato = await enviarAudioWhatsApp(formattedJid, speech);
+          if (formato === "arquivo") {
+            whatsappLogs.unshift({
+              id: Math.random().toString(36).substring(2, 11),
+              timestamp: Date.now(),
+              type: "info",
+              sender,
+              message: "Áudio enviado como ARQUIVO (toca normalmente). Para virar mensagem de voz na bolinha, instale o ffmpeg na máquina onde o OSONE roda."
+            });
+            if (whatsappLogs.length > 100) whatsappLogs.pop();
+          }
         } else {
           whatsappLogs.unshift({
             id: Math.random().toString(36).substring(2, 11),
@@ -2299,6 +2374,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       let msgId: string = "ok";
       let audioSent = false;
       let audioError: string | null = null;
+      let audioFormat: "voz" | "arquivo" | null = null;
       let mediaSent = false;
 
       // Com mídia e texto juntos, o texto vira legenda do arquivo (numa mensagem só, como uma
@@ -2334,14 +2410,12 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
           });
 
           if (speech) {
-            const audioResult = await waSocket.sendMessage(formattedJid, {
-              audio: speech.buffer,
-              mimetype: speech.mimeType,
-              ptt: true
-            });
+            // Campo próprio em vez de reaproveitar audioError: o áudio CHEGOU, apenas com
+            // aparência diferente. Tratar isso como erro faria o modelo dizer ao usuário que
+            // o envio falhou, quando o destinatário está ouvindo o áudio normalmente.
+            audioFormat = await enviarAudioWhatsApp(formattedJid, speech);
             audioSent = true;
-            if (msgId === "ok") msgId = audioResult?.key?.id || "ok";
-            console.log(`[WhatsApp Send] Áudio (mensagem de voz) enviado com sucesso para ${formattedJid}.`);
+            console.log(`[WhatsApp Send] Áudio enviado para ${formattedJid} como ${audioFormat}.`);
           } else {
             audioError = "Não foi possível gerar o áudio (verifique a chave de voz configurada nos Ajustes).";
           }
@@ -2391,6 +2465,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
         to: formattedJid,
         audioSent,
         audioError,
+        audioFormat,
         mediaSent
       });
     } catch (sendErr: any) {
