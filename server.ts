@@ -1900,7 +1900,46 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
    *
    * Uso: /api/whatsapp/diagnostico-recepcao?numero=5511999999999&texto=/osone oi
    */
-  app.get("/api/whatsapp/diagnostico-recepcao", (req, res) => {
+  /**
+   * Faz uma chamada mínima de verdade à IA para saber se a chave FUNCIONA — não basta existir.
+   *
+   * A verificação anterior olhava apenas se o campo estava preenchido e dizia "configurada".
+   * Uma chave com um espaço colado no fim, revogada, ou de um projeto sem a API ativada passava
+   * por esse teste e o robô continuava mudo, com o diagnóstico jurando que estava tudo certo.
+   */
+  async function testarChaveGemini(): Promise<{ passa: boolean; detalhe: string }> {
+    const chave = whatsappConfig.geminiApiKey || getSecretGeminiKey();
+    if (!chave) return { passa: false, detalhe: "AUSENTE — configure no painel do OSONE ZAP (aba Ajustes de IA) ou no .env" };
+
+    // Espaços invisíveis colados junto da chave são a causa mais comum de "API key not valid",
+    // e a mais difícil de enxergar: na tela a chave parece perfeita.
+    if (chave !== chave.trim()) {
+      return { passa: false, detalhe: "a chave está salva com espaços/quebras de linha em volta — apague e cole de novo, sem espaço no começo ou no fim" };
+    }
+
+    try {
+      const ai = new GoogleGenAI({ apiKey: chave, vertexai: false, httpOptions: { headers: { "User-Agent": "aistudio-build" } } });
+      await ai.models.generateContent({ model: "gemini-3.5-flash-lite", contents: "oi" });
+      return { passa: true, detalhe: `funcionando (${chave.slice(0, 6)}...${chave.slice(-4)})` };
+    } catch (e: any) {
+      const msg = String(e?.message || e);
+      if (msg.includes("API_KEY_INVALID") || msg.includes("API key not valid")) {
+        return {
+          passa: false,
+          detalhe: `RECUSADA pelo Google (${chave.slice(0, 6)}...${chave.slice(-4)}, ${chave.length} caracteres). A chave está errada, incompleta ou foi revogada. Gere outra em aistudio.google.com/apikey e cole no painel.`
+        };
+      }
+      if (msg.includes("PERMISSION_DENIED") || msg.includes("SERVICE_DISABLED")) {
+        return { passa: false, detalhe: "a chave existe, mas o projeto dela não tem a API do Gemini ativada." };
+      }
+      if (msg.includes("RESOURCE_EXHAUSTED") || msg.includes("quota")) {
+        return { passa: false, detalhe: "a chave é válida, mas a cota acabou (limite de uso atingido)." };
+      }
+      return { passa: false, detalhe: `falhou ao testar: ${msg.slice(0, 160)}` };
+    }
+  }
+
+  app.get("/api/whatsapp/diagnostico-recepcao", async (req, res) => {
     const numero = String(req.query.numero || "").replace(/\D/g, "");
     const texto = String(req.query.texto || "/osone teste");
     if (!numero) {
@@ -1942,8 +1981,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       },
       {
         porta: "Chave do Gemini",
-        passa: !!(whatsappConfig.geminiApiKey || getSecretGeminiKey()),
-        detalhe: (whatsappConfig.geminiApiKey || getSecretGeminiKey()) ? "configurada" : "AUSENTE — configure nos Ajustes"
+        ...(await testarChaveGemini())
       },
       {
         porta: "WhatsApp conectado",
@@ -1978,7 +2016,10 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     const { enabled, geminiApiKey, sendAudioReplies, onlyKnownContacts, requireTriggerCommand, triggerCommand, ttsEngine, ttsVoice, elevenLabsApiKey, elevenLabsVoiceId } = req.body;
 
     if (enabled !== undefined) whatsappConfig.enabled = enabled;
-    if (geminiApiKey !== undefined) whatsappConfig.geminiApiKey = geminiApiKey;
+    // trim() obrigatório: copiar a chave do console do Google costuma trazer junto um espaço ou
+    // uma quebra de linha invisível. Guardada suja, o Google devolve "API key not valid" e o
+    // usuário fica olhando para uma chave que PARECE certa na tela, sem entender a recusa.
+    if (geminiApiKey !== undefined) whatsappConfig.geminiApiKey = String(geminiApiKey).trim();
     if (sendAudioReplies !== undefined) whatsappConfig.sendAudioReplies = !!sendAudioReplies;
     if (onlyKnownContacts !== undefined) whatsappConfig.onlyKnownContacts = !!onlyKnownContacts;
     if (requireTriggerCommand !== undefined) whatsappConfig.requireTriggerCommand = !!requireTriggerCommand;
@@ -1989,7 +2030,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     }
     if (ttsEngine === "gemini" || ttsEngine === "elevenlabs") whatsappConfig.ttsEngine = ttsEngine;
     if (ttsVoice !== undefined) whatsappConfig.ttsVoice = ttsVoice;
-    if (elevenLabsApiKey !== undefined) whatsappConfig.elevenLabsApiKey = elevenLabsApiKey;
+    if (elevenLabsApiKey !== undefined) whatsappConfig.elevenLabsApiKey = String(elevenLabsApiKey).trim();
     if (elevenLabsVoiceId !== undefined) whatsappConfig.elevenLabsVoiceId = elevenLabsVoiceId;
 
     // Grava em disco para que a escolha sobreviva a reinícios do OSONE.
