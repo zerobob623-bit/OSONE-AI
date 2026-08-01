@@ -549,6 +549,13 @@ Comentário de @${user}: "${text}"`;
     // golpes e desconhecidos sem ninguém olhando. Mensagens de números não cadastrados continuam
     // sendo registradas no histórico e nos logs — só não recebem resposta automática.
     onlyKnownContacts: true,
+    // Quando true (padrão), o robô só responde a mensagens que chamem o OSONE pelo comando
+    // abaixo — como quem diz "ei, OSONE, me responde aqui". Sem isso, o robô entraria no meio
+    // de qualquer conversa em andamento com o dono do número, respondendo coisas que eram para
+    // a pessoa, não para a IA. O comando é removido do texto antes de ir para o modelo, para a
+    // IA ler só o pedido em si.
+    requireTriggerCommand: true,
+    triggerCommand: "/osone",
     ttsEngine: "gemini" as "gemini" | "elevenlabs",
     ttsVoice: "Kore",
     elevenLabsApiKey: "",
@@ -788,6 +795,29 @@ Responda em português do Brasil, de forma natural para leitura no WhatsApp (sem
       (cleanDigits.length >= 8 && c.phone.endsWith(cleanDigits)) ||
       (c.phone.length >= 8 && cleanDigits.endsWith(c.phone))
     );
+  }
+
+  /**
+   * Verifica se a mensagem chama o OSONE pelo comando de gatilho (ex.: "/osone") e devolve o
+   * texto já sem o comando, que é o que vai para o modelo — a IA deve ler "me manda o catálogo",
+   * não "/osone me manda o catálogo".
+   *
+   * Procura o comando em qualquer posição, e não só no começo, por dois motivos práticos:
+   * mensagens de voz e imagens chegam aqui como transcrição/descrição gerada pela IA (com um
+   * prefixo tipo "[Mensagem de voz do cliente]: ..."), então exigir o comando no início faria o
+   * gatilho nunca funcionar por áudio; e é comum a pessoa escrever "oi, /osone me ajuda".
+   */
+  function matchTriggerCommand(text: string): { triggered: boolean; cleanedText: string } {
+    const trigger = (whatsappConfig.triggerCommand || "").trim().toLowerCase();
+    if (!trigger) return { triggered: true, cleanedText: text };
+
+    const idx = text.toLowerCase().indexOf(trigger);
+    if (idx === -1) return { triggered: false, cleanedText: text };
+
+    const cleaned = (text.slice(0, idx) + text.slice(idx + trigger.length))
+      .replace(/\s{2,}/g, " ")
+      .trim();
+    return { triggered: true, cleanedText: cleaned };
   }
 
   function buildSalesPrompt(senderJid: string, senderName?: string): string {
@@ -1115,6 +1145,18 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       }
     }
 
+    // Gatilho: só responde quando chamarem o OSONE pelo comando (ex.: "/osone"). O
+    // desenvolvedor passa direto, já que no modo desenvolvedor toda mensagem dele é uma ordem
+    // ao sistema — exigir o comando dele seria só atrito.
+    let promptBody = body;
+    if (whatsappConfig.requireTriggerCommand && !isDeveloperNumber(sender)) {
+      const { triggered, cleanedText } = matchTriggerCommand(body);
+      if (!triggered) return; // conversa normal entre humanos: o robô fica quieto, sem poluir os logs
+      // Mensagem que era só o comando, sem pergunta junto ("/osone"): trata como um "oi",
+      // senão o modelo receberia uma string vazia e responderia qualquer coisa.
+      promptBody = cleanedText || "Olá!";
+    }
+
     if (!geminiApiKeyToUse) {
       whatsappLogs.unshift({
         id: Math.random().toString(36).substring(2, 11),
@@ -1153,7 +1195,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     try {
       const gResult = await generateContentWithFallback(ai, {
         model: "gemini-3.5-flash-lite",
-        contents: body,
+        contents: promptBody,
         config: { systemInstruction: systemPrompt }
       });
       replyText = (gResult.text || "").trim() || "Olá! Agradeço sua mensagem. Como posso te ajudar com nossos produtos hoje?";
@@ -1594,12 +1636,18 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   });
 
   app.post("/api/whatsapp/config", (req, res) => {
-    const { enabled, geminiApiKey, sendAudioReplies, onlyKnownContacts, ttsEngine, ttsVoice, elevenLabsApiKey, elevenLabsVoiceId } = req.body;
+    const { enabled, geminiApiKey, sendAudioReplies, onlyKnownContacts, requireTriggerCommand, triggerCommand, ttsEngine, ttsVoice, elevenLabsApiKey, elevenLabsVoiceId } = req.body;
 
     if (enabled !== undefined) whatsappConfig.enabled = enabled;
     if (geminiApiKey !== undefined) whatsappConfig.geminiApiKey = geminiApiKey;
     if (sendAudioReplies !== undefined) whatsappConfig.sendAudioReplies = !!sendAudioReplies;
     if (onlyKnownContacts !== undefined) whatsappConfig.onlyKnownContacts = !!onlyKnownContacts;
+    if (requireTriggerCommand !== undefined) whatsappConfig.requireTriggerCommand = !!requireTriggerCommand;
+    // Um gatilho vazio faria matchTriggerCommand liberar TODA mensagem, o oposto do que a opção
+    // promete — então texto em branco é recusado e mantém o comando anterior.
+    if (typeof triggerCommand === "string" && triggerCommand.trim()) {
+      whatsappConfig.triggerCommand = triggerCommand.trim();
+    }
     if (ttsEngine === "gemini" || ttsEngine === "elevenlabs") whatsappConfig.ttsEngine = ttsEngine;
     if (ttsVoice !== undefined) whatsappConfig.ttsVoice = ttsVoice;
     if (elevenLabsApiKey !== undefined) whatsappConfig.elevenLabsApiKey = elevenLabsApiKey;
@@ -1933,6 +1981,24 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
         return res.json({ status: "ignored", reason: "Sender is not a saved contact" });
       }
 
+      // Mesmo gatilho da recepção real, pelo mesmo motivo do filtro de contatos acima.
+      let promptText = cleanText;
+      if (whatsappConfig.requireTriggerCommand && !isDeveloperNumber(cleanJid)) {
+        const { triggered, cleanedText } = matchTriggerCommand(cleanText);
+        if (!triggered) {
+          whatsappLogs.unshift({
+            id: Math.random().toString(36).substring(2, 11),
+            timestamp: Date.now(),
+            type: "info",
+            sender: `${cleanSender} (${cleanJid})`,
+            message: `Simulação: mensagem sem o comando "${whatsappConfig.triggerCommand}". O robô ficou quieto, como faria numa conversa normal entre pessoas.`
+          });
+          if (whatsappLogs.length > 100) whatsappLogs.pop();
+          return res.json({ status: "ignored", reason: "Message did not include the trigger command" });
+        }
+        promptText = cleanedText || "Olá!";
+      }
+
       const geminiApiKeyToUse = whatsappConfig.geminiApiKey || getSecretGeminiKey();
       if (!geminiApiKeyToUse) {
         whatsappLogs.unshift({
@@ -1952,7 +2018,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
 
       const gResult = await generateContentWithFallback(ai, {
         model: "gemini-3.5-flash-lite",
-        contents: cleanText,
+        contents: promptText,
         config: {
           systemInstruction: systemPrompt
         }
@@ -1980,6 +2046,142 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     }
   });
 
+  /** Teto de tamanho para mídia enviada pelo WhatsApp. O arquivo inteiro passa pela memória do
+   * servidor antes de ir para o Baileys, então sem limite um link para um arquivo gigante
+   * derrubaria o processo do OSONE inteiro por falta de memória. */
+  const MAX_WHATSAPP_MEDIA_BYTES = 40 * 1024 * 1024; // 40 MB
+
+  /**
+   * Recusa endereços que apontam para a própria máquina ou para a rede interna. Sem isso, um
+   * link de mídia poderia fazer o servidor buscar coisas que só ele enxerga (o próprio Agente
+   * Local em 127.0.0.1, roteadores, serviços da rede doméstica) e mandar o conteúdo por
+   * WhatsApp — e a URL pode vir do modelo, que por sua vez lê mensagens escritas por clientes
+   * desconhecidos. É a mesma razão de o Agente Local só entregar token em loopback.
+   */
+  function assertSafeMediaUrl(rawUrl: string): URL {
+    let parsed: URL;
+    try {
+      parsed = new URL(rawUrl);
+    } catch {
+      throw new Error(`URL de mídia inválida: '${rawUrl}'.`);
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error(`Protocolo não permitido em '${rawUrl}'. Use apenas http:// ou https://.`);
+    }
+    const host = parsed.hostname.toLowerCase();
+    const isPrivate =
+      host === "localhost" ||
+      host === "0.0.0.0" ||
+      host.endsWith(".local") ||
+      host.endsWith(".internal") ||
+      /^127\./.test(host) ||
+      /^10\./.test(host) ||
+      /^192\.168\./.test(host) ||
+      /^169\.254\./.test(host) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+      host === "::1" || host === "[::1]";
+    if (isPrivate) {
+      throw new Error(`Endereço bloqueado por segurança: '${host}' aponta para a própria máquina ou para a rede interna, não para a internet pública.`);
+    }
+    return parsed;
+  }
+
+  /** Extensão -> mimetype, para quando o servidor de origem não informa um Content-Type útil. */
+  const MEDIA_MIME_BY_EXT: Record<string, string> = {
+    pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+    gif: "image/gif", webp: "image/webp", mp4: "video/mp4", mp3: "audio/mpeg",
+    ogg: "audio/ogg", opus: "audio/ogg", wav: "audio/wav", doc: "application/msword",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    xls: "application/vnd.ms-excel",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    zip: "application/zip", txt: "text/plain", csv: "text/csv"
+  };
+
+  /**
+   * Resolve a mídia pedida (link público ou base64) num buffer pronto para o Baileys, junto do
+   * mimetype e do nome de arquivo. Aceita base64 puro ou data URI ("data:application/pdf;base64,...").
+   */
+  async function resolveWhatsAppMedia(media: any): Promise<{ buffer: Buffer; mimeType: string; fileName: string }> {
+    const explicitMime = (media?.mimeType || media?.mimetype || "").toString().trim();
+    let fileName = (media?.fileName || media?.filename || "").toString().trim();
+    let buffer: Buffer;
+    let mimeType = explicitMime;
+
+    if (media?.url) {
+      const parsed = assertSafeMediaUrl(String(media.url));
+      const response = await fetch(parsed.toString(), { redirect: "follow" });
+      if (!response.ok) {
+        throw new Error(`Não foi possível baixar o arquivo do link (HTTP ${response.status}).`);
+      }
+      // Confere o tamanho antes de carregar tudo na memória, quando o servidor informa.
+      const declaredLength = Number(response.headers.get("content-length") || 0);
+      if (declaredLength && declaredLength > MAX_WHATSAPP_MEDIA_BYTES) {
+        throw new Error(`Arquivo muito grande (${(declaredLength / 1024 / 1024).toFixed(1)} MB). O limite para envio é ${MAX_WHATSAPP_MEDIA_BYTES / 1024 / 1024} MB.`);
+      }
+      buffer = Buffer.from(await response.arrayBuffer());
+      if (!mimeType) mimeType = (response.headers.get("content-type") || "").split(";")[0].trim();
+      if (!fileName) {
+        fileName = decodeURIComponent(parsed.pathname.split("/").filter(Boolean).pop() || "").trim();
+      }
+    } else if (media?.data || media?.base64) {
+      const raw = String(media.data || media.base64);
+      const dataUriMatch = raw.match(/^data:([^;,]+)(;base64)?,(.*)$/s);
+      if (dataUriMatch) {
+        if (!mimeType) mimeType = dataUriMatch[1];
+        buffer = Buffer.from(dataUriMatch[3], "base64");
+      } else {
+        buffer = Buffer.from(raw, "base64");
+      }
+    } else {
+      throw new Error("Para enviar um arquivo, informe 'media.url' (link público) ou 'media.data' (conteúdo em base64).");
+    }
+
+    if (!buffer.length) {
+      throw new Error("O arquivo veio vazio — nada foi enviado.");
+    }
+    if (buffer.length > MAX_WHATSAPP_MEDIA_BYTES) {
+      throw new Error(`Arquivo muito grande (${(buffer.length / 1024 / 1024).toFixed(1)} MB). O limite para envio é ${MAX_WHATSAPP_MEDIA_BYTES / 1024 / 1024} MB.`);
+    }
+
+    const ext = fileName.includes(".") ? fileName.split(".").pop()!.toLowerCase() : "";
+    if (!mimeType || mimeType === "application/octet-stream") {
+      mimeType = MEDIA_MIME_BY_EXT[ext] || mimeType || "application/octet-stream";
+    }
+    if (!fileName) {
+      const guessedExt = Object.keys(MEDIA_MIME_BY_EXT).find(k => MEDIA_MIME_BY_EXT[k] === mimeType) || "bin";
+      fileName = `arquivo.${guessedExt}`;
+    }
+
+    return { buffer, mimeType, fileName };
+  }
+
+  /** Decide como o WhatsApp deve apresentar o arquivo, a partir do tipo pedido ou do mimetype. */
+  function buildWhatsAppMediaPayload(
+    kind: string,
+    resolved: { buffer: Buffer; mimeType: string; fileName: string },
+    caption?: string
+  ): any {
+    const { buffer, mimeType, fileName } = resolved;
+    const effectiveKind = (kind || "").toLowerCase() || (
+      mimeType.startsWith("image/") ? "image"
+        : mimeType.startsWith("video/") ? "video"
+        : mimeType.startsWith("audio/") ? "audio"
+        : "document"
+    );
+
+    switch (effectiveKind) {
+      case "image":
+        return { image: buffer, mimetype: mimeType, ...(caption ? { caption } : {}) };
+      case "video":
+        return { video: buffer, mimetype: mimeType, ...(caption ? { caption } : {}) };
+      case "audio":
+        // ptt:false = arquivo de áudio/música; o áudio de voz da IA continua indo por ptt:true.
+        return { audio: buffer, mimetype: mimeType, ptt: false };
+      default:
+        return { document: buffer, mimetype: mimeType, fileName, ...(caption ? { caption } : {}) };
+    }
+  }
+
   // Send Outbound Message via WhatsApp (Baileys — waSocket.sendMessage)
   app.post("/api/whatsapp/send-message", async (req, res) => {
     const rawNumber = req.body.number || req.body.to || "";
@@ -1996,8 +2198,11 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     });
     if (whatsappLogs.length > 100) whatsappLogs.pop();
 
-    if (!rawNumber || !messageText) {
-      const errorMsg = "Número de telefone e mensagem são obrigatórios.";
+    // Aceita envio só de mídia (ex.: mandar um PDF sem texto junto), então o texto deixa de ser
+    // obrigatório quando há um arquivo — antes qualquer envio sem texto era recusado aqui.
+    const mediaRequest = req.body.media || null;
+    if (!rawNumber || (!messageText && !mediaRequest)) {
+      const errorMsg = "Número de telefone é obrigatório, junto de uma mensagem de texto ou de um arquivo em 'media'.";
       console.error("[WhatsApp Send] Falha na validação:", errorMsg);
       whatsappLogs.unshift({
         id: Math.random().toString(36).substring(2, 11),
@@ -2054,11 +2259,28 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       let msgId: string = "ok";
       let audioSent = false;
       let audioError: string | null = null;
+      let mediaSent = false;
 
-      if (!asAudio || alsoText) {
+      // Com mídia e texto juntos, o texto vira legenda do arquivo (numa mensagem só, como uma
+      // pessoa faria) em vez de sair como uma segunda mensagem solta.
+      const mediaCaption = (req.body.caption || (mediaRequest ? messageText : "") || "").toString();
+      const sendTextSeparately = messageText && !mediaRequest && (!asAudio || alsoText);
+
+      if (sendTextSeparately) {
         const sentResult = await waSocket.sendMessage(formattedJid, { text: messageText });
         msgId = sentResult?.key?.id || "ok";
         console.log(`[WhatsApp Send] Mensagem de texto enviada com sucesso! ID: ${msgId}`);
+      }
+
+      if (mediaRequest) {
+        // Falha de mídia é falha do envio: quem pediu para mandar o PDF precisa saber que ele
+        // não chegou, em vez de receber "enviado com sucesso" por causa de um texto avulso.
+        const resolved = await resolveWhatsAppMedia(mediaRequest);
+        const payload = buildWhatsAppMediaPayload(mediaRequest.type || mediaRequest.kind, resolved, mediaCaption);
+        const mediaResult = await waSocket.sendMessage(formattedJid, payload);
+        mediaSent = true;
+        if (msgId === "ok") msgId = mediaResult?.key?.id || "ok";
+        console.log(`[WhatsApp Send] Arquivo '${resolved.fileName}' (${resolved.mimeType}, ${(resolved.buffer.length / 1024).toFixed(0)} KB) enviado para ${formattedJid}.`);
       }
 
       if (asAudio) {
@@ -2103,26 +2325,33 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       }
 
       // Add to contact history
-      addMessageToHistory(formattedJid, "assistant", messageText);
+      const historyText = messageText || (mediaSent ? "[arquivo enviado]" : "");
+      if (historyText) addMessageToHistory(formattedJid, "assistant", historyText);
 
+      const extras = [audioSent ? "+ áudio" : "", mediaSent ? "+ arquivo" : ""].filter(Boolean).join(" ");
       whatsappLogs.unshift({
         id: Math.random().toString(36).substring(2, 11),
         timestamp: Date.now(),
         type: "sent",
         sender: `Para: ${cleanDigits}`,
-        message: audioSent ? `${messageText} [+ áudio enviado]` : messageText
+        message: extras ? `${historyText} [${extras.trim()}]` : historyText
       });
       if (whatsappLogs.length > 100) whatsappLogs.pop();
 
+      const parts = [
+        sendTextSeparately || (mediaSent && messageText) ? "texto" : "",
+        audioSent ? "áudio" : "",
+        mediaSent ? "arquivo" : ""
+      ].filter(Boolean);
+
       return res.json({
         status: "success",
-        message: audioSent
-          ? `Mensagem enviada com sucesso via WhatsApp${alsoText ? " (texto + áudio)" : " (áudio)"}!`
-          : "Mensagem enviada com sucesso via WhatsApp!",
+        message: `Enviado com sucesso via WhatsApp (${parts.join(" + ") || "mensagem"})!`,
         messageId: msgId,
         to: formattedJid,
         audioSent,
-        audioError
+        audioError,
+        mediaSent
       });
     } catch (sendErr: any) {
       const errMsg = sendErr?.message || String(sendErr);
