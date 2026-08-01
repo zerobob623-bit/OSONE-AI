@@ -19,6 +19,7 @@
     "release": "npm run build && electron-builder --win --linux --publish always",
     "build:vercel": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=server-build/server.cjs",
     "publicar": "node scripts/publicar.mjs",
+    "baixar-voz": "node scripts/baixar-piper.mjs",
     "preview": "vite preview",
     "clean": "rm -rf dist dist-desktop server-build",
     "lint": "tsc --noEmit"
@@ -35,6 +36,7 @@
       "electron/**/*",
       "build/**/*",
       "src/documentos_osone/**/*",
+      "vendor/**/*",
       "package.json",
       "node_modules/**/*",
       "!node_modules/**/*.{md,markdown,ts,map}",
@@ -43,7 +45,8 @@
       "!node_modules/**/*.d.ts"
     ],
     "asarUnpack": [
-      "**/node_modules/ffmpeg-static/**"
+      "**/node_modules/ffmpeg-static/**",
+      "vendor/piper/**"
     ],
     "publish": {
       "provider": "github",

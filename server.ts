@@ -1013,6 +1013,67 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   let ultimoErroTts = "";
 
   /**
+   * Onde mora a voz local (Piper). Baixada por "npm run baixar-voz" e embutida no instalador
+   * pelo GitHub Actions. Como qualquer binário empacotado, precisa ficar fora do app.asar para
+   * poder ser executado — daí a troca por "app.asar.unpacked" (ver asarUnpack no package.json).
+   */
+  function caminhosDaVozLocal(): { binario: string; modelo: string } | null {
+    const base = path.join(process.cwd(), "vendor", "piper").replace("app.asar", "app.asar.unpacked");
+    const candidatos = [
+      base,
+      path.join(__dirname, "vendor", "piper").replace("app.asar", "app.asar.unpacked"),
+      path.join(process.resourcesPath || "", "vendor", "piper"),
+    ];
+    for (const dir of candidatos) {
+      const binario = path.join(dir, process.platform === "win32" ? "piper.exe" : "piper");
+      const modelo = path.join(dir, "pt_BR-faber-medium.onnx");
+      if (fs.existsSync(binario) && fs.existsSync(modelo)) return { binario, modelo };
+    }
+    return null;
+  }
+
+  /**
+   * Gera a voz na própria máquina, sem cota, sem chave e sem internet.
+   *
+   * É a rede de segurança final do áudio: as vozes de nuvem (Gemini, ElevenLabs) têm limite
+   * diário ou mensal que acaba no meio do expediente, e é justamente quando o robô está sendo
+   * usado que ele não pode emudecer. A voz daqui é um pouco menos natural, mas nunca acaba.
+   */
+  async function sintetizarComVozLocal(texto: string): Promise<Buffer | null> {
+    const caminhos = caminhosDaVozLocal();
+    if (!caminhos) {
+      console.warn("[OSONE ZAP] Voz local não instalada. Rode 'npm run baixar-voz' para nunca ficar sem áudio.");
+      return null;
+    }
+
+    const saida = path.join(os.tmpdir(), `osone-voz-local-${crypto.randomBytes(6).toString("hex")}.wav`);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const proc = execFile(
+          caminhos.binario,
+          ["--model", caminhos.modelo, "--output_file", saida, "--quiet"],
+          // O binário carrega bibliotecas (onnxruntime, espeak) que ficam ao lado dele: sem
+          // rodar a partir dessa pasta, ele não as encontra e falha ao iniciar.
+          { cwd: path.dirname(caminhos.binario), timeout: 120000 },
+          (erro) => (erro ? reject(erro) : resolve())
+        );
+        // O Piper lê o texto pela entrada padrão.
+        proc.stdin?.end(texto);
+      });
+
+      if (!fs.existsSync(saida) || fs.statSync(saida).size === 0) return null;
+      const wav = fs.readFileSync(saida);
+      console.log(`[OSONE ZAP] Áudio gerado pela voz local (${(wav.length / 1024).toFixed(0)} KB) — sem consumir cota.`);
+      return wav;
+    } catch (e: any) {
+      console.error(`[OSONE ZAP] Falha na voz local: ${e?.message || e}`);
+      return null;
+    } finally {
+      fs.unlink(saida, () => {});
+    }
+  }
+
+  /**
    * Traduz o erro cru da API de voz numa frase que explique o que fazer.
    *
    * A API devolve um bloco de JSON de vários milhares de caracteres para dizer coisas simples
@@ -1233,10 +1294,18 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
             ultimoErroTts = "";
             return porEleven;
           }
-          ultimoErroTts = `${ultimoErroTts} A troca automática para a ElevenLabs também não funcionou — confira a chave dela nos Ajustes.`;
-        } else if (!chaveEleven) {
-          ultimoErroTts = `${ultimoErroTts} Dica: configure uma chave da ElevenLabs nos Ajustes e o OSONE passa a usá-la sozinho quando a cota do Gemini acabar.`;
+          ultimoErroTts = `${ultimoErroTts} A troca automática para a ElevenLabs também não funcionou.`;
         }
+
+        // Última camada: a voz que roda na própria máquina. Chega aqui quando as vozes de
+        // nuvem falharam — e, diferente delas, esta não tem cota para acabar.
+        const wavLocal = await sintetizarComVozLocal(stripVocalTags(cleanText));
+        if (wavLocal) {
+          ultimoErroTts = "";
+          return { buffer: wavLocal, mimeType: "audio/wav", extension: "wav" };
+        }
+
+        ultimoErroTts = `${ultimoErroTts} A voz local também não está disponível — rode 'npm run baixar-voz' para instalá-la e nunca mais ficar sem áudio.`;
         return null;
       }
     }
