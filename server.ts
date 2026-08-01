@@ -1013,6 +1013,39 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   let ultimoErroTts = "";
 
   /**
+   * Traduz o erro cru da API de voz numa frase que explique o que fazer.
+   *
+   * A API devolve um bloco de JSON de vários milhares de caracteres para dizer coisas simples
+   * como "acabou sua cota do dia". Jogado direto no log, ele esconde a informação em vez de
+   * entregá-la — e o caso mais comum, o limite diário do plano gratuito, é justamente o que o
+   * usuário mais precisa entender rápido.
+   */
+  function explicarErroDeVoz(modelo: string, erro: any): string {
+    const bruto = String(erro?.message || erro || "");
+
+    if (bruto.includes("RESOURCE_EXHAUSTED") || bruto.includes("429")) {
+      // O limite que estoura na prática é o de requisições por DIA no plano gratuito (10 por
+      // modelo). Vale extrair o número em vez de fixá-lo aqui: ele muda sem aviso.
+      const limite = bruto.match(/"quotaValue":\s*"(\d+)"/)?.[1];
+      const segundos = bruto.match(/"retryDelay":\s*"(\d+)s"/)?.[1];
+      if (limite === "0") {
+        return `${modelo}: não está disponível no plano gratuito (cota zero).`;
+      }
+      return `${modelo}: cota diária de voz esgotada${limite ? ` (${limite} áudios por dia no plano gratuito)` : ""}.${segundos ? ` A API sugere tentar de novo em ${segundos}s, mas o limite é diário — só volta amanhã.` : ""}`;
+    }
+    if (bruto.includes("API_KEY_INVALID") || bruto.includes("API key not valid")) {
+      return `${modelo}: a chave do Gemini foi recusada.`;
+    }
+    if (bruto.includes("PERMISSION_DENIED") || bruto.includes("SERVICE_DISABLED")) {
+      return `${modelo}: a chave não tem permissão para este modelo.`;
+    }
+    if (bruto.includes("NOT_FOUND") || bruto.includes("not found")) {
+      return `${modelo}: modelo inexistente ou fora do ar para esta chave.`;
+    }
+    return `${modelo}: ${bruto.slice(0, 150)}`;
+  }
+
+  /**
    * Pergunta à API do Gemini quais modelos de voz esta chave enxerga.
    *
    * Existe porque nomes de modelo mudam de geração em geração e a quebra é silenciosa: o
@@ -1157,16 +1190,20 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
           }
           falhasPorModelo.push(`${modelName}: respondeu sem áudio`);
         } catch (e: any) {
-          falhasPorModelo.push(`${modelName}: ${e?.message || e}`);
+          falhasPorModelo.push(explicarErroDeVoz(modelName, e));
         }
       }
 
       if (!chunkAudioBuffer) {
         console.error(
-          "[OSONE ZAP] Nenhum modelo conseguiu gerar a voz. Motivos por modelo:\n  " +
-          falhasPorModelo.join("\n  ")
+          "[OSONE ZAP] Nenhum modelo conseguiu gerar a voz:\n  " + falhasPorModelo.join("\n  ")
         );
-        ultimoErroTts = falhasPorModelo.join(" | ");
+        // Cota estourada em todos os modelos é o caso mais comum e tem uma saída prática, então
+        // ganha uma mensagem própria em vez da lista de falhas repetindo o mesmo motivo.
+        const todosSemCota = falhasPorModelo.length > 0 && falhasPorModelo.every(f => f.includes("cota"));
+        ultimoErroTts = todosSemCota
+          ? "A cota diária de voz do plano gratuito do Gemini acabou (são poucos áudios por dia). As respostas em texto seguem normalmente. Para voltar a ter áudio hoje: ative o faturamento no Google AI Studio, use uma chave de outro projeto, ou troque o motor de voz para ElevenLabs nos Ajustes."
+          : falhasPorModelo.join(" | ");
       }
 
       if (chunkAudioBuffer) {
