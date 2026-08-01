@@ -1361,7 +1361,9 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                   <p className="text-[11px] text-zinc-400 mt-0.5">
                     {config.onlyKnownContacts
                       ? 'O robô só atende números cadastrados na aba Contatos. Mensagens de desconhecidos ficam registradas nos logs, mas sem resposta automática.'
-                      : 'ATENÇÃO: o robô responde a QUALQUER número que escrever, incluindo spam e desconhecidos, mesmo com você longe do computador.'}
+                      : config.requireTriggerCommand
+                        ? `Qualquer pessoa pode perguntar ao OSONE, desde que escreva "${config.triggerCommand}" na mensagem. Quem não usar o comando é ignorado.`
+                        : 'ATENÇÃO: sem a lista de contatos E sem o comando de ativação, o robô responde a QUALQUER mensagem de QUALQUER número, incluindo spam.'}
                   </p>
                 </div>
 
