@@ -22,6 +22,7 @@ interface WhatsAppConfig {
   enabled: boolean;
   geminiApiKey: string;
   sendAudioReplies: boolean;
+  onlyKnownContacts: boolean;
   ttsEngine: 'gemini' | 'elevenlabs';
   ttsVoice: string;
   elevenLabsApiKey: string;
@@ -51,6 +52,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
     enabled: false,
     geminiApiKey: '',
     sendAudioReplies: true,
+    onlyKnownContacts: true,
     ttsEngine: 'gemini',
     ttsVoice: 'Kore',
     elevenLabsApiKey: '',
@@ -1293,6 +1295,31 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                 <p className="text-[10px] text-zinc-500 mt-1">
                   Se deixado em branco, o sistema usará a chave de ambiente configurada no OSONE.
                 </p>
+              </div>
+
+              {/* Saved-contacts-only Toggle */}
+              <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
+                <div className="pr-3">
+                  <h4 className="text-xs font-bold text-white">Responder apenas contatos salvos</h4>
+                  <p className="text-[11px] text-zinc-400 mt-0.5">
+                    {config.onlyKnownContacts
+                      ? 'O robô só atende números cadastrados na aba Contatos. Mensagens de desconhecidos ficam registradas nos logs, mas sem resposta automática.'
+                      : 'ATENÇÃO: o robô responde a QUALQUER número que escrever, incluindo spam e desconhecidos, mesmo com você longe do computador.'}
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => handleSaveConfig({ onlyKnownContacts: !config.onlyKnownContacts })}
+                  className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer shrink-0 ${
+                    config.onlyKnownContacts ? 'bg-emerald-500' : 'bg-zinc-800'
+                  }`}
+                >
+                  <span
+                    className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${
+                      config.onlyKnownContacts ? 'left-7' : 'left-1'
+                    }`}
+                  />
+                </button>
               </div>
 
               {/* Audio Reply Toggle */}
