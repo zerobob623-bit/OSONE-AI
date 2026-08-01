@@ -1044,7 +1044,6 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     const candidateModels = ["gemini-3.1-flash-tts-preview", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
     const chunks = splitIntoTtsChunks(cleanText, 700);
     const buffers: Buffer[] = [];
-    let usedFallback = false;
 
     for (const chunk of chunks) {
       const processedChunk = stripVocalTags(chunk);
@@ -1071,24 +1070,18 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       if (chunkAudioBuffer) {
         buffers.push(chunkAudioBuffer);
       } else {
-        usedFallback = true;
-        const subChunks = splitIntoChunks(processedChunk, 180);
-        for (const subChunk of subChunks) {
-          try {
-            const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=pt-BR&client=tw-ob&q=${encodeURIComponent(subChunk)}`;
-            const fbResponse = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" } });
-            if (fbResponse.ok) buffers.push(Buffer.from(await fbResponse.arrayBuffer()));
-          } catch (_) { /* pula este subtrecho */ }
-        }
+        // Antes havia aqui um recurso de emergência que sintetizava o trecho pelo TTS do Google
+        // Tradutor. Ele salvava o envio, mas com a voz robótica de leitor de texto — e, pior,
+        // só para os trechos em que o Gemini falhava. O resultado era um mesmo áudio alternando
+        // entre a voz natural e a robótica no meio da frase, sem nada explicando o porquê.
+        // Preferimos falhar de forma clara: sem voz natural, o áudio não sai, e o log diz isso.
+        console.error("[OSONE ZAP] O Gemini TTS não gerou áudio para um trecho — nenhum áudio será enviado (a voz robótica de emergência foi removida de propósito).");
+        return null;
       }
     }
 
     if (buffers.length === 0) return null;
-    const finalBuffer = Buffer.concat(buffers);
-    if (usedFallback) {
-      return { buffer: finalBuffer, mimeType: "audio/mpeg", extension: "mp3" };
-    }
-    return { buffer: pcmToWav(finalBuffer, 24000), mimeType: "audio/wav", extension: "wav" };
+    return { buffer: pcmToWav(Buffer.concat(buffers), 24000), mimeType: "audio/wav", extension: "wav" };
   }
 
   // Traduz o código de desconexão do Baileys (erro Boom com statusCode equivalente a um

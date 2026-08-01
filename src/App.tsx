@@ -964,7 +964,9 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   - Para mandar mensagem no WhatsApp de alguém você DEVE chamar a ferramenta send_whatsapp_message. Não existe nenhuma outra forma: você não consegue enviar apenas escrevendo o texto na resposta.
   - NUNCA diga que enviou, mandou ou encaminhou uma mensagem sem ter chamado a ferramenta e recebido confirmação de sucesso dela. Se a ferramenta retornar erro (WhatsApp desconectado, número inválido, sessão caída), diga exatamente que NÃO foi enviado e qual foi o motivo. Afirmar um envio que não aconteceu é o pior erro possível aqui.
   - Para enviar áudio (mensagem de voz), chame a mesma ferramenta com asAudio: true — o texto que você escrever será convertido em voz e enviado como áudio no WhatsApp. Use alsoText: false se o usuário quiser SOMENTE o áudio, sem o texto junto.
-  - O número deve ir com DDI e DDD, apenas dígitos (ex: 5584999259368). Se o usuário não informar o número e você não tiver certeza de qual é, pergunte antes de enviar — nunca chute um destinatário.
+  - DESTINATÁRIO — REGRA ABSOLUTA: quando o usuário citar a pessoa pelo NOME ("manda pro João", "avisa a Maria"), chame ANTES a ferramenta listar_contatos_whatsapp para descobrir o número real dela. Você NÃO sabe o número de ninguém de cabeça. Nunca reutilize um número que apareceu antes na conversa, nunca use o número do próprio dono do sistema como destino, e nunca invente. Se a busca não encontrar a pessoa, diga quais nomes existem na agenda e pergunte — não envie para ninguém.
+  - Só pule a consulta à agenda quando o usuário ditar o número explicitamente naquela mesma mensagem. Nesse caso use exatamente o que ele ditou.
+  - O número vai com DDI e DDD, apenas dígitos.
   - Se a resposta avisar que o áudio falhou mas o texto foi enviado, relate exatamente isso ao usuário, sem arredondar para "enviei o áudio".
   - Para mandar ARQUIVOS (PDF, imagem, vídeo, planilha, documento), use a mesma ferramenta com fileUrl (link público do arquivo) ou fileBase64 (conteúdo do arquivo), junto de fileName com a extensão correta. O texto em 'message' vira a legenda do arquivo. Para mandar apenas um LINK (site, vídeo, catálogo online), não precisa de arquivo nenhum: coloque a URL dentro de 'message' e o WhatsApp gera a pré-visualização sozinho.
   - Links internos (localhost, 127.0.0.1, rede local) são recusados por segurança ao anexar arquivos. Se precisar mandar algo que só existe no computador do usuário, gere o conteúdo em base64 e use fileBase64.
@@ -1879,6 +1881,49 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
    * como enviar, acabava apenas AFIRMANDO que havia enviado. Agora existe um caminho real, e o
    * resultado retornado aqui é a única fonte de verdade sobre o envio ter acontecido.
    */
+  /**
+   * Entrega ao modelo a agenda real do OSONE ZAP (contacts.json no servidor).
+   *
+   * Sem isto o modelo não tinha NENHUMA forma de descobrir o número de alguém: ao ouvir "manda
+   * mensagem pro João" ele só podia chutar, e acabava reaproveitando algum número que tivesse
+   * visto na conversa — normalmente o do próprio dono. Era por isso que tudo caía no mesmo
+   * destinatário, e por que só funcionava quando o número era ditado em voz alta.
+   */
+  const listarContatosWhatsApp = async (args: any): Promise<any> => {
+    try {
+      const res = await fetch('/api/whatsapp/contacts');
+      if (!res.ok) {
+        return { error: `Não consegui ler a lista de contatos (HTTP ${res.status}).` };
+      }
+      const contatos = await res.json();
+      if (!Array.isArray(contatos) || contatos.length === 0) {
+        return { contatos: [], aviso: 'A lista de contatos do OSONE ZAP está vazia. Peça ao usuário para cadastrar o contato na aba Contatos, ou para ditar o número.' };
+      }
+
+      const busca = String(args?.busca || '').trim().toLowerCase();
+      const filtrados = busca
+        ? contatos.filter((c: any) =>
+            (c.name || '').toLowerCase().includes(busca) ||
+            (c.phone || '').includes(busca.replace(/\D/g, '')))
+        : contatos;
+
+      if (busca && filtrados.length === 0) {
+        return {
+          contatos: [],
+          aviso: `Nenhum contato encontrado para '${args?.busca}'. NÃO invente um número: mostre ao usuário os nomes disponíveis ou peça o número.`,
+          nomesDisponiveis: contatos.map((c: any) => c.name)
+        };
+      }
+
+      return {
+        contatos: filtrados.map((c: any) => ({ nome: c.name, numero: c.phone, observacoes: c.notes || '' })),
+        total: filtrados.length
+      };
+    } catch (err: any) {
+      return { error: `Erro ao consultar a lista de contatos: ${err?.message || err}` };
+    }
+  };
+
   const sendWhatsAppFromModel = async (args: any): Promise<{ message: string; error?: string }> => {
     const number = String(args?.number || '').replace(/\D/g, '');
     const message = String(args?.message || '').trim();
@@ -7450,12 +7495,23 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
       });
 
       functionDeclarations.push({
+        name: "listar_contatos_whatsapp",
+        description: "Consulta a agenda REAL do OSONE ZAP e devolve nome + número de cada contato salvo. Use SEMPRE antes de enviar uma mensagem quando o usuário citar alguém pelo NOME ('manda pro João', 'avisa a Maria') — é a única forma de descobrir o número correto. Sem chamar esta ferramenta você NÃO sabe o número de ninguém e não pode adivinhar.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            busca: { type: Type.STRING, description: "Nome (ou parte do nome) do contato procurado. Deixe vazio para receber a lista inteira." }
+          }
+        }
+      });
+
+      functionDeclarations.push({
         name: "send_whatsapp_message",
         description: "Envia uma mensagem de WhatsApp REAL para um contato, pelo WhatsApp conectado no OSONE ZAP. Use SEMPRE esta ferramenta quando o usuário pedir para mandar mensagem para alguém — você não tem nenhuma outra forma de enviar. Pode enviar texto, áudio (mensagem de voz gerada a partir do texto), e também ARQUIVOS: PDF, imagem, vídeo, planilha ou qualquer documento, por link público (fileUrl) ou por conteúdo em base64 (fileBase64). Para mandar um link normal (site, YouTube), basta colocar a URL dentro de 'message' — o WhatsApp gera a pré-visualização sozinho. Só afirme que a mensagem foi enviada se a resposta desta ferramenta confirmar o sucesso.",
         parameters: {
           type: Type.OBJECT,
           properties: {
-            number: { type: Type.STRING, description: "Número de telefone do destinatário com DDI e DDD, apenas dígitos (ex: '5584999259368')." },
+            number: { type: Type.STRING, description: "Número do destinatário com DDI e DDD, apenas dígitos. Obtenha-o SEMPRE com a ferramenta listar_contatos_whatsapp ou com o número ditado pelo usuário. NUNCA use um número de memória, de exemplo, ou de uma conversa anterior." },
             message: { type: Type.STRING, description: "O texto da mensagem a enviar. Se asAudio for true, este texto é convertido em voz. Se houver arquivo junto, este texto vira a legenda do arquivo. Pode ficar vazio quando você só quer mandar um arquivo." },
             asAudio: { type: Type.BOOLEAN, description: "true para enviar como mensagem de voz (áudio) no WhatsApp. Padrão: false (só texto)." },
             alsoText: { type: Type.BOOLEAN, description: "Quando asAudio for true, define se o texto também é enviado junto. Padrão: true." },
@@ -8329,6 +8385,15 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
               role: 'assistant' as const, 
               content: `Desenhei ${objects.length} objeto(s) no canvas interativo.` 
             }]);
+          } else if (call.name === 'listar_contatos_whatsapp') {
+            const lista = await listarContatosWhatsApp(call.args);
+            setChatHistory(prev => [...prev, {
+              id: Math.random().toString(36).substr(2, 9),
+              role: 'assistant' as const,
+              content: lista.error
+                ? `⚠️ [CONTATOS] ${lista.error}`
+                : `📇 [CONTATOS] ${lista.total || 0} contato(s) encontrado(s).`
+            }]);
           } else if (call.name === 'send_whatsapp_message') {
             const waRes = await sendWhatsAppFromModel(call.args);
             setChatHistory(prev => [...prev, {
@@ -9114,12 +9179,22 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                                       }
                 },
                 {
+                  name: "listar_contatos_whatsapp",
+                  description: "Consulta a agenda REAL do OSONE ZAP e devolve nome + número de cada contato salvo. Use SEMPRE antes de enviar mensagem quando o usuário citar alguém pelo NOME ('manda pro João') — é a única forma de descobrir o número correto. Sem chamar esta ferramenta você NÃO sabe o número de ninguém e não pode adivinhar.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      busca: { type: Type.STRING, description: "Nome (ou parte do nome) do contato. Vazio devolve a lista inteira." }
+                    }
+                  }
+                },
+                {
                   name: "send_whatsapp_message",
                   description: "Envia uma mensagem de WhatsApp REAL para um contato, pelo WhatsApp conectado no OSONE ZAP. Use SEMPRE esta ferramenta quando o usuário pedir para mandar mensagem para alguém — você não tem nenhuma outra forma de enviar. Pode enviar texto, áudio (mensagem de voz), e também ARQUIVOS: PDF, imagem, vídeo, planilha ou qualquer documento, por link público (fileUrl) ou base64 (fileBase64). Para mandar um link normal (site, YouTube), basta colocar a URL dentro de 'message'. Só afirme que a mensagem foi enviada se a resposta desta ferramenta confirmar o sucesso.",
                   parameters: {
                     type: Type.OBJECT,
                     properties: {
-                      number: { type: Type.STRING, description: "Número do destinatário com DDI e DDD, apenas dígitos." },
+                      number: { type: Type.STRING, description: "Número do destinatário com DDI e DDD, apenas dígitos. Obtenha-o SEMPRE com listar_contatos_whatsapp ou com o número ditado pelo usuário. NUNCA use um número de memória ou de conversa anterior." },
                       message: { type: Type.STRING, description: "O texto da mensagem. Se houver arquivo junto, vira a legenda dele. Pode ficar vazio quando você só quer mandar um arquivo." },
                       asAudio: { type: Type.BOOLEAN, description: "true para enviar como mensagem de voz (áudio)." },
                       alsoText: { type: Type.BOOLEAN, description: "Quando asAudio for true, define se o texto também vai junto. Padrão: true." },
@@ -9822,6 +9897,9 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       id: call.id,
                       response: { result: resultMsg }
                     });
+                  } else if (call.name === 'listar_contatos_whatsapp') {
+                    const lista = await listarContatosWhatsApp(call.args);
+                    responses.push({ name: call.name, id: call.id, response: { result: lista } });
                   } else if (call.name === 'send_whatsapp_message') {
                     const waRes = await sendWhatsAppFromModel(call.args);
                     responses.push({
