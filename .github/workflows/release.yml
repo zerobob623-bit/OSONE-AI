@@ -62,21 +62,43 @@ jobs:
           VITE_FIREBASE_FIRESTORE_DATABASE_ID: ${{ secrets.VITE_FIREBASE_FIRESTORE_DATABASE_ID }}
 
       - name: Conferir se o Firebase entrou no build
-        # Trava de segurança: se um secret estiver faltando ou escrito errado, o build passa
-        # normalmente e só se descobre o problema quando um usuário tenta entrar com o Google
-        # no app já distribuído. Aqui a publicação para antes disso acontecer.
+        # Trava de segurança: se um secret estiver faltando ou com o nome escrito errado, o
+        # build passa normalmente e o problema só aparece quando um usuário tenta entrar com o
+        # Google no app já distribuído. Aqui a publicação para antes disso acontecer.
+        #
+        # Confere TODOS os secrets obrigatórios, não só um: o app considera o Firebase
+        # "configurado" olhando apenas apiKey/projectId/appId, então um authDomain faltando
+        # passaria despercebido no build e só quebraria na hora do login.
         shell: bash
+        env:
+          API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+          # Nomes reais dos secrets, só para a mensagem de erro apontar o que cadastrar.
+          NOMES: "VITE_FIREBASE_API_KEY VITE_FIREBASE_AUTH_DOMAIN VITE_FIREBASE_PROJECT_ID VITE_FIREBASE_STORAGE_BUCKET VITE_FIREBASE_MESSAGING_SENDER_ID VITE_FIREBASE_APP_ID"
         run: |
-          PROJETO="${{ secrets.VITE_FIREBASE_PROJECT_ID }}"
-          if [ -z "$PROJETO" ]; then
-            echo "ERRO: o secret VITE_FIREBASE_PROJECT_ID não está definido no repositório."
-            echo "Cadastre os secrets em Settings > Secrets and variables > Actions."
+          faltando=""
+          i=0
+          for valor in "$API_KEY" "$AUTH_DOMAIN" "$PROJECT_ID" "$STORAGE_BUCKET" "$SENDER_ID" "$APP_ID"; do
+            i=$((i + 1))
+            nome=$(echo $NOMES | cut -d' ' -f$i)
+            [ -z "$valor" ] && faltando="$faltando $nome"
+          done
+
+          if [ -n "$faltando" ]; then
+            echo "ERRO: secrets ausentes ou com nome escrito errado:$faltando"
+            echo "Cadastre em Settings > Secrets and variables > Actions, conferindo a grafia exata."
             exit 1
           fi
-          if grep -rq "$PROJETO" dist/assets/; then
-            echo "OK: as chaves do Firebase foram embutidas no build."
+
+          # Além de existirem, os valores precisam ter chegado de fato dentro do bundle.
+          if grep -rq "$PROJECT_ID" dist/assets/ && grep -rq "$AUTH_DOMAIN" dist/assets/; then
+            echo "OK: os 6 secrets estão definidos e as chaves foram embutidas no build."
           else
-            echo "ERRO: o build saiu SEM as chaves do Firebase."
+            echo "ERRO: o build saiu SEM as chaves do Firebase dentro do bundle."
             echo "O app seria publicado sem login Google e sem sincronização em nuvem."
             exit 1
           fi
