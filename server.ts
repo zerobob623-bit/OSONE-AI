@@ -2009,7 +2009,26 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   });
 
   app.get("/api/whatsapp/config", (req, res) => {
-    res.json(whatsappConfig);
+    // A chave NUNCA volta para o navegador. Antes ela ia junto e era censurada pelo middleware
+    // de segurança, virando o texto "[CHAVE_REMOVIDA]" — que o painel carregava no campo e
+    // regravava por cima da chave verdadeira no primeiro ajuste que o usuário fizesse. A
+    // proteção destruía exatamente o que deveria proteger.
+    //
+    // No lugar dela vai só o suficiente para a tela mostrar que existe uma chave e qual é:
+    // início, fim e comprimento. Segredo que não trafega não pode ser sobrescrito por acidente.
+    const { geminiApiKey, elevenLabsApiKey, ...resto } = whatsappConfig;
+    const resumo = (chave: string) =>
+      chave
+        ? { configurada: true, tamanho: chave.length, previa: `${chave.slice(0, 6)}...${chave.slice(-4)}` }
+        : { configurada: false, tamanho: 0, previa: "" };
+
+    res.json({
+      ...resto,
+      geminiApiKey: "",
+      elevenLabsApiKey: "",
+      geminiApiKeyInfo: resumo(geminiApiKey),
+      elevenLabsApiKeyInfo: resumo(elevenLabsApiKey)
+    });
   });
 
   app.post("/api/whatsapp/config", (req, res) => {
@@ -2019,7 +2038,26 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     // trim() obrigatório: copiar a chave do console do Google costuma trazer junto um espaço ou
     // uma quebra de linha invisível. Guardada suja, o Google devolve "API key not valid" e o
     // usuário fica olhando para uma chave que PARECE certa na tela, sem entender a recusa.
-    if (geminiApiKey !== undefined) whatsappConfig.geminiApiKey = String(geminiApiKey).trim();
+    // Campo vazio significa "não mexer na chave", e não "apagar a chave".
+    //
+    // Toda alteração no painel reenvia a configuração INTEIRA, mesmo quando o usuário só clicou
+    // num botão. Como a chave não trafega mais de volta ao navegador, o campo chega vazio nesses
+    // casos — tratar isso como "apagar" limparia a chave a cada ajuste. Para remover de fato
+    // existe o pedido explícito removerGeminiApiKey.
+    let avisoChave: string | null = null;
+    if (req.body.removerGeminiApiKey === true) {
+      whatsappConfig.geminiApiKey = "";
+    } else if (geminiApiKey !== undefined && String(geminiApiKey).trim()) {
+      const nova = String(geminiApiKey).trim();
+      // Rede de segurança contra o navegador autopreencher uma senha salva neste campo: chaves
+      // do Google sempre começam com "AIza". A recusa é avisada, nunca silenciosa.
+      if (!nova.startsWith("AIza")) {
+        avisoChave = `A chave enviada (${nova.length} caracteres) não parece uma chave do Google — elas começam com "AIza". Nada foi alterado. Se o navegador preencheu o campo sozinho, apague-o e cole a chave de novo.`;
+        console.warn(`[OSONE ZAP] ${avisoChave}`);
+      } else {
+        whatsappConfig.geminiApiKey = nova;
+      }
+    }
     if (sendAudioReplies !== undefined) whatsappConfig.sendAudioReplies = !!sendAudioReplies;
     if (onlyKnownContacts !== undefined) whatsappConfig.onlyKnownContacts = !!onlyKnownContacts;
     if (requireTriggerCommand !== undefined) whatsappConfig.requireTriggerCommand = !!requireTriggerCommand;
@@ -2030,7 +2068,12 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     }
     if (ttsEngine === "gemini" || ttsEngine === "elevenlabs") whatsappConfig.ttsEngine = ttsEngine;
     if (ttsVoice !== undefined) whatsappConfig.ttsVoice = ttsVoice;
-    if (elevenLabsApiKey !== undefined) whatsappConfig.elevenLabsApiKey = String(elevenLabsApiKey).trim();
+    // Mesma regra da chave do Gemini: vazio mantém o que já existe.
+    if (req.body.removerElevenLabsApiKey === true) {
+      whatsappConfig.elevenLabsApiKey = "";
+    } else if (elevenLabsApiKey !== undefined && String(elevenLabsApiKey).trim()) {
+      whatsappConfig.elevenLabsApiKey = String(elevenLabsApiKey).trim();
+    }
     if (elevenLabsVoiceId !== undefined) whatsappConfig.elevenLabsVoiceId = elevenLabsVoiceId;
 
     // Grava em disco para que a escolha sobreviva a reinícios do OSONE.
@@ -2044,7 +2087,25 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       message: `Configurações salvas: Chatbot ${whatsappConfig.enabled ? "Ativado" : "Desativado"}.`
     });
     
-    res.json({ status: "success", config: whatsappConfig });
+    // Devolve a configuração sem as chaves, pelo mesmo motivo do GET: o que não trafega de
+    // volta não pode ser regravado por cima do valor verdadeiro no próximo salvamento.
+    const { geminiApiKey: _g, elevenLabsApiKey: _e, ...configSemChaves } = whatsappConfig;
+    const resumoChave = (chave: string) =>
+      chave
+        ? { configurada: true, tamanho: chave.length, previa: `${chave.slice(0, 6)}...${chave.slice(-4)}` }
+        : { configurada: false, tamanho: 0, previa: "" };
+
+    res.json({
+      status: "success",
+      config: {
+        ...configSemChaves,
+        geminiApiKey: "",
+        elevenLabsApiKey: "",
+        geminiApiKeyInfo: resumoChave(whatsappConfig.geminiApiKey),
+        elevenLabsApiKeyInfo: resumoChave(whatsappConfig.elevenLabsApiKey)
+      },
+      avisoChave
+    });
   });
 
   app.get("/api/whatsapp/logs", (req, res) => {
