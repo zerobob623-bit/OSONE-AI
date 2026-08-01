@@ -2,6 +2,9 @@ node_modules
 dist
 dist-desktop
 server-build
+# Voz local (Piper): ~90 MB de binário e modelo, baixados por "npm run baixar-voz".
+# Ficam fora do repositório e entram no instalador durante a publicação.
+vendor
 .env
 .env.local
 .env.*.local
