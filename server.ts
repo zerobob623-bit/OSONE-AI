@@ -98,8 +98,12 @@ async function startServer() {
   const sanitizeMessageOfKeys = (message: string): string => {
     if (!message) return "";
 
-    // 1. Mask Google Gemini API keys (starts with AIzaSy followed by 33 characters)
-    let sanitized = message.replace(/AIzaSy[A-Za-z0-9_-]{33}/g, "[CHAVE_REMOVIDA]");
+    // 1. Esconde chaves do Google nos DOIS formatos: o antigo "AIzaSy" + 33 caracteres, e o
+    //    atual "AQ." + ~50, que é o emitido pelo AI Studio hoje. Sem a segunda regra, as chaves
+    //    novas apareceriam inteiras em mensagens de erro devolvidas ao navegador.
+    let sanitized = message
+      .replace(/AIzaSy[A-Za-z0-9_-]{33}/g, "[CHAVE_REMOVIDA]")
+      .replace(/AQ\.[A-Za-z0-9_-]{30,}/g, "[CHAVE_REMOVIDA]");
 
     // 2. Mask generic key/token patterns (such as api_key=..., key=..., xi-api-key, etc.)
     sanitized = sanitized.replace(/(key|api_key|apikey|xi-api-key|token)(?:["'\s:=]+)([A-Za-z0-9_-]{10,60})/gi, "$1=[REMOVED]");
@@ -2051,8 +2055,11 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       const nova = String(geminiApiKey).trim();
       // Rede de segurança contra o navegador autopreencher uma senha salva neste campo: chaves
       // do Google sempre começam com "AIza". A recusa é avisada, nunca silenciosa.
-      if (!nova.startsWith("AIza")) {
-        avisoChave = `A chave enviada (${nova.length} caracteres) não parece uma chave do Google — elas começam com "AIza". Nada foi alterado. Se o navegador preencheu o campo sozinho, apague-o e cole a chave de novo.`;
+      // O Google emite chaves em dois formatos: o antigo "AIza..." (39 caracteres) e o atual
+      // "AQ...." (~53), gerado pelo AI Studio hoje. Reconhecer só um deles recusaria chaves
+      // perfeitamente válidas — e a mensagem ainda culparia o navegador por isso.
+      if (!nova.startsWith("AIza") && !nova.startsWith("AQ.")) {
+        avisoChave = `A chave enviada (${nova.length} caracteres) não parece uma chave do Google — elas começam com "AIza" ou "AQ.". Nada foi alterado. Se o navegador preencheu o campo sozinho, apague-o e cole a chave de novo.`;
         console.warn(`[OSONE ZAP] ${avisoChave}`);
       } else {
         whatsappConfig.geminiApiKey = nova;
