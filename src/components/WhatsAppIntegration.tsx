@@ -18,6 +18,18 @@ interface WhatsappLog {
   response?: string;
 }
 
+/**
+ * Reconhece os dois formatos de chave que o Google emite: o antigo "AIza..." (39 caracteres) e
+ * o atual "AQ...." (~53), gerado pelo AI Studio hoje. Valida o prefixo e um comprimento mínimo
+ * em vez de um número exato — travar num tamanho fixo já fez uma chave nova e válida ser
+ * marcada como incompleta na tela.
+ */
+function chaveGeminiParecerValida(chave: string): boolean {
+  if (chave.startsWith("AQ.")) return chave.length >= 30;
+  if (chave.startsWith("AIza")) return chave.length === 39;
+  return false;
+}
+
 interface WhatsAppConfig {
   enabled: boolean;
   geminiApiKey: string;
@@ -1321,14 +1333,16 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                     fica vazio de propósito: a chave não trafega de volta, então não há como um
                     salvamento seguinte gravar um valor censurado por cima dela. */}
                 {config.geminiApiKey ? (
-                  <p className={`text-[10px] mt-1 ${config.geminiApiKey.trim().length === 39 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  <p className={`text-[10px] mt-1 ${chaveGeminiParecerValida(config.geminiApiKey.trim()) ? 'text-emerald-400' : 'text-amber-400'}`}>
                     Digitando: {config.geminiApiKey.trim().length} caracteres
-                    {config.geminiApiKey.trim().length === 39 ? ' — tamanho correto.' : ' — uma chave do Gemini tem 39.'}
+                    {chaveGeminiParecerValida(config.geminiApiKey.trim())
+                      ? ' — formato reconhecido.'
+                      : ' — chaves do Google começam com "AQ." ou "AIza"; esta parece incompleta.'}
                   </p>
                 ) : config.geminiApiKeyInfo?.configurada ? (
-                  <p className={`text-[10px] mt-1 ${config.geminiApiKeyInfo.tamanho === 39 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  <p className={`text-[10px] mt-1 ${config.geminiApiKeyInfo.tamanho >= 30 ? 'text-emerald-400' : 'text-amber-400'}`}>
                     Salva: {config.geminiApiKeyInfo.previa} ({config.geminiApiKeyInfo.tamanho} caracteres)
-                    {config.geminiApiKeyInfo.tamanho !== 39 && ' — uma chave do Gemini tem 39, esta parece incompleta.'}
+                    {config.geminiApiKeyInfo.tamanho < 30 && ' — curta demais, provavelmente incompleta.'}
                   </p>
                 ) : (
                   <p className="text-[10px] text-zinc-500 mt-1">
