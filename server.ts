@@ -1013,6 +1013,67 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   let ultimoErroTts = "";
 
   /**
+   * Onde mora a voz local (Piper). Baixada por "npm run baixar-voz" e embutida no instalador
+   * pelo GitHub Actions. Como qualquer binário empacotado, precisa ficar fora do app.asar para
+   * poder ser executado — daí a troca por "app.asar.unpacked" (ver asarUnpack no package.json).
+   */
+  function caminhosDaVozLocal(): { binario: string; modelo: string } | null {
+    const base = path.join(process.cwd(), "vendor", "piper").replace("app.asar", "app.asar.unpacked");
+    const candidatos = [
+      base,
+      path.join(__dirname, "vendor", "piper").replace("app.asar", "app.asar.unpacked"),
+      path.join(process.resourcesPath || "", "vendor", "piper"),
+    ];
+    for (const dir of candidatos) {
+      const binario = path.join(dir, process.platform === "win32" ? "piper.exe" : "piper");
+      const modelo = path.join(dir, "pt_BR-faber-medium.onnx");
+      if (fs.existsSync(binario) && fs.existsSync(modelo)) return { binario, modelo };
+    }
+    return null;
+  }
+
+  /**
+   * Gera a voz na própria máquina, sem cota, sem chave e sem internet.
+   *
+   * É a rede de segurança final do áudio: as vozes de nuvem (Gemini, ElevenLabs) têm limite
+   * diário ou mensal que acaba no meio do expediente, e é justamente quando o robô está sendo
+   * usado que ele não pode emudecer. A voz daqui é um pouco menos natural, mas nunca acaba.
+   */
+  async function sintetizarComVozLocal(texto: string): Promise<Buffer | null> {
+    const caminhos = caminhosDaVozLocal();
+    if (!caminhos) {
+      console.warn("[OSONE ZAP] Voz local não instalada. Rode 'npm run baixar-voz' para nunca ficar sem áudio.");
+      return null;
+    }
+
+    const saida = path.join(os.tmpdir(), `osone-voz-local-${crypto.randomBytes(6).toString("hex")}.wav`);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const proc = execFile(
+          caminhos.binario,
+          ["--model", caminhos.modelo, "--output_file", saida, "--quiet"],
+          // O binário carrega bibliotecas (onnxruntime, espeak) que ficam ao lado dele: sem
+          // rodar a partir dessa pasta, ele não as encontra e falha ao iniciar.
+          { cwd: path.dirname(caminhos.binario), timeout: 120000 },
+          (erro) => (erro ? reject(erro) : resolve())
+        );
+        // O Piper lê o texto pela entrada padrão.
+        proc.stdin?.end(texto);
+      });
+
+      if (!fs.existsSync(saida) || fs.statSync(saida).size === 0) return null;
+      const wav = fs.readFileSync(saida);
+      console.log(`[OSONE ZAP] Áudio gerado pela voz local (${(wav.length / 1024).toFixed(0)} KB) — sem consumir cota.`);
+      return wav;
+    } catch (e: any) {
+      console.error(`[OSONE ZAP] Falha na voz local: ${e?.message || e}`);
+      return null;
+    } finally {
+      fs.unlink(saida, () => {});
+    }
+  }
+
+  /**
    * Traduz o erro cru da API de voz numa frase que explique o que fazer.
    *
    * A API devolve um bloco de JSON de vários milhares de caracteres para dizer coisas simples
@@ -1088,8 +1149,10 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     voice?: string;
     elevenLabsApiKey?: string;
     elevenLabsVoiceId?: string;
+    /** Uso interno: marca a chamada de revezamento, para não repetir a troca de motor em ciclo. */
+    jaTentouFallback?: boolean;
   }): Promise<{ buffer: Buffer; mimeType: string; extension: string } | null> {
-    ultimoErroTts = "";
+    if (!opts.jaTentouFallback) ultimoErroTts = "";
     const cleanText = (text || "").trim();
     if (!cleanText) return null;
 
@@ -1213,8 +1276,36 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
         // Tradutor. Ele salvava o envio, mas com a voz robótica de leitor de texto — e, pior,
         // só para os trechos em que o Gemini falhava. O resultado era um mesmo áudio alternando
         // entre a voz natural e a robótica no meio da frase, sem nada explicando o porquê.
-        // Preferimos falhar de forma clara: sem voz natural, o áudio não sai, e o log diz isso.
-        console.error("[OSONE ZAP] O Gemini TTS não gerou áudio para um trecho — nenhum áudio será enviado (a voz robótica de emergência foi removida de propósito).");
+        // Antes havia aqui um recurso de emergência com a voz robótica do Google Tradutor.
+        // Foi removido: ele salvava o envio, mas alternando entre a voz natural e a robótica no
+        // meio da mesma frase. O revezamento agora é para a ElevenLabs, que tem voz boa.
+        console.error("[OSONE ZAP] O Gemini TTS não gerou áudio para um trecho.");
+
+        // Troca automática de motor: a cota gratuita de voz do Gemini é de poucos áudios por
+        // DIA, então ela acaba no meio do expediente e o robô emudece justamente quando está
+        // sendo usado. Havendo chave da ElevenLabs, o áudio continua saindo por lá sem que
+        // ninguém precise mexer em nada. 'jaTentouFallback' evita recursão infinita caso a
+        // ElevenLabs também falhe.
+        const chaveEleven = opts.elevenLabsApiKey || process.env.ELEVENLABS_API_KEY;
+        if (chaveEleven && !opts.jaTentouFallback) {
+          console.log("[OSONE ZAP] Trocando automaticamente para a ElevenLabs para não ficar sem áudio.");
+          const porEleven = await synthesizeWhatsAppVoiceReply(text, { ...opts, engine: "elevenlabs", jaTentouFallback: true });
+          if (porEleven) {
+            ultimoErroTts = "";
+            return porEleven;
+          }
+          ultimoErroTts = `${ultimoErroTts} A troca automática para a ElevenLabs também não funcionou.`;
+        }
+
+        // Última camada: a voz que roda na própria máquina. Chega aqui quando as vozes de
+        // nuvem falharam — e, diferente delas, esta não tem cota para acabar.
+        const wavLocal = await sintetizarComVozLocal(stripVocalTags(cleanText));
+        if (wavLocal) {
+          ultimoErroTts = "";
+          return { buffer: wavLocal, mimeType: "audio/wav", extension: "wav" };
+        }
+
+        ultimoErroTts = `${ultimoErroTts} A voz local também não está disponível — rode 'npm run baixar-voz' para instalá-la e nunca mais ficar sem áudio.`;
         return null;
       }
     }
