@@ -25,6 +25,10 @@ interface WhatsAppConfig {
   onlyKnownContacts: boolean;
   requireTriggerCommand: boolean;
   triggerCommand: string;
+  // As chaves nunca vêm do servidor (ver GET /api/whatsapp/config): os campos acima ficam
+  // sempre vazios e o que o painel exibe vem destes resumos.
+  geminiApiKeyInfo?: { configurada: boolean; tamanho: number; previa: string };
+  elevenLabsApiKeyInfo?: { configurada: boolean; tamanho: number; previa: string };
   ttsEngine: 'gemini' | 'elevenlabs';
   ttsVoice: string;
   elevenLabsApiKey: string;
@@ -306,6 +310,10 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
       if (res.ok) {
         const data = await res.json();
         setConfig(data.config);
+        // O servidor recusa uma "chave" que claramente não é uma, para não deixar o valor bom
+        // ser sobrescrito. Se isso acontecer, o usuário precisa saber — calar aqui recriaria
+        // justamente o problema silencioso que esta proteção existe para evitar.
+        if (data.avisoChave) alert(`OSONE ZAP — chave não alterada\n\n${data.avisoChave}`);
         fetchLogs();
       }
     } catch (e) {
@@ -1289,28 +1297,42 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                 <label className="block text-xs font-bold text-white mb-1.5">
                   Chave API Personalizada do Gemini (Opcional)
                 </label>
+                {/* Este campo NÃO pode ser autopreenchido pelo navegador.
+                    Sendo type="password", o Chrome o trata como campo de senha e injeta nele
+                    uma senha salva ao abrir a tela. Como qualquer ajuste no painel salva a
+                    configuração INTEIRA, essa senha ia junto e sobrescrevia a chave real no
+                    servidor — a chave era colada corretamente e depois destruída sozinha, e o
+                    Google passava a recusar tudo com "API key not valid". Os atributos abaixo
+                    desligam o autopreenchimento do navegador e dos gerenciadores de senha. */}
                 <input
                   type="password"
-                  placeholder="AIzaSy..."
+                  name="osone-chave-gemini"
+                  autoComplete="off"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
+                  data-form-type="other"
+                  spellCheck={false}
+                  placeholder={config.geminiApiKeyInfo?.configurada ? "Chave salva — digite aqui só para trocá-la" : "AIzaSy..."}
                   value={config.geminiApiKey}
                   onChange={(e) => setConfig({ ...config, geminiApiKey: e.target.value })}
                   className="w-full px-3.5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500/50 font-mono"
                 />
-                {/* Campo de senha esconde o conteúdo, então uma chave colada pela metade parece
-                    idêntica a uma completa — e o Google recusa as duas com o mesmo "API key not
-                    valid". Mostrar o comprimento revela na hora que a cópia veio cortada. */}
+                {/* Mostra o que está salvo NO SERVIDOR (prévia e comprimento). O campo acima
+                    fica vazio de propósito: a chave não trafega de volta, então não há como um
+                    salvamento seguinte gravar um valor censurado por cima dela. */}
                 {config.geminiApiKey ? (
-                  <p className={`text-[10px] mt-1 ${
-                    config.geminiApiKey.length === 39 ? 'text-emerald-400' : 'text-amber-400'
-                  }`}>
-                    {config.geminiApiKey.length} caracteres
-                    {config.geminiApiKey.length === 39
-                      ? ' — tamanho correto de uma chave do Gemini.'
-                      : ' — uma chave do Gemini tem 39. Apague o campo e cole de novo; provavelmente a cópia veio incompleta.'}
+                  <p className={`text-[10px] mt-1 ${config.geminiApiKey.trim().length === 39 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    Digitando: {config.geminiApiKey.trim().length} caracteres
+                    {config.geminiApiKey.trim().length === 39 ? ' — tamanho correto.' : ' — uma chave do Gemini tem 39.'}
+                  </p>
+                ) : config.geminiApiKeyInfo?.configurada ? (
+                  <p className={`text-[10px] mt-1 ${config.geminiApiKeyInfo.tamanho === 39 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    Salva: {config.geminiApiKeyInfo.previa} ({config.geminiApiKeyInfo.tamanho} caracteres)
+                    {config.geminiApiKeyInfo.tamanho !== 39 && ' — uma chave do Gemini tem 39, esta parece incompleta.'}
                   </p>
                 ) : (
                   <p className="text-[10px] text-zinc-500 mt-1">
-                    Se deixado em branco, o sistema usará a chave de ambiente configurada no OSONE.
+                    Nenhuma chave salva. Em branco, o sistema usa a chave de ambiente do OSONE.
                   </p>
                 )}
               </div>
@@ -1451,6 +1473,12 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                     <div className="mt-3 space-y-2.5">
                       <input
                         type="password"
+                        name="osone-chave-elevenlabs"
+                        autoComplete="off"
+                        data-lpignore="true"
+                        data-1p-ignore="true"
+                        data-form-type="other"
+                        spellCheck={false}
                         placeholder="Chave API da ElevenLabs (opcional, usa a global se vazio)"
                         value={config.elevenLabsApiKey}
                         onChange={(e) => setConfig({ ...config, elevenLabsApiKey: e.target.value })}
