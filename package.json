@@ -42,6 +42,9 @@
       "!node_modules/**/tests/**",
       "!node_modules/**/*.d.ts"
     ],
+    "asarUnpack": [
+      "**/node_modules/ffmpeg-static/**"
+    ],
     "publish": {
       "provider": "github",
       "owner": "zerobob623-bit",
@@ -84,6 +87,7 @@
     "electron-updater": "^6.8.9",
     "esbuild": "^0.28.0",
     "express": "^4.21.2",
+    "ffmpeg-static": "^5.3.0",
     "file-saver": "^2.0.5",
     "firebase": "^12.15.0",
     "framer-motion": "^11.18.2",

@@ -7,6 +7,9 @@ import os from "os";
 import crypto from "crypto";
 import dns from "dns";
 import { execFile } from "child_process";
+// Binário do ffmpeg que viaja junto do OSONE, para a mensagem de voz do WhatsApp funcionar em
+// qualquer instalação sem o usuário precisar instalar nada por fora.
+import ffmpegStatic from "ffmpeg-static";
 import { WebSocketServer, WebSocket } from "ws";
 import { GoogleGenAI, Modality } from "@google/genai";
 import { createServer as createViteServer } from "vite";
@@ -930,6 +933,25 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
    * falha, e nesse caso quem chama envia o áudio como ARQUIVO comum (que toca normalmente no
    * WhatsApp), em vez de uma mensagem de voz que não chegaria.
    */
+  /**
+   * Descobre qual ffmpeg usar. Prefere o binário que vai empacotado junto do OSONE — assim a
+   * mensagem de voz funciona para qualquer pessoa que instale o app, sem pedir que ela instale
+   * nada (no Windows isso exigiria baixar um zip e editar variáveis de ambiente, o que nenhum
+   * usuário comum faria). Cai para o ffmpeg do sistema se o embutido não estiver disponível,
+   * o que cobre o modo desenvolvimento e instalações por conta própria.
+   */
+  function resolverCaminhoFfmpeg(): string {
+    try {
+      // O caminho vem apontando para dentro do app.asar no app empacotado, e binários não podem
+      // ser executados de dentro do arquivo asar. O electron-builder extrai esta pasta para
+      // "app.asar.unpacked" (ver asarUnpack no package.json) — é para lá que o caminho aponta.
+      const bruto = (ffmpegStatic as unknown as string) || "";
+      const desempacotado = bruto.replace("app.asar", "app.asar.unpacked");
+      if (desempacotado && fs.existsSync(desempacotado)) return desempacotado;
+    } catch (_) { /* usa o ffmpeg do sistema */ }
+    return "ffmpeg";
+  }
+
   async function converterAudioParaOpus(buffer: Buffer, extensaoOrigem: string): Promise<Buffer | null> {
     const base = path.join(os.tmpdir(), `osone-voz-${crypto.randomBytes(6).toString("hex")}`);
     const entrada = `${base}.${extensaoOrigem || "wav"}`;
@@ -939,7 +961,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       // Parâmetros da mensagem de voz do WhatsApp: Opus, mono, 48 kHz, em contêiner OGG.
       await new Promise<void>((resolve, reject) => {
         execFile(
-          "ffmpeg",
+          resolverCaminhoFfmpeg(),
           ["-hide_banner", "-loglevel", "error", "-y", "-i", entrada,
            "-c:a", "libopus", "-b:a", "32k", "-ar", "48000", "-ac", "1", "-f", "ogg", saida],
           { timeout: 60000 },
@@ -979,6 +1001,13 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     return "arquivo";
   }
 
+  /**
+   * Guarda o motivo da última falha de síntese de voz para que quem chamou possa mostrá-lo ao
+   * usuário. A função devolve null quando não consegue gerar o áudio, e só isso não diz nada
+   * sobre a causa — que é justamente o que se precisa saber quando a voz para de funcionar.
+   */
+  let ultimoErroTts = "";
+
   async function synthesizeWhatsAppVoiceReply(text: string, opts: {
     engine?: "gemini" | "elevenlabs";
     geminiApiKey?: string;
@@ -986,6 +1015,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     elevenLabsApiKey?: string;
     elevenLabsVoiceId?: string;
   }): Promise<{ buffer: Buffer; mimeType: string; extension: string } | null> {
+    ultimoErroTts = "";
     const cleanText = (text || "").trim();
     if (!cleanText) return null;
 
@@ -1049,6 +1079,11 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       const processedChunk = stripVocalTags(chunk);
       let chunkAudioBuffer: Buffer | null = null;
 
+      // Guarda o motivo de cada tentativa frustrada. Antes o catch era vazio: quando a voz
+      // parava de funcionar não sobrava nenhuma pista — nem qual modelo falhou, nem por quê —
+      // e o problema ficava invisível porque a voz robótica de emergência cobria o buraco.
+      const falhasPorModelo: string[] = [];
+
       for (const modelName of candidateModels) {
         try {
           const response = await ai.models.generateContent({
@@ -1064,7 +1099,18 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
             chunkAudioBuffer = Buffer.from(base64Audio, "base64");
             break;
           }
-        } catch (_) { /* tenta o próximo modelo candidato */ }
+          falhasPorModelo.push(`${modelName}: respondeu sem áudio`);
+        } catch (e: any) {
+          falhasPorModelo.push(`${modelName}: ${e?.message || e}`);
+        }
+      }
+
+      if (!chunkAudioBuffer) {
+        console.error(
+          "[OSONE ZAP] Nenhum modelo conseguiu gerar a voz. Motivos por modelo:\n  " +
+          falhasPorModelo.join("\n  ")
+        );
+        ultimoErroTts = falhasPorModelo.join(" | ");
       }
 
       if (chunkAudioBuffer) {
@@ -1363,7 +1409,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
             timestamp: Date.now(),
             type: "error",
             sender,
-            message: "Não foi possível gerar o áudio da resposta (a resposta em texto já foi enviada normalmente)."
+            message: `Não foi possível gerar o áudio da resposta (o texto foi enviado normalmente). Motivo: ${ultimoErroTts || "a IA de voz não retornou áudio."}`
           });
           if (whatsappLogs.length > 100) whatsappLogs.pop();
         }
@@ -2410,7 +2456,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
             audioSent = true;
             console.log(`[WhatsApp Send] Áudio enviado para ${formattedJid} como ${audioFormat}.`);
           } else {
-            audioError = "Não foi possível gerar o áudio (verifique a chave de voz configurada nos Ajustes).";
+            audioError = `Não foi possível gerar o áudio. Motivo: ${ultimoErroTts || "a IA de voz não retornou áudio (verifique a chave configurada nos Ajustes)."}`;
           }
         } catch (ttsErr: any) {
           audioError = `Falha ao gerar/enviar o áudio: ${ttsErr?.message || ttsErr}`;
