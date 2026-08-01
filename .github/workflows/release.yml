@@ -103,6 +103,14 @@ jobs:
             exit 1
           fi
 
+      - name: Baixar a voz local (Piper)
+        # Vai embutida no instalador para que a resposta em áudio nunca dependa de cota: quando
+        # o limite diário do Gemini e o mensal da ElevenLabs acabam, o áudio continua saindo
+        # por esta voz, que roda na máquina do próprio usuário.
+        # Não interrompe a publicação se falhar: sem ela o app perde só a última camada de voz.
+        run: npm run baixar-voz
+        continue-on-error: true
+
       - name: Gerar instalador e publicar na Release
         run: npx electron-builder ${{ matrix.alvo }} --publish always
         env:

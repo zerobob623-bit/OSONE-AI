@@ -1493,11 +1493,19 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                         data-1p-ignore="true"
                         data-form-type="other"
                         spellCheck={false}
-                        placeholder="Chave API da ElevenLabs (opcional, usa a global se vazio)"
+                        placeholder={config.elevenLabsApiKeyInfo?.configurada ? "Chave salva — digite aqui só para trocá-la" : "Chave API da ElevenLabs (opcional, usa a global se vazio)"}
                         value={config.elevenLabsApiKey}
                         onChange={(e) => setConfig({ ...config, elevenLabsApiKey: e.target.value })}
                         className="w-full px-3.5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500/50 font-mono"
                       />
+                      {/* Sem este aviso o campo parecia apagar a chave ao salvar: como o segredo
+                          não volta do servidor, o input fica vazio e dá a impressão de que nada
+                          foi guardado. */}
+                      {config.elevenLabsApiKeyInfo?.configurada && !config.elevenLabsApiKey && (
+                        <p className="text-[10px] text-emerald-400">
+                          Salva: {config.elevenLabsApiKeyInfo.previa} ({config.elevenLabsApiKeyInfo.tamanho} caracteres)
+                        </p>
+                      )}
                       <input
                         type="text"
                         placeholder="ID da Voz na ElevenLabs (opcional)"
