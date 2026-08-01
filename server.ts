@@ -1008,6 +1008,43 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
    */
   let ultimoErroTts = "";
 
+  /**
+   * Pergunta à API do Gemini quais modelos de voz esta chave enxerga.
+   *
+   * Existe porque nomes de modelo mudam de geração em geração e a quebra é silenciosa: o
+   * modelo fixo no código some da API, toda chamada falha, e não sobra pista nenhuma. Com a
+   * consulta, o OSONE se reajusta sozinho quando o Google renomeia ou aposenta um modelo.
+   *
+   * O resultado fica em cache: a lista não muda durante a execução e a consulta custa uma
+   * chamada de rede que não vale repetir a cada áudio.
+   */
+  let cacheModelosDeVoz: string[] | null = null;
+  async function descobrirModelosDeVoz(ai: any): Promise<string[]> {
+    if (cacheModelosDeVoz) return cacheModelosDeVoz;
+    try {
+      const resposta = await ai.models.list();
+      // O SDK ora devolve um array, ora um paginador iterável — aceita os dois formatos.
+      const lista: any[] = Array.isArray(resposta) ? resposta : [];
+      if (!lista.length && resposta && typeof resposta[Symbol.asyncIterator] === "function") {
+        for await (const m of resposta) lista.push(m);
+      }
+      const nomes = lista
+        .map((m: any) => String(m?.name || "").replace(/^models\//, ""))
+        .filter((nome: string) => nome.toLowerCase().includes("tts"));
+      cacheModelosDeVoz = nomes;
+      console.log(
+        nomes.length
+          ? `[OSONE ZAP] Modelos de voz disponíveis nesta chave: ${nomes.join(", ")}`
+          : "[OSONE ZAP] A API não listou nenhum modelo de voz (TTS) para esta chave."
+      );
+      return nomes;
+    } catch (e: any) {
+      console.warn(`[OSONE ZAP] Não foi possível listar os modelos da API: ${e?.message || e}`);
+      cacheModelosDeVoz = [];
+      return [];
+    }
+  }
+
   async function synthesizeWhatsAppVoiceReply(text: string, opts: {
     engine?: "gemini" | "elevenlabs";
     geminiApiKey?: string;
@@ -1071,7 +1108,22 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     let selectedVoice = opts.voice || "Kore";
     if (!supportedGeminiVoices.includes(selectedVoice)) selectedVoice = "Kore";
 
-    const candidateModels = ["gemini-3.1-flash-tts-preview", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
+    // Só modelos de VOZ entram aqui. A lista anterior trazia junto três modelos de texto
+    // (gemini-3.6-flash e as duas variantes flash-lite): eles nunca devolvem áudio, então
+    // serviam apenas para gastar tempo e cota antes de falhar igual. Quando o modelo de voz
+    // não estava disponível para a chave, o resultado era nenhum áudio e nenhuma explicação.
+    const candidateModels = [
+      "gemini-3.1-flash-tts-preview",
+      "gemini-2.5-flash-preview-tts",
+      "gemini-2.5-pro-preview-tts",
+    ];
+    // Nomes de modelo mudam a cada geração e quebram silenciosamente. Se nenhum candidato fixo
+    // funcionar, o OSONE pergunta à própria API quais modelos de voz a chave enxerga e tenta
+    // esses — assim a voz volta a funcionar sozinha quando o Google renomeia algo.
+    const descobertos = await descobrirModelosDeVoz(ai);
+    for (const m of descobertos) {
+      if (!candidateModels.includes(m)) candidateModels.push(m);
+    }
     const chunks = splitIntoTtsChunks(cleanText, 700);
     const buffers: Buffer[] = [];
 
@@ -1782,6 +1834,45 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   });
 
   // API Endpoints for WhatsApp Frontend configuration
+  /**
+   * Diagnóstico da voz: diz se a chave do Gemini enxerga algum modelo de TTS e tenta gerar um
+   * áudio curto de verdade, informando o erro exato de cada modelo. Serve para descobrir por
+   * que a voz não sai sem precisar mandar mensagem de WhatsApp para alguém a cada tentativa.
+   */
+  app.get("/api/whatsapp/diagnostico-voz", async (req, res) => {
+    const apiKey = whatsappConfig.geminiApiKey || getSecretGeminiKey();
+    if (!apiKey) {
+      return res.status(400).json({
+        ok: false,
+        erro: "Nenhuma chave do Gemini configurada (nem nos Ajustes do OSONE ZAP, nem no servidor)."
+      });
+    }
+    try {
+      const ai = new GoogleGenAI({ apiKey, vertexai: false, httpOptions: { headers: { "User-Agent": "aistudio-build" } } });
+      cacheModelosDeVoz = null; // força uma consulta nova a cada diagnóstico
+      const modelosDeVoz = await descobrirModelosDeVoz(ai);
+
+      const teste = await synthesizeWhatsAppVoiceReply("Teste de voz do OSONE.", {
+        engine: whatsappConfig.ttsEngine,
+        geminiApiKey: apiKey,
+        voice: whatsappConfig.ttsVoice,
+        elevenLabsApiKey: whatsappConfig.elevenLabsApiKey,
+        elevenLabsVoiceId: whatsappConfig.elevenLabsVoiceId
+      });
+
+      return res.json({
+        ok: !!teste,
+        motorConfigurado: whatsappConfig.ttsEngine,
+        modelosDeVozVistosPelaSuaChave: modelosDeVoz,
+        audioGerado: teste ? `sim (${(teste.buffer.length / 1024).toFixed(0)} KB)` : "não",
+        erro: teste ? null : (ultimoErroTts || "a IA de voz não retornou áudio."),
+        ffmpeg: resolverCaminhoFfmpeg() === "ffmpeg" ? "usando o do sistema (pode não existir)" : "embutido no OSONE"
+      });
+    } catch (e: any) {
+      return res.status(500).json({ ok: false, erro: e?.message || String(e) });
+    }
+  });
+
   app.get("/api/whatsapp/config", (req, res) => {
     res.json(whatsappConfig);
   });
