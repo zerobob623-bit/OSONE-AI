@@ -23,6 +23,8 @@ interface WhatsAppConfig {
   geminiApiKey: string;
   sendAudioReplies: boolean;
   onlyKnownContacts: boolean;
+  requireTriggerCommand: boolean;
+  triggerCommand: string;
   ttsEngine: 'gemini' | 'elevenlabs';
   ttsVoice: string;
   elevenLabsApiKey: string;
@@ -53,6 +55,8 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
     geminiApiKey: '',
     sendAudioReplies: true,
     onlyKnownContacts: true,
+    requireTriggerCommand: true,
+    triggerCommand: '/osone',
     ttsEngine: 'gemini',
     ttsVoice: 'Kore',
     elevenLabsApiKey: '',
@@ -1295,6 +1299,59 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                 <p className="text-[10px] text-zinc-500 mt-1">
                   Se deixado em branco, o sistema usará a chave de ambiente configurada no OSONE.
                 </p>
+              </div>
+
+              {/* Trigger Command Toggle */}
+              <div className="p-4 bg-white/5 rounded-2xl border border-white/10 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="pr-3">
+                    <h4 className="text-xs font-bold text-white">Só responder quando chamarem o OSONE</h4>
+                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                      {config.requireTriggerCommand
+                        ? `O robô fica quieto até alguém escrever "${config.triggerCommand}" na mensagem — como quem diz "ei, OSONE, me responde aqui". Suas conversas normais seguem sem interrupção.`
+                        : 'ATENÇÃO: o robô responde a TODA mensagem recebida, inclusive no meio de conversas suas com outras pessoas.'}
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() => handleSaveConfig({ requireTriggerCommand: !config.requireTriggerCommand })}
+                    className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer shrink-0 ${
+                      config.requireTriggerCommand ? 'bg-emerald-500' : 'bg-zinc-800'
+                    }`}
+                  >
+                    <span
+                      className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${
+                        config.requireTriggerCommand ? 'left-7' : 'left-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {config.requireTriggerCommand && (
+                  <div>
+                    <label className="block text-[10px] font-bold text-zinc-400 mb-1.5 uppercase tracking-wide">
+                      Comando que ativa o robô
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="/osone"
+                      value={config.triggerCommand}
+                      onChange={(e) => setConfig({ ...config, triggerCommand: e.target.value })}
+                      onBlur={() => {
+                        // Campo vazio liberaria todas as mensagens, o oposto do que a opção promete:
+                        // volta para o padrão em vez de salvar um gatilho que não filtra nada.
+                        const cleaned = config.triggerCommand.trim() || '/osone';
+                        if (cleaned !== config.triggerCommand) setConfig({ ...config, triggerCommand: cleaned });
+                        handleSaveConfig({ triggerCommand: cleaned });
+                      }}
+                      className="w-full px-3.5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500/50 font-mono"
+                    />
+                    <p className="text-[10px] text-zinc-500 mt-1">
+                      Funciona em qualquer parte da mensagem, sem diferenciar maiúsculas. O comando é
+                      removido antes de a IA ler o pedido. Vale também para áudios: basta falar o comando.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Saved-contacts-only Toggle */}
