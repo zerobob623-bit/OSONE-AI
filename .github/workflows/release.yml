@@ -94,6 +94,20 @@ jobs:
             exit 1
           fi
 
+          # Aviso, não erro: o app já limpa espaços e quebras de linha ao ler estes valores. Mas
+          # um secret sujo indica que a origem tem um caractere invisível colado, e vale
+          # consertar lá — outra parte do sistema pode ler o mesmo valor sem limpar.
+          i=0
+          for valor in "$API_KEY" "$AUTH_DOMAIN" "$PROJECT_ID" "$STORAGE_BUCKET" "$SENDER_ID" "$APP_ID"; do
+            i=$((i + 1))
+            nome=$(echo $NOMES | cut -d' ' -f$i)
+            limpo=$(printf '%s' "$valor" | tr -d '[:space:]')
+            if [ "${#valor}" -ne "${#limpo}" ]; then
+              echo "AVISO: o secret $nome tem espaço ou quebra de linha em volta."
+              echo "       Reabra-o em Settings > Secrets and variables > Actions e cole de novo, sem o caractere extra."
+            fi
+          done
+
           # Além de existirem, os valores precisam ter chegado de fato dentro do bundle.
           if grep -rq "$PROJECT_ID" dist/assets/ && grep -rq "$AUTH_DOMAIN" dist/assets/; then
             echo "OK: os 6 secrets estão definidos e as chaves foram embutidas no build."
