@@ -261,8 +261,47 @@ function createWindow() {
     }
   }, 10000);
 
-  // Open external links in user's default browser
+  /**
+   * Reconhece as janelas de login (Firebase/Google), que precisam abrir DENTRO do app.
+   *
+   * O Firebase faz login abrindo um popup por window.open() e espera receber a credencial de
+   * volta por ele, usando a ligação "opener" entre as duas janelas. Mandando essa janela para o
+   * navegador do sistema, o login até acontece — mas num processo separado, sem ligação nenhuma
+   * com o OSONE: a página não consegue se fechar nem devolver o resultado ("Scripts may close
+   * only the windows that were opened by them"), e o app nunca fica sabendo que o usuário
+   * entrou. Era o que acontecia no app instalado, enquanto no navegador funcionava normalmente.
+   */
+  const ehJanelaDeLogin = (url) => {
+    try {
+      const { hostname, pathname } = new URL(url);
+      if (hostname === 'accounts.google.com') return true;
+      // O manipulador de autenticação do Firebase fica em <projeto>.firebaseapp.com/__/auth/...
+      // (ou .web.app). Comparado pelo formato, e não pelo nome do projeto, para seguir valendo
+      // em qualquer instalação que use um projeto Firebase próprio.
+      if ((hostname.endsWith('.firebaseapp.com') || hostname.endsWith('.web.app')) &&
+          pathname.startsWith('/__/auth')) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  };
+
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    // Login: abre dentro do app, preservando a ligação com a janela que o chamou.
+    if (ehJanelaDeLogin(url)) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 520,
+          height: 680,
+          autoHideMenuBar: true,
+          // Sem integração com Node nesta janela: ela carrega uma página do Google, e é código
+          // de terceiros que não deve ter acesso ao sistema do usuário.
+          webPreferences: { nodeIntegration: false, contextIsolation: true }
+        }
+      };
+    }
+    // Qualquer outro link continua indo para o navegador do sistema.
     if (url.startsWith('http:') || url.startsWith('https:')) {
       shell.openExternal(url);
       return { action: 'deny' };
