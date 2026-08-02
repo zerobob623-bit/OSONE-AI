@@ -41,7 +41,7 @@ interface WhatsAppConfig {
   // sempre vazios e o que o painel exibe vem destes resumos.
   geminiApiKeyInfo?: { configurada: boolean; tamanho: number; previa: string };
   elevenLabsApiKeyInfo?: { configurada: boolean; tamanho: number; previa: string };
-  ttsEngine: 'gemini' | 'elevenlabs';
+  ttsEngine: 'gemini' | 'elevenlabs' | 'local';
   ttsVoice: string;
   elevenLabsApiKey: string;
   elevenLabsVoiceId: string;
@@ -1460,7 +1460,9 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                   <label className="block text-xs font-bold text-white mb-1.5">
                     Motor de Voz para as Respostas em Áudio
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
+                  {/* Três colunas desde que virou três motores: num grid de duas, o terceiro
+                      botão caía sozinho numa linha nova, com uma célula vazia ao lado. */}
+                  <div className="grid grid-cols-3 gap-2">
                     <button
                       onClick={() => setConfig({ ...config, ttsEngine: 'gemini' })}
                       className={`px-3.5 py-2.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
@@ -1481,7 +1483,23 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                     >
                       ElevenLabs
                     </button>
+                    <button
+                      onClick={() => setConfig({ ...config, ttsEngine: 'local' })}
+                      className={`px-3.5 py-2.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                        config.ttsEngine === 'local'
+                          ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+                          : 'bg-white/5 border-white/10 text-zinc-400'
+                      }`}
+                    >
+                      Voz Local
+                    </button>
                   </div>
+
+                  <p className="text-[10px] text-zinc-500 mt-2">
+                    {config.ttsEngine === 'local'
+                      ? 'A voz roda no próprio computador: sem cota, sem chave e sem custo, mas um pouco menos natural que as de nuvem. Precisa ter sido instalada com "npm run baixar-voz".'
+                      : 'Se a cota deste motor acabar, o OSONE tenta os outros sozinho e, por último, a voz local — assim o áudio nunca deixa de sair.'}
+                  </p>
 
                   {config.ttsEngine === 'elevenlabs' && (
                     <div className="mt-3 space-y-2.5">
