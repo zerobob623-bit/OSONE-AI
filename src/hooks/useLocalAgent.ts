@@ -6,15 +6,102 @@ import { PendingLocalAgentConfirmation } from '../components/LocalAgentConfirmMo
  * Operações que modificam arquivos (organizar pasta, mover para lixeira) exigem confirmação
  * humana explícita no painel de texto e são totalmente bloqueadas em sessões de voz.
  */
+/** Uma ação do motor, como ela aparece no painel: o que está fazendo e como terminou. */
+export interface AcaoDoMotor {
+  id: string;
+  quando: number;
+  rotulo: string;
+  detalhe?: string;
+  estado: 'executando' | 'ok' | 'erro' | 'parado';
+  resultado?: string;
+}
+
 export function useLocalAgent() {
   const [pendingLocalAgentConfirmation, setPendingLocalAgentConfirmation] = useState<PendingLocalAgentConfirmation | null>(null);
+  /**
+   * O que o motor está fazendo, em ordem. Existe porque até agora a única pista de que algo
+   * acontecia era um "Ação do Agente Local processada" que sumia da tela — sem saber qual ação,
+   * quantas faltam, nem se travou. Ver a sequência é o que permite julgar se está funcionando.
+   */
+  const [acoesDoMotor, setAcoesDoMotor] = useState<AcaoDoMotor[]>([]);
+  /**
+   * Trava de parada. Fica num ref, e não em estado, porque precisa ser lida DENTRO de uma
+   * sequência já em andamento — um estado só chegaria na próxima renderização, tarde demais para
+   * interromper o que já está rodando.
+   */
+  const motorParadoRef = useRef(false);
+  const [motorParado, setMotorParado] = useState(false);
+
+  /** Interrompe a sequência: a ação em curso termina, as seguintes são recusadas. */
+  const pararMotor = () => {
+    motorParadoRef.current = true;
+    setMotorParado(true);
+    setAcoesDoMotor(prev => prev.map(a => a.estado === 'executando' ? { ...a, estado: 'parado' as const } : a));
+  };
+
+  const retomarMotor = () => {
+    motorParadoRef.current = false;
+    setMotorParado(false);
+  };
+
+  const limparAcoesDoMotor = () => setAcoesDoMotor([]);
   const pendingLocalAgentResolveRef = useRef<((value: any) => void) | null>(null);
   const pendingLocalAgentTimerRef = useRef<any>(null);
   // Resolução da tela, lida uma vez e reaproveitada: ela não muda no meio de uma sessão, e
   // consultá-la a cada clique acrescentaria uma ida ao agente antes de cada ação.
   const telaCacheRef = useRef<{ width: number; height: number; offsetX: number; offsetY: number } | null>(null);
 
+  /** Nome legível da ação, para o painel não mostrar jargão de ferramenta. */
+  const rotularAcao = (toolName: string, args: any): string => {
+    if (toolName !== 'controlar_pc') return toolName;
+    const a = String(args?.acao || '');
+    const mapa: Record<string, string> = {
+      clicar: 'Clicar', mover_mouse: 'Mover o mouse', rolar: 'Rolar a tela',
+      digitar: 'Digitar', tecla: 'Pressionar tecla', capturar_tela: 'Olhar a tela',
+      abrir: 'Abrir', fechar: 'Fechar', terminal: 'Rodar comando',
+      criar_pasta: 'Criar pasta', escrever_arquivo: 'Escrever arquivo', listar: 'Listar'
+    };
+    return mapa[a] || a || toolName;
+  };
+
+  const detalharAcao = (toolName: string, args: any): string | undefined => {
+    if (toolName !== 'controlar_pc') return undefined;
+    const a = String(args?.acao || '');
+    if (a === 'clicar' || a === 'mover_mouse') {
+      return args?.x !== undefined ? `x=${args.x}, y=${args.y}` : undefined;
+    }
+    if (a === 'capturar_tela') return args?.x !== undefined ? `ampliando em x=${args.x}, y=${args.y}` : 'tela inteira';
+    if (a === 'digitar') return String(args?.texto || '').slice(0, 40);
+    if (a === 'tecla') return String(args?.tecla || '');
+    if (a === 'terminal') return String(args?.comando || '').slice(0, 60);
+    return args?.caminho ? String(args.caminho).slice(0, 60) : undefined;
+  };
+
   const executeLocalAgentCall = async (toolName: string, args: any, localAgentToken?: string, isVoiceSession: boolean = false): Promise<any> => {
+    // Parada pedida pelo usuário: recusa antes de tocar na máquina dele. A mensagem vai para o
+    // modelo para ele não insistir nem fingir que executou.
+    if (motorParadoRef.current) {
+      return { error: "O usuário PAROU o motor de ações. Não execute mais nada no computador dele e pergunte se ele quer retomar." };
+    }
+
+    const idAcao = Math.random().toString(36).slice(2, 9);
+    setAcoesDoMotor(prev => [
+      { id: idAcao, quando: Date.now(), rotulo: rotularAcao(toolName, args), detalhe: detalharAcao(toolName, args), estado: 'executando' as const },
+      ...prev
+    ].slice(0, 60));
+
+    const concluir = (resultado: any) => {
+      const deuErro = !!resultado?.error;
+      setAcoesDoMotor(prev => prev.map(a => a.id === idAcao
+        ? { ...a, estado: deuErro ? ('erro' as const) : ('ok' as const), resultado: deuErro ? String(resultado.error).slice(0, 160) : (resultado?.resumo ? String(resultado.resumo).slice(0, 160) : undefined) }
+        : a));
+      return resultado;
+    };
+
+    return concluir(await executarAcao(toolName, args, localAgentToken, isVoiceSession));
+  };
+
+  const executarAcao = async (toolName: string, args: any, localAgentToken?: string, isVoiceSession: boolean = false): Promise<any> => {
     // Sem fallback para um token fixo: cada instalação gera seu próprio token forte em
     // config.json na primeira vez que o servidor sobe (ver localAgentService.ts). Usar um
     // valor padrão aqui seria o mesmo token público em toda instalação do OSONE — quem lesse
@@ -552,6 +639,11 @@ export function useLocalAgent() {
 
   return {
     pendingLocalAgentConfirmation,
-    executeLocalAgentCall
+    executeLocalAgentCall,
+    acoesDoMotor,
+    motorParado,
+    pararMotor,
+    retomarMotor,
+    limparAcoesDoMotor
   };
 }

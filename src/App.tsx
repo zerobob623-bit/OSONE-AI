@@ -74,6 +74,7 @@ import { connectToLiveBridge } from './lib/live-bridge';
 import { FileTreeItem } from './components/FileTreeItem';
 import { InfinityLogo } from './components/InfinityLogo';
 import { SettingsModal } from './components/SettingsModal';
+import { MotorDeAcoes } from './components/MotorDeAcoes';
 import { Sidebar } from './components/Sidebar';
 import { ProfileModal } from './components/ProfileModal';
 import { IntimateMissionModal } from './components/IntimateMissionModal';
@@ -991,6 +992,9 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   - Use os caminhos reais do bloco AMBIENTE REAL DESTE COMPUTADOR (acima) e a sintaxe do sistema indicado ali. Não adivinhe o sistema operacional nem invente nomes de pasta em inglês se as pastas reais estiverem em português.
   - Em dúvida sobre o que existe numa pasta, chame antes com acao='listar' e aja sobre o que voltou, em vez de chutar nomes de arquivo.
   - Quando o usuário quiser VER o comando rodando ("abre o terminal", "mostra no terminal"), use acao='terminal' com visivel=true, que abre uma janela real na tela.
+  - AUTONOMIA: quando o usuário pedir algo que exige VÁRIOS passos ("abre o YouTube Studio e vai em Conteúdo", "clica no menu e depois em Fundo"), execute a sequência INTEIRA de uma vez, um passo atrás do outro, sem parar para pedir permissão entre eles e sem esperar ele mandar continuar. Parar no meio e ficar calado é o pior comportamento possível aqui: para o usuário é indistinguível de ter travado. Só interrompa se der erro, se faltar uma informação que só ele tem, ou se ele mandar parar.
+  - Enquanto executa uma sequência, vá dizendo em voz alta o que está fazendo em frases curtas ("abrindo o menu", "agora clicando em Conteúdo"). O usuário está vendo o painel do motor, mas silêncio prolongado ainda parece travamento.
+  - Se o usuário mandar PARAR, pare imediatamente e não execute mais nada até ele liberar. Se uma ferramenta responder que o motor foi parado pelo usuário, não insista nem tente de novo — confirme que parou e pergunte se ele quer retomar.
   - CONTROLE DE MOUSE/TECLADO ('mover_mouse', 'clicar', 'rolar', 'digitar', 'tecla', 'capturar_tela'): use para agir sobre o que estiver na tela (navegador, qualquer app), como um usuário faria. Você só sabe ONDE clicar/rolar olhando a imagem do compartilhamento de tela (quando ativo) ou o resultado de 'capturar_tela' — nunca invente coordenadas sem ter visto a tela antes. REGRA ABSOLUTA DE COORDENADAS: as coordenadas de clique SÓ podem sair de 'capturar_tela'. NUNCA tire coordenadas da imagem do compartilhamento de tela. Motivo: o compartilhamento pode estar mostrando apenas uma aba ou uma janela, enquanto o clique sempre age na TELA INTEIRA. Nesse caso o 'topo' que você vê é o topo da página, não o topo da tela, e o clique cai acima do alvo — em barra de título, abas ou barra de endereço. O compartilhamento serve para ENTENDER o que está acontecendo; 'capturar_tela' serve para MEDIR onde clicar. PROCEDIMENTO OBRIGATÓRIO DE MIRA, EM DOIS TEMPOS — siga sempre, sem pular etapa: (1) Chame 'capturar_tela' SEM x/y. Você recebe a tela inteira com grade numerada de 100 em 100 na escala 0-1000. Localize o alvo e estime x,y aproximados. (2) Chame 'capturar_tela' DE NOVO passando esses x,y. Você recebe aquela região AMPLIADA, com grade fina de 10 em 10, já numerada em coordenadas absolutas da tela — o número que você ler ali é o valor final do clique, sem conversão nenhuma. Leia o CENTRO do alvo e só então chame 'clicar' com esse valor. O passo 2 é o que separa acertar de quase acertar: na tela inteira cada linha cobre mais de 100 pixels, na ampliação cobre poucos. Nunca clique com o valor do passo 1 quando o alvo for pequeno (botão, ícone, campo, item de menu). As linhas vermelhas são régua sobreposta e não existem na tela real — nunca tente clicar nelas. Depois de clicar, se a ação não teve o efeito esperado, capture a tela de novo, confira onde o clique caiu e corrija — nunca repita o mesmo valor achando que dessa vez vai. Para preencher um campo: primeiro 'clicar' nele (x,y do que você viu), depois 'digitar' o texto. 'tecla' serve para atalhos e navegação (enter para enviar, tab para trocar de campo, ctrl+a para selecionar tudo). Essas ações dependem do sistema operacional ter as ferramentas necessárias instaladas (ex: xdotool no Linux) — se vier 'error', diga exatamente o que faltou, nunca finja que a ação aconteceu.
 
   MODULAÇÃO DE VOZ:
@@ -1885,7 +1889,8 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   }, [workspaceMode, writingSubMode]);
 
   const [proposedPlan, setProposedPlan] = useState<SkeletonPlan | null>(null);
-  const { pendingLocalAgentConfirmation, executeLocalAgentCall } = useLocalAgent();
+  const { pendingLocalAgentConfirmation, executeLocalAgentCall,
+          acoesDoMotor, motorParado, pararMotor, retomarMotor, limparAcoesDoMotor } = useLocalAgent();
 
   /**
    * Envia uma mensagem de WhatsApp de verdade, a pedido do modelo.
@@ -12612,6 +12617,14 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         onOpenProfileModal={() => setIsProfileModalOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
       />
+      <MotorDeAcoes
+        acoes={acoesDoMotor}
+        parado={motorParado}
+        onParar={pararMotor}
+        onRetomar={retomarMotor}
+        onLimpar={limparAcoesDoMotor}
+      />
+
       <SettingsModal 
         isOpen={isSettingsOpen} 
         onClose={() => setIsSettingsOpen(false)} 
