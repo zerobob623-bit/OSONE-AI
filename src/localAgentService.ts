@@ -1292,22 +1292,31 @@ const handleExec = async (req: Request, res: Response) => {
  * conectados), usada pelo frontend para mapear a posição da mão detectada pela câmera para
  * coordenadas absolutas de tela, incluindo monitores estendidos.
  */
+async function obterDimensoesDaTela(): Promise<{ width: number; height: number; offsetX: number; offsetY: number }> {
+  const platform = process.platform;
+  if (platform === 'linux') {
+    const { stdout } = await runShell(`xdotool getdisplaygeometry`);
+    const [width, height] = stdout.trim().split(/\s+/).map(Number);
+    return { width, height, offsetX: 0, offsetY: 0 };
+  }
+  if (platform === 'win32') {
+    const script = `Add-Type -AssemblyName System.Windows.Forms; $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen; Write-Output "$($vs.Width)|$($vs.Height)|$($vs.X)|$($vs.Y)"`;
+    const { stdout } = await runShell(`powershell -NoProfile -Command "${script}"`);
+    const [width, height, offsetX, offsetY] = stdout.trim().split('|').map(Number);
+    return { width, height, offsetX, offsetY };
+  }
+  throw new Error(`Plataforma '${platform}' não suportada para leitura das dimensões de tela.`);
+};
+
 const handleGetScreenInfo = async (_req: Request, res: Response) => {
   const platform = process.platform;
   try {
-    if (platform === 'linux') {
-      const { stdout } = await runShell(`xdotool getdisplaygeometry`);
-      const [width, height] = stdout.trim().split(/\s+/).map(Number);
-      return res.status(200).json({ width, height, offsetX: 0, offsetY: 0, monitors: 'union' });
-    }
-    if (platform === 'win32') {
-      const script = `Add-Type -AssemblyName System.Windows.Forms; $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen; Write-Output "$($vs.Width)|$($vs.Height)|$($vs.X)|$($vs.Y)"`;
-      const { stdout } = await runShell(`powershell -NoProfile -Command "${script}"`);
-      const [width, height, offsetX, offsetY] = stdout.trim().split('|').map(Number);
-      return res.status(200).json({ width, height, offsetX, offsetY, monitors: 'union' });
-    }
-    return res.status(501).json({ error: `Controle de mouse ainda não suportado na plataforma '${platform}'.` });
+    const info = await obterDimensoesDaTela();
+    return res.status(200).json({ ...info, monitors: 'union' });
   } catch (err: any) {
+    if (platform !== 'linux' && platform !== 'win32') {
+      return res.status(501).json({ error: `Controle de mouse ainda não suportado na plataforma '${platform}'.` });
+    }
     logAudit('ERROR', 'SCREEN_INFO_FAILED', err.message, { platform });
     return res.status(500).json({ error: `Não foi possível obter as dimensões da tela: ${err.message}. No Linux é necessário ter o pacote 'xdotool' instalado.` });
   }
@@ -1626,7 +1635,20 @@ const handleScreenCapture = async (_req: Request, res: Response) => {
     }
     const buffer = fs.readFileSync(tmpFile);
     fs.unlink(tmpFile, () => {});
-    return res.status(200).json({ image: `data:image/png;base64,${buffer.toString('base64')}`, mimeType: 'image/png' });
+
+    // As dimensões vão junto com a imagem de propósito: antes a captura era devolvida "crua", e
+    // quem olhasse a foto não tinha como saber a que tamanho de tela ela corresponde — uma foto
+    // sem régua. Sem isso, qualquer coordenada devolvida é um chute sobre a escala.
+    let tela: { width: number; height: number; offsetX: number; offsetY: number } | null = null;
+    try {
+      tela = await obterDimensoesDaTela();
+    } catch (_) { /* a imagem sozinha ainda é útil; segue sem as dimensões */ }
+
+    return res.status(200).json({
+      image: `data:image/png;base64,${buffer.toString('base64')}`,
+      mimeType: 'image/png',
+      ...(tela ? { screenWidth: tela.width, screenHeight: tela.height } : {})
+    });
   } catch (err: any) {
     fs.unlink(tmpFile, () => {});
     logAudit('ERROR', 'SCREEN_CAPTURE_FAILED', err.message, { platform });

@@ -10,6 +10,9 @@ export function useLocalAgent() {
   const [pendingLocalAgentConfirmation, setPendingLocalAgentConfirmation] = useState<PendingLocalAgentConfirmation | null>(null);
   const pendingLocalAgentResolveRef = useRef<((value: any) => void) | null>(null);
   const pendingLocalAgentTimerRef = useRef<any>(null);
+  // Resolução da tela, lida uma vez e reaproveitada: ela não muda no meio de uma sessão, e
+  // consultá-la a cada clique acrescentaria uma ida ao agente antes de cada ação.
+  const telaCacheRef = useRef<{ width: number; height: number; offsetX: number; offsetY: number } | null>(null);
 
   const executeLocalAgentCall = async (toolName: string, args: any, localAgentToken?: string, isVoiceSession: boolean = false): Promise<any> => {
     // Sem fallback para um token fixo: cada instalação gera seu próprio token forte em
@@ -27,6 +30,48 @@ export function useLocalAgent() {
     const headers = {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${token.trim()}`
+    };
+
+    /**
+     * Converte a coordenada que o MODELO informa (escala 0–1000) para o pixel real da tela.
+     *
+     * Por que 0–1000 e não pixels: o Gemini aponta posições em imagens nessa escala normalizada
+     * por padrão — é o que ele foi treinado a produzir. Pedir pixels obrigava o modelo a adivinhar
+     * a resolução da tela, que ele não tem como saber olhando uma foto sem régua. O resultado era
+     * um erro sistemático em TODO clique: ele mandava "500" querendo dizer "meio da tela", e o
+     * mouse ia para o pixel 500 — bem à esquerda do meio numa tela de 1440.
+     *
+     * A conversão acontece aqui, e não no endpoint, porque /mouse/move continua recebendo pixels
+     * de verdade — é assim que o controle por gestos de mão (useVisionControl) o utiliza, e ele
+     * já sabe a resolução real.
+     */
+    const dimensoesDaTela = async (): Promise<{ width: number; height: number; offsetX: number; offsetY: number } | null> => {
+      if (telaCacheRef.current) return telaCacheRef.current;
+      try {
+        const res = await fetch(`${LOCAL_AGENT_URL}/screen-info`, { headers });
+        if (!res.ok) return null;
+        const data = await res.json().catch(() => null);
+        if (!data?.width || !data?.height) return null;
+        telaCacheRef.current = {
+          width: Number(data.width),
+          height: Number(data.height),
+          offsetX: Number(data.offsetX) || 0,
+          offsetY: Number(data.offsetY) || 0
+        };
+        return telaCacheRef.current;
+      } catch {
+        return null;
+      }
+    };
+
+    /** Traduz um par (x,y) na escala 0–1000 para pixels absolutos de tela. */
+    const paraPixels = async (x: number, y: number): Promise<{ x: number; y: number } | null> => {
+      const tela = await dimensoesDaTela();
+      if (!tela) return null;
+      return {
+        x: Math.round(tela.offsetX + (x / 1000) * tela.width),
+        y: Math.round(tela.offsetY + (y / 1000) * tela.height)
+      };
     };
 
     try {
@@ -123,17 +168,21 @@ export function useLocalAgent() {
           case 'mover_mouse': {
             const x = Number(args?.x);
             const y = Number(args?.y);
-            if (!Number.isFinite(x) || !Number.isFinite(y)) return { error: "Informe 'x' e 'y' (coordenadas numéricas de tela) para mover_mouse." };
-            return post('/mouse/move', { x, y });
+            if (!Number.isFinite(x) || !Number.isFinite(y)) return { error: "Informe 'x' e 'y' (0 a 1000) para mover_mouse." };
+            const pixels = await paraPixels(x, y);
+            if (!pixels) return { error: "Não foi possível ler as dimensões da tela para posicionar o mouse. No Linux é necessário ter o pacote 'xdotool' instalado." };
+            return post('/mouse/move', pixels);
           }
           case 'clicar': {
             const x = args?.x !== undefined ? Number(args.x) : undefined;
             const y = args?.y !== undefined ? Number(args.y) : undefined;
             if ((x !== undefined && !Number.isFinite(x)) || (y !== undefined && !Number.isFinite(y))) {
-              return { error: "Parâmetros 'x' e 'y', quando informados, devem ser numéricos." };
+              return { error: "Parâmetros 'x' e 'y', quando informados, devem ser numéricos (0 a 1000)." };
             }
             if (x !== undefined && y !== undefined) {
-              const moveResult = await post('/mouse/move', { x, y });
+              const pixels = await paraPixels(x, y);
+              if (!pixels) return { error: "Não foi possível ler as dimensões da tela para posicionar o clique. No Linux é necessário ter o pacote 'xdotool' instalado." };
+              const moveResult = await post('/mouse/move', pixels);
               if (moveResult?.error) return moveResult;
             }
             const botao = args?.botao === 'right' ? 'right' : 'left';
@@ -144,8 +193,10 @@ export function useLocalAgent() {
             if (!direcao) return { error: "Informe 'direcao' como 'up' ou 'down' para rolar." };
             const body: any = { direction: direcao };
             if (args?.quantidade !== undefined) body.amount = Number(args.quantidade);
-            if (args?.x !== undefined) body.x = Number(args.x);
-            if (args?.y !== undefined) body.y = Number(args.y);
+            if (args?.x !== undefined && args?.y !== undefined) {
+              const pixels = await paraPixels(Number(args.x), Number(args.y));
+              if (pixels) { body.x = pixels.x; body.y = pixels.y; }
+            }
             return post('/mouse/scroll', body);
           }
           case 'digitar': {
