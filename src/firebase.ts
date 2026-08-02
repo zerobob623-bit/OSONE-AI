@@ -19,15 +19,26 @@ import {
   type Firestore
 } from "firebase/firestore";
 
+/**
+ * Lê uma variável de ambiente já sem espaços ou quebras de linha em volta.
+ *
+ * O trim() não é zelo excessivo: copiar uma chave do console do Google costuma trazer junto uma
+ * quebra de linha invisível, e ao colá-la num secret do GitHub ela é guardada exatamente assim.
+ * O valor viaja embutido no app e chega ao Firebase com um "\n" no fim — que aparece como %0A na
+ * URL de login e faz o Google recusar com "The requested action is invalid", sem dizer o motivo.
+ * Na tela a chave parece perfeita, então o defeito é praticamente invisível.
+ */
+const env = (nome: string): string => String(import.meta.env[nome] ?? "").trim();
+
 // Merge settings with explicit environment variables (e.g. on Vercel or GitHub builds)
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "",
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "",
+  apiKey: env("VITE_FIREBASE_API_KEY"),
+  authDomain: env("VITE_FIREBASE_AUTH_DOMAIN"),
+  projectId: env("VITE_FIREBASE_PROJECT_ID"),
+  storageBucket: env("VITE_FIREBASE_STORAGE_BUCKET"),
+  messagingSenderId: env("VITE_FIREBASE_MESSAGING_SENDER_ID"),
+  appId: env("VITE_FIREBASE_APP_ID"),
+  measurementId: env("VITE_FIREBASE_MEASUREMENT_ID"),
 };
 
 /**
