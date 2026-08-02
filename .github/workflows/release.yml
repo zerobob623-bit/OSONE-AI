@@ -152,9 +152,87 @@ jobs:
             exit 1
           fi
 
+      - name: Criar a Release antes de enviar qualquer arquivo
+        # Evita a Release duplicada, que já quebrou a v1.2.3 inteira com o build todo verde.
+        #
+        # O electron-builder envia os arquivos em paralelo, e cada envio começa perguntando ao
+        # GitHub "a Release desta tag existe? se não, cria". Quando dois envios fazem essa
+        # pergunta no mesmo instante, os dois recebem "não" e os DOIS criam — e o GitHub aceita
+        # duas Releases com a mesma tag sem reclamar. Os arquivos se dividem entre os dois
+        # registros, e a página da tag mostra só um deles. Se calhar de mostrar o registro que
+        # ficou sem o instalador, todo link de download vira 404 e a atualização automática para,
+        # porque o latest.yml também some. Nada disso aparece nos logs: os dois jobs terminam
+        # com sucesso.
+        #
+        # Criando a Release aqui, uma vez só e antes de qualquer envio, todos os envios
+        # encontram uma Release pronta e nenhum precisa criar nada. É por isso que este passo
+        # vem antes do electron-builder, e não depois.
+        #
+        # (O max-parallel: 1 lá em cima não resolve isto: a corrida acontece DENTRO de um único
+        # job, entre os envios simultâneos do mesmo electron-builder.)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # A tag vem da versão do package.json, e não de github.ref_name, porque é essa que o
+          # electron-builder vai procurar — inclusive quando o workflow é disparado à mão pelo
+          # botão "Run workflow", onde não existe tag nenhuma.
+          tag="v$(node -p "require('./package.json').version")"
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY"
+
+          quantas=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$api/releases?per_page=100" \
+            | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>
+                console.log(JSON.parse(d).filter(r => r.tag_name === process.argv[1]).length))" "$tag")
+
+          if [ "$quantas" -eq 0 ]; then
+            codigo=$(curl -sS -o resposta.json -w '%{http_code}' -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "$api/releases" \
+              -d "{\"tag_name\":\"$tag\",\"name\":\"${tag#v}\"}")
+            if [ "$codigo" != "201" ]; then
+              echo "ERRO: não consegui criar a Release $tag (HTTP $codigo)."
+              cat resposta.json
+              exit 1
+            fi
+            echo "Release $tag criada; os instaladores serão anexados a ela."
+          else
+            echo "Release $tag já existe ($quantas registro(s)) — nada a criar."
+          fi
+
       - name: Gerar instalador e publicar na Release
         run: npx electron-builder ${{ matrix.alvo }} --publish always
         env:
           # Token que o próprio GitHub Actions fornece; é o que o electron-builder usa para
           # criar a Release e anexar os instaladores. Não precisa cadastrar nada.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Conferir se a Release está mesmo servindo os arquivos
+        # O passo anterior dizer "sucesso" significa apenas que o envio foi aceito, não que o
+        # arquivo ficou acessível na página da tag. Foi exatamente essa a falha da v1.2.3: build
+        # verde, envio bem-sucedido, e mesmo assim todo link de download respondendo 404.
+        #
+        # O manifesto .yml é o arquivo que a atualização automática lê — sem ele, ninguém recebe
+        # a versão nova. O instalador é o que a pessoa baixa na mão. Os dois precisam estar lá.
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="v$(node -p "require('./package.json').version")"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            manifesto="latest.yml"; extensao=".exe"
+          else
+            manifesto="latest-linux.yml"; extensao=".AppImage"
+          fi
+
+          # Três tentativas: o GitHub leva alguns segundos para publicar um arquivo recém-enviado,
+          # e reprovar por causa disso seria um alarme falso.
+          for tentativa in 1 2 3; do
+            node scripts/conferir-release.mjs "$tag" "$manifesto" "$extensao" && exit 0
+            echo "Nova conferência em 10s..."
+            sleep 10
+          done
+          exit 1
