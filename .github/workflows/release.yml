@@ -107,9 +107,36 @@ jobs:
         # Vai embutida no instalador para que a resposta em áudio nunca dependa de cota: quando
         # o limite diário do Gemini e o mensal da ElevenLabs acabam, o áudio continua saindo
         # por esta voz, que roda na máquina do próprio usuário.
-        # Não interrompe a publicação se falhar: sem ela o app perde só a última camada de voz.
-        run: npm run baixar-voz
-        continue-on-error: true
+        #
+        # Tenta três vezes porque o download vem de servidores externos e uma falha passageira
+        # de rede não deveria custar uma publicação inteira.
+        shell: bash
+        run: |
+          for tentativa in 1 2 3; do
+            npm run baixar-voz && break
+            echo "Tentativa $tentativa falhou; nova tentativa em ${tentativa}0s..."
+            sleep ${tentativa}0
+          done
+
+      - name: Conferir se a voz local entrou no pacote
+        # Trava proposital: antes esta etapa apenas avisava e deixava publicar assim mesmo, o que
+        # geraria um instalador SEM a voz local sem ninguém perceber. Como a atualização é
+        # automática, esse instalador incompleto chegaria sozinho em todos os usuários. É melhor
+        # a publicação parar e ser refeita do que distribuir um app pela metade em silêncio.
+        shell: bash
+        run: |
+          binario="vendor/piper/piper"
+          [ "$RUNNER_OS" = "Windows" ] && binario="vendor/piper/piper.exe"
+          modelo="vendor/piper/pt_BR-faber-medium.onnx"
+
+          if [ -f "$binario" ] && [ -f "$modelo" ]; then
+            echo "OK: voz local presente ($(du -h "$modelo" | cut -f1))."
+          else
+            echo "ERRO: a voz local não foi baixada, e o instalador sairia sem ela."
+            echo "Os servidores de download podem estar fora do ar — rode o workflow de novo."
+            ls -la vendor/piper 2>/dev/null || echo "(a pasta vendor/piper nem existe)"
+            exit 1
+          fi
 
       - name: Gerar instalador e publicar na Release
         run: npx electron-builder ${{ matrix.alvo }} --publish always
