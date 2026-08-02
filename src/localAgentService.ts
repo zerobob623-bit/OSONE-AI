@@ -1596,6 +1596,82 @@ const handleKeyboardKey = async (req: Request, res: Response) => {
  * então pode ser chamada sob demanda a qualquer momento — inclusive fora de uma sessão de voz
  * com compartilhamento ativo — para o agente conferir o estado atual da tela.
  */
+/**
+ * De quantas em quantas unidades a grade é traçada, na escala 0-1000 usada para clicar.
+ * 100 dá uma malha 10x10: densa o bastante para servir de régua, esparsa o bastante para não
+ * cobrir a tela de linhas e atrapalhar a leitura do que está por baixo.
+ */
+const PASSO_DA_GRADE = 100;
+
+/**
+ * Desenha sobre a captura uma grade numerada na MESMA escala em que o clique é informado (0-1000).
+ *
+ * Sem ela, acertar um alvo significa estimar proporções a olho numa imagem sem nenhuma referência
+ * — e errar por pouco é o resultado normal, não a exceção. Com linhas numeradas visíveis, a
+ * posição passa a ser lida contra marcas concretas ("logo à direita da linha 700") em vez de
+ * adivinhada.
+ *
+ * Falhar aqui nunca derruba a captura: uma imagem sem grade continua sendo útil, uma captura que
+ * não acontece não serve para nada. Por isso todo o corpo é best-effort.
+ */
+async function desenharGradeDeReferencia(arquivo: string, largura: number, altura: number): Promise<void> {
+  const linhas: string[] = [];
+  const textos: string[] = [];
+
+  for (let v = PASSO_DA_GRADE; v < 1000; v += PASSO_DA_GRADE) {
+    const x = Math.round((v / 1000) * largura);
+    const y = Math.round((v / 1000) * altura);
+    linhas.push(`line ${x},0 ${x},${altura}`);
+    linhas.push(`line 0,${y} ${largura},${y}`);
+    // Os rótulos ficam junto às bordas para não tapar o conteúdo no meio da tela.
+    textos.push(`text ${x + 4},26 '${v}'`);
+    textos.push(`text 4,${y - 6} '${v}'`);
+  }
+
+  if (process.platform === 'linux') {
+    const saida = `${arquivo}.grade.png`;
+    await execFileShellSafe('convert', [
+      arquivo,
+      '-stroke', 'rgba(255,64,64,0.40)', '-strokewidth', '2', '-draw', linhas.join(' '),
+      '-stroke', 'none', '-fill', 'rgba(255,64,64,0.95)', '-pointsize', '26', '-draw', textos.join(' '),
+      saida
+    ], 15000);
+    if (fs.existsSync(saida) && fs.statSync(saida).size > 0) {
+      fs.renameSync(saida, arquivo);
+    }
+    return;
+  }
+
+  if (process.platform === 'win32') {
+    const caminho = arquivo.replace(/'/g, "''");
+    const desenhos: string[] = [];
+    for (let v = PASSO_DA_GRADE; v < 1000; v += PASSO_DA_GRADE) {
+      const x = Math.round((v / 1000) * largura);
+      const y = Math.round((v / 1000) * altura);
+      desenhos.push(`$g.DrawLine($pen, ${x}, 0, ${x}, ${altura});`);
+      desenhos.push(`$g.DrawLine($pen, 0, ${y}, ${largura}, ${y});`);
+      desenhos.push(`$g.DrawString('${v}', $fonte, $tinta, ${x + 4}, 6);`);
+      desenhos.push(`$g.DrawString('${v}', $fonte, $tinta, 4, ${y - 26});`);
+    }
+    // O bitmap é recriado a partir de uma cópia porque um Bitmap carregado de arquivo mantém o
+    // arquivo travado no Windows, impedindo que ele seja sobrescrito logo em seguida.
+    const script = [
+      `Add-Type -AssemblyName System.Drawing;`,
+      `$orig = [System.Drawing.Image]::FromFile('${caminho}');`,
+      `$bmp = New-Object System.Drawing.Bitmap($orig);`,
+      `$orig.Dispose();`,
+      `$g = [System.Drawing.Graphics]::FromImage($bmp);`,
+      `$pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(102,255,64,64), 2);`,
+      `$tinta = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(242,255,64,64));`,
+      `$fonte = New-Object System.Drawing.Font('Arial', 18);`,
+      ...desenhos,
+      `$bmp.Save('${caminho}', [System.Drawing.Imaging.ImageFormat]::Png);`,
+      `$g.Dispose(); $bmp.Dispose();`
+    ].join(' ');
+    await runShell(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`, 20000);
+  }
+}
+
 const handleScreenCapture = async (_req: Request, res: Response) => {
   const platform = process.platform;
   const tmpFile = path.join(os.tmpdir(), `osone-screenshot-${crypto.randomBytes(6).toString('hex')}.png`);
@@ -1633,9 +1709,6 @@ const handleScreenCapture = async (_req: Request, res: Response) => {
     if (!fs.existsSync(tmpFile) || fs.statSync(tmpFile).size === 0) {
       throw new Error('A captura de tela retornou vazia.');
     }
-    const buffer = fs.readFileSync(tmpFile);
-    fs.unlink(tmpFile, () => {});
-
     // As dimensões vão junto com a imagem de propósito: antes a captura era devolvida "crua", e
     // quem olhasse a foto não tinha como saber a que tamanho de tela ela corresponde — uma foto
     // sem régua. Sem isso, qualquer coordenada devolvida é um chute sobre a escala.
@@ -1644,10 +1717,33 @@ const handleScreenCapture = async (_req: Request, res: Response) => {
       tela = await obterDimensoesDaTela();
     } catch (_) { /* a imagem sozinha ainda é útil; segue sem as dimensões */ }
 
+    let comGrade = false;
+    if (tela && tela.width > 0 && tela.height > 0) {
+      try {
+        await desenharGradeDeReferencia(tmpFile, tela.width, tela.height);
+        comGrade = true;
+      } catch (err: any) {
+        // Sem ImageMagick no Linux, por exemplo. A captura continua valendo — só volta a exigir
+        // estimativa a olho, que é como era antes da grade existir.
+        logAudit('WARN', 'SCREEN_GRID_FAILED', `Não foi possível desenhar a grade: ${err?.message || err}`, { platform });
+      }
+    }
+
+    const buffer = fs.readFileSync(tmpFile);
+    fs.unlink(tmpFile, () => {});
+
     return res.status(200).json({
       image: `data:image/png;base64,${buffer.toString('base64')}`,
       mimeType: 'image/png',
-      ...(tela ? { screenWidth: tela.width, screenHeight: tela.height } : {})
+      ...(tela ? { screenWidth: tela.width, screenHeight: tela.height } : {}),
+      grade: comGrade,
+      // Instrução junto do dado: quem recebe a imagem precisa saber que as linhas vermelhas são
+      // régua, e não parte da tela — senão pode tentar interagir com elas.
+      comoUsar: comGrade
+        ? `A imagem tem uma grade vermelha de referência, numerada de ${PASSO_DA_GRADE} em ${PASSO_DA_GRADE} na escala 0-1000 ` +
+          `(0 = topo/esquerda, 1000 = base/direita). Use as linhas numeradas para ler a posição do alvo e informe x e y nessa mesma escala. ` +
+          `As linhas vermelhas são apenas régua sobreposta: elas não existem na tela real.`
+        : `Informe x e y na escala 0-1000 (0 = topo/esquerda, 1000 = base/direita).`
     });
   } catch (err: any) {
     fs.unlink(tmpFile, () => {});
