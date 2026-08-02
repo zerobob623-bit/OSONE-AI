@@ -58,6 +58,122 @@ export function checkTuyaConfig() {
   };
 }
 
+/**
+ * Traduz o erro cru da Tuya para uma instrução do que fazer.
+ *
+ * A Tuya responde com códigos numéricos e frases em inglês técnico ("sign invalid",
+ * "no permissions") que não dizem a ninguém qual campo está errado nem onde consertar. Quem está
+ * configurando pela primeira vez fica travado sem saber se errou a chave, a região ou a conta —
+ * e é justamente na primeira vez que a pessoa mais precisa de direção.
+ */
+function explicarErroTuya(mensagem: string): string {
+  const m = String(mensagem || '');
+
+  if (/sign invalid|1004/i.test(m)) {
+    return "A Tuya recusou a assinatura da requisição. Quase sempre é o TUYA_CLIENT_SECRET copiado errado " +
+      "(faltando um caractere, ou com espaço em volta). Abra o projeto em iot.tuya.com > Cloud > seu projeto > " +
+      "aba 'Overview' e copie de novo o Access Secret inteiro.";
+  }
+  if (/token is expired|1010|1011|1012/i.test(m)) {
+    return "O token de acesso da Tuya expirou ou foi invalidado. Normalmente o OSONE renova sozinho — " +
+      "se o erro persistir, confira se o Access ID/Secret ainda são os mesmos no painel da Tuya.";
+  }
+  if (/no permissions|permission deny|1106|28841002/i.test(m)) {
+    return "As credenciais são válidas, mas o projeto na Tuya não tem permissão para esta operação. " +
+      "Em iot.tuya.com > Cloud > seu projeto > aba 'Service API', clique em 'Go to Authorize' e adicione " +
+      "'IoT Core' (e 'Authorization Token Management', se aparecer). Depois espere ~5 minutos e tente de novo.";
+  }
+  if (/cross-region|not exist|1no such user|user not found|1i0/i.test(m) || /uid/i.test(m)) {
+    return "A conta (UID) informada não foi encontrada nesta região. Confira o TUYA_USER_UID e, principalmente, " +
+      "se o TUYA_BASE_URL corresponde à região onde sua conta do app Smart Life foi criada — " +
+      "no Brasil normalmente é https://openapi.tuyaus.com (data center 'Western America').";
+  }
+  if (/timeout|ETIMEDOUT|ENOTFOUND|fetch failed/i.test(m)) {
+    return "Não foi possível alcançar os servidores da Tuya. Verifique a conexão com a internet e se o " +
+      "TUYA_BASE_URL está escrito corretamente.";
+  }
+  return m;
+}
+
+/**
+ * Testa a integração Tuya de ponta a ponta e devolve um relatório do que está OK e do que falta.
+ *
+ * Diferente de checkTuyaConfig, que só verifica se os campos estão PREENCHIDOS, aqui a conexão é
+ * de fato exercitada: autentica na Tuya e lista os aparelhos. Um campo preenchido com o valor
+ * errado passa na primeira checagem e falha na hora de usar — que é exatamente a situação em que
+ * a pessoa acha que configurou tudo certo e nada funciona, sem nenhuma pista do motivo.
+ */
+export async function diagnosticarTuya(): Promise<any> {
+  const env = getTuyaEnv();
+  const faltando: string[] = [];
+  if (!env.clientId) faltando.push('TUYA_CLIENT_ID');
+  if (!env.clientSecret) faltando.push('TUYA_CLIENT_SECRET');
+  if (!env.baseUrl) faltando.push('TUYA_BASE_URL');
+  if (!env.userUid) faltando.push('TUYA_USER_UID');
+
+  if (faltando.length > 0) {
+    return {
+      ok: false,
+      etapa: 'credenciais',
+      resumo: `Faltam ${faltando.length} credencial(is) da Tuya.`,
+      faltando,
+      comoResolver:
+        "Crie um projeto em iot.tuya.com (Cloud > Development > Create Cloud Project), pegue o Access ID e o " +
+        "Access Secret na aba 'Overview', vincule o app Smart Life em 'Devices > Link App Account' e copie o UID " +
+        "que aparece lá. Preencha esses valores no arquivo .env.local (ou nas variáveis de ambiente da Vercel) e " +
+        "reinicie o OSONE.",
+      // Só o tamanho, nunca o valor: o diagnóstico é para ser lido e colado num chat de suporte.
+      preenchidos: {
+        TUYA_CLIENT_ID: env.clientId ? `${env.clientId.length} caracteres` : 'vazio',
+        TUYA_CLIENT_SECRET: env.clientSecret ? `${env.clientSecret.length} caracteres` : 'vazio',
+        TUYA_BASE_URL: env.baseUrl || 'vazio',
+        TUYA_USER_UID: env.userUid ? `${env.userUid.length} caracteres` : 'vazio'
+      }
+    };
+  }
+
+  try {
+    const resposta: any = await getTuyaDevices();
+    const aparelhos = Array.isArray(resposta) ? resposta : (resposta?.result || resposta?.devices || []);
+    const lista = Array.isArray(aparelhos) ? aparelhos : [];
+
+    if (lista.length === 0) {
+      return {
+        ok: false,
+        etapa: 'aparelhos',
+        resumo: "Conexão com a Tuya funcionando, mas nenhum aparelho foi encontrado nesta conta.",
+        comoResolver:
+          "Os aparelhos precisam estar cadastrados no app Smart Life (ou Tuya Smart) da MESMA conta vinculada " +
+          "ao projeto. Em iot.tuya.com > Cloud > seu projeto > 'Devices' > 'Link App Account', confirme que a " +
+          "conta vinculada é a mesma do celular onde as lâmpadas aparecem.",
+        totalAparelhos: 0
+      };
+    }
+
+    return {
+      ok: true,
+      etapa: 'pronto',
+      resumo: `Tudo certo: ${lista.length} aparelho(s) encontrado(s) e prontos para o OSONE controlar.`,
+      totalAparelhos: lista.length,
+      aparelhos: lista.slice(0, 20).map((d: any) => ({
+        nome: d?.name || '(sem nome)',
+        id: d?.id,
+        online: d?.online === true,
+        tipo: d?.category || d?.product_name || ''
+      }))
+    };
+  } catch (err: any) {
+    const bruto = String(err?.message || err);
+    return {
+      ok: false,
+      etapa: 'conexao',
+      resumo: "As credenciais estão preenchidas, mas a Tuya recusou a conexão.",
+      erroTecnico: bruto,
+      comoResolver: explicarErroTuya(bruto)
+    };
+  }
+}
+
 export function logTuyaStartupCheck() {
   const { configured, env } = checkTuyaConfig();
   if (configured) {
