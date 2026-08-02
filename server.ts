@@ -22,7 +22,8 @@ import {
   getTuyaDevices, 
   getDeviceStatus, 
   getDeviceDetail, 
-  sendDeviceCommand 
+  sendDeviceCommand,
+  diagnosticarTuya
 } from "./src/tuyaService";
 import { agentRouter, OSONE_INSTALL_DIR } from "./src/localAgentService";
 import {
@@ -4981,6 +4982,24 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
       res.json(status);
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Erro ao verificar status da Tuya API" });
+    }
+  });
+
+  /**
+   * Diagnóstico de ponta a ponta da Tuya: em vez de só dizer se os campos estão preenchidos,
+   * autentica de verdade e lista os aparelhos, devolvendo em português o que falta fazer.
+   * É o endpoint para abrir quando "está tudo configurado mas nada funciona".
+   */
+  app.get("/api/tuya/diagnostico", async (_req, res) => {
+    try {
+      res.json(await diagnosticarTuya());
+    } catch (err: any) {
+      res.status(500).json({
+        ok: false,
+        etapa: 'interno',
+        resumo: "O diagnóstico da Tuya falhou inesperadamente.",
+        erroTecnico: err?.message || String(err)
+      });
     }
   });
 
