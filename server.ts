@@ -3367,8 +3367,46 @@ Retorne SOMENTE o objeto JSON conforme o esquema.
     return chunks;
   }
 
+  /**
+   * Tira do texto tudo o que não se fala, antes de mandá-lo para qualquer voz.
+   *
+   * Existe porque o modelo escreve para ser LIDO, não ouvido: ele devolve "*muito* importante"
+   * e emojis no meio da frase. A voz não sabe que aquilo é formatação e lê literalmente —
+   * "asterisco muito asterisco importante" — e, no caso dos emojis, chega a pronunciar o nome
+   * de cada um ("rosto sorridente"). Some com os símbolos, mas preserva a palavra que eles
+   * estavam enfeitando: "*muito*" vira "muito", e não desaparece junto.
+   *
+   * Separada de stripVocalTags de propósito: aquela remove marcações de interpretação vocal
+   * (ex: "[sussurrando]"), que para algumas vozes são intencionais e devem continuar chegando.
+   * Símbolo e emoji, ao contrário, nunca devem ser falados por voz nenhuma.
+   */
+  function limparSimbolosParaVoz(text: string): string {
+    return (text || "")
+      // Emojis e pictogramas, incluindo bandeiras, tons de pele e as junções invisíveis que
+      // grudam vários emojis num só (ZWJ) — sem remover essas peças, sobram fragmentos soltos.
+      .replace(/\p{Extended_Pictographic}/gu, "")
+      .replace(/[\u{1F1E6}-\u{1F1FF}]/gu, "")
+      .replace(/[\u{1F3FB}-\u{1F3FF}]/gu, "")
+      .replace(/[\u{FE00}-\u{FE0F}\u{200D}\u{20E3}]/gu, "")
+      // Formatação markdown: mantém o conteúdo, descarta os sinais em volta.
+      .replace(/(\*\*\*|___)(.+?)\1/g, "$2")
+      .replace(/(\*\*|__)(.+?)\1/g, "$2")
+      .replace(/(\*|_)(.+?)\1/g, "$2")
+      .replace(/~~(.+?)~~/g, "$1")
+      .replace(/`{1,3}([^`]+)`{1,3}/g, "$1")
+      .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+      .replace(/^\s{0,3}>\s?/gm, "")
+      // Marcador de lista no começo da linha vira pausa, não a palavra "hífen".
+      .replace(/^\s*[-*+]\s+/gm, "")
+      // Sobras avulsas (um asterisco sozinho, uma crase perdida) que não formavam par.
+      .replace(/[*_`~#]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
   function stripVocalTags(text: string): string {
-    return text.replace(/\[[^\]]+\]/g, "").replace(/\([^)]+\)/g, "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+    const semTags = text.replace(/\[[^\]]+\]/g, "").replace(/\([^)]+\)/g, "").replace(/<[^>]+>/g, "");
+    return limparSimbolosParaVoz(semTags);
   }
 
   // POST endpoint for high-quality, consolidated Premium Gemini 3.1 TTS or ElevenLabs voice synthesis
@@ -3538,7 +3576,10 @@ Retorne SOMENTE o objeto JSON conforme o esquema.
 
       for (const chunk of chunks) {
         let chunkAudioBuffer: Buffer | null = null;
-        const processedChunk = isScarletVoice ? chunk : stripVocalTags(chunk);
+        // A voz Scarlet/Fenrir continua recebendo as marcações de interpretação (ex: "[sussurrando]"),
+        // que nela são intencionais — mas passa pela limpeza de símbolos como todas as outras.
+        // Antes ela pulava a limpeza inteira, e era a única voz que ainda lia asteriscos e emojis.
+        const processedChunk = isScarletVoice ? limparSimbolosParaVoz(chunk) : stripVocalTags(chunk);
         
         // Tiered model candidates list of premium intelligent voice models
         const candidateModels = [
