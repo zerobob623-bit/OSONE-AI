@@ -11,7 +11,7 @@
  * aqui, tanto na máquina de quem desenvolve quanto no GitHub Actions antes de gerar o
  * instalador, de onde seguem embutidos para o usuário final.
  */
-import { createWriteStream, existsSync, mkdirSync, rmSync, chmodSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, rmSync, chmodSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
@@ -56,11 +56,33 @@ function extrair(arquivo, destino) {
   }
 }
 
+/**
+ * Confirma que o caminho existe E é um arquivo.
+ *
+ * No Linux o programa se chama "piper" e a pasta que o pacote traz também: uma execução
+ * interrompida da versão anterior deste script deixava a PASTA vendor/piper/piper no lugar
+ * exato onde o programa deveria estar. Um existsSync() simples dava verdadeiro para ela, o
+ * script anunciava "já estava baixado" e seguia sem nunca instalar o programa.
+ */
+function arquivoExiste(caminho) {
+  try {
+    return statSync(caminho).isFile();
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
   const binario = path.join(DESTINO, process.platform === "win32" ? "piper.exe" : "piper");
   const modelo = path.join(DESTINO, `${NOME_VOZ}.onnx`);
 
-  if (existsSync(binario) && existsSync(modelo)) {
+  // Limpa a sobra da versão anterior antes de qualquer verificação: enquanto essa pasta existir
+  // no lugar do programa, nenhuma checagem consegue enxergar o estado real da instalação.
+  if (existsSync(path.join(DESTINO, "piper")) && !arquivoExiste(binario)) {
+    rmSync(path.join(DESTINO, "piper"), { recursive: true, force: true });
+  }
+
+  if (arquivoExiste(binario) && arquivoExiste(modelo)) {
     console.log("Piper e voz já estão em vendor/piper — nada a fazer.");
     return;
   }
@@ -68,27 +90,51 @@ async function main() {
   console.log(`Baixando a voz local (Piper) para ${process.platform}/${process.arch}:`);
   mkdirSync(DESTINO, { recursive: true });
 
-  const pacote = pacoteDaPlataforma();
-  const temporario = path.join(DESTINO, pacote);
-  await baixar(`${BASE_PIPER}/${pacote}`, temporario, "programa Piper");
+  // Cada parte é baixada só se estiver faltando. Uma execução interrompida (rede caindo,
+  // espaço em disco) costuma deixar o programa pronto e a voz pela metade: sem esta checagem,
+  // a nova tentativa refaria os 25 MB do programa sem necessidade.
+  if (!arquivoExiste(binario)) {
+    const pacote = pacoteDaPlataforma();
+    // A extração acontece numa pasta separada, IRMÃ do destino, e não dentro dele.
+    //
+    // O pacote traz uma pasta "piper/" que contém um arquivo também chamado "piper" (o próprio
+    // programa). Extraindo dentro do destino, promover esse arquivo significaria mover
+    // vendor/piper/piper/piper para vendor/piper/piper — o mesmo caminho da pasta que o contém.
+    // Limpar o destino antes da movimentação apagaria a pasta com o programa ainda dentro,
+    // destruindo o que acabou de ser baixado.
+    const areaTemp = path.join(RAIZ, "vendor", "_extracao");
+    rmSync(areaTemp, { recursive: true, force: true });
+    mkdirSync(areaTemp, { recursive: true });
 
-  process.stdout.write("  extraindo... ");
-  extrair(temporario, DESTINO);
-  rmSync(temporario, { force: true });
-  console.log("ok");
+    const temporario = path.join(areaTemp, pacote);
+    await baixar(`${BASE_PIPER}/${pacote}`, temporario, "programa Piper");
 
-  // O pacote extrai numa subpasta "piper/": promove o conteúdo para vendor/piper direto, para o
-  // servidor não precisar adivinhar o nível em que o binário ficou.
-  const subpasta = path.join(DESTINO, "piper");
-  if (existsSync(subpasta)) {
-    for (const item of (await import("node:fs")).readdirSync(subpasta)) {
-      (await import("node:fs")).renameSync(path.join(subpasta, item), path.join(DESTINO, item));
+    process.stdout.write("  extraindo... ");
+    extrair(temporario, areaTemp);
+    rmSync(temporario, { force: true });
+
+    const { readdirSync, renameSync } = await import("node:fs");
+    // O conteúdo pode vir solto ou dentro de uma subpasta, conforme a plataforma.
+    const dentro = path.join(areaTemp, "piper");
+    const origem = existsSync(dentro) && statSync(dentro).isDirectory() ? dentro : areaTemp;
+
+    for (const item of readdirSync(origem)) {
+      const destinoItem = path.join(DESTINO, item);
+      rmSync(destinoItem, { recursive: true, force: true });
+      renameSync(path.join(origem, item), destinoItem);
     }
-    rmSync(subpasta, { recursive: true, force: true });
+    rmSync(areaTemp, { recursive: true, force: true });
+    console.log("ok");
+  } else {
+    console.log("  programa Piper... já estava baixado");
   }
 
-  await baixar(`${BASE_VOZ}/${NOME_VOZ}.onnx`, modelo, "voz em português");
-  await baixar(`${BASE_VOZ}/${NOME_VOZ}.onnx.json`, `${modelo}.json`, "config da voz");
+  if (!arquivoExiste(modelo)) {
+    await baixar(`${BASE_VOZ}/${NOME_VOZ}.onnx`, modelo, "voz em português");
+  }
+  if (!arquivoExiste(`${modelo}.json`)) {
+    await baixar(`${BASE_VOZ}/${NOME_VOZ}.onnx.json`, `${modelo}.json`, "config da voz");
+  }
 
   if (process.platform !== "win32") chmodSync(binario, 0o755);
 
