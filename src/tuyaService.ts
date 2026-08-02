@@ -78,6 +78,16 @@ function explicarErroTuya(mensagem: string): string {
     return "O token de acesso da Tuya expirou ou foi invalidado. Normalmente o OSONE renova sozinho — " +
       "se o erro persistir, confira se o Access ID/Secret ainda são os mesmos no painel da Tuya.";
   }
+  if (/don't have access to this api|1114/i.test(m)) {
+    const ip = m.match(/ip\(([^)]+)\)/i)?.[1];
+    return "As credenciais estão CERTAS — a Tuya autenticou e só então bloqueou pelo endereço de IP. " +
+      `O projeto tem uma lista de IPs autorizados e ${ip ? `o seu (${ip})` : 'o seu'} não está nela. ` +
+      "Em iot.tuya.com > Cloud > seu projeto, procure a lista de IPs (aparece como 'IP Whitelist' ou " +
+      `'Allowlist') e acrescente ${ip || 'o IP mostrado no erro'}. ` +
+      "Atenção: esse é o IP da sua internet e a maioria das operadoras o troca de tempos em tempos — " +
+      "quando parar de funcionar do nada, é provável que ele tenha mudado e precise ser atualizado lá. " +
+      "Pelo mesmo motivo, hospedar o OSONE na Vercel não combina com essa trava: o IP de lá muda a cada execução.";
+  }
   if (/no permissions|permission deny|1106|28841002/i.test(m)) {
     return "As credenciais são válidas, mas o projeto na Tuya não tem permissão para esta operação. " +
       "Em iot.tuya.com > Cloud > seu projeto > aba 'Service API', clique em 'Go to Authorize' e adicione " +
