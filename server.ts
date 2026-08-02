@@ -991,6 +991,27 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   }
 
   /**
+   * Tenta de novo antes de desistir. Existe especificamente para o envio de áudio: o Baileys
+   * já tenta vários servidores do WhatsApp para o upload da mídia, mas se TODOS falharem
+   * naquele instante (rede instável, servidor sobrecarregado por um segundo) ele desiste com
+   * "Media upload failed on all hosts" — e sem isto aqui essa falha passageira jogava fora o
+   * áudio inteiro, mesmo a resposta em texto já tendo chegado normalmente. Tentando de novo
+   * alguns segundos depois, na prática a maioria se resolve sozinha.
+   */
+  async function comRetentativa<T>(fn: () => Promise<T>, tentativas = 3): Promise<T> {
+    let ultimoErro: any;
+    for (let i = 0; i < tentativas; i++) {
+      try {
+        return await fn();
+      } catch (e: any) {
+        ultimoErro = e;
+        if (i < tentativas - 1) await new Promise((r) => setTimeout(r, 3000 * (i + 1)));
+      }
+    }
+    throw ultimoErro;
+  }
+
+  /**
    * Envia o áudio pelo WhatsApp no melhor formato disponível e conta a verdade sobre o que
    * saiu: mensagem de voz (quando há ffmpeg) ou arquivo de áudio (quando não há). Os dois
    * tocam no WhatsApp — o que muda é a aparência.
@@ -998,12 +1019,12 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   async function enviarAudioWhatsApp(jid: string, speech: { buffer: Buffer; mimeType: string; extension: string }): Promise<"voz" | "arquivo"> {
     const opus = await converterAudioParaOpus(speech.buffer, speech.extension);
     if (opus) {
-      await waSocket.sendMessage(jid, { audio: opus, mimetype: "audio/ogg; codecs=opus", ptt: true });
+      await comRetentativa(() => waSocket.sendMessage(jid, { audio: opus, mimetype: "audio/ogg; codecs=opus", ptt: true }));
       return "voz";
     }
     // ptt:false de propósito: marcar um WAV/MP3 como mensagem de voz faz o WhatsApp descartá-lo
     // silenciosamente. Como arquivo de áudio ele chega e toca normalmente.
-    await waSocket.sendMessage(jid, { audio: speech.buffer, mimetype: speech.mimeType, ptt: false });
+    await comRetentativa(() => waSocket.sendMessage(jid, { audio: speech.buffer, mimetype: speech.mimeType, ptt: false }));
     return "arquivo";
   }
 
