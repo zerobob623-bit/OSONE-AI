@@ -565,7 +565,9 @@ Comentário de @${user}: "${text}"`;
     // IA ler só o pedido em si.
     requireTriggerCommand: true,
     triggerCommand: "/osone",
-    ttsEngine: "gemini" as "gemini" | "elevenlabs",
+    // "local" usa o Piper, que roda na própria máquina: qualidade um pouco menor, mas sem cota,
+    // sem chave e sem custo. As outras duas são de nuvem e podem esgotar.
+    ttsEngine: "gemini" as "gemini" | "elevenlabs" | "local",
     ttsVoice: "Kore",
     elevenLabsApiKey: "",
     elevenLabsVoiceId: ""
@@ -1162,7 +1164,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   }
 
   type OpcoesDeVoz = {
-    engine?: "gemini" | "elevenlabs";
+    engine?: "gemini" | "elevenlabs" | "local";
     geminiApiKey?: string;
     voice?: string;
     elevenLabsApiKey?: string;
@@ -1206,6 +1208,9 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   }
 
   async function sintetizarPelaNuvem(text: string, opts: OpcoesDeVoz): Promise<AudioSintetizado | null> {
+    // Voz local escolhida de propósito: não passa pela nuvem. Devolver null aqui já basta —
+    // quem chamou cai direto no Piper, sem gastar cota de nenhum serviço no caminho.
+    if (opts.engine === "local") return null;
     const cleanText = (text || "").trim();
     if (!cleanText) return null;
 
@@ -2246,7 +2251,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     if (typeof triggerCommand === "string" && triggerCommand.trim()) {
       whatsappConfig.triggerCommand = triggerCommand.trim();
     }
-    if (ttsEngine === "gemini" || ttsEngine === "elevenlabs") whatsappConfig.ttsEngine = ttsEngine;
+    if (ttsEngine === "gemini" || ttsEngine === "elevenlabs" || ttsEngine === "local") whatsappConfig.ttsEngine = ttsEngine;
     if (ttsVoice !== undefined) whatsappConfig.ttsVoice = ttsVoice;
     // Mesma regra da chave do Gemini: vazio mantém o que já existe.
     if (req.body.removerElevenLabsApiKey === true) {
