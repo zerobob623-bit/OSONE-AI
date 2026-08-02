@@ -977,7 +977,7 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   - Use os caminhos reais do bloco AMBIENTE REAL DESTE COMPUTADOR (acima) e a sintaxe do sistema indicado ali. Não adivinhe o sistema operacional nem invente nomes de pasta em inglês se as pastas reais estiverem em português.
   - Em dúvida sobre o que existe numa pasta, chame antes com acao='listar' e aja sobre o que voltou, em vez de chutar nomes de arquivo.
   - Quando o usuário quiser VER o comando rodando ("abre o terminal", "mostra no terminal"), use acao='terminal' com visivel=true, que abre uma janela real na tela.
-  - CONTROLE DE MOUSE/TECLADO ('mover_mouse', 'clicar', 'rolar', 'digitar', 'tecla', 'capturar_tela'): use para agir sobre o que estiver na tela (navegador, qualquer app), como um usuário faria. Você só sabe ONDE clicar/rolar olhando a imagem do compartilhamento de tela (quando ativo) ou o resultado de 'capturar_tela' — nunca invente coordenadas sem ter visto a tela antes. Prefira SEMPRE 'capturar_tela' antes de clicar: ela devolve a imagem com uma grade vermelha numerada de 100 em 100 na escala 0-1000, feita para você LER a posição do alvo contra as linhas em vez de estimar a olho. Localize o alvo entre duas linhas e interpole (ex: entre a 700 e a 800, mais perto da 700, use 720). Essas linhas são régua sobreposta e não existem na tela real — nunca tente clicar nelas. Para preencher um campo: primeiro 'clicar' nele (x,y do que você viu), depois 'digitar' o texto. 'tecla' serve para atalhos e navegação (enter para enviar, tab para trocar de campo, ctrl+a para selecionar tudo). Essas ações dependem do sistema operacional ter as ferramentas necessárias instaladas (ex: xdotool no Linux) — se vier 'error', diga exatamente o que faltou, nunca finja que a ação aconteceu.
+  - CONTROLE DE MOUSE/TECLADO ('mover_mouse', 'clicar', 'rolar', 'digitar', 'tecla', 'capturar_tela'): use para agir sobre o que estiver na tela (navegador, qualquer app), como um usuário faria. Você só sabe ONDE clicar/rolar olhando a imagem do compartilhamento de tela (quando ativo) ou o resultado de 'capturar_tela' — nunca invente coordenadas sem ter visto a tela antes. REGRA ABSOLUTA DE COORDENADAS: as coordenadas de clique SÓ podem sair de 'capturar_tela'. NUNCA tire coordenadas da imagem do compartilhamento de tela. Motivo: o compartilhamento pode estar mostrando apenas uma aba ou uma janela, enquanto o clique sempre age na TELA INTEIRA. Nesse caso o 'topo' que você vê é o topo da página, não o topo da tela, e o clique cai acima do alvo — em barra de título, abas ou barra de endereço. O compartilhamento serve para ENTENDER o que está acontecendo; 'capturar_tela' serve para MEDIR onde clicar. A imagem de 'capturar_tela' é sempre da tela inteira e vem com uma grade vermelha numerada de 100 em 100 na escala 0-1000, feita para você LER a posição do alvo contra as linhas em vez de estimar a olho. Localize o alvo entre duas linhas e interpole (ex: entre a 700 e a 800, mais perto da 700, use 720). Essas linhas são régua sobreposta e não existem na tela real — nunca tente clicar nelas. Se acabou de clicar e não tem certeza se acertou, capture a tela de novo e confira antes de seguir. Para preencher um campo: primeiro 'clicar' nele (x,y do que você viu), depois 'digitar' o texto. 'tecla' serve para atalhos e navegação (enter para enviar, tab para trocar de campo, ctrl+a para selecionar tudo). Essas ações dependem do sistema operacional ter as ferramentas necessárias instaladas (ex: xdotool no Linux) — se vier 'error', diga exatamente o que faltou, nunca finja que a ação aconteceu.
 
   MODULAÇÃO DE VOZ:
   - IMPORTANTE: Não altere seus parâmetros de voz (pitch/rate) a menos que o usuário peça explicitamente ou a situação seja DRAMATICAMENTE necessária para um efeito criativo (ex: contar uma história de terror ou imitar um robô). NÃO troque de voz em diálogos comuns.
@@ -6047,7 +6047,16 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
         alert("O compartilhamento de tela não é suportado neste ambiente. Tente abrir o aplicativo em uma nova aba do navegador.");
         return;
       }
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      // displaySurface: 'monitor' pede ao navegador que já venha com a TELA INTEIRA selecionada.
+      //
+      // Compartilhar apenas a aba desalinha tudo o que depende de posição: o modelo passa a ver o
+      // topo da PÁGINA como se fosse o topo da tela, enquanto o clique age na tela inteira — o
+      // alvo é acertado no centro e errado para cima, caindo na barra de título ou de endereço.
+      // É só uma preferência (a escolha final continua sendo do usuário), por isso a regra de
+      // tirar coordenadas de 'capturar_tela' segue valendo mesmo assim.
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { displaySurface: 'monitor' } as MediaTrackConstraints
+      });
       screenStreamRef.current = stream;
       setIsScreenSharing(true);
 
