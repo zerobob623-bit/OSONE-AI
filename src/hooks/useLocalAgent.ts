@@ -64,13 +64,21 @@ export function useLocalAgent() {
       }
     };
 
-    /** Traduz um par (x,y) na escala 0–1000 para pixels absolutos de tela. */
+    /**
+     * Traduz um par (x,y) na escala 0–1000 para pixels absolutos de tela.
+     *
+     * O valor é preso na faixa 0–1000 antes da conversão: nada garante que o número informado
+     * caiba nela, e um 1400 solto viraria um clique fora da tela — que não erra o alvo, apenas
+     * não acontece, sem nada explicando por quê. Preso na borda, o clique ao menos cai no ponto
+     * mais próximo do que foi pedido.
+     */
     const paraPixels = async (x: number, y: number): Promise<{ x: number; y: number } | null> => {
       const tela = await dimensoesDaTela();
       if (!tela) return null;
+      const dentro = (v: number) => Math.min(1000, Math.max(0, v));
       return {
-        x: Math.round(tela.offsetX + (x / 1000) * tela.width),
-        y: Math.round(tela.offsetY + (y / 1000) * tela.height)
+        x: Math.round(tela.offsetX + (dentro(x) / 1000) * tela.width),
+        y: Math.round(tela.offsetY + (dentro(y) / 1000) * tela.height)
       };
     };
 

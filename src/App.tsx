@@ -692,6 +692,16 @@ export default function App() {
   // realmente têm no disco). Descoberto uma vez e injetado no prompt, para o modelo agir
   // direto em vez de adivinhar o sistema ou tentar caminhos que não existem.
   const [localAgentEnvironment, setLocalAgentEnvironment] = useState<any>(null);
+  /**
+   * O que está sendo compartilhado agora: 'monitor' (tela inteira), 'recorte' (uma aba ou
+   * janela) ou null (nada sendo compartilhado).
+   *
+   * Só em 'monitor' a imagem que o modelo vê e a área onde o clique age são a mesma coisa. Num
+   * recorte ele mede dentro do pedaço e o clique acerta a tela toda, caindo acima do alvo. Fica
+   * declarado aqui, e não junto do resto do compartilhamento, porque o prompt é montado logo
+   * abaixo e precisa deste valor — um estado declarado depois não existiria a tempo.
+   */
+  const [superficieCompartilhada, setSuperficieCompartilhada] = useState<'monitor' | 'recorte' | null>(null);
   const [isGuestMode, setIsGuestMode] = useState(() => {
     try {
       const saved = localStorage.getItem('osone_last_active_user');
@@ -958,6 +968,10 @@ export default function App() {
 ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    ${k}: ${v}`).join('\n') || '    (nenhuma detectada)'}
   - Caminho protegido (única coisa que você NÃO pode apagar/sobrescrever): ${localAgentEnvironment.protectedPath}
   Use a sintaxe do sistema acima em todo comando de terminal. Nunca misture comandos de Windows com Linux. Nunca invente caminhos em inglês se as pastas acima estiverem em português.
+
+` : ''}${superficieCompartilhada ? `  ESTADO ATUAL DO COMPARTILHAMENTO DE TELA: ${superficieCompartilhada === 'monitor'
+    ? `TELA INTEIRA. O que você vê e o lugar onde o clique age são a mesma área, então dá para medir posição pela imagem compartilhada. Ainda assim, 'capturar_tela' é mais confiável porque traz a grade numerada.`
+    : `APENAS UMA ABA/JANELA (recorte). Você PODE ver e descrever o que aparece, mas NÃO PODE tirar coordenadas daí: você estaria medindo dentro do recorte enquanto o clique age na tela inteira, e o clique cairia acima do alvo, em barra de título ou de endereço. Para clicar, chame 'capturar_tela' e meça pela grade dela. Se o usuário insistir em clicar por aqui, explique que ele precisa refazer o compartilhamento escolhendo 'Tela inteira'.`}
 
 ` : ''}  DIRETRIZ - WHATSAPP (send_whatsapp_message):
   - Para mandar mensagem no WhatsApp de alguém você DEVE chamar a ferramenta send_whatsapp_message. Não existe nenhuma outra forma: você não consegue enviar apenas escrevendo o texto na resposta.
@@ -6060,6 +6074,28 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
       screenStreamRef.current = stream;
       setIsScreenSharing(true);
 
+      /**
+       * Descobre O QUE foi compartilhado e prende a ação dentro disso.
+       *
+       * O navegador informa em displaySurface se o usuário escolheu a tela inteira ('monitor'),
+       * uma janela ('window') ou uma aba ('browser'). Só no primeiro caso o que o modelo vê e o
+       * lugar onde o clique age são a mesma coisa; nos outros dois ele mede dentro de um recorte
+       * e o clique acerta a tela toda, sempre acima do alvo. Em vez de deixar isso acontecer em
+       * silêncio, a superfície é registrada e o clique fica restrito ao que dá para alinhar.
+       */
+      const superficie = (stream.getVideoTracks()[0]?.getSettings() as any)?.displaySurface;
+      const alinhado = superficie === 'monitor';
+      setSuperficieCompartilhada(alinhado ? 'monitor' : 'recorte');
+
+      if (!alinhado) {
+        addNotification(
+          "Você compartilhou apenas uma aba/janela. O OSONE consegue VER, mas não consegue clicar com precisão aí — " +
+          "ele mede dentro do recorte e o clique age na tela inteira. Para ele clicar, refaça o compartilhamento " +
+          "escolhendo 'Tela inteira'. Enquanto isso, ele vai tirar as coordenadas de uma captura própria.",
+          "info"
+        );
+      }
+
       const video = document.createElement('video');
       video.srcObject = stream;
       video.play();
@@ -6104,6 +6140,9 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
       screenIntervalRef.current = null;
     }
     setIsScreenSharing(false);
+    // Zerado junto: deixar uma superfície registrada sem compartilhamento nenhum faria o
+    // próximo começar mentindo, antes de a superfície real ser lida.
+    setSuperficieCompartilhada(null);
 
     if (liveSessionRef.current && liveState.status === 'connected') {
       liveSessionRef.current.sendRealtimeInput({ text: "O usuário DESATIVOU o compartilhamento de tela agora." });
