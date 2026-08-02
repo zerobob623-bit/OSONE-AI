@@ -217,7 +217,16 @@ export function useLocalAgent() {
             return post('/keyboard/key', { key: String(args.tecla), modifiers: modificadores });
           }
           case 'capturar_tela': {
-            const res = await fetch(`${LOCAL_AGENT_URL}/screen/capture`, { method: 'GET', headers });
+            // Com x/y, a captura volta ampliada em volta daquele ponto — o segundo passo da mira
+            // em dois tempos, que é o que leva o clique do "quase" para o "exato".
+            const params = new URLSearchParams();
+            if (args?.x !== undefined && args?.y !== undefined) {
+              params.set('x', String(Number(args.x)));
+              params.set('y', String(Number(args.y)));
+              if (args?.janela !== undefined) params.set('janela', String(Number(args.janela)));
+            }
+            const consulta = params.toString() ? `?${params.toString()}` : '';
+            const res = await fetch(`${LOCAL_AGENT_URL}/screen/capture${consulta}`, { method: 'GET', headers });
             const data = await res.json().catch(() => null);
             if (!res.ok) return { error: data?.error || 'Não foi possível capturar a tela.' };
             return data;
