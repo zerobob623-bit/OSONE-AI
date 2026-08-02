@@ -5544,6 +5544,16 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
     });
 
     let bidiSession: any = null;
+    /**
+     * Marca que o cliente já foi embora.
+     *
+     * Conectar ao Google leva alguns segundos, e nesse meio-tempo o cliente pode desistir (fechar
+     * a aba, trocar de página, cair a rede). Quando isso acontecia, a limpeza do "close" rodava
+     * enquanto bidiSession ainda era null e portanto não fechava nada — logo depois a conexão
+     * ficava pronta e virava uma sessão órfã, aberta contra o Google sem ninguém do outro lado,
+     * ocupando lugar até o próprio Google derrubá-la. Uma sobrava a cada tentativa.
+     */
+    let clienteSaiu = false;
 
     // Send initial handoff state to newly connected client
     try {
@@ -5619,6 +5629,14 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
                 }
               }
             });
+            // O cliente pode ter ido embora enquanto esta conexão era estabelecida. Se foi,
+            // fecha a sessão recém-criada agora — senão ela fica órfã, sem ninguém do outro lado.
+            if (clienteSaiu || clientWs.readyState !== WebSocket.OPEN) {
+              console.log("Cliente saiu antes de a conexão com o Google ficar pronta; fechando a sessão órfã.");
+              try { bidiSession.close(); } catch (_) { /* já pode ter caído sozinha */ }
+              bidiSession = null;
+              return;
+            }
             console.log("Server successfully connected to Google Gemini Live endpoint!");
           } catch (connectError: any) {
             console.error("Failed to connect to Gemini Live:", connectError);
@@ -5646,6 +5664,9 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
 
     clientWs.on("close", () => {
       console.log("Client disconnected from websocket bridge, cleaning up");
+      // Antes de qualquer coisa: se a conexão com o Google ainda estiver sendo estabelecida,
+      // é esta marca que fará a sessão ser fechada assim que ficar pronta.
+      clienteSaiu = true;
       if (bidiSession) {
         try {
           bidiSession.close();
