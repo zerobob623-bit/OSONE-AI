@@ -1018,13 +1018,21 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
    * poder ser executado — daí a troca por "app.asar.unpacked" (ver asarUnpack no package.json).
    */
   function caminhosDaVozLocal(): { binario: string; modelo: string } | null {
-    const base = path.join(process.cwd(), "vendor", "piper").replace("app.asar", "app.asar.unpacked");
+    // Sem __dirname aqui: este arquivo roda como ESM em desenvolvimento (tsx), onde essa
+    // variável não existe e o simples acesso a ela lança erro — derrubando toda a cadeia de voz
+    // em vez de apenas pular a voz local. No app empacotado o bundle vira CommonJS e ela
+    // passaria a existir, então o defeito só apareceria em desenvolvimento.
     const candidatos = [
-      base,
-      path.join(__dirname, "vendor", "piper").replace("app.asar", "app.asar.unpacked"),
+      // Desenvolvimento: a pasta vendor fica na raiz do projeto.
+      path.join(process.cwd(), "vendor", "piper"),
+      // App instalado: o electron-builder extrai o que está em asarUnpack para cá. O
+      // process.cwd() não serve no empacotado — o Electron o aponta para a pasta de dados do
+      // usuário (ver electron/main.js), que não contém os arquivos do programa.
+      path.join(process.resourcesPath || "", "app.asar.unpacked", "vendor", "piper"),
       path.join(process.resourcesPath || "", "vendor", "piper"),
     ];
     for (const dir of candidatos) {
+      if (!dir) continue;
       const binario = path.join(dir, process.platform === "win32" ? "piper.exe" : "piper");
       const modelo = path.join(dir, "pt_BR-faber-medium.onnx");
       if (fs.existsSync(binario) && fs.existsSync(modelo)) return { binario, modelo };
@@ -1040,7 +1048,17 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
    * usado que ele não pode emudecer. A voz daqui é um pouco menos natural, mas nunca acaba.
    */
   async function sintetizarComVozLocal(texto: string): Promise<Buffer | null> {
-    const caminhos = caminhosDaVozLocal();
+    // Esta é a ÚLTIMA rede de segurança do áudio: se ela lançar uma exceção em vez de devolver
+    // null, derruba a cadeia inteira e o robô fica sem áudio justamente no caminho criado para
+    // impedir isso — foi o que aconteceu com um __dirname inexistente em ESM.
+    let caminhos: { binario: string; modelo: string } | null = null;
+    try {
+      caminhos = caminhosDaVozLocal();
+    } catch (e: any) {
+      console.error(`[OSONE ZAP] Erro ao localizar a voz local: ${e?.message || e}`);
+      return null;
+    }
+
     if (!caminhos) {
       console.warn("[OSONE ZAP] Voz local não instalada. Rode 'npm run baixar-voz' para nunca ficar sem áudio.");
       return null;
@@ -1143,7 +1161,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     }
   }
 
-  async function synthesizeWhatsAppVoiceReply(text: string, opts: {
+  type OpcoesDeVoz = {
     engine?: "gemini" | "elevenlabs";
     geminiApiKey?: string;
     voice?: string;
@@ -1151,8 +1169,43 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     elevenLabsVoiceId?: string;
     /** Uso interno: marca a chamada de revezamento, para não repetir a troca de motor em ciclo. */
     jaTentouFallback?: boolean;
-  }): Promise<{ buffer: Buffer; mimeType: string; extension: string } | null> {
+  };
+  type AudioSintetizado = { buffer: Buffer; mimeType: string; extension: string };
+
+  /**
+   * Ponto de entrada da síntese de voz: tenta as vozes de nuvem e, se nenhuma delas responder,
+   * cai para a voz local.
+   *
+   * A rede de segurança fica AQUI, num lugar só, de propósito. Quando ela vivia dentro da
+   * lógica da nuvem, cobria apenas um caminho de falha — bastava o motor estar configurado como
+   * ElevenLabs, ou faltar a chave do Gemini, para a função desistir antes de chegar nela. Ou
+   * seja: falhava exatamente na situação em que foi criada para servir, a de trocar de motor
+   * porque a cota acabou.
+   */
+  async function synthesizeWhatsAppVoiceReply(text: string, opts: OpcoesDeVoz): Promise<AudioSintetizado | null> {
     if (!opts.jaTentouFallback) ultimoErroTts = "";
+
+    const pelaNuvem = await sintetizarPelaNuvem(text, opts);
+    if (pelaNuvem) return pelaNuvem;
+
+    // Chamada de revezamento interna (gemini -> elevenlabs): quem tentar a voz local é a
+    // chamada externa, uma vez só, para não disparar o Piper duas vezes na mesma mensagem.
+    if (opts.jaTentouFallback) return null;
+
+    const limpo = stripVocalTags((text || "").trim());
+    if (!limpo) return null;
+
+    const wavLocal = await sintetizarComVozLocal(limpo);
+    if (wavLocal) {
+      ultimoErroTts = "";
+      return { buffer: wavLocal, mimeType: "audio/wav", extension: "wav" };
+    }
+
+    ultimoErroTts = `${ultimoErroTts} A voz local também não está disponível — rode 'npm run baixar-voz' para instalá-la e nunca mais ficar sem áudio.`.trim();
+    return null;
+  }
+
+  async function sintetizarPelaNuvem(text: string, opts: OpcoesDeVoz): Promise<AudioSintetizado | null> {
     const cleanText = (text || "").trim();
     if (!cleanText) return null;
 
@@ -1272,13 +1325,10 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       if (chunkAudioBuffer) {
         buffers.push(chunkAudioBuffer);
       } else {
-        // Antes havia aqui um recurso de emergência que sintetizava o trecho pelo TTS do Google
-        // Tradutor. Ele salvava o envio, mas com a voz robótica de leitor de texto — e, pior,
-        // só para os trechos em que o Gemini falhava. O resultado era um mesmo áudio alternando
-        // entre a voz natural e a robótica no meio da frase, sem nada explicando o porquê.
-        // Antes havia aqui um recurso de emergência com a voz robótica do Google Tradutor.
-        // Foi removido: ele salvava o envio, mas alternando entre a voz natural e a robótica no
-        // meio da mesma frase. O revezamento agora é para a ElevenLabs, que tem voz boa.
+        // Havia aqui um recurso de emergência com a voz robótica do Google Tradutor. Foi
+        // removido: ele salvava o envio, mas só nos trechos em que o Gemini falhava, então a
+        // mesma mensagem alternava entre a voz natural e a robótica no meio da frase. O
+        // revezamento agora é para a ElevenLabs e, por fim, para a voz local — ambas boas.
         console.error("[OSONE ZAP] O Gemini TTS não gerou áudio para um trecho.");
 
         // Troca automática de motor: a cota gratuita de voz do Gemini é de poucos áudios por
@@ -1297,15 +1347,8 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
           ultimoErroTts = `${ultimoErroTts} A troca automática para a ElevenLabs também não funcionou.`;
         }
 
-        // Última camada: a voz que roda na própria máquina. Chega aqui quando as vozes de
-        // nuvem falharam — e, diferente delas, esta não tem cota para acabar.
-        const wavLocal = await sintetizarComVozLocal(stripVocalTags(cleanText));
-        if (wavLocal) {
-          ultimoErroTts = "";
-          return { buffer: wavLocal, mimeType: "audio/wav", extension: "wav" };
-        }
-
-        ultimoErroTts = `${ultimoErroTts} A voz local também não está disponível — rode 'npm run baixar-voz' para instalá-la e nunca mais ficar sem áudio.`;
+        // Devolve null e quem chamou (synthesizeWhatsAppVoiceReply) tenta a voz local. A rede
+        // de segurança fica lá em cima, num ponto só, para nenhum caminho de falha escapar dela.
         return null;
       }
     }
@@ -1988,17 +2031,16 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
    * que a voz não sai sem precisar mandar mensagem de WhatsApp para alguém a cada tentativa.
    */
   app.get("/api/whatsapp/diagnostico-voz", async (req, res) => {
+    // Sem chave do Gemini o diagnóstico NÃO pode desistir: a voz local funciona sem chave
+    // nenhuma, e parar aqui faria o painel dizer que não há voz para quem depende só dela.
     const apiKey = whatsappConfig.geminiApiKey || getSecretGeminiKey();
-    if (!apiKey) {
-      return res.status(400).json({
-        ok: false,
-        erro: "Nenhuma chave do Gemini configurada (nem nos Ajustes do OSONE ZAP, nem no servidor)."
-      });
-    }
     try {
-      const ai = new GoogleGenAI({ apiKey, vertexai: false, httpOptions: { headers: { "User-Agent": "aistudio-build" } } });
-      cacheModelosDeVoz = null; // força uma consulta nova a cada diagnóstico
-      const modelosDeVoz = await descobrirModelosDeVoz(ai);
+      let modelosDeVoz: string[] = [];
+      if (apiKey) {
+        const ai = new GoogleGenAI({ apiKey, vertexai: false, httpOptions: { headers: { "User-Agent": "aistudio-build" } } });
+        cacheModelosDeVoz = null; // força uma consulta nova a cada diagnóstico
+        modelosDeVoz = await descobrirModelosDeVoz(ai);
+      }
 
       const teste = await synthesizeWhatsAppVoiceReply("Teste de voz do OSONE.", {
         engine: whatsappConfig.ttsEngine,
@@ -2008,10 +2050,13 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
         elevenLabsVoiceId: whatsappConfig.elevenLabsVoiceId
       });
 
+      const vozLocal = caminhosDaVozLocal();
       return res.json({
         ok: !!teste,
         motorConfigurado: whatsappConfig.ttsEngine,
+        chaveGeminiConfigurada: !!apiKey,
         modelosDeVozVistosPelaSuaChave: modelosDeVoz,
+        vozLocalInstalada: vozLocal ? "sim — o áudio nunca fica sem alternativa" : "não — rode 'npm run baixar-voz'",
         audioGerado: teste ? `sim (${(teste.buffer.length / 1024).toFixed(0)} KB)` : "não",
         erro: teste ? null : (ultimoErroTts || "a IA de voz não retornou áudio."),
         ffmpeg: resolverCaminhoFfmpeg() === "ffmpeg" ? "usando o do sistema (pode não existir)" : "embutido no OSONE"
