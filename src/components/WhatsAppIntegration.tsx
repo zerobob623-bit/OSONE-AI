@@ -1460,7 +1460,9 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                   <label className="block text-xs font-bold text-white mb-1.5">
                     Motor de Voz para as Respostas em Áudio
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
+                  {/* Três colunas desde que virou três motores: num grid de duas, o terceiro
+                      botão caía sozinho numa linha nova, com uma célula vazia ao lado. */}
+                  <div className="grid grid-cols-3 gap-2">
                     <button
                       onClick={() => setConfig({ ...config, ttsEngine: 'gemini' })}
                       className={`px-3.5 py-2.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
@@ -1489,7 +1491,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                           : 'bg-white/5 border-white/10 text-zinc-400'
                       }`}
                     >
-                      Voz Local (ilimitada)
+                      Voz Local
                     </button>
                   </div>
 
