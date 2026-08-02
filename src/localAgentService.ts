@@ -1672,7 +1672,107 @@ async function desenharGradeDeReferencia(arquivo: string, largura: number, altur
   }
 }
 
-const handleScreenCapture = async (_req: Request, res: Response) => {
+/**
+ * Recorta um pedaço da captura em volta de um ponto e o amplia, com uma grade fina por cima.
+ *
+ * É o que transforma "quase acertou" em "acertou". Numa tela inteira, uma linha da grade a cada
+ * 100 unidades cobre 144 pixels — ler a posição entre duas linhas ainda deixa margem para errar
+ * por algumas dezenas de pixels, o suficiente para cair no botão vizinho. Ampliando uma janela
+ * de 200 unidades para o mesmo tamanho de imagem, cada unidade fica 5 vezes maior e a grade pode
+ * ser traçada de 10 em 10: o mesmo erro de leitura passa a valer poucos pixels.
+ *
+ * A grade da ampliação é numerada em coordenadas ABSOLUTAS da tela (a mesma escala 0-1000 do
+ * clique), e não em coordenadas do recorte. Isso é deliberado: com números do recorte seria
+ * preciso convertê-los de volta, e essa conversão é mais um lugar para errar. Numerada em
+ * absoluto, o valor lido na ampliação já é o valor final do clique.
+ */
+async function ampliarRegiao(
+  arquivo: string,
+  tela: { width: number; height: number },
+  centroX: number,
+  centroY: number,
+  janela: number
+): Promise<{ x0: number; y0: number; x1: number; y1: number }> {
+  // Janela em unidades 0-1000, presa dentro da tela para nunca recortar fora da imagem.
+  const meia = janela / 2;
+  let u0 = Math.max(0, Math.min(1000 - janela, centroX - meia));
+  let v0 = Math.max(0, Math.min(1000 - janela, centroY - meia));
+  const u1 = u0 + janela;
+  const v1 = v0 + janela;
+
+  const px = (u: number) => Math.round((u / 1000) * tela.width);
+  const py = (v: number) => Math.round((v / 1000) * tela.height);
+  const cropX = px(u0), cropY = py(v0);
+  const cropL = Math.max(1, px(u1) - cropX), cropA = Math.max(1, py(v1) - cropY);
+
+  // Alvo de saída: largura fixa, para a ampliação ser sempre legível independentemente do
+  // tamanho da janela recortada.
+  const SAIDA = 1000;
+  const escala = SAIDA / cropL;
+  const saidaA = Math.round(cropA * escala);
+
+  const PASSO_FINO = 10;
+  const linhas: string[] = [];
+  const textos: string[] = [];
+  for (let u = Math.ceil(u0 / PASSO_FINO) * PASSO_FINO; u <= u1; u += PASSO_FINO) {
+    const x = Math.round(((u - u0) / janela) * SAIDA);
+    const forte = u % 50 === 0;
+    linhas.push(`line ${x},0 ${x},${saidaA}`);
+    if (forte) textos.push(`text ${x + 4},24 '${u}'`);
+  }
+  for (let v = Math.ceil(v0 / PASSO_FINO) * PASSO_FINO; v <= v1; v += PASSO_FINO) {
+    const y = Math.round(((v - v0) / janela) * saidaA);
+    const forte = v % 50 === 0;
+    linhas.push(`line 0,${y} ${SAIDA},${y}`);
+    if (forte) textos.push(`text 4,${y - 6} '${v}'`);
+  }
+
+  if (process.platform === 'linux') {
+    const saida = `${arquivo}.zoom.png`;
+    await execFileShellSafe('convert', [
+      arquivo,
+      '-crop', `${cropL}x${cropA}+${cropX}+${cropY}`, '+repage',
+      '-filter', 'point', '-resize', `${SAIDA}x${saidaA}!`,
+      '-stroke', 'rgba(255,64,64,0.35)', '-strokewidth', '1', '-draw', linhas.join(' '),
+      '-stroke', 'none', '-fill', 'rgba(255,64,64,0.95)', '-pointsize', '22', '-draw', textos.join(' '),
+      saida
+    ], 20000);
+    if (fs.existsSync(saida) && fs.statSync(saida).size > 0) fs.renameSync(saida, arquivo);
+  } else if (process.platform === 'win32') {
+    const caminho = arquivo.replace(/'/g, "''");
+    const desenhos: string[] = [];
+    for (const l of linhas) {
+      const m = l.match(/^line (\d+),(\d+) (\d+),(\d+)$/);
+      if (m) desenhos.push(`$g.DrawLine($pen, ${m[1]}, ${m[2]}, ${m[3]}, ${m[4]});`);
+    }
+    for (const t of textos) {
+      const m = t.match(/^text (\d+),(\d+) '(\d+)'$/);
+      if (m) desenhos.push(`$g.DrawString('${m[3]}', $fonte, $tinta, ${m[1]}, ${m[2]});`);
+    }
+    const script = [
+      `Add-Type -AssemblyName System.Drawing;`,
+      `$orig = [System.Drawing.Image]::FromFile('${caminho}');`,
+      `$bmp = New-Object System.Drawing.Bitmap(${SAIDA}, ${saidaA});`,
+      `$g = [System.Drawing.Graphics]::FromImage($bmp);`,
+      `$g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::NearestNeighbor;`,
+      `$destino = New-Object System.Drawing.Rectangle(0, 0, ${SAIDA}, ${saidaA});`,
+      `$origem = New-Object System.Drawing.Rectangle(${cropX}, ${cropY}, ${cropL}, ${cropA});`,
+      `$g.DrawImage($orig, $destino, $origem, [System.Drawing.GraphicsUnit]::Pixel);`,
+      `$orig.Dispose();`,
+      `$pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(89,255,64,64), 1);`,
+      `$tinta = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(242,255,64,64));`,
+      `$fonte = New-Object System.Drawing.Font('Arial', 15);`,
+      ...desenhos,
+      `$bmp.Save('${caminho}', [System.Drawing.Imaging.ImageFormat]::Png);`,
+      `$g.Dispose(); $bmp.Dispose();`
+    ].join(' ');
+    await runShell(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`, 25000);
+  }
+
+  return { x0: u0, y0: v0, x1: u1, y1: v1 };
+}
+
+const handleScreenCapture = async (req: Request, res: Response) => {
   const platform = process.platform;
   const tmpFile = path.join(os.tmpdir(), `osone-screenshot-${crypto.randomBytes(6).toString('hex')}.png`);
   try {
@@ -1717,10 +1817,23 @@ const handleScreenCapture = async (_req: Request, res: Response) => {
       tela = await obterDimensoesDaTela();
     } catch (_) { /* a imagem sozinha ainda é útil; segue sem as dimensões */ }
 
+    // Quando x/y vêm na requisição, a resposta deixa de ser a tela inteira e passa a ser uma
+    // ampliação em volta daquele ponto — o segundo passo de uma mira em dois tempos.
+    const pedeZoom = req.query?.x !== undefined && req.query?.y !== undefined;
+    const zoomX = Number(req.query?.x);
+    const zoomY = Number(req.query?.y);
+    const janela = Math.max(40, Math.min(500, Number(req.query?.janela) || 200));
+
     let comGrade = false;
+    let regiao: { x0: number; y0: number; x1: number; y1: number } | null = null;
+
     if (tela && tela.width > 0 && tela.height > 0) {
       try {
-        await desenharGradeDeReferencia(tmpFile, tela.width, tela.height);
+        if (pedeZoom && Number.isFinite(zoomX) && Number.isFinite(zoomY)) {
+          regiao = await ampliarRegiao(tmpFile, tela, zoomX, zoomY, janela);
+        } else {
+          await desenharGradeDeReferencia(tmpFile, tela.width, tela.height);
+        }
         comGrade = true;
       } catch (err: any) {
         // Sem ImageMagick no Linux, por exemplo. A captura continua valendo — só volta a exigir
@@ -1737,13 +1850,21 @@ const handleScreenCapture = async (_req: Request, res: Response) => {
       mimeType: 'image/png',
       ...(tela ? { screenWidth: tela.width, screenHeight: tela.height } : {}),
       grade: comGrade,
+      ampliada: !!regiao,
+      ...(regiao ? { regiao } : {}),
       // Instrução junto do dado: quem recebe a imagem precisa saber que as linhas vermelhas são
       // régua, e não parte da tela — senão pode tentar interagir com elas.
-      comoUsar: comGrade
-        ? `A imagem tem uma grade vermelha de referência, numerada de ${PASSO_DA_GRADE} em ${PASSO_DA_GRADE} na escala 0-1000 ` +
-          `(0 = topo/esquerda, 1000 = base/direita). Use as linhas numeradas para ler a posição do alvo e informe x e y nessa mesma escala. ` +
-          `As linhas vermelhas são apenas régua sobreposta: elas não existem na tela real.`
-        : `Informe x e y na escala 0-1000 (0 = topo/esquerda, 1000 = base/direita).`
+      comoUsar: !comGrade
+        ? `Informe x e y na escala 0-1000 (0 = topo/esquerda, 1000 = base/direita).`
+        : regiao
+          ? `AMPLIAÇÃO da região x de ${regiao.x0} a ${regiao.x1} e y de ${regiao.y0} a ${regiao.y1}. ` +
+            `A grade está numerada em coordenadas ABSOLUTAS da tela (a mesma escala 0-1000 do clique), com uma linha a cada 10 e número a cada 50 — ` +
+            `o valor que você ler aqui é o valor final, não precisa converter nada. Leia o centro exato do alvo e clique nele. ` +
+            `As linhas vermelhas são régua sobreposta e não existem na tela real.`
+          : `TELA INTEIRA com grade vermelha numerada de ${PASSO_DA_GRADE} em ${PASSO_DA_GRADE} na escala 0-1000 ` +
+            `(0 = topo/esquerda, 1000 = base/direita). Localize o alvo por aqui e, para CLICAR com precisão, ` +
+            `chame 'capturar_tela' de novo passando x e y aproximados do alvo: você receberá essa mesma região ampliada, ` +
+            `com grade fina, para ler a posição exata. As linhas vermelhas são régua sobreposta e não existem na tela real.`
     });
   } catch (err: any) {
     fs.unlink(tmpFile, () => {});
