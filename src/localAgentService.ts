@@ -1339,6 +1339,35 @@ const WIN_MOUSEEVENTF = { LEFTDOWN: 0x0002, LEFTUP: 0x0004, RIGHTDOWN: 0x0008, R
  * que a câmera detecta a posição da mão, o frontend chama este endpoint (com controle de taxa
  * no próprio frontend para não sobrecarregar).
  */
+/**
+ * Onde o cursor REALMENTE está, perguntado ao sistema operacional.
+ *
+ * É a única fonte de verdade disponível. Todo o resto — a coordenada que o modelo informou, a
+ * conversão feita aqui — é intenção; só isto é fato. Sem essa leitura, mover o mouse é uma
+ * operação cega: nada no sistema jamais compara o que foi pedido com o que aconteceu, e um erro
+ * de mira fica indistinguível de um acerto.
+ */
+async function lerPosicaoDoCursor(): Promise<{ x: number; y: number } | null> {
+  try {
+    if (process.platform === 'linux') {
+      const { stdout } = await runShell('xdotool getmouselocation --shell', 3000);
+      const x = Number(stdout.match(/^X=(\d+)/m)?.[1]);
+      const y = Number(stdout.match(/^Y=(\d+)/m)?.[1]);
+      return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+    }
+    if (process.platform === 'win32') {
+      const script = `Add-Type -AssemblyName System.Windows.Forms; $p = [System.Windows.Forms.Cursor]::Position; Write-Output \\"$($p.X)|$($p.Y)\\"`;
+      const { stdout } = await runShell(`powershell -NoProfile -Command "${script}"`, 4000);
+      const [x, y] = stdout.trim().split('|').map(Number);
+      return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+    }
+  } catch (_) { /* sem leitura disponível: melhor não afirmar nada do que afirmar errado */ }
+  return null;
+}
+
+/** Últimos movimentos de mouse, para diagnosticar mira errada sem depender de adivinhação. */
+const historicoDeMira: Array<{ quando: string; pediuPx: { x: number; y: number }; ficouPx: { x: number; y: number } | null; desvioPx: number | null; tela: { width: number; height: number } | null }> = [];
+
 const handleMouseMove = async (req: Request, res: Response) => {
   const x = Number(req.body?.x);
   const y = Number(req.body?.y);
@@ -1346,15 +1375,42 @@ const handleMouseMove = async (req: Request, res: Response) => {
     return res.status(400).json({ error: "Parâmetros 'x' e 'y' (numéricos) são obrigatórios." });
   }
   const platform = process.platform;
+  const alvo = { x: Math.round(x), y: Math.round(y) };
   try {
     if (platform === 'linux') {
-      await runShell(`xdotool mousemove ${Math.round(x)} ${Math.round(y)}`, 3000);
+      await runShell(`xdotool mousemove ${alvo.x} ${alvo.y}`, 3000);
     } else if (platform === 'win32') {
-      await runShell(`powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${Math.round(x)},${Math.round(y)})"`, 3000);
+      await runShell(`powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${alvo.x},${alvo.y})"`, 3000);
     } else {
       return res.status(501).json({ error: `Controle de mouse ainda não suportado na plataforma '${platform}'.` });
     }
-    return res.status(200).json({ success: true });
+
+    // Confere com o sistema operacional onde o cursor parou de fato.
+    const real = await lerPosicaoDoCursor();
+    const desvio = real ? Math.round(Math.hypot(real.x - alvo.x, real.y - alvo.y)) : null;
+    let tela: { width: number; height: number } | null = null;
+    try {
+      const t = await obterDimensoesDaTela();
+      tela = { width: t.width, height: t.height };
+    } catch (_) { /* opcional */ }
+
+    historicoDeMira.unshift({ quando: new Date().toISOString(), pediuPx: alvo, ficouPx: real, desvioPx: desvio, tela });
+    if (historicoDeMira.length > 30) historicoDeMira.pop();
+
+    if (desvio !== null && desvio > 2) {
+      logAudit('WARN', 'MOUSE_MOVE_DESVIO', `Pedi (${alvo.x},${alvo.y}) e o cursor parou em (${real!.x},${real!.y}) — ${desvio}px de desvio.`, { platform });
+    }
+
+    return res.status(200).json({
+      success: true,
+      pediuPx: alvo,
+      ficouPx: real,
+      desvioPx: desvio,
+      ...(tela ? { telaPx: tela } : {}),
+      // O sistema operacional obedeceu exatamente? Se sim, um clique errado é erro de MIRA
+      // (a coordenada escolhida) e não de execução — distinção que antes era impossível de fazer.
+      execucaoExata: desvio === null ? null : desvio <= 2
+    });
   } catch (err: any) {
     return res.status(500).json({ error: `Falha ao mover o cursor: ${err.message}` });
   }
@@ -2173,4 +2229,38 @@ agentRouter.post('/mouse/scroll', handleMouseScroll);
 agentRouter.post('/keyboard/type', handleKeyboardType);
 agentRouter.post('/keyboard/key', handleKeyboardKey);
 agentRouter.get('/screen/capture', handleScreenCapture);
+
+/**
+ * GET /diagnostico-mira — mostra os últimos movimentos de mouse: o que foi pedido, onde o cursor
+ * parou de fato e o desvio entre os dois.
+ *
+ * Serve para responder de uma vez a pergunta que vinha sendo respondida por tentativa e erro:
+ * quando o clique cai no lugar errado, a culpa é da coordenada escolhida ou da execução? Se o
+ * desvio for zero, o sistema obedeceu e o problema está na mira; se não for, o problema está aqui.
+ */
+agentRouter.get('/diagnostico-mira', async (_req: Request, res: Response) => {
+  let tela: any = null;
+  try {
+    tela = await obterDimensoesDaTela();
+  } catch (err: any) {
+    tela = { erro: err?.message || String(err) };
+  }
+  const cursor = await lerPosicaoDoCursor();
+  const comDesvio = historicoDeMira.filter(h => h.desvioPx !== null && h.desvioPx > 2).length;
+
+  return res.status(200).json({
+    tela,
+    cursorAgora: cursor,
+    totalRegistrado: historicoDeMira.length,
+    movimentosComDesvio: comDesvio,
+    veredito: historicoDeMira.length === 0
+      ? "Nenhum movimento de mouse registrado ainda. Peça ao OSONE para clicar em algo e abra este endereço de novo."
+      : comDesvio === 0
+        ? "O sistema operacional posicionou o cursor EXATAMENTE onde foi pedido em todos os movimentos. " +
+          "Logo, cliques no lugar errado vêm da coordenada escolhida (leitura da tela), não da execução."
+        : `${comDesvio} de ${historicoDeMira.length} movimentos pararam longe do pedido. O problema está na EXECUÇÃO ` +
+          `(xdotool/PowerShell), não na leitura da tela — compare 'pediuPx' com 'ficouPx' abaixo.`,
+    ultimosMovimentos: historicoDeMira.slice(0, 10)
+  });
+});
 agentRouter.get('/audit/logs', handleAuditLogs);

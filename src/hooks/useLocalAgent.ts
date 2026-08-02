@@ -187,14 +187,39 @@ export function useLocalAgent() {
             if ((x !== undefined && !Number.isFinite(x)) || (y !== undefined && !Number.isFinite(y))) {
               return { error: "Parâmetros 'x' e 'y', quando informados, devem ser numéricos (0 a 1000)." };
             }
+            let relato: any = null;
             if (x !== undefined && y !== undefined) {
               const pixels = await paraPixels(x, y);
               if (!pixels) return { error: "Não foi possível ler as dimensões da tela para posicionar o clique. No Linux é necessário ter o pacote 'xdotool' instalado." };
               const moveResult = await post('/mouse/move', pixels);
               if (moveResult?.error) return moveResult;
+              relato = moveResult;
             }
             const botao = args?.botao === 'right' ? 'right' : 'left';
-            return post('/mouse/button', { action: 'click', button: botao, double: args?.duplo === true });
+            const clique = await post('/mouse/button', { action: 'click', button: botao, double: args?.duplo === true });
+            if (clique?.error) return clique;
+
+            // Devolve ONDE o clique caiu, não apenas "deu certo".
+            //
+            // Antes a resposta era um sucesso mudo, e com isso o modelo nunca ficava sabendo se
+            // acertou: errar e acertar produziam exatamente a mesma resposta, o que torna impossível
+            // corrigir a mira na tentativa seguinte. Dizendo o pixel real e o tamanho da tela, uma
+            // conferência da tela depois do clique passa a ser suficiente para ele se corrigir.
+            if (!relato) return clique;
+            const t = relato.telaPx;
+            return {
+              ...clique,
+              cliqueEm: { escala0a1000: { x, y }, pixelDaTela: relato.ficouPx || relato.pediuPx },
+              telaPx: t,
+              execucaoExata: relato.execucaoExata,
+              resumo: t
+                ? `Cliquei em x=${x}, y=${y} (escala 0-1000), que nesta tela de ${t.width}x${t.height} é o pixel ` +
+                  `(${(relato.ficouPx || relato.pediuPx).x}, ${(relato.ficouPx || relato.pediuPx).y}). ` +
+                  (relato.execucaoExata === false
+                    ? `ATENÇÃO: o cursor parou ${relato.desvioPx}px longe do pedido — o sistema não obedeceu exatamente.`
+                    : `O sistema posicionou o cursor exatamente onde foi pedido, então se o alvo errado foi atingido a coordenada é que estava errada: capture a tela e confira antes de tentar de novo.`)
+                : undefined
+            };
           }
           case 'rolar': {
             const direcao = args?.direcao === 'up' || args?.direcao === 'down' ? args.direcao : null;
