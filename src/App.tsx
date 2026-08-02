@@ -703,7 +703,6 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
-  const [clickVisual, setClickVisual] = useState<{ x: number; y: number; visible: boolean }>({ x: 0, y: 0, visible: false });
   const [showUi, setShowUi] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isIntimateMissionOpen, setIsIntimateMissionOpen] = useState(false);
@@ -7480,8 +7479,8 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
             subacao: { type: Type.STRING, description: "Detalhe da ação: volume ('set','up','down','mute','unmute'); midia ('playpause','play','pause','next','previous'); configuracoes ('camera','sound','network','bluetooth','privacy','display','taskbar','main')." },
             valor: { type: Type.NUMBER, description: "Valor numérico, usado no volume com subacao='set' (0 a 100)." },
             forcar: { type: Type.BOOLEAN, description: "Para 'fechar': true encerra o app à força, sem esperar salvar." },
-            x: { type: Type.NUMBER, description: "Coordenada X de tela (pixels), para 'mover_mouse', 'clicar' e opcionalmente 'rolar'. Use o que você vê pelo compartilhamento de tela para estimar a posição." },
-            y: { type: Type.NUMBER, description: "Coordenada Y de tela (pixels), para 'mover_mouse', 'clicar' e opcionalmente 'rolar'." },
+            x: { type: Type.NUMBER, description: "Coordenada X na escala 0-1000 da LARGURA da tela (0 = borda esquerda, 500 = meio, 1000 = borda direita), para 'mover_mouse', 'clicar' e opcionalmente 'rolar'. NÃO use pixels: informe sempre nesta escala, olhando a imagem da tela." },
+            y: { type: Type.NUMBER, description: "Coordenada Y na escala 0-1000 da ALTURA da tela (0 = topo, 500 = meio, 1000 = base), para 'mover_mouse', 'clicar' e opcionalmente 'rolar'. NÃO use pixels." },
             botao: { type: Type.STRING, description: "Para 'clicar': 'left' (padrão) ou 'right'." },
             duplo: { type: Type.BOOLEAN, description: "Para 'clicar': true faz duplo-clique." },
             direcao: { type: Type.STRING, description: "Para 'rolar': 'up' ou 'down'." },
@@ -8962,18 +8961,6 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   }
                 },
                 {
-                  name: "click_screen",
-                  description: "Simula um clique na tela do usuário. Use quando o usuário estiver compartilhando a tela e pedir para clicar em algo. Coordenadas de 0 a 1000.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      x: { type: Type.NUMBER, description: "Coordenada X (0-1000)." },
-                      y: { type: Type.NUMBER, description: "Coordenada Y (0-1000)." }
-                    },
-                    required: ["x", "y"]
-                  }
-                },
-                {
                   name: "draw_on_canvas",
                   description: "Desenha objetos no canvas interativo. Use para jogos ou ilustrações.",
                   parameters: {
@@ -9165,8 +9152,8 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                                           subacao: { type: Type.STRING, description: "Detalhe da ação: volume ('set','up','down','mute','unmute'); midia ('playpause','play','pause','next','previous'); configuracoes ('camera','sound','network','bluetooth','privacy','display','taskbar','main')." },
                                           valor: { type: Type.NUMBER, description: "Valor numérico, usado no volume com subacao='set' (0 a 100)." },
                                           forcar: { type: Type.BOOLEAN, description: "Para 'fechar': true encerra o app à força, sem esperar salvar." },
-                                          x: { type: Type.NUMBER, description: "Coordenada X de tela (pixels), para 'mover_mouse', 'clicar' e opcionalmente 'rolar'. Use o que você vê pelo compartilhamento de tela para estimar a posição." },
-                                          y: { type: Type.NUMBER, description: "Coordenada Y de tela (pixels), para 'mover_mouse', 'clicar' e opcionalmente 'rolar'." },
+                                          x: { type: Type.NUMBER, description: "Coordenada X na escala 0-1000 da LARGURA da tela (0 = borda esquerda, 500 = meio, 1000 = borda direita), para 'mover_mouse', 'clicar' e opcionalmente 'rolar'. NÃO use pixels: informe sempre nesta escala, olhando a imagem da tela." },
+                                          y: { type: Type.NUMBER, description: "Coordenada Y na escala 0-1000 da ALTURA da tela (0 = topo, 500 = meio, 1000 = base), para 'mover_mouse', 'clicar' e opcionalmente 'rolar'. NÃO use pixels." },
                                           botao: { type: Type.STRING, description: "Para 'clicar': 'left' (padrão) ou 'right'." },
                                           duplo: { type: Type.BOOLEAN, description: "Para 'clicar': true faz duplo-clique." },
                                           direcao: { type: Type.STRING, description: "Para 'rolar': 'up' ou 'down'." },
@@ -10674,21 +10661,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       id: call.id,
                       response: { result: handledInternally ? `Mapa integrado aberto localmente para '${title}'.` : `Guia '${title}' aberta com sucesso.` }
                     });
-                  } else if (call.name === "click_screen") {
-                    const x = call.args.x as number;
-                    const y = call.args.y as number;
-                    
-                    // Visual feedback in the OSONE app
-                    setClickVisual({ x, y, visible: true });
-                    setTimeout(() => setClickVisual(prev => ({ ...prev, visible: false })), 1000);
-                    
-                    responses.push({
-                      name: call.name,
-                      id: call.id,
-                      response: { result: `Clique simulado em (${x}, ${y}).` }
-                    });
-
-                  } else if (call.name === "register_user_profile_facts") {
+                                    } else if (call.name === "register_user_profile_facts") {
                     const facts = (call.args as any).facts;
                     if (facts && typeof facts === 'object') {
                       registerUserProfileFacts(facts);
@@ -11245,28 +11218,6 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
             transition={{ duration: 0.15 }}
             className="fixed inset-0 z-[1000] bg-red-600/25 pointer-events-none mix-blend-color-burn"
           />
-        )}
-      </AnimatePresence>
-      {/* Click Visual Effect */}
-      <AnimatePresence>
-        {clickVisual.visible && (
-          <motion.div
-            initial={{ scale: 0, opacity: 0 }}
-            animate={{ scale: [0, 1.5, 1], opacity: [0, 0.8, 0] }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.8 }}
-            className="fixed z-[9999] pointer-events-none"
-            style={{ 
-              left: `${(clickVisual.x / 1000) * 100}%`, 
-              top: `${(clickVisual.y / 1000) * 100}%`,
-              transform: 'translate(-50%, -50%)'
-            }}
-          >
-            <div className="w-12 h-12 rounded-full border-2 border-her-accent shadow-[0_0_20px_rgba(242,125,38,0.5)]" />
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="w-2 h-2 bg-her-accent rounded-full" />
-            </div>
-          </motion.div>
         )}
       </AnimatePresence>
 
