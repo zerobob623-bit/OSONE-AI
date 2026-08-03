@@ -886,10 +886,10 @@ function execFileShellSafe(
         /**
          * A mensagem do erro vem do PRÓPRIO erro; o stderr entra só como contexto.
          *
-         * Antes o stderr tinha prioridade, e programas que escrevem avisos inofensivos ali —
-         * o tesseract sempre imprime "Invalid resolution 0 dpi" — faziam o aviso se passar
-         * pela causa da falha. O resultado era uma mensagem que parecia diagnóstico e apontava
-         * para o lugar errado, escondendo o motivo real (tempo esgotado, buffer estourado).
+         * Antes o stderr tinha prioridade, e programas que escrevem avisos inofensivos ali
+         * faziam o aviso se passar pela causa da falha. O resultado era uma mensagem que parecia
+         * diagnóstico e apontava para o lugar errado, escondendo o motivo real (tempo esgotado,
+         * buffer estourado).
          */
         const e: any = new Error(error.killed ? `tempo esgotado após ${timeoutMs}ms` : error.message);
         e.code = error.code || (error.killed ? 'ETIMEDOUT' : undefined);
@@ -1873,201 +1873,6 @@ async function ampliarRegiao(
   return { x0: u0, y0: v0, x1: u1, y1: v1 };
 }
 
-/**
- * POST /screen/find-text — acha na tela um elemento pelo TEXTO visível e devolve o centro dele.
- *
- * Existe porque estimar coordenadas olhando uma imagem é o elo fraco de toda a cadeia, e isso
- * ficou medido: em três tentativas seguidas o erro em Y foi constante (-45px nas três) enquanto o
- * erro em X variou ao acaso. Erro de leitura seria aleatório nos dois eixos; um desvio fixo num
- * eixo só revela que a imagem não estava sendo lida — a coordenada vinha de uma crença anterior.
- * Nenhuma melhoria na régua, na grade ou na ampliação corrige isso, porque todas dependem de o
- * modelo escolher olhar.
- *
- * Aqui não há estimativa: o texto é localizado por OCR e o centro da palavra é uma medição. Para
- * botão, menu ou link — que quase sempre têm texto — o clique deixa de ser um palpite.
- *
- * Depende do tesseract instalado. Quando falta, a resposta diz exatamente isso e como instalar,
- * em vez de devolver uma coordenada inventada: um erro claro é melhor que um acerto por sorte.
- */
-const handleFindText = async (req: Request, res: Response) => {
-  const alvo = String(req.body?.texto || '').trim();
-  if (!alvo) return res.status(400).json({ error: "Informe 'texto' com o rótulo visível do elemento (ex: 'Instalar')." });
-
-  const base = path.join(os.tmpdir(), `osone-ocr-${crypto.randomBytes(6).toString('hex')}`);
-  const png = `${base}.png`;
-  try {
-    if (process.platform === 'linux') {
-      await runShell(`import -window root -silent "${png}"`, 15000);
-    } else if (process.platform === 'win32') {
-      const p = png.replace(/'/g, "''");
-      const script = `Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen; $bmp = New-Object System.Drawing.Bitmap($vs.Width, $vs.Height); $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($vs.X, $vs.Y, 0, 0, $bmp.Size); $bmp.Save('${p}', [System.Drawing.Imaging.ImageFormat]::Png); $g.Dispose(); $bmp.Dispose();`;
-      await runShell(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`, 15000);
-    } else {
-      return res.status(501).json({ error: `Busca por texto ainda não suportada em '${process.platform}'.` });
-    }
-
-    // TSV traz uma linha por palavra, com caixa delimitadora e confiança — é o que permite
-    // devolver o CENTRO exato em vez de só dizer que o texto existe.
-    let tsv = '';
-    try {
-      // maxBuffer generoso: o TSV de uma tela cheia passa fácil do padrão de 1 MB do Node, e
-      // estourar o buffer gera um erro que nada tem a ver com o tesseract faltar — foi assim que
-      // a busca passou a relatar "não instalado" numa máquina onde ele estava instalado.
-      // --dpi 96 informa a resolução em vez de deixar o tesseract adivinhá-la a cada execução
-      // (é a origem do aviso "Invalid resolution 0 dpi"). --psm 11 é o modo certo para texto
-      // espalhado por uma interface, mas é lento numa tela inteira: daí os 3 minutos, folga
-      // suficiente para uma máquina modesta terminar em vez de a busca morrer pela metade.
-      const r = await execFileShellSafe(
-        'tesseract',
-        [png, 'stdout', '-l', 'por+eng', '--psm', '11', '--dpi', '96', 'tsv'],
-        180000,
-        64 * 1024 * 1024
-      );
-      tsv = r.stdout;
-    } catch (err: any) {
-      const faltaInstalar = err?.code === 'ENOENT' || /not found|não encontrado|is not recognized/i.test(String(err?.message || ''));
-      if (faltaInstalar) {
-        return res.status(500).json({
-          error: "O reconhecimento de texto (tesseract) não está instalado nesta máquina. " +
-            "No Linux: sudo apt install tesseract-ocr tesseract-ocr-por. No Windows, instale o Tesseract e garanta que ele esteja no PATH.",
-          detalhe: err?.message || String(err)
-        });
-      }
-      // Qualquer outra falha é relatada como o que ela é. Tratar tudo como "não instalado"
-      // mandava o usuário instalar algo que já estava instalado, escondendo a causa real.
-      const porTempo = err?.encerradoPorTempo || err?.code === 'ETIMEDOUT';
-      return res.status(500).json({
-        error: porTempo
-          ? "A leitura da tela demorou demais e foi interrompida. Esta máquina precisa de mais tempo para ler a tela inteira."
-          : `O tesseract está instalado, mas a leitura da tela falhou: ${err?.message || err}`,
-        codigo: err?.code || null,
-        // Os avisos vão separados da causa. Juntá-los fazia o aviso rotineiro do tesseract
-        // ("Invalid resolution 0 dpi") se passar pelo motivo da falha e apontar para o lugar errado.
-        avisosDoTesseract: err?.saidaDeErro || undefined,
-        dica: porTempo
-          ? "Meça quanto tempo leva na sua máquina: tire uma captura e rode 'time tesseract captura.png stdout --psm 11 --dpi 96 tsv'. Se passar de 3 minutos, feche janelas para reduzir o texto na tela."
-          : err?.code === 'ENOBUFS'
-            ? "A saída passou do limite de buffer."
-            : "Rode o mesmo comando no terminal para ver a saída completa."
-      });
-    }
-
-    const colunas = tsv.split('\n').slice(1).map(l => l.split('\t')).filter(c => c.length >= 12);
-    const normalizar = (t: string) => t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
-    const buscado = normalizar(alvo);
-
-    interface Palavra { texto: string; conf: number; left: number; top: number; width: number; height: number; linha: string; }
-    const palavras: Palavra[] = colunas
-      .map(c => ({
-        texto: c[11], conf: Number(c[10]),
-        left: Number(c[6]), top: Number(c[7]), width: Number(c[8]), height: Number(c[9]),
-        // page|block|par|line identifica a LINHA a que a palavra pertence.
-        linha: `${c[1]}|${c[2]}|${c[3]}|${c[4]}`
-      }))
-      .filter(p => p.texto && p.texto.trim() && Number.isFinite(p.left) && p.conf > 40);
-
-    /**
-     * Junta as palavras de cada linha antes de comparar.
-     *
-     * O tesseract devolve UMA palavra por registro, então um rótulo de duas palavras como
-     * "VOZ LIVRE" nunca casaria comparando registro a registro — era o motivo de a busca
-     * responder "não encontrei" com o elemento visível na tela. Agrupando por linha, o texto
-     * comparado passa a ser o rótulo inteiro, e a caixa devolvida engloba todas as palavras
-     * dele: o centro cai no meio do botão, não no meio da primeira palavra.
-     */
-    const porLinha = new Map<string, Palavra[]>();
-    for (const p of palavras) {
-      if (!porLinha.has(p.linha)) porLinha.set(p.linha, []);
-      porLinha.get(p.linha)!.push(p);
-    }
-
-    type Candidato = { texto: string; conf: number; left: number; top: number; right: number; bottom: number };
-    const candidatos: Candidato[] = [];
-
-    for (const grupo of porLinha.values()) {
-      const ordenado = [...grupo].sort((a, b) => a.left - b.left);
-      // Testa todas as sequências contíguas de palavras da linha: assim tanto "Instalar"
-      // (uma palavra) quanto "VOZ LIVRE" (duas) são encontráveis, e a menor correspondência
-      // possível é preferida por vir antes na ordem de tamanho.
-      for (let i = 0; i < ordenado.length; i++) {
-        // Janela larga de propósito: interfaces com letras espaçadas (o OSONE usa exatamente
-        // isso nos botões) fazem o tesseract devolver UMA LETRA por registro, então um rótulo
-        // como "VOZ LIVRE" chega como 8 registros. Com uma janela de 6 ele nunca se formava, e
-        // a busca respondia "não encontrei" com o botão bem visível na tela.
-        for (let j = i; j < Math.min(ordenado.length, i + 14); j++) {
-          const trecho = ordenado.slice(i, j + 1);
-          const junto = normalizar(trecho.map(p => p.texto).join(''));
-          if (!junto) continue;
-          const casa = junto === buscado || (buscado.length >= 3 && junto.includes(buscado));
-          if (!casa) continue;
-          candidatos.push({
-            texto: trecho.map(p => p.texto).join(' '),
-            conf: Math.round(trecho.reduce((s, p) => s + p.conf, 0) / trecho.length),
-            left: Math.min(...trecho.map(p => p.left)),
-            top: Math.min(...trecho.map(p => p.top)),
-            right: Math.max(...trecho.map(p => p.left + p.width)),
-            bottom: Math.max(...trecho.map(p => p.top + p.height))
-          });
-        }
-      }
-    }
-
-    // Correspondências sobrepostas (ex: "Instalar" e "Instalar agora") são reduzidas à mais
-    // curta, que é a mais próxima do que foi pedido.
-    candidatos.sort((a, b) => (a.right - a.left) - (b.right - b.left));
-    const achados: Candidato[] = [];
-    for (const c of candidatos) {
-      const jaCoberto = achados.some(a => !(c.right < a.left || c.left > a.right || c.bottom < a.top || c.top > a.bottom));
-      if (!jaCoberto) achados.push(c);
-    }
-
-    if (achados.length === 0) {
-      // Mostra as linhas inteiras, não palavras soltas: é assim que o rótulo aparece na tela, e
-      // é o que permite conferir a grafia de verdade.
-      const visiveis = Array.from(porLinha.values())
-        .map(g => [...g].sort((a, b) => a.left - b.left).map(p => p.texto).join(' ').trim())
-        .filter(t => t.length > 1)
-        .slice(0, 60);
-      return res.status(404).json({
-        error: `Não encontrei nenhum elemento escrito "${alvo}" na tela.`,
-        textosVisiveis: visiveis,
-        dica: "Confira a grafia pela lista acima (ela mostra o que o OCR realmente leu), ou role a tela até o elemento aparecer."
-      });
-    }
-
-    let tela: { width: number; height: number } | null = null;
-    try {
-      const t = await obterDimensoesDaTela();
-      tela = { width: t.width, height: t.height };
-    } catch (_) { /* opcional */ }
-
-    const ocorrencias = achados.map(p => {
-      const cx = (p.left + p.right) / 2;
-      const cy = (p.top + p.bottom) / 2;
-      return {
-        texto: p.texto,
-        confianca: p.conf,
-        pixel: { x: Math.round(cx), y: Math.round(cy) },
-        ...(tela ? { escala0a1000: { x: Math.round(cx / tela.width * 1000), y: Math.round(cy / tela.height * 1000) } } : {})
-      };
-    });
-
-    return res.status(200).json({
-      encontrado: true,
-      total: ocorrencias.length,
-      ocorrencias,
-      ...(tela ? { telaPx: tela } : {}),
-      comoUsar: ocorrencias.length === 1
-        ? `Posição MEDIDA (não estimada) de "${alvo}". Clique exatamente em x=${ocorrencias[0].escala0a1000?.x}, y=${ocorrencias[0].escala0a1000?.y}, sem ajustar nada.`
-        : `"${alvo}" aparece ${ocorrencias.length} vezes na tela. Escolha a ocorrência certa pela posição e clique exatamente na coordenada dela, sem ajustar.`
-    });
-  } catch (err: any) {
-    return res.status(500).json({ error: `Falha ao procurar "${alvo}" na tela: ${err?.message || err}` });
-  } finally {
-    fs.unlink(png, () => {});
-  }
-};
-
 const handleScreenCapture = async (req: Request, res: Response) => {
   const platform = process.platform;
   const tmpFile = path.join(os.tmpdir(), `osone-screenshot-${crypto.randomBytes(6).toString('hex')}.png`);
@@ -2115,6 +1920,15 @@ const handleScreenCapture = async (req: Request, res: Response) => {
 
     // Quando x/y vêm na requisição, a resposta deixa de ser a tela inteira e passa a ser uma
     // ampliação em volta daquele ponto — o segundo passo de uma mira em dois tempos.
+    /**
+     * A captura sai LIMPA por padrão; a grade vermelha só com ?grade=1.
+     *
+     * Ela era desenhada em toda captura para servir de régua a quem estimasse a posição a olho.
+     * Como a posição passou a ser perguntada a quem olha a imagem, a grade virou o contrário de
+     * ajuda: risca o conteúdo a ser reconhecido e acrescenta números que não existem na tela real
+     * — e já houve tentativa de clicar nas próprias linhas.
+     */
+    const querGrade = String(req.query?.grade ?? '0') === '1';
     const pedeZoom = req.query?.x !== undefined && req.query?.y !== undefined;
     const zoomX = Number(req.query?.x);
     const zoomY = Number(req.query?.y);
@@ -2123,7 +1937,7 @@ const handleScreenCapture = async (req: Request, res: Response) => {
     let comGrade = false;
     let regiao: { x0: number; y0: number; x1: number; y1: number } | null = null;
 
-    if (tela && tela.width > 0 && tela.height > 0) {
+    if (querGrade && tela && tela.width > 0 && tela.height > 0) {
       try {
         if (pedeZoom && Number.isFinite(zoomX) && Number.isFinite(zoomY)) {
           regiao = await ampliarRegiao(tmpFile, tela, zoomX, zoomY, janela);
@@ -2150,17 +1964,11 @@ const handleScreenCapture = async (req: Request, res: Response) => {
       ...(regiao ? { regiao } : {}),
       // Instrução junto do dado: quem recebe a imagem precisa saber que as linhas vermelhas são
       // régua, e não parte da tela — senão pode tentar interagir com elas.
-      comoUsar: !comGrade
-        ? `Informe x e y na escala 0-1000 (0 = topo/esquerda, 1000 = base/direita).`
-        : regiao
-          ? `AMPLIAÇÃO da região x de ${regiao.x0} a ${regiao.x1} e y de ${regiao.y0} a ${regiao.y1}. ` +
-            `A grade está numerada em coordenadas ABSOLUTAS da tela (a mesma escala 0-1000 do clique), com uma linha a cada 10 e número a cada 50 — ` +
-            `o valor que você ler aqui é o valor final, não precisa converter nada. Leia o centro exato do alvo e clique nele. ` +
-            `As linhas vermelhas são régua sobreposta e não existem na tela real.`
-          : `TELA INTEIRA com grade vermelha numerada de ${PASSO_DA_GRADE} em ${PASSO_DA_GRADE} na escala 0-1000 ` +
-            `(0 = topo/esquerda, 1000 = base/direita). Localize o alvo por aqui e, para CLICAR com precisão, ` +
-            `chame 'capturar_tela' de novo passando x e y aproximados do alvo: você receberá essa mesma região ampliada, ` +
-            `com grade fina, para ler a posição exata. As linhas vermelhas são régua sobreposta e não existem na tela real.`
+      comoUsar: regiao
+        ? `AMPLIAÇÃO da região x de ${regiao.x0} a ${regiao.x1} e y de ${regiao.y0} a ${regiao.y1}, para você ler algo pequeno de perto.`
+        : `Foto da tela inteira do usuário, como ela está agora. Serve para você VER o que está acontecendo — ` +
+          `que janelas estão abertas, se uma ação deu certo, o que mudou. Para CLICAR em algo, não tire coordenada daqui: ` +
+          `chame 'localizar' com a descrição do alvo, que devolve a coordenada pronta.`
     });
   } catch (err: any) {
     fs.unlink(tmpFile, () => {});
@@ -2469,7 +2277,6 @@ agentRouter.post('/mouse/scroll', handleMouseScroll);
 agentRouter.post('/keyboard/type', handleKeyboardType);
 agentRouter.post('/keyboard/key', handleKeyboardKey);
 agentRouter.get('/screen/capture', handleScreenCapture);
-agentRouter.post('/screen/find-text', handleFindText);
 
 /**
  * GET /diagnostico-mira — mostra os últimos movimentos de mouse: o que foi pedido, onde o cursor
