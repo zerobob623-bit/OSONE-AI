@@ -3940,6 +3940,88 @@ ${processedChunk}`;
     }
   });
 
+  // ====== ATUALIZAÇÃO DO APP INSTALADO ======
+  /**
+   * O app instalado se atualiza sozinho, mas fazia isso em silêncio absoluto: checava uma vez ao
+   * abrir, baixava calado e instalava ao fechar. Quem usava não tinha como saber em que versão
+   * estava, se havia uma nova, nem por que a atualização não vinha quando não vinha.
+   *
+   * Estas rotas expõem o que o processo do Electron sabe. Elas funcionam sem preload nem IPC
+   * porque este servidor é carregado DENTRO do processo principal do app empacotado; rodando pelo
+   * código-fonte, o controle não existe e a resposta diz exatamente isso, em vez de fingir.
+   *
+   * Só de dentro da própria máquina: 'instalar' fecha e reinstala o app, e isso não pode estar ao
+   * alcance de quem alcançar a porta pela rede.
+   */
+  const controleDeAtualizacao = (): any => (globalThis as any).__osoneAtualizador || null;
+
+  /**
+   * A versão que está rodando, lida do package.json.
+   *
+   * Sem __dirname: em desenvolvimento este arquivo roda como ESM (tsx), onde ele não existe e o
+   * acesso lança erro — o mesmo cuidado que a voz local já toma alguns blocos acima. No app
+   * empacotado o package.json fica dentro do asar, ao lado do bundle, e o Electron aponta o
+   * process.cwd() para a pasta de dados do usuário, que não tem os arquivos do programa.
+   */
+  const APP_VERSION: string = (() => {
+    const candidatos = [
+      path.join(process.cwd(), "package.json"),
+      path.join(process.resourcesPath || "", "app.asar", "package.json"),
+      path.join(process.resourcesPath || "", "app", "package.json"),
+    ];
+    for (const arquivo of candidatos) {
+      try {
+        if (arquivo && fs.existsSync(arquivo)) {
+          const lido = JSON.parse(fs.readFileSync(arquivo, "utf-8"));
+          if (lido?.version) return String(lido.version);
+        }
+      } catch (_) { /* arquivo ilegível: tenta o próximo */ }
+    }
+    return "desconhecida";
+  })();
+
+  const estadoSemAppInstalado = {
+    suportado: false,
+    versaoAtual: APP_VERSION,
+    fase: 'ocioso',
+    versaoNova: null,
+    progresso: 0,
+    mensagem: 'Atualização automática só existe no aplicativo instalado. Rodando pelo código-fonte, atualize com "git pull".',
+    ultimaChecagem: null
+  };
+
+  const somenteDaPropriaMaquina = (req: express.Request, res: express.Response): boolean => {
+    if (isLoopbackAddress(req.socket?.remoteAddress)) return true;
+    res.status(403).json({ error: 'A atualização do app só pode ser comandada a partir do próprio computador.' });
+    return false;
+  };
+
+  app.get("/api/atualizacao/estado", (req, res) => {
+    if (!somenteDaPropriaMaquina(req, res)) return;
+    const controle = controleDeAtualizacao();
+    return res.json(controle ? controle.estado() : estadoSemAppInstalado);
+  });
+
+  app.post("/api/atualizacao/checar", async (req, res) => {
+    if (!somenteDaPropriaMaquina(req, res)) return;
+    const controle = controleDeAtualizacao();
+    if (!controle) return res.json(estadoSemAppInstalado);
+    try {
+      return res.json(await controle.checar());
+    } catch (err: any) {
+      return res.status(500).json({ ...estadoSemAppInstalado, suportado: true, fase: 'erro', mensagem: err?.message || String(err) });
+    }
+  });
+
+  app.post("/api/atualizacao/instalar", (req, res) => {
+    if (!somenteDaPropriaMaquina(req, res)) return;
+    const controle = controleDeAtualizacao();
+    if (!controle) return res.status(400).json({ error: estadoSemAppInstalado.mensagem });
+    const r = controle.instalar();
+    if (!r?.ok) return res.status(400).json({ error: r?.erro || 'Não foi possível instalar agora.' });
+    return res.json({ ok: true, mensagem: 'O OSONE vai fechar e abrir de novo já atualizado.' });
+  });
+
   // POST secure proxy endpoint for general Gemini content generation (supports history, tools, etc.)
   app.post("/api/gemini/generateContent", async (req, res) => {
     try {

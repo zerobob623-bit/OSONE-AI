@@ -341,34 +341,116 @@ function createWindow() {
   });
 }
 
+/**
+ * ATUALIZAÇÃO — o que está acontecendo, em estado consultável.
+ *
+ * Antes tudo isto ia só para o console: o app checava uma vez ao abrir, baixava calado e instalava
+ * ao fechar, e ninguém nunca via nada. Quando falhava — sem internet, GitHub fora do ar, release
+ * publicada sem o manifesto — falhava igualmente calado. Na prática era impossível responder
+ * "estou na versão nova?" sem abrir o console de um app empacotado, que ninguém faz.
+ *
+ * Guardando o estado num objeto e publicando um controle em globalThis, a interface passa a poder
+ * perguntar e mandar. Funciona sem preload nem IPC porque o servidor do OSONE é carregado DENTRO
+ * deste mesmo processo (ver startBackendServer) — as duas metades compartilham memória.
+ */
+const estadoDaAtualizacao = {
+  /** Só o app instalado se atualiza; rodando pelo código-fonte não há release para comparar. */
+  suportado: false,
+  versaoAtual: app.getVersion(),
+  /** ocioso | procurando | disponivel | baixando | baixada | atualizado | erro */
+  fase: 'ocioso',
+  versaoNova: null,
+  progresso: 0,
+  mensagem: '',
+  ultimaChecagem: null
+};
+
+function publicarControleDeAtualizacao() {
+  globalThis.__osoneAtualizador = {
+    estado: () => ({ ...estadoDaAtualizacao }),
+    checar: async () => {
+      if (!estadoDaAtualizacao.suportado) return { ...estadoDaAtualizacao };
+      // Uma checagem por vez: clicar duas vezes no botão não deve abrir dois downloads.
+      if (estadoDaAtualizacao.fase === 'procurando' || estadoDaAtualizacao.fase === 'baixando') {
+        return { ...estadoDaAtualizacao };
+      }
+      estadoDaAtualizacao.fase = 'procurando';
+      estadoDaAtualizacao.mensagem = '';
+      try {
+        await autoUpdater.checkForUpdates();
+      } catch (err) {
+        estadoDaAtualizacao.fase = 'erro';
+        estadoDaAtualizacao.mensagem = err?.message || String(err);
+      }
+      estadoDaAtualizacao.ultimaChecagem = new Date().toISOString();
+      return { ...estadoDaAtualizacao };
+    },
+    instalar: () => {
+      if (estadoDaAtualizacao.fase !== 'baixada') {
+        return { ok: false, erro: 'Não há atualização baixada para instalar.' };
+      }
+      // O fechamento precisa acontecer depois da resposta HTTP, senão a interface nunca recebe a
+      // confirmação e o usuário fica olhando um botão travado enquanto o app some.
+      setTimeout(() => autoUpdater.quitAndInstall(false, true), 400);
+      return { ok: true };
+    }
+  };
+}
+
+// De quanto em quanto tempo o app procura atualização sozinho enquanto fica aberto. Antes só havia
+// a checagem da abertura, então um app que passa dias ligado nunca via versão nova nenhuma.
+const INTERVALO_DE_CHECAGEM_MS = 6 * 60 * 60 * 1000;
+
 // Auto-update via electron-updater, publicando releases no GitHub (owner/repo do package.json).
 // Só roda em builds empacotados (app.isPackaged) — em dev não há release para comparar.
 function setupAutoUpdater() {
+  estadoDaAtualizacao.suportado = true;
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
 
   autoUpdater.on('checking-for-update', () => {
+    estadoDaAtualizacao.fase = 'procurando';
     console.log('[AutoUpdater] Verificando atualizações...');
   });
   autoUpdater.on('update-available', (info) => {
+    estadoDaAtualizacao.fase = 'disponivel';
+    estadoDaAtualizacao.versaoNova = info?.version || null;
+    estadoDaAtualizacao.progresso = 0;
     console.log(`[AutoUpdater] Atualização disponível: v${info.version}. Baixando...`);
   });
   autoUpdater.on('update-not-available', () => {
+    estadoDaAtualizacao.fase = 'atualizado';
+    estadoDaAtualizacao.versaoNova = null;
     console.log('[AutoUpdater] Nenhuma atualização disponível. Versão atual em uso.');
   });
   autoUpdater.on('error', (err) => {
+    estadoDaAtualizacao.fase = 'erro';
+    estadoDaAtualizacao.mensagem = err?.message || String(err);
     console.error('[AutoUpdater] Erro ao verificar/baixar atualização:', err);
   });
   autoUpdater.on('download-progress', (progress) => {
-    console.log(`[AutoUpdater] Baixando atualização: ${Math.round(progress.percent)}%`);
+    estadoDaAtualizacao.fase = 'baixando';
+    estadoDaAtualizacao.progresso = Math.round(progress?.percent || 0);
+    console.log(`[AutoUpdater] Baixando atualização: ${estadoDaAtualizacao.progresso}%`);
   });
   autoUpdater.on('update-downloaded', (info) => {
+    estadoDaAtualizacao.fase = 'baixada';
+    estadoDaAtualizacao.versaoNova = info?.version || estadoDaAtualizacao.versaoNova;
+    estadoDaAtualizacao.progresso = 100;
     console.log(`[AutoUpdater] Atualização v${info.version} baixada. Será instalada ao fechar o app.`);
   });
 
-  autoUpdater.checkForUpdates().catch((err) => {
-    console.error('[AutoUpdater] Falha ao iniciar verificação de atualização:', err);
-  });
+  const procurar = () => {
+    estadoDaAtualizacao.ultimaChecagem = new Date().toISOString();
+    autoUpdater.checkForUpdates().catch((err) => {
+      estadoDaAtualizacao.fase = 'erro';
+      estadoDaAtualizacao.mensagem = err?.message || String(err);
+      console.error('[AutoUpdater] Falha ao iniciar verificação de atualização:', err);
+    });
+  };
+
+  procurar();
+  setInterval(procurar, INTERVALO_DE_CHECAGEM_MS);
 }
 
 /**
@@ -422,6 +504,9 @@ if (!gotSingleInstanceLock) {
 
 app.whenReady().then(async () => {
   setupScreenSharing();
+  // O controle vai para o ar ANTES do servidor: é ele que o servidor procura ao responder as
+  // rotas de atualização, e um servidor que suba primeiro não encontraria nada.
+  publicarControleDeAtualizacao();
   await startBackendServer();
 
   if (!startupError) {

@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Cpu, Palette, Key, Info, Activity, CheckCircle2, AlertCircle, Loader2, Home, UserCircle, Volume2, RefreshCw, Copy, Image, Eye, EyeOff, Fingerprint, Sparkles, KeyRound } from 'lucide-react';
+import { X, Cpu, Palette, Key, Info, Activity, CheckCircle2, AlertCircle, Loader2, Home, UserCircle, Volume2, RefreshCw, Copy, Image, Eye, EyeOff, Fingerprint, Sparkles, KeyRound, DownloadCloud } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { ApiKeys, OrbStyle, AppTheme, AIProfile, VoiceModulation } from '../types';
 import { PERSONAS, Persona } from './PersonaSwitcher';
@@ -13,7 +13,7 @@ const VOICE_DETAILS = [
   { id: 'Scarlet', name: 'Sensus (Scarlet)', desc: 'Quântica • Adaptativa, profunda e misteriosa', category: 'Especiais' }
 ];
 
-type TabId = 'general' | 'elevenlabs' | 'interface' | 'profile' | 'automation';
+type TabId = 'general' | 'elevenlabs' | 'interface' | 'profile' | 'automation' | 'atualizacao';
 type ConnectionStatus = 'idle' | 'testing' | 'connected' | 'error';
 
 export const SettingsModal = ({ 
@@ -97,6 +97,70 @@ export const SettingsModal = ({
   const [tuyaStatus, setTuyaStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [tuyaMessage, setTuyaMessage] = useState('');
   const [tuyaDetails, setTuyaDetails] = useState<{ configured: boolean; env: Record<string, boolean> } | null>(null);
+
+  // ====== ATUALIZAÇÃO DO APP ======
+  interface EstadoDaAtualizacao {
+    suportado: boolean;
+    versaoAtual: string;
+    fase: 'ocioso' | 'procurando' | 'disponivel' | 'baixando' | 'baixada' | 'atualizado' | 'erro';
+    versaoNova: string | null;
+    progresso: number;
+    mensagem: string;
+    ultimaChecagem: string | null;
+  }
+  const [atualizacao, setAtualizacao] = useState<EstadoDaAtualizacao | null>(null);
+  const [checandoAtualizacao, setChecandoAtualizacao] = useState(false);
+
+  const lerEstadoDaAtualizacao = async () => {
+    try {
+      const res = await fetch('/api/atualizacao/estado');
+      const dados = await res.json().catch(() => null);
+      if (dados) setAtualizacao(dados);
+    } catch { /* servidor ainda subindo: a próxima leitura resolve */ }
+  };
+
+  /**
+   * Enquanto o download corre, o estado é relido de dois em dois segundos.
+   *
+   * Sem isso a barra de progresso ficaria parada no número do instante em que o botão foi clicado,
+   * e uma atualização de 200 MB pareceria travada — que é exatamente a impressão que a atualização
+   * silenciosa já dava antes desta tela existir.
+   */
+  useEffect(() => {
+    if (!isOpen || activeTab !== 'atualizacao') return;
+    lerEstadoDaAtualizacao();
+    const fase = atualizacao?.fase;
+    if (fase !== 'procurando' && fase !== 'baixando' && fase !== 'disponivel') return;
+    const id = setInterval(lerEstadoDaAtualizacao, 2000);
+    return () => clearInterval(id);
+  }, [isOpen, activeTab, atualizacao?.fase]);
+
+  const procurarAtualizacao = async () => {
+    setChecandoAtualizacao(true);
+    try {
+      const res = await fetch('/api/atualizacao/checar', { method: 'POST' });
+      const dados = await res.json().catch(() => null);
+      if (dados) setAtualizacao(dados);
+    } catch (err: any) {
+      if (onAddNotification) onAddNotification(`Não foi possível procurar atualização: ${err?.message || err}`, 'error');
+    } finally {
+      setChecandoAtualizacao(false);
+    }
+  };
+
+  const instalarAtualizacao = async () => {
+    try {
+      const res = await fetch('/api/atualizacao/instalar', { method: 'POST' });
+      const dados = await res.json().catch(() => null);
+      if (!res.ok) {
+        if (onAddNotification) onAddNotification(dados?.error || 'Não foi possível instalar agora.', 'error');
+        return;
+      }
+      if (onAddNotification) onAddNotification(dados?.mensagem || 'Reiniciando para instalar...', 'info');
+    } catch (err: any) {
+      if (onAddNotification) onAddNotification(`Falha ao instalar: ${err?.message || err}`, 'error');
+    }
+  };
 
   const handleTestTuya = async () => {
     setTuyaStatus('testing');
@@ -307,6 +371,7 @@ export const SettingsModal = ({
     { id: 'interface', label: 'Interface', icon: Palette },
     { id: 'profile', label: 'Perfil', icon: UserCircle },
     { id: 'automation', label: 'Automação', icon: Cpu },
+    { id: 'atualizacao', label: 'Atualizar', icon: DownloadCloud },
   ];
 
   return (
@@ -1654,6 +1719,107 @@ export const SettingsModal = ({
                     </div>
                   </motion.div>
                 )}
+
+                {activeTab === 'atualizacao' && (
+                  <motion.div
+                    key="atualizacao"
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 10 }}
+                    className="space-y-5"
+                  >
+                    <div className="p-5 bg-white/[0.01] border border-white/[0.04] rounded-3xl space-y-1">
+                      <span className="text-[9px] uppercase tracking-[0.2em] text-her-muted font-bold">Versão instalada</span>
+                      <p className="text-2xl font-light text-her-ink">{atualizacao?.versaoAtual || '...'}</p>
+                      {atualizacao?.ultimaChecagem && (
+                        <p className="text-[10px] text-her-muted/70 font-mono">
+                          Última procura: {new Date(atualizacao.ultimaChecagem).toLocaleString('pt-BR')}
+                        </p>
+                      )}
+                    </div>
+
+                    {atualizacao && !atualizacao.suportado ? (
+                      // Fora do app instalado não existe release para comparar — e dizer isso é
+                      // melhor do que um botão que nunca vai encontrar nada.
+                      <div className="p-4 rounded-2xl border border-amber-500/20 bg-amber-500/[0.04] flex items-start gap-3">
+                        <AlertCircle size={15} className="text-amber-400 shrink-0 mt-0.5" />
+                        <p className="text-[11px] text-her-muted leading-relaxed">{atualizacao.mensagem}</p>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="p-5 bg-white/[0.01] border border-white/[0.04] rounded-3xl space-y-4">
+                          {atualizacao?.fase === 'baixada' ? (
+                            <div className="space-y-3">
+                              <div className="flex items-center gap-2 text-emerald-400">
+                                <CheckCircle2 size={15} />
+                                <span className="text-xs font-bold">Versão {atualizacao.versaoNova} pronta para instalar</span>
+                              </div>
+                              <p className="text-[11px] text-her-muted leading-relaxed">
+                                Ela já foi baixada. O OSONE vai fechar, instalar e abrir de novo sozinho — leva alguns segundos.
+                                O ícone, o atalho e a pasta continuam os mesmos.
+                              </p>
+                              <button
+                                type="button"
+                                onClick={instalarAtualizacao}
+                                className="w-full p-3 rounded-2xl border border-emerald-500/25 hover:border-emerald-500/50 bg-emerald-500/[0.08] hover:bg-emerald-500/[0.15] text-emerald-300 text-xs font-bold transition-all cursor-pointer"
+                              >
+                                Reiniciar e instalar agora
+                              </button>
+                            </div>
+                          ) : atualizacao?.fase === 'baixando' || atualizacao?.fase === 'disponivel' ? (
+                            <div className="space-y-3">
+                              <div className="flex items-center gap-2 text-her-accent">
+                                <Loader2 size={14} className="animate-spin" />
+                                <span className="text-xs font-bold">
+                                  Baixando a versão {atualizacao.versaoNova} — {atualizacao.progresso}%
+                                </span>
+                              </div>
+                              <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                                <div className="h-full bg-her-accent transition-all duration-500" style={{ width: `${Math.max(3, atualizacao.progresso)}%` }} />
+                              </div>
+                              <p className="text-[10px] text-her-muted/70">Pode continuar usando o OSONE; o download corre por baixo.</p>
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              <p className="text-[11px] text-her-muted leading-relaxed">
+                                {atualizacao?.fase === 'atualizado'
+                                  ? 'Você está na versão mais recente publicada.'
+                                  : 'O OSONE procura atualização sozinho ao abrir e a cada 6 horas, e instala ao fechar. Aqui você força a procura na hora.'}
+                              </p>
+                              <button
+                                type="button"
+                                onClick={procurarAtualizacao}
+                                disabled={checandoAtualizacao || atualizacao?.fase === 'procurando'}
+                                className="w-full p-3 rounded-2xl border border-white/10 hover:border-her-accent/40 bg-white/[0.02] hover:bg-her-accent/[0.06] text-her-ink text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+                              >
+                                {(checandoAtualizacao || atualizacao?.fase === 'procurando')
+                                  ? <><Loader2 size={14} className="animate-spin" /> Procurando...</>
+                                  : <><RefreshCw size={14} /> Procurar atualização</>}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {atualizacao?.fase === 'erro' && atualizacao.mensagem && (
+                          <div className="p-4 rounded-2xl border border-red-500/20 bg-red-500/[0.04] space-y-1">
+                            <div className="flex items-center gap-2 text-red-400 text-[10px] font-bold uppercase tracking-widest">
+                              <AlertCircle size={12} /> A procura falhou
+                            </div>
+                            {/* O motivo vai inteiro: é ele que distingue "sem internet" de
+                                "release publicada sem o manifesto", que exigem coisas diferentes. */}
+                            <p className="text-[11px] text-red-200/80 leading-relaxed">{atualizacao.mensagem}</p>
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    <p className="text-[10px] text-her-muted/60 leading-relaxed">
+                      A atualização substitui o programa no lugar onde ele já está: o nome do aplicativo, o atalho e a
+                      pasta de instalação não mudam. Suas conversas, chaves e configurações continuam como estão.
+                    </p>
+                  </motion.div>
+                )}
+
               </AnimatePresence>
             </div>
             
