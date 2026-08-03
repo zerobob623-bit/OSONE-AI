@@ -266,6 +266,27 @@ function createWindow() {
   // Remove default menu bar
   mainWindow.setMenu(null);
 
+  /**
+   * Ctrl+Shift+I e F12 abrem o console, no app instalado também.
+   *
+   * O menu foi removido para a janela ficar limpa, e com ele foram os atalhos de desenvolvedor.
+   * A consequência só apareceu quando o login passou a falhar apenas no app empacotado: a
+   * mensagem de erro do Firebase, os avisos do Chromium e o que a janela do Google escreve no
+   * console existiam, mas não havia como olhar — cada tentativa de entender exigia compilar uma
+   * versão nova só para ver um texto. Uma tecla resolve isso para sempre.
+   */
+  const abrirConsoleComAtalho = (conteudo) => {
+    conteudo.on('before-input-event', (evento, entrada) => {
+      if (entrada.type !== 'keyDown') return;
+      const ehF12 = entrada.key === 'F12';
+      const ehCtrlShiftI = (entrada.control || entrada.meta) && entrada.shift && entrada.key.toLowerCase() === 'i';
+      if (!ehF12 && !ehCtrlShiftI) return;
+      evento.preventDefault();
+      conteudo.isDevToolsOpened() ? conteudo.closeDevTools() : conteudo.openDevTools({ mode: 'detach' });
+    });
+  };
+  abrirConsoleComAtalho(mainWindow.webContents);
+
   if (startupError) {
     // A janela precisa existir antes de conseguirmos mostrar qualquer coisa, então a tela de
     // erro é carregada aqui, e não abortamos a criação da janela.
@@ -367,6 +388,9 @@ function createWindow() {
     registrarEventoDeLogin('janela de login aberta', detalhes.url);
 
     const conteudo = janela.webContents;
+    // A janela do Google também abre console: quando ela recusa, o motivo costuma estar escrito
+    // ali dentro, e não do lado do OSONE.
+    abrirConsoleComAtalho(conteudo);
     conteudo.on('did-navigate', (_e, url) => registrarEventoDeLogin('navegou para', url));
     conteudo.on('did-navigate-in-page', (_e, url) => registrarEventoDeLogin('mudou de tela em', url));
     conteudo.on('did-fail-load', (_e, codigo, descricao, url) => {
