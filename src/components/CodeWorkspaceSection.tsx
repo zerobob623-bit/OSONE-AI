@@ -1,10 +1,16 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { CodeWorkspace } from './CodeWorkspace';
+import { CodeWorkspace, AlvoDaGeracao } from './CodeWorkspace';
 
 interface CodeWorkspaceSectionProps {
   onClose: () => void;
-  onGenerateCodeRequest: (prompt: string) => void;
+  /** Repassado inteiro: quem gera devolve o código, e quem grava é o editor (ver CodeWorkspace). */
+  onGenerateCodeRequest: (
+    prompt: string,
+    referenceImages?: Array<{ mimeType: string; data: string }>,
+    maxEffort?: boolean,
+    alvo?: AlvoDaGeracao
+  ) => Promise<{ conteudo: string; resumo: string } | null>;
   onStartLiveVoice: () => void;
   apiKeys: any;
   isGenerating: boolean;

@@ -295,9 +295,27 @@ const DEFAULT_PROJECTS: OSONEProject[] = [
   }
 ];
 
+/** O arquivo sobre o qual a IA vai trabalhar, entregue de fora para não haver adivinhação. */
+export interface AlvoDaGeracao {
+  nome: string;
+  conteudo: string;
+}
+
 export const CodeWorkspace: React.FC<{
   onClose?: () => void;
-  onGenerateCodeRequest?: (prompt: string, referenceImages?: Array<{ mimeType: string; data: string }>, maxEffort?: boolean) => void;
+  /**
+   * Pede o código à IA e DEVOLVE o resultado, em vez de gravá-lo por conta própria.
+   *
+   * Quem grava é só o repositório aqui dentro (applyCodeToRepository), e isso não é detalhe de
+   * organização: enquanto o outro lado escrevia direto no localStorage, a alteração feita pela IA
+   * não entrava no histórico e não havia como desfazê-la.
+   */
+  onGenerateCodeRequest?: (
+    prompt: string,
+    referenceImages?: Array<{ mimeType: string; data: string }>,
+    maxEffort?: boolean,
+    alvo?: AlvoDaGeracao
+  ) => Promise<{ conteudo: string; resumo: string } | null>;
   onStartLiveVoice?: () => void;
   apiKeys?: any;
   isGenerating?: boolean;
@@ -425,6 +443,17 @@ export const CodeWorkspace: React.FC<{
   const [activeArtifactTab, setActiveArtifactTab] = useState<'pm' | 'architect' | 'qa' | 'logs'>('logs');
 
   const activeFile = files.find(f => f.id === activeFileId) || files[0];
+
+  /**
+   * A lista de arquivos sempre atual, para quem grava fora do ciclo de renderização.
+   *
+   * O Enxame chama a gravação várias vezes dentro de um laço com esperas de rede no meio. Lendo
+   * 'files' pela variável do closure, toda iteração enxergaria a lista de quando o laço começou —
+   * e uma edição feita à mão no meio do processo seria apagada pela iteração seguinte. Atribuído
+   * durante a renderização, o ref nunca fica para trás.
+   */
+  const filesRef = useRef(files);
+  filesRef.current = files;
 
   // Auto-dismiss notification banner
   useEffect(() => {
@@ -623,7 +652,15 @@ export const CodeWorkspace: React.FC<{
     setActiveProjectId(targetProject.id);
     setFiles(targetProject.files);
     setActiveFileId(targetProject.activeFileId || targetProject.files[0]?.id || 'main-app');
+    /**
+     * Os DOIS históricos são zerados na troca de projeto.
+     *
+     * Só o de desfazer era limpo, e o de refazer sobrevivia à troca carregando os arquivos do
+     * projeto anterior. Um Ctrl+Y depois de trocar despejava o Projeto 1 inteiro por cima do
+     * Projeto 2 — sem aviso, e sem nada no caminho que revelasse de onde aquele código veio.
+     */
     setHistoryStack([]);
+    setRedoStack([]);
 
     try {
       localStorage.setItem('osone_code_active_project_id', targetProject.id);
@@ -656,51 +693,59 @@ export const CodeWorkspace: React.FC<{
     setNotificationBanner({ message: `Projeto renomeado para "${newName}"!`, type: 'success' });
   };
 
+  /**
+   * ÚNICO caminho por onde código gerado entra no repositório.
+   *
+   * Ser único importa: enquanto a geração pelo chat escrevia direto no localStorage por fora
+   * daqui, aquela alteração — a mais destrutiva de todas, porque troca o arquivo inteiro — era
+   * justamente a única que o desfazer não alcançava.
+   *
+   * O alvo é sempre EXPLÍCITO. Antes o destino era 'index.html' fixo, então auditar um script.js
+   * gravava o resultado por cima do index.html; e quando o nome pedido não existia no projeto, o
+   * conteúdo caía no primeiro arquivo da lista, fosse ele qual fosse. Agora um nome que não existe
+   * vira arquivo novo, e nada é sobrescrito sem ter sido escolhido.
+   */
   const applyCodeToRepository = (newContent: string, targetFileIdOrName?: string) => {
-    pushHistory(files);
-    let updatedFiles: CodeRepositoryFile[] = [];
-    setFiles(prev => {
-      let targetFound = false;
-      updatedFiles = prev.map(f => {
-        const isTarget = targetFileIdOrName
-          ? (f.id === targetFileIdOrName || f.name.toLowerCase() === targetFileIdOrName.toLowerCase())
-          : (f.name.toLowerCase() === 'index.html' || f.id === 'main-app' || f.id === activeFileId);
-        if (isTarget && !targetFound) {
-          targetFound = true;
-          return { ...f, content: newContent, updatedAt: Date.now() };
-        }
-        return f;
-      });
+    const atuais = filesRef.current;
+    pushHistory(atuais);
 
-      if (!targetFound) {
-        if (updatedFiles.length > 0) {
-          updatedFiles[0] = { ...updatedFiles[0], content: newContent, updatedAt: Date.now() };
-        } else {
-          updatedFiles = [{
-            id: 'main-app',
-            name: 'index.html',
-            language: 'html',
-            isMain: true,
-            updatedAt: Date.now(),
-            content: newContent
-          }];
-        }
-      }
+    const alvo = (targetFileIdOrName || activeFileId || '').trim();
+    const idx = atuais.findIndex(f => f.id === alvo || f.name.toLowerCase() === alvo.toLowerCase());
 
-      try {
-        localStorage.setItem('osone_code_repository_files', JSON.stringify(updatedFiles));
-      } catch (e) {
-        console.error("Erro ao salvar no localStorage:", e);
-      }
+    let updatedFiles: CodeRepositoryFile[];
+    let idDoAlvo: string;
 
-      return updatedFiles;
-    });
+    if (idx !== -1) {
+      updatedFiles = atuais.map((f, i) => i === idx ? { ...f, content: newContent, updatedAt: Date.now() } : f);
+      idDoAlvo = atuais[idx].id;
+    } else {
+      // Nome pedido não existe no projeto: cria, em vez de derrubar um arquivo alheio.
+      const pareceNomeDeArquivo = /\.[a-z0-9]{1,8}$/i.test(alvo);
+      const nome = pareceNomeDeArquivo ? alvo : 'index.html';
+      const ext = nome.split('.').pop()?.toLowerCase() || 'html';
+      const novo: CodeRepositoryFile = {
+        id: 'file-' + Date.now(),
+        name: nome,
+        language: ext === 'html' || ext === 'htm' ? 'html' : ext === 'css' ? 'css' : ext === 'py' ? 'python' : 'javascript',
+        ...(nome.toLowerCase() === 'index.html' ? { isMain: true } : {}),
+        updatedAt: Date.now(),
+        content: newContent
+      };
+      updatedFiles = [...atuais, novo];
+      idDoAlvo = novo.id;
+    }
 
+    // A lista nova é montada AQUI, e não dentro do setFiles: o React só executa aquele callback
+    // na renderização seguinte, então tudo o que fosse lido logo abaixo dele veria uma lista
+    // vazia — era por isso que o editor nunca pulava para o arquivo que a IA acabara de mudar.
+    setFiles(updatedFiles);
+    setActiveFileId(idDoAlvo);
     setIsSaved(true);
 
-    const mainFile = updatedFiles.find(f => f.name.toLowerCase() === 'index.html' || f.id === 'main-app') || updatedFiles[0];
-    if (mainFile) {
-      setActiveFileId(mainFile.id);
+    try {
+      localStorage.setItem('osone_code_repository_files', JSON.stringify(updatedFiles));
+    } catch (e) {
+      console.error("Erro ao salvar no localStorage:", e);
     }
 
     window.dispatchEvent(new Event('osone_repository_updated'));
@@ -811,14 +856,42 @@ export const CodeWorkspace: React.FC<{
     reader.readAsText(uploaded);
   };
 
-  const handleSendAIPrompt = (promptText?: string) => {
+  const handleSendAIPrompt = async (promptText?: string) => {
     const textToSend = promptText || promptInput;
     if (!textToSend.trim() || !onGenerateCodeRequest) return;
+
+    /**
+     * O arquivo ABERTO é o que vai para a IA, e é nele que o resultado volta.
+     *
+     * O outro lado escolhia sozinho: mandava o primeiro arquivo da lista como "código atual" e
+     * gravava no index.html. Editando um script.js, o modelo recebia o HTML e devolvia edições
+     * para ele — e quando o primeiro da lista não era o index.html, o conteúdo de um arquivo
+     * acabava gravado por cima de outro, apagando o segundo por inteiro.
+     */
+    const alvo = activeFile ? { nome: activeFile.name, conteudo: activeFile.content } : undefined;
+    const idDoAlvo = activeFile?.id;
+
     const imagesToSend = attachedImages.map(img => ({ mimeType: img.mimeType, data: img.data }));
-    onGenerateCodeRequest(textToSend, imagesToSend.length > 0 ? imagesToSend : undefined, maxEffort);
     setPromptInput('');
     attachedImages.forEach(img => URL.revokeObjectURL(img.previewUrl));
     setAttachedImages([]);
+
+    const resultado = await onGenerateCodeRequest(
+      textToSend,
+      imagesToSend.length > 0 ? imagesToSend : undefined,
+      maxEffort,
+      alvo
+    );
+
+    if (resultado?.conteudo && resultado.conteudo.trim() && resultado.conteudo !== alvo?.conteudo) {
+      // Passa pelo caminho único de gravação, que guarda o estado anterior no histórico — é o
+      // que torna uma reescrita feita pela IA reversível com Ctrl+Z.
+      applyCodeToRepository(resultado.conteudo, idDoAlvo);
+      setNotificationBanner({
+        message: `Código aplicado em "${alvo?.nome || 'arquivo'}"${resultado.resumo ? ` — ${resultado.resumo}` : ''}. Dá para desfazer com Ctrl+Z.`,
+        type: 'success'
+      });
+    }
   };
 
   const handleAttachImages = (fileList: FileList | null) => {
@@ -951,12 +1024,23 @@ ${currentCode}`;
         setHunterReport(finalSummary || "Código auditado e 100% alinhado com as especificações solicitadas!");
 
         if (correctedCode && correctedCode.trim().length > 0) {
-          applyCodeToRepository(correctedCode, 'index.html');
+          /**
+           * Grava no arquivo QUE FOI AUDITADO, não no index.html.
+           *
+           * O Hunter lê o conteúdo do arquivo ativo, mas o destino estava fixo em 'index.html':
+           * auditar um script.js gravava o script corrigido por cima do index.html, destruindo os
+           * dois de uma vez — o HTML era perdido e o script continuava sem correção.
+           */
+          const arquivoAuditado = activeFile?.id;
+          applyCodeToRepository(correctedCode, arquivoAuditado);
 
-          // Abrir Preview Vivo e notificar
-          setViewLayout('preview');
+          // O Preview só abre quando o que mudou é renderizável; num .css ou .py ele mostraria
+          // o código como se fosse página, o que confunde mais do que informa.
+          const ehRenderizavel = /\.(html?|htm)$/i.test(activeFile?.name || '') || activeFile?.language === 'html';
+          if (ehRenderizavel) setViewLayout('preview');
           setNotificationBanner({
-            message: "🏹 Hunter auditou e aplicou o código corrigido com sucesso! O Preview Vivo foi aberto automaticamente.",
+            message: `🏹 Hunter auditou e aplicou o código corrigido em "${activeFile?.name || 'arquivo'}"!` +
+              (ehRenderizavel ? ' O Preview Vivo foi aberto automaticamente.' : ''),
             type: "success"
           });
 
