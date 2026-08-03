@@ -703,6 +703,14 @@ export default function App() {
    * abaixo e precisa deste valor — um estado declarado depois não existiria a tempo.
    */
   const [superficieCompartilhada, setSuperficieCompartilhada] = useState<'monitor' | 'recorte' | null>(null);
+  /**
+   * Até quando parar de empurrar frames do compartilhamento de tela.
+   *
+   * Usado logo após injetar uma captura/ampliação no mesmo canal de vídeo: sem a pausa, os frames
+   * da tela inteira continuam chegando por cima e a ampliação some antes de o modelo conseguir
+   * usá-la. Fica em ref, não em estado, porque é lido dentro do intervalo que já está rodando.
+   */
+  const pausarEnvioDeTelaAte = useRef(0);
   const [isGuestMode, setIsGuestMode] = useState(() => {
     try {
       const saved = localStorage.getItem('osone_last_active_user');
@@ -6112,6 +6120,8 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
       const ctx = canvas.getContext('2d');
 
       screenIntervalRef.current = setInterval(() => {
+        // Enquanto uma captura injetada está sendo examinada, não mandar frames por cima dela.
+        if (Date.now() < pausarEnvioDeTelaAte.current) return;
         if (ctx && liveSessionRef.current && liveState.status === 'connected') {
           canvas.width = 640;
           canvas.height = 480;
@@ -8468,10 +8478,13 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
               }]);
             } else if (agentRes.image) {
               addNotification("Captura de tela obtida.", "success");
+              // O 'comoUsar' entra junto da imagem: numa ampliação ele diz os limites da região e
+              // que a grade já está em coordenadas finais. Mostrar a imagem sem esse texto deixa a
+              // ampliação sem manual de leitura, e foi assim que ela vinha sendo desperdiçada.
               setChatHistory(prev => [...prev, {
                 id: Math.random().toString(36).substr(2, 9),
                 role: 'assistant' as const,
-                content: "📸 Captura de tela obtida.",
+                content: agentRes.comoUsar ? `📸 ${agentRes.comoUsar}` : "📸 Captura de tela obtida.",
                 imageUrl: agentRes.image
               }]);
             } else {
@@ -9960,13 +9973,33 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       // de o usuário estar com o compartilhamento de tela via navegador ativo.
                       const base64Png = String(agentRes.image).split(',')[1] || '';
                       if (liveSessionRef.current && base64Png) {
+                        // Silencia o compartilhamento por alguns segundos.
+                        //
+                        // A imagem vai pelo MESMO canal de vídeo que o compartilhamento de tela
+                        // alimenta continuamente. Sem essa pausa, os frames da tela inteira
+                        // continuam chegando por cima e soterram a ampliação em segundos — o
+                        // modelo pede o zoom, recebe, e antes de decidir já está olhando outra
+                        // coisa. Foi o que se via no painel: ele clicava repetindo a coordenada
+                        // que havia pedido para ampliar, sem nunca corrigi-la.
+                        pausarEnvioDeTelaAte.current = Date.now() + 8000;
                         liveSessionRef.current.sendRealtimeInput({ video: { data: base64Png, mimeType: 'image/png' } });
                       }
                       addNotification("Captura de tela enviada ao modelo.", "success");
                       responses.push({
                         name: call.name,
                         id: call.id,
-                        response: { result: "Captura de tela obtida e enviada como imagem. Você já pode ver e descrever o que está na tela agora." }
+                        // O 'comoUsar' vem do agente e explica o que a imagem é e como lê-la: em uma
+                        // ampliação, quais são os limites da região e que a grade já está em
+                        // coordenadas finais. Antes esse texto era descartado e trocado por um aviso
+                        // genérico — o modelo recebia a imagem sem nenhuma instrução de leitura, o
+                        // que tornava a ampliação inútil por mais correta que fosse.
+                        response: {
+                          result: agentRes.comoUsar
+                            ? `Imagem enviada. ${agentRes.comoUsar}`
+                            : "Captura de tela obtida e enviada como imagem. Você já pode ver e descrever o que está na tela agora.",
+                          ...(agentRes.ampliada ? { ampliada: true, regiao: agentRes.regiao } : {}),
+                          ...(agentRes.screenWidth ? { telaPx: { width: agentRes.screenWidth, height: agentRes.screenHeight } } : {})
+                        }
                       });
                     } else {
                       addNotification("Ação do Agente Local processada.", "success");
