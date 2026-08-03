@@ -215,6 +215,73 @@ const botaoDesfazer = (pag) => pag.locator('button[title="Desfazer alteração n
   await ctx.close();
 }
 
+// 6) O editor de código: régua de linhas, Tab que indenta e o desfazer funcionando aqui dentro.
+{
+  const { pag, ctx } = await abrir();
+  await pag.getByText('script.js', { exact: true }).first().click();
+  await pag.waitForTimeout(200);
+
+  const editor = pag.locator('textarea.code-editor-textarea').first();
+  const regua = pag.locator('.regua-de-linhas').first();
+
+  // Sem a classe, o atalho global de desfazer ignora o editor — e era assim que estava. Reprovar
+  // com essa frase vale mais do que o teste inteiro morrer procurando um seletor que não existe.
+  if (await editor.count() === 0) {
+    registrar('o editor é reconhecido pelo atalho de desfazer', false,
+      'a área de escrita não tem a classe code-editor-textarea; Ctrl+Z nunca age aqui dentro');
+    await ctx.close();
+  } else {
+
+  await editor.fill('linha um\nlinha dois\nlinha tres');
+  await pag.waitForTimeout(400);
+
+  const numeros = (await regua.innerText()).split('\n').map(t => t.trim()).filter(Boolean);
+  registrar('a régua numera todas as linhas do arquivo',
+    numeros.length === 3 && numeros[0] === '1' && numeros[2] === '3',
+    `régua mostra [${numeros.join(', ')}]`);
+
+  // Tab no meio de uma linha: insere recuo e mantém o foco no editor.
+  await editor.evaluate(el => el.setSelectionRange(0, 0));
+  await editor.press('Tab');
+  await pag.waitForTimeout(300);
+  const depoisDoTab = await editor.inputValue();
+  const focoContinua = await editor.evaluate(el => document.activeElement === el);
+  registrar('Tab indenta em vez de tirar o foco do editor',
+    depoisDoTab.startsWith('  linha um') && focoContinua,
+    focoContinua ? 'recuo inserido e foco mantido' : 'O FOCO SAIU DO EDITOR');
+
+  // Tab com várias linhas selecionadas: indenta o bloco inteiro.
+  await editor.fill('a\nb\nc');
+  await pag.waitForTimeout(300);
+  await editor.evaluate(el => el.setSelectionRange(0, el.value.length));
+  await editor.press('Tab');
+  await pag.waitForTimeout(300);
+  const bloco = await editor.inputValue();
+  registrar('Tab com seleção indenta o bloco inteiro',
+    bloco === '  a\n  b\n  c', `ficou ${JSON.stringify(bloco)}`);
+
+  // Shift+Tab desfaz um nível.
+  await editor.evaluate(el => el.setSelectionRange(0, el.value.length));
+  await editor.press('Shift+Tab');
+  await pag.waitForTimeout(300);
+  const semRecuo = await editor.inputValue();
+  registrar('Shift+Tab tira um nível de recuo',
+    semRecuo === 'a\nb\nc', `ficou ${JSON.stringify(semRecuo)}`);
+
+  // Ctrl+Z COM O FOCO NO EDITOR: era o caso que o atalho global recusava.
+  await editor.fill('TEXTO NOVO DIGITADO');
+  await pag.waitForTimeout(400);
+  await editor.press('Control+z');
+  await pag.waitForTimeout(500);
+  const depoisDoDesfazer = await editor.inputValue();
+  registrar('Ctrl+Z funciona com o cursor dentro do editor',
+    depoisDoDesfazer !== 'TEXTO NOVO DIGITADO',
+    depoisDoDesfazer !== 'TEXTO NOVO DIGITADO' ? `voltou para ${JSON.stringify(depoisDoDesfazer.slice(0, 30))}` : 'NADA FOI DESFEITO');
+
+  await ctx.close();
+  }
+}
+
 await nav.close();
 fs.rmSync(pastaTemp, { recursive: true, force: true });
 
