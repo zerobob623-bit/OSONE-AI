@@ -69,7 +69,8 @@ export function useLocalAgent() {
       clicar: 'Clicar', mover_mouse: 'Mover o mouse', rolar: 'Rolar a tela',
       digitar: 'Digitar', tecla: 'Pressionar tecla', capturar_tela: 'Olhar a tela',
       abrir: 'Abrir', fechar: 'Fechar', terminal: 'Rodar comando',
-      criar_pasta: 'Criar pasta', escrever_arquivo: 'Escrever arquivo', listar: 'Listar'
+      criar_pasta: 'Criar pasta', escrever_arquivo: 'Escrever arquivo', listar: 'Listar',
+      achar_texto: 'Procurar na tela'
     };
     return mapa[a] || a || toolName;
   };
@@ -81,6 +82,7 @@ export function useLocalAgent() {
       return args?.x !== undefined ? `x=${args.x}, y=${args.y}` : undefined;
     }
     if (a === 'capturar_tela') return args?.x !== undefined ? `ampliando em x=${args.x}, y=${args.y}` : 'tela inteira';
+    if (a === 'achar_texto') return `"${String(args?.texto || '')}"`;
     if (a === 'digitar') return String(args?.texto || '').slice(0, 40);
     if (a === 'tecla') return String(args?.tecla || '');
     if (a === 'terminal') return String(args?.comando || '').slice(0, 60);
@@ -371,6 +373,25 @@ export function useLocalAgent() {
             if (!args?.tecla) return { error: "Informe 'tecla' (ex: 'enter', 'tab', 'escape', 'a')." };
             const modificadores = Array.isArray(args?.modificadores) ? args.modificadores : [];
             return post('/keyboard/key', { key: String(args.tecla), modifiers: modificadores });
+          }
+          case 'achar_texto': {
+            // Caminho preferido para clicar: em vez de estimar coordenadas olhando a tela, o
+            // elemento é localizado pelo texto e o centro dele é uma MEDIÇÃO. Marca a última
+            // captura como válida e ampliada porque a posição devolvida é exata — exigir uma
+            // conferência ampliada por cima de uma medição seria só atraso sem ganho.
+            if (!args?.texto) return { error: "Informe 'texto' com o rótulo visível do elemento (ex: 'Instalar')." };
+            const achado = await post('/screen/find-text', { texto: String(args.texto) });
+            if (!achado?.error && achado?.ocorrencias?.length) {
+              const c = achado.ocorrencias[0]?.escala0a1000;
+              if (c) {
+                ultimaCapturaRef.current = {
+                  quando: Date.now(),
+                  ampliada: true,
+                  regiao: { x0: c.x - 1, y0: c.y - 1, x1: c.x + 1, y1: c.y + 1 }
+                };
+              }
+            }
+            return achado;
           }
           case 'capturar_tela': {
             // Com x/y, a captura volta ampliada em volta daquele ponto — o segundo passo da mira
