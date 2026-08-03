@@ -407,6 +407,12 @@ export const CodeWorkspace: React.FC<{
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
+  // Editor de código: a área de escrita e a régua de números ao lado dela.
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const reguaRef = useRef<HTMLDivElement>(null);
+  /** Onde deixar o cursor depois que a próxima renderização trouxer o texto novo. */
+  const selecaoPendenteRef = useRef<{ inicio: number; fim: number } | null>(null);
+
   // MODO DE ESFORÇO MÁXIMO: pede ao modelo o maior nível de raciocínio/capricho possível
   const [maxEffort, setMaxEffort] = useState<boolean>(false);
 
@@ -754,6 +760,66 @@ export const CodeWorkspace: React.FC<{
     }
 
     window.dispatchEvent(new Event('osone_repository_updated'));
+  };
+
+  // ====== EDITOR DE CÓDIGO: RÉGUA DE LINHAS E INDENTAÇÃO ======
+
+  /** Quantas linhas o arquivo tem. Sempre pelo menos uma, para a régua nunca ficar vazia. */
+  const totalDeLinhas = Math.max(1, (activeFile?.content || '').split('\n').length);
+
+  /** A régua acompanha a rolagem do texto — senão os números ficam parados enquanto o código anda. */
+  const sincronizarRegua = (e: React.UIEvent<HTMLTextAreaElement>) => {
+    if (reguaRef.current) reguaRef.current.scrollTop = e.currentTarget.scrollTop;
+  };
+
+  /**
+   * Devolve o cursor ao lugar certo depois que o texto novo chega.
+   *
+   * A área de escrita é controlada pelo React: ao trocar o conteúdo, o navegador joga o cursor
+   * para o fim. Numa indentação isso significaria perder a posição a cada Tab, o que torna a
+   * tecla inútil. A posição é anotada antes e reaplicada assim que o texto novo está na tela.
+   */
+  useEffect(() => {
+    const alvo = selecaoPendenteRef.current;
+    if (!alvo || !editorRef.current) return;
+    selecaoPendenteRef.current = null;
+    editorRef.current.setSelectionRange(alvo.inicio, alvo.fim);
+  }, [activeFile?.content]);
+
+  const RECUO = '  ';
+
+  /**
+   * Tab indenta em vez de pular para o próximo campo.
+   *
+   * Numa área de texto comum o Tab move o foco para fora — num editor de código isso é o oposto
+   * do esperado: quem escreve código aperta Tab dezenas de vezes por arquivo. Com seleção de
+   * várias linhas, indenta o bloco inteiro; com Shift, tira um nível.
+   */
+  const aoTeclarNoEditor = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== 'Tab') return;
+    e.preventDefault();
+
+    const { selectionStart: inicio, selectionEnd: fim, value } = e.currentTarget;
+    const varias = value.slice(inicio, fim).includes('\n');
+
+    if (varias || e.shiftKey) {
+      // O bloco começa no INÍCIO da primeira linha tocada, e não onde a seleção começou: indentar
+      // do meio de uma linha deixaria espaços soltos no meio do código.
+      const inicioDaLinha = value.lastIndexOf('\n', inicio - 1) + 1;
+      const bloco = value.slice(inicioDaLinha, fim);
+      const novoBloco = e.shiftKey
+        ? bloco.replace(/^[ \t]{1,2}/gm, '')
+        : bloco.replace(/^/gm, RECUO);
+      if (novoBloco === bloco) return;
+
+      handleUpdateActiveContent(value.slice(0, inicioDaLinha) + novoBloco + value.slice(fim));
+      // O bloco continua selecionado, para dar para apertar Tab de novo e seguir indentando.
+      selecaoPendenteRef.current = { inicio: inicioDaLinha, fim: inicioDaLinha + novoBloco.length };
+      return;
+    }
+
+    handleUpdateActiveContent(value.slice(0, inicio) + RECUO + value.slice(fim));
+    selecaoPendenteRef.current = { inicio: inicio + RECUO.length, fim: inicio + RECUO.length };
   };
 
   const handleUpdateActiveContent = (newContent: string) => {
@@ -1728,13 +1794,41 @@ FORMATO OBRIGATÓRIO (JSON estrito):
                 </div>
               </div>
 
-              {/* Code Textarea */}
-              <div className="flex-1 relative w-full h-full bg-[#07080d]">
-                <textarea 
+              {/* Editor: régua de linhas + área de escrita.
+                  As duas colunas usam exatamente as mesmas classes de fonte, tamanho e altura de
+                  linha, e a mesma folga no topo — qualquer diferença aí faria os números
+                  descolarem do código conforme o arquivo cresce. */}
+              <div className="flex-1 relative w-full h-full bg-[#07080d] flex overflow-hidden">
+                <div
+                  ref={reguaRef}
+                  aria-hidden="true"
+                  className="regua-de-linhas shrink-0 select-none overflow-hidden py-4 pl-3 pr-2 text-right
+                             font-mono text-xs md:text-sm leading-relaxed text-zinc-600
+                             bg-black/25 border-r border-white/5"
+                >
+                  {Array.from({ length: totalDeLinhas }, (_, i) => (
+                    <div key={i + 1}>{i + 1}</div>
+                  ))}
+                </div>
+
+                <textarea
+                  ref={editorRef}
                   value={activeFile.content}
                   onChange={(e) => handleUpdateActiveContent(e.target.value)}
+                  onScroll={sincronizarRegua}
+                  onKeyDown={aoTeclarNoEditor}
                   spellCheck={false}
-                  className="w-full h-full bg-transparent p-4 font-mono text-xs md:text-sm text-cyan-100/90 leading-relaxed outline-none resize-none custom-scrollbar selection:bg-cyan-500/30"
+                  // 'off' desliga a quebra automática de linha: com ela, uma linha longa ocupava
+                  // várias alturas na tela e a régua passava a contar outra coisa. Em troca vem a
+                  // rolagem horizontal, que é como todo editor de código se comporta.
+                  wrap="off"
+                  // A classe é o que autoriza o Ctrl+Z do OSONE a agir aqui dentro: o atalho global
+                  // ignora campos de texto, e sem ela o desfazer nunca funcionava no editor —
+                  // justamente onde ele mais faz falta.
+                  className="code-editor-textarea flex-1 h-full bg-transparent py-4 pl-3 pr-4
+                             font-mono text-xs md:text-sm text-cyan-100/90 leading-relaxed
+                             outline-none resize-none custom-scrollbar selection:bg-cyan-500/30
+                             whitespace-pre overflow-auto"
                   placeholder="Escreva ou cole seu código aqui..."
                 />
               </div>
