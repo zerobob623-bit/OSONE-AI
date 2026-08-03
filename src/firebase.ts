@@ -52,6 +52,66 @@ export const isFirebaseFullyConfigured = !!(
   firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId
 );
 
+/**
+ * Quais variáveis faltam para o login com Google funcionar, pelo nome exato.
+ *
+ * authDomain entra aqui mesmo não entrando em isFirebaseFullyConfigured: sem ele o app se
+ * considera configurado e o login morre depois, na abertura da janela, com um código que não diz
+ * o que fazer. Nomear a variável que falta é a diferença entre "deu erro" e "preencha isto".
+ */
+export const firebaseConfigFaltando: string[] = ([
+  ['VITE_FIREBASE_API_KEY', firebaseConfig.apiKey],
+  ['VITE_FIREBASE_AUTH_DOMAIN', firebaseConfig.authDomain],
+  ['VITE_FIREBASE_PROJECT_ID', firebaseConfig.projectId],
+  ['VITE_FIREBASE_APP_ID', firebaseConfig.appId]
+] as [string, string][]).filter(([, valor]) => !valor).map(([nome]) => nome);
+
+/**
+ * Traduz a falha do login para o que precisa ser feito a respeito.
+ *
+ * O código do Firebase ('auth/unauthorized-domain') e a mensagem crua não dizem onde clicar nem o
+ * que preencher, e era isso que chegava ao usuário. Cada caso aqui aponta a tela e o valor exato —
+ * inclusive o endereço em que o app está rodando, que no app instalado não é o do site e é
+ * justamente o que costuma faltar na lista de domínios autorizados.
+ *
+ * Devolve string vazia quando não houve falha nenhuma a relatar (o usuário só fechou a janela).
+ */
+export function explicarErroDeLogin(err: any): string {
+  const codigo = String(err?.code || '');
+  const endereco = typeof window !== 'undefined' ? window.location.origin : '';
+  const dominio = typeof window !== 'undefined' ? window.location.hostname : '';
+
+  switch (codigo) {
+    case 'auth/unauthorized-domain':
+      return `O Firebase recusou o endereço em que o OSONE está aberto (${endereco}). ` +
+        `Abra o Console do Firebase > Authentication > Settings > Authorized domains e acrescente "${dominio}". ` +
+        `No app instalado o endereço é ${dominio}, e não o do site — por isso o login pode funcionar no navegador e falhar aqui.`;
+    case 'auth/operation-not-allowed':
+      return 'O login com Google está desligado no projeto Firebase. Ligue em Console do Firebase > Authentication > Sign-in method > Google.';
+    case 'auth/configuration-not-found':
+      return 'Este projeto Firebase não tem o Authentication ativado. Abra o Console do Firebase > Authentication e conclua a ativação.';
+    case 'auth/auth-domain-config-required':
+      return 'Falta a variável VITE_FIREBASE_AUTH_DOMAIN nesta instalação. Sem ela o Firebase não sabe para onde abrir a janela de login.';
+    case 'auth/invalid-api-key':
+    case 'auth/api-key-not-valid':
+      return 'A chave VITE_FIREBASE_API_KEY não é aceita por este projeto. Copie de novo do Console do Firebase > Configurações do projeto > Seus apps.';
+    case 'auth/popup-blocked':
+      return 'A janela de login foi bloqueada antes de abrir. Libere pop-ups para este endereço e tente de novo.';
+    case 'auth/network-request-failed':
+      return 'A rede não respondeu ao falar com o Google. Confira a internet e se o firewall ou o antivírus está bloqueando o OSONE.';
+    case 'auth/too-many-requests':
+      return 'O Google bloqueou temporariamente as tentativas deste computador. Espere alguns minutos e tente de novo.';
+    case 'auth/popup-closed-by-user':
+    case 'auth/cancelled-popup-request':
+      return '';
+    case 'auth/internal-error':
+      return 'O Firebase respondeu com erro interno. Costuma ser chave incompleta ou domínio não autorizado — confira ' +
+        `se "${dominio}" está em Authentication > Settings > Authorized domains.`;
+    default:
+      return `${err?.message || err}${codigo ? ` (código: ${codigo})` : ''}`;
+  }
+}
+
 let app: FirebaseApp | null = null;
 let realAuth: Auth | null = null;
 let realDb: Firestore | null = null;

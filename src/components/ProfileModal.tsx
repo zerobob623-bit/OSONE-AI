@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, User, Plus, Trash2, Check, Loader2, Cloud, Database, Fingerprint, Heart, Cpu, Sparkles } from 'lucide-react';
+import { X, User, Loader2, Cloud, Fingerprint, Cpu, Sparkles } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { User as UserClass } from '../types';
 
@@ -8,8 +8,6 @@ interface ProfileModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentUser: UserClass | null;
-  onSwitchUser: (user: UserClass | null) => Promise<void>;
-  onGoogleLogin: () => Promise<void>;
   onLogout: () => Promise<void>;
   isAuthLoading: boolean;
   onOpenDossier?: () => void;
@@ -23,8 +21,6 @@ export const ProfileModal = ({
   isOpen,
   onClose,
   currentUser,
-  onSwitchUser,
-  onGoogleLogin,
   onLogout,
   isAuthLoading,
   onOpenDossier,
@@ -33,93 +29,9 @@ export const ProfileModal = ({
   onStartAiDossier,
   onOpenAiDossier
 }: ProfileModalProps) => {
-  const [localProfiles, setLocalProfiles] = useState<UserClass[]>([]);
-  const [newProfileName, setNewProfileName] = useState('');
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showInitSelection, setShowInitSelection] = useState(false);
   const [isInitializingDossier, setIsInitializingDossier] = useState(false);
   const [initStageText, setInitStageText] = useState("");
-
-  // Load local profiles on open
-  useEffect(() => {
-    if (isOpen) {
-      try {
-        const saved = localStorage.getItem('osone_local_profiles');
-        if (saved) {
-          setLocalProfiles(JSON.parse(saved));
-        } else {
-          setLocalProfiles([]);
-        }
-      } catch (e) {
-        console.error("Error reading local profiles", e);
-      }
-    }
-  }, [isOpen]);
-
-  const saveLocalProfiles = (profiles: UserClass[]) => {
-    setLocalProfiles(profiles);
-    localStorage.setItem('osone_local_profiles', JSON.stringify(profiles));
-  };
-
-  const handleCreateLocalProfile = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrorMessage(null);
-
-    const trimmedName = newProfileName.trim();
-    if (!trimmedName) {
-      setErrorMessage("Por favor, digite um nome válido.");
-      return;
-    }
-
-    if (trimmedName.length > 25) {
-      setErrorMessage("O nome do perfil é muito longo (máx 25 caracteres).");
-      return;
-    }
-
-    // Check for duplicate names
-    const isDuplicate = localProfiles.some(
-      p => p.displayName.toLowerCase() === trimmedName.toLowerCase()
-    );
-    if (isDuplicate) {
-      setErrorMessage("Já existe um perfil local com este nome.");
-      return;
-    }
-
-    const newUid = `local_${Math.random().toString(36).substring(2, 11)}`;
-    const newProfile: UserClass = {
-      uid: newUid,
-      displayName: trimmedName,
-      email: `${trimmedName.toLowerCase().replace(/\s+/g, '')}@osone.local`,
-      isLocal: true
-    };
-
-    const updated = [...localProfiles, newProfile];
-    saveLocalProfiles(updated);
-    setNewProfileName('');
-
-    // Toggle active user to newly created local profile
-    await onSwitchUser(newProfile);
-  };
-
-  const handleDeleteLocalProfile = (uidToDelete: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const updated = localProfiles.filter(p => p.uid !== uidToDelete);
-    saveLocalProfiles(updated);
-
-    // If active user was deleted, switch to null (Guest)
-    if (currentUser?.uid === uidToDelete) {
-      onSwitchUser(null);
-    }
-
-    // Clean up local data for deleted user
-    try {
-      localStorage.removeItem(`osone_user_${uidToDelete}_ai_profile`);
-      localStorage.removeItem(`osone_user_${uidToDelete}_health_data`);
-      localStorage.removeItem(`osone_user_${uidToDelete}_chat_history`);
-    } catch (err) {
-      console.error(err);
-    }
-  };
 
   if (!isOpen) return null;
 
@@ -182,13 +94,9 @@ export const ProfileModal = ({
                     <div>
                       <p className="text-xs font-bold text-white leading-tight flex items-center gap-1.5">
                         {currentUser.displayName}
-                        {currentUser.isLocal ? (
-                          <span className="text-[8px] bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 px-1 py-0.2 rounded-full uppercase font-mono tracking-wider">LOCAL</span>
-                        ) : (
-                          <span className="text-[8px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1 py-0.2 rounded-full uppercase font-mono tracking-wider flex items-center gap-0.5">
-                            <Cloud size={8} /> CLOUD
-                          </span>
-                        )}
+                        <span className="text-[8px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1 py-0.2 rounded-full uppercase font-mono tracking-wider flex items-center gap-0.5">
+                          <Cloud size={8} /> CLOUD
+                        </span>
                       </p>
                       <p className="text-[9px] text-zinc-500 font-mono mt-0.5 truncate max-w-[200px]">
                         {currentUser.email || 'offline-only@osone.local'}
@@ -204,33 +112,10 @@ export const ProfileModal = ({
                   </button>
                 </div>
               ) : (
-                <div className="flex items-center justify-between text-zinc-400 py-1">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full bg-white/5 border border-white/5 flex items-center justify-center text-xs font-sans text-zinc-500">
-                      VS
-                    </div>
-                    <div>
-                      <span className="text-xs font-semibold text-zinc-300">Modo Visitante / Offline</span>
-                      <p className="text-[9px] text-zinc-600">Nenhum perfil selecionado</p>
-                    </div>
-                  </div>
+                <div className="flex items-center gap-2 text-zinc-400 py-1">
+                  <Loader2 size={14} className="animate-spin text-zinc-500" />
+                  <span className="text-xs text-zinc-500">Carregando a conta...</span>
                 </div>
-              )}
-
-              {(!currentUser || currentUser.isLocal) && (
-                <button
-                  type="button"
-                  onClick={onGoogleLogin}
-                  disabled={isAuthLoading}
-                  className="w-full p-2.5 rounded-2xl border border-emerald-500/20 hover:border-emerald-500/40 bg-emerald-500/5 hover:bg-emerald-500/10 text-emerald-400 text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-wait"
-                >
-                  {isAuthLoading ? (
-                    <Loader2 size={14} className="animate-spin" />
-                  ) : (
-                    <Cloud size={14} />
-                  )}
-                  Entrar com Google (sincronizar na nuvem)
-                </button>
               )}
             </div>
 
@@ -364,92 +249,6 @@ export const ProfileModal = ({
               )}
             </div>
 
-            {/* List of local profiles */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-[9px] font-mono uppercase tracking-widest text-zinc-500">Membros Locais</span>
-                <span className="text-[9px] font-mono text-zinc-600 uppercase">{localProfiles.length} Perfis</span>
-              </div>
-
-              {localProfiles.length > 0 ? (
-                <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1">
-                  {localProfiles.map(profile => {
-                    const isActive = currentUser?.uid === profile.uid;
-                    return (
-                      <div
-                        key={profile.uid}
-                        onClick={() => onSwitchUser(profile)}
-                        className={cn(
-                          "p-3 rounded-2xl flex items-center justify-between group transition-all cursor-pointer border",
-                          isActive
-                            ? "bg-cyan-500/[0.04] border-cyan-500/20 text-white"
-                            : "bg-white/[0.01] border-white/5 text-zinc-400 hover:text-white hover:bg-white/[0.03]"
-                        )}
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className={cn(
-                            "w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold select-none",
-                            isActive 
-                              ? "bg-cyan-500/10 text-cyan-400" 
-                              : "bg-white/5 text-zinc-400 group-hover:text-cyan-300"
-                          )}>
-                            {profile.displayName.slice(0, 2).toUpperCase()}
-                          </div>
-                          <div>
-                            <p className="text-xs font-bold leading-tight flex items-center gap-1.5">
-                              {profile.displayName}
-                              {isActive && <Check size={11} className="text-cyan-400" />}
-                            </p>
-                            <p className="text-[8.5px] text-zinc-500 font-mono mt-0.5 uppercase tracking-tighter">
-                              Cérebro Local Sincronizado
-                            </p>
-                          </div>
-                        </div>
-
-                        <button
-                          onClick={(e) => handleDeleteLocalProfile(profile.uid, e)}
-                          className="opacity-0 group-hover:opacity-100 p-1.5 hover:text-red-400 text-zinc-600 hover:bg-white/5 rounded-lg transition-all cursor-pointer"
-                          title="Excluir Perfil e Memória"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="p-4 rounded-2xl border border-dashed border-white/5 text-center py-6">
-                  <p className="text-xs text-zinc-500">Nenhum perfil local criado ainda.</p>
-                  <p className="text-[9px] text-zinc-600 mt-1 uppercase">Crie um perfil abaixo para salvar seus dados localmente.</p>
-                </div>
-              )}
-            </div>
-
-            {/* Create new profile */}
-            <form onSubmit={handleCreateLocalProfile} className="space-y-3">
-              <span className="text-[9px] font-mono uppercase tracking-widest text-zinc-500">Adicionar Perfil Local</span>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={newProfileName}
-                  onChange={(e) => setNewProfileName(e.target.value)}
-                  placeholder="Nome do perfil local..."
-                  maxLength={25}
-                  className="flex-1 bg-white/[0.02] hover:bg-white/[0.04] focus:bg-white/[0.04] border border-white/10 focus:border-cyan-500/50 rounded-2xl p-2.5 px-4 text-xs text-white placeholder-zinc-600 transition-all focus:outline-none"
-                />
-                <button
-                  type="submit"
-                  className="p-2.5 px-4 rounded-2xl bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/20 text-xs font-bold flex items-center gap-1 transition-all cursor-pointer shrink-0"
-                >
-                  <Plus size={14} />
-                  <span>Criar</span>
-                </button>
-              </div>
-              {errorMessage && (
-                <p className="text-[9px] text-rose-400 font-semibold">{errorMessage}</p>
-              )}
-            </form>
-
             {onOpenDossier && (
               <div className="border-t border-white/5 pt-5 space-y-3">
                 <span className="text-[9px] font-mono uppercase tracking-widest text-zinc-500">Mapeamento Biométrico</span>
@@ -480,7 +279,7 @@ export const ProfileModal = ({
             <div className="border-t border-white/5 pt-5 space-y-3">
               <span className="text-[9px] font-mono uppercase tracking-widest text-zinc-500">Privacidade OSONE</span>
               <p className="text-[10px] text-zinc-400 bg-cyan-950/20 border border-cyan-500/15 p-3 rounded-2xl leading-relaxed">
-                🚀 <strong>Perfis Locais:</strong> ficam 100% no seu navegador (localStorage), nunca saem deste aparelho. <strong>Perfis com Google:</strong> sincronizam suas memórias, histórico e configurações com sua conta na nuvem (Firestore), disponíveis em qualquer dispositivo que você fizer login.
+                🚀 O OSONE entra com a sua conta Google e sincroniza memórias, histórico e configurações na nuvem (Firestore), disponíveis em qualquer aparelho em que você fizer login. Do Google ele recebe apenas nome, e-mail e foto.
               </p>
             </div>
           </div>
