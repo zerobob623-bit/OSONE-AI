@@ -30,6 +30,8 @@ export const MotorDeAcoes = ({
 
   const executando = acoes.some(a => a.estado === 'executando');
 
+  const duracaoLegivel = (ms: number) => (ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`);
+
   const icone = (estado: AcaoDoMotor['estado']) => {
     if (estado === 'executando') return <Loader2 className="w-3.5 h-3.5 animate-spin text-her-accent" />;
     if (estado === 'ok') return <Check className="w-3.5 h-3.5 text-emerald-400" />;
@@ -97,8 +99,15 @@ export const MotorDeAcoes = ({
                   </div>
                 )}
               </div>
-              <div className="text-[10px] text-neutral-600 shrink-0">
-                {new Date(a.quando).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              {/* Hora de início e quanto durou. O tempo por ação é o que transforma "está lento"
+                  em um passo específico a consertar — sem ele, o minuto por ação some na média. */}
+              <div className="text-[10px] text-neutral-600 shrink-0 text-right leading-tight">
+                <div>{new Date(a.quando).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</div>
+                {a.duracaoMs !== undefined && (
+                  <div className={a.duracaoMs >= 10000 ? 'text-amber-500/80' : 'text-neutral-700'}>
+                    {duracaoLegivel(a.duracaoMs)}
+                  </div>
+                )}
               </div>
             </motion.div>
           ))}

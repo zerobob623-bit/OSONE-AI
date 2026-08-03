@@ -1306,12 +1306,21 @@ const handleExec = async (req: Request, res: Response) => {
 // SEÇÃO 10: CONTROLE DE MOUSE (CONTROLE POR VISÃO / GESTOS DE MÃO)
 // ============================================================================
 
+interface DimensoesDaTela { width: number; height: number; offsetX: number; offsetY: number }
+
 /**
- * GET /screen-info - Retorna as dimensões da tela virtual (união de todos os monitores
- * conectados), usada pelo frontend para mapear a posição da mão detectada pela câmera para
- * coordenadas absolutas de tela, incluindo monitores estendidos.
+ * A resolução lida há pouco.
+ *
+ * Ela é consultada em TODO movimento de mouse, e cada consulta abre um processo — no Windows, um
+ * PowerShell inteiro, que custa mais do que o movimento em si. Uma sequência de mira faz vários
+ * movimentos seguidos, então esse processo repetido entrava direto no tempo que o usuário espera.
+ * A resolução da tela não muda entre um movimento e o seguinte; guardá-la por alguns segundos
+ * elimina o custo sem esconder uma troca de monitor, que continua aparecendo na leitura seguinte.
  */
-async function obterDimensoesDaTela(): Promise<{ width: number; height: number; offsetX: number; offsetY: number }> {
+let dimensoesEmCache: { quando: number; valor: DimensoesDaTela } | null = null;
+const VALIDADE_DAS_DIMENSOES_MS = 15000;
+
+async function lerDimensoesDaTela(): Promise<DimensoesDaTela> {
   const platform = process.platform;
   if (platform === 'linux') {
     const { stdout } = await runShell(`xdotool getdisplaygeometry`);
@@ -1325,6 +1334,23 @@ async function obterDimensoesDaTela(): Promise<{ width: number; height: number; 
     return { width, height, offsetX, offsetY };
   }
   throw new Error(`Plataforma '${platform}' não suportada para leitura das dimensões de tela.`);
+}
+
+/**
+ * Dimensões da tela virtual (união de todos os monitores conectados), usada para mapear a posição
+ * da mão detectada pela câmera e a coordenada do clique para pixels absolutos, incluindo monitores
+ * estendidos. Serve o GET /screen-info e todo movimento de mouse.
+ */
+async function obterDimensoesDaTela(): Promise<DimensoesDaTela> {
+  const agora = Date.now();
+  if (dimensoesEmCache && agora - dimensoesEmCache.quando < VALIDADE_DAS_DIMENSOES_MS) {
+    return dimensoesEmCache.valor;
+  }
+  const valor = await lerDimensoesDaTela();
+  if (Number.isFinite(valor.width) && valor.width > 0 && Number.isFinite(valor.height) && valor.height > 0) {
+    dimensoesEmCache = { quando: agora, valor };
+  }
+  return valor;
 };
 
 const handleGetScreenInfo = async (_req: Request, res: Response) => {
