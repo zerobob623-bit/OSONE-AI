@@ -1001,9 +1001,10 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   - Em dúvida sobre o que existe numa pasta, chame antes com acao='listar' e aja sobre o que voltou, em vez de chutar nomes de arquivo.
   - Quando o usuário quiser VER o comando rodando ("abre o terminal", "mostra no terminal"), use acao='terminal' com visivel=true, que abre uma janela real na tela.
   - COMO CLICAR (ordem de preferência, NÃO invente uma sua):
-    1º) O alvo tem texto visível (botão, menu, link, aba, item de lista)? Use acao='achar_texto' com esse texto. Ele MEDE a posição real do elemento na tela e devolve a coordenada exata — é medição, não estimativa, e por isso acerta. Depois clique EXATAMENTE na coordenada devolvida, sem somar nem subtrair nada dela.
-    2º) Só quando o alvo NÃO tem texto (ícone puro, área de imagem, ponto do mapa) é que se estima: 'capturar_tela' sem x/y para localizar, 'capturar_tela' com x/y para ampliar, ler a grade fina e clicar.
-    Estimar coordenada olhando a tela quando existe texto no alvo é erro: já foi medido que a estimativa erra de forma sistemática, e 'achar_texto' não erra. Se 'achar_texto' disser que o tesseract não está instalado, diga isso ao usuário e peça para ele instalar, em vez de voltar a estimar em silêncio.
+    1º) SEMPRE comece por acao='achar_texto', passando em 'texto' o nome do alvo. Ele MEDE a posição real e devolve a coordenada exata — é medição, não estimativa, e por isso acerta. Ele tenta duas fontes de medição, nesta ordem, sozinho: a própria interface do OSONE (que sabe onde cada botão dela está, INCLUSIVE os que são só ícone, sem texto nenhum) e, se não for um elemento do OSONE, o reconhecimento de texto na tela (que serve para qualquer programa, desde que o alvo tenha rótulo escrito). A resposta diz em 'comoFoiLocalizado' qual das duas mediu. Depois clique EXATAMENTE na coordenada devolvida, sem somar nem subtrair nada dela.
+    Para um botão do OSONE que é só ícone, informe o nome dele em 'texto' assim mesmo ("menu", "hambúrguer", "compartilhar tela", "fundo"): a busca casa com o rótulo de acessibilidade do botão, que existe mesmo quando nada está escrito na tela.
+    2º) Só quando 'achar_texto' falhar nas duas formas é que se estima: 'capturar_tela' sem x/y para localizar, 'capturar_tela' com x/y para ampliar, ler a grade fina e clicar.
+    Estimar coordenada olhando a tela antes de tentar 'achar_texto' é erro: já foi medido que a estimativa erra de forma sistemática (de 44 a 510 pixels) e a medição não erra. Quando 'achar_texto' falha, a resposta diz o motivo de CADA um dos dois caminhos — repasse esse motivo ao usuário (tesseract faltando, janela do OSONE atrás de outra, rótulo com grafia diferente) em vez de voltar a estimar em silêncio.
   - AUTONOMIA: quando o usuário pedir algo que exige VÁRIOS passos ("abre o YouTube Studio e vai em Conteúdo", "clica no menu e depois em Fundo"), execute a sequência INTEIRA de uma vez, um passo atrás do outro, sem parar para pedir permissão entre eles e sem esperar ele mandar continuar. Parar no meio e ficar calado é o pior comportamento possível aqui: para o usuário é indistinguível de ter travado. Só interrompa se der erro, se faltar uma informação que só ele tem, ou se ele mandar parar.
   - Enquanto executa uma sequência, vá dizendo em voz alta o que está fazendo em frases curtas ("abrindo o menu", "agora clicando em Conteúdo"). O usuário está vendo o painel do motor, mas silêncio prolongado ainda parece travamento.
   - Se o usuário mandar PARAR, pare imediatamente e não execute mais nada até ele liberar. Se uma ferramenta responder que o motor foi parado pelo usuário, não insista nem tente de novo — confirme que parou e pergunte se ele quer retomar.
@@ -7549,7 +7550,7 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
         parameters: {
           type: Type.OBJECT,
           properties: {
-            acao: { type: Type.STRING, description: "O que fazer. Use exatamente um destes: 'criar_pasta', 'escrever_arquivo', 'apagar', 'mover', 'copiar', 'renomear', 'listar', 'abrir', 'fechar', 'terminal', 'volume', 'midia', 'configuracoes', 'checar_sistema', 'status', 'mover_mouse', 'clicar', 'rolar', 'digitar', 'tecla', 'capturar_tela', 'achar_texto'. Use 'achar_texto' (passando 'texto') SEMPRE que o alvo tiver texto visível: ele MEDE a posição exata do elemento e devolve a coordenada pronta, sem estimativa. Em 'capturar_tela', passar x/y devolve aquela região AMPLIADA com grade fina." },
+            acao: { type: Type.STRING, description: "O que fazer. Use exatamente um destes: 'criar_pasta', 'escrever_arquivo', 'apagar', 'mover', 'copiar', 'renomear', 'listar', 'abrir', 'fechar', 'terminal', 'volume', 'midia', 'configuracoes', 'checar_sistema', 'status', 'mover_mouse', 'clicar', 'rolar', 'digitar', 'tecla', 'capturar_tela', 'achar_texto'. Para clicar em qualquer coisa, comece SEMPRE por 'achar_texto' (passando 'texto'): ele MEDE a posição exata do elemento e devolve a coordenada pronta, sem estimativa. Ele mede primeiro pela própria interface do OSONE, que localiza até botão que é só ícone, e depois por reconhecimento de texto na tela, para qualquer outro programa. Em 'capturar_tela', passar x/y devolve aquela região AMPLIADA com grade fina — é o último recurso, quando 'achar_texto' não achou." },
             caminho: { type: Type.STRING, description: "Alvo da ação: caminho completo do arquivo/pasta; nome do app para 'abrir'/'fechar'; pasta de trabalho para 'terminal'." },
             destino: { type: Type.STRING, description: "Caminho de destino, para 'mover', 'copiar' e 'renomear'." },
             conteudo: { type: Type.STRING, description: "Texto a gravar, para 'escrever_arquivo'." },
@@ -7564,7 +7565,7 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
             duplo: { type: Type.BOOLEAN, description: "Para 'clicar': true faz duplo-clique." },
             direcao: { type: Type.STRING, description: "Para 'rolar': 'up' ou 'down'." },
             quantidade: { type: Type.NUMBER, description: "Para 'rolar': quantos 'cliques' de roda de mouse (padrão 3, como um giro normal de roda física)." },
-            texto: { type: Type.STRING, description: "Para 'digitar': o texto a digitar no campo/elemento em foco (clique nele antes). Para 'achar_texto': o rótulo VISÍVEL do elemento que você quer localizar na tela (ex: 'Instalar', 'Conteúdo', 'Salvar')." },
+            texto: { type: Type.STRING, description: "Para 'digitar': o texto a digitar no campo/elemento em foco (clique nele antes). Para 'achar_texto': o nome do elemento que você quer localizar. Pode ser o rótulo VISÍVEL na tela (ex: 'Instalar', 'Conteúdo', 'Salvar') ou, para botões do próprio OSONE que são só ícone, o nome deles (ex: 'menu', 'hambúrguer', 'compartilhar tela')." },
             tecla: { type: Type.STRING, description: "Para 'tecla': nome da tecla ('enter', 'tab', 'escape', 'backspace', 'delete', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'home', 'end', 'pageup', 'pagedown') ou um único caractere alfanumérico." },
             modificadores: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Para 'tecla': lista de modificadores a segurar junto, ex: ['ctrl'] para Ctrl+C." }
           },
@@ -9225,7 +9226,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         parameters: {
                                         type: Type.OBJECT,
                                         properties: {
-                                          acao: { type: Type.STRING, description: "O que fazer. Use exatamente um destes: 'criar_pasta', 'escrever_arquivo', 'apagar', 'mover', 'copiar', 'renomear', 'listar', 'abrir', 'fechar', 'terminal', 'volume', 'midia', 'configuracoes', 'checar_sistema', 'status', 'mover_mouse', 'clicar', 'rolar', 'digitar', 'tecla', 'capturar_tela', 'achar_texto'. Use 'achar_texto' (passando 'texto') SEMPRE que o alvo tiver texto visível: ele MEDE a posição exata do elemento e devolve a coordenada pronta, sem estimativa. Em 'capturar_tela', passar x/y devolve aquela região AMPLIADA com grade fina." },
+                                          acao: { type: Type.STRING, description: "O que fazer. Use exatamente um destes: 'criar_pasta', 'escrever_arquivo', 'apagar', 'mover', 'copiar', 'renomear', 'listar', 'abrir', 'fechar', 'terminal', 'volume', 'midia', 'configuracoes', 'checar_sistema', 'status', 'mover_mouse', 'clicar', 'rolar', 'digitar', 'tecla', 'capturar_tela', 'achar_texto'. Para clicar em qualquer coisa, comece SEMPRE por 'achar_texto' (passando 'texto'): ele MEDE a posição exata do elemento e devolve a coordenada pronta, sem estimativa. Ele mede primeiro pela própria interface do OSONE, que localiza até botão que é só ícone, e depois por reconhecimento de texto na tela, para qualquer outro programa. Em 'capturar_tela', passar x/y devolve aquela região AMPLIADA com grade fina — é o último recurso, quando 'achar_texto' não achou." },
                                           caminho: { type: Type.STRING, description: "Alvo da ação: caminho completo do arquivo/pasta; nome do app para 'abrir'/'fechar'; pasta de trabalho para 'terminal'." },
                                           destino: { type: Type.STRING, description: "Caminho de destino, para 'mover', 'copiar' e 'renomear'." },
                                           conteudo: { type: Type.STRING, description: "Texto a gravar, para 'escrever_arquivo'." },
@@ -9240,7 +9241,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                                           duplo: { type: Type.BOOLEAN, description: "Para 'clicar': true faz duplo-clique." },
                                           direcao: { type: Type.STRING, description: "Para 'rolar': 'up' ou 'down'." },
                                           quantidade: { type: Type.NUMBER, description: "Para 'rolar': quantos 'cliques' de roda de mouse (padrão 3, como um giro normal de roda física)." },
-                                          texto: { type: Type.STRING, description: "Para 'digitar': o texto a digitar no campo/elemento em foco (clique nele antes). Para 'achar_texto': o rótulo VISÍVEL do elemento que você quer localizar na tela (ex: 'Instalar', 'Conteúdo', 'Salvar')." },
+                                          texto: { type: Type.STRING, description: "Para 'digitar': o texto a digitar no campo/elemento em foco (clique nele antes). Para 'achar_texto': o nome do elemento que você quer localizar. Pode ser o rótulo VISÍVEL na tela (ex: 'Instalar', 'Conteúdo', 'Salvar') ou, para botões do próprio OSONE que são só ícone, o nome deles (ex: 'menu', 'hambúrguer', 'compartilhar tela')." },
                                           tecla: { type: Type.STRING, description: "Para 'tecla': nome da tecla ('enter', 'tab', 'escape', 'backspace', 'delete', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'home', 'end', 'pageup', 'pagedown') ou um único caractere alfanumérico." },
                                           modificadores: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Para 'tecla': lista de modificadores a segurar junto, ex: ['ctrl'] para Ctrl+C." }
                                         },
@@ -11346,9 +11347,15 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
           "relative z-30 flex justify-between items-center px-4 md:px-8 py-4 md:py-6 shrink-0 w-full border-b border-white/[0.03] bg-black/20 transition-all duration-500",
           !showUi && "opacity-0 pointer-events-none -translate-y-4"
         )}>
-          <button 
+          {/* O nome do botão não é decoração: é por ele que o próprio OSONE encontra este botão
+              quando o usuário manda clicar. Um botão só de ícone sem rótulo é invisível tanto para
+              o reconhecimento de texto quanto para a consulta à interface — foi exatamente o caso
+              do hambúrguer, que só podia ser alcançado por estimativa, o caminho que erra. */}
+          <button
             onClick={() => setIsSidebarOpen(true)}
             className="p-2 md:p-3 hover:bg-white/[0.03] transition-colors text-her-muted"
+            title="Menu"
+            aria-label="Menu (hambúrguer) — abrir a barra lateral"
           >
             <Menu size={20} className="md:w-[22px] md:h-[22px]" />
           </button>

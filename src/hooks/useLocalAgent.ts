@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { PendingLocalAgentConfirmation } from '../components/LocalAgentConfirmModal';
+import { mirarNaInterface } from '../lib/mirarNaInterface';
 
 /**
  * Bridge com o Agente Local OSONE (app desktop opcional instalado pelo usuário) via /api/agent.
@@ -14,6 +15,15 @@ export interface AcaoDoMotor {
   detalhe?: string;
   estado: 'executando' | 'ok' | 'erro' | 'parado';
   resultado?: string;
+  /**
+   * Quanto tempo a ação levou.
+   *
+   * Existe porque "está lento" não é diagnóstico: sem o tempo de cada passo, um minuto por ação
+   * pode ser a leitura da tela, a ida ao agente, o modelo pensando ou a soma de tudo, e escolher
+   * qual otimizar vira palpite. Com o número ao lado de cada linha, o passo caro se identifica
+   * sozinho na primeira sequência que rodar.
+   */
+  duracaoMs?: number;
 }
 
 export function useLocalAgent() {
@@ -41,6 +51,15 @@ export function useLocalAgent() {
    * transforma o procedimento de recomendação em pré-requisito.
    */
   const ultimaCapturaRef = useRef<{ quando: number; ampliada: boolean; regiao?: { x0: number; y0: number; x1: number; y1: number } } | null>(null);
+  /**
+   * A última posição MEDIDA de um alvo, com o pixel exato ao lado da coordenada 0–1000.
+   *
+   * A escala 0–1000 é a linguagem do modelo, mas ela é grosseira: numa tela de 1920 cada degrau
+   * vale quase 2px, então uma posição medida ao pixel volta arredondada e chega ao clique já com
+   * um erro que ninguém introduziu de propósito. Guardando o pixel original, o clique feito na
+   * coordenada que acabou de ser devolvida usa a medição inteira, e não a versão arredondada dela.
+   */
+  const ultimaMiraRef = useRef<{ quando: number; escala0a1000: { x: number; y: number }; pixel: { x: number; y: number } } | null>(null);
   /**
    * Quando o motor mexeu no computador pela última vez.
    *
@@ -110,8 +129,9 @@ export function useLocalAgent() {
     if (toolName === 'controlar_pc') ultimaAcaoNoPcRef.current = Date.now();
 
     const idAcao = Math.random().toString(36).slice(2, 9);
+    const comecou = Date.now();
     setAcoesDoMotor(prev => [
-      { id: idAcao, quando: Date.now(), rotulo: rotularAcao(toolName, args), detalhe: detalharAcao(toolName, args), estado: 'executando' as const },
+      { id: idAcao, quando: comecou, rotulo: rotularAcao(toolName, args), detalhe: detalharAcao(toolName, args), estado: 'executando' as const },
       ...prev
     ].slice(0, 60));
 
@@ -126,7 +146,12 @@ export function useLocalAgent() {
             : '')
         : undefined;
       setAcoesDoMotor(prev => prev.map(a => a.id === idAcao
-        ? { ...a, estado: deuErro ? ('erro' as const) : ('ok' as const), resultado: deuErro ? detalheDoErro!.slice(0, 600) : (resultado?.resumo ? String(resultado.resumo).slice(0, 160) : undefined) }
+        ? {
+            ...a,
+            estado: deuErro ? ('erro' as const) : ('ok' as const),
+            duracaoMs: Date.now() - comecou,
+            resultado: deuErro ? detalheDoErro!.slice(0, 600) : (resultado?.resumo ? String(resultado.resumo).slice(0, 160) : undefined)
+          }
         : a));
       return resultado;
     };
@@ -343,7 +368,18 @@ export function useLocalAgent() {
                 };
               }
 
-              const pixels = await paraPixels(x, y);
+              /**
+               * Clicar na coordenada que acabou de ser MEDIDA usa o pixel medido, não a versão
+               * arredondada dele. A escala 0–1000 perde até dois pixels no caminho de ida e mais
+               * dois na volta; num botão de 20px isso é a diferença entre o centro e a borda.
+               */
+              const mira = ultimaMiraRef.current;
+              const usarMiraExata = !!mira
+                && Date.now() - mira.quando < JANELA_VALIDA_MS
+                && Math.abs(mira.escala0a1000.x - x) <= 1
+                && Math.abs(mira.escala0a1000.y - y) <= 1;
+
+              const pixels = usarMiraExata ? mira!.pixel : await paraPixels(x, y);
               if (!pixels) return { error: "Não foi possível ler as dimensões da tela para posicionar o clique. No Linux é necessário ter o pacote 'xdotool' instalado." };
               const moveResult = await post('/mouse/move', pixels);
               if (moveResult?.error) return moveResult;
@@ -396,23 +432,93 @@ export function useLocalAgent() {
             return post('/keyboard/key', { key: String(args.tecla), modifiers: modificadores });
           }
           case 'achar_texto': {
-            // Caminho preferido para clicar: em vez de estimar coordenadas olhando a tela, o
-            // elemento é localizado pelo texto e o centro dele é uma MEDIÇÃO. Marca a última
-            // captura como válida e ampliada porque a posição devolvida é exata — exigir uma
-            // conferência ampliada por cima de uma medição seria só atraso sem ganho.
+            // Caminho preferido para clicar: em vez de estimar coordenadas olhando a tela, a
+            // posição do elemento é MEDIDA. Há duas formas de medir, e elas são tentadas nesta
+            // ordem porque a primeira é mais rápida, mais exata e funciona sem texto nenhum:
+            //
+            //   1ª) a própria interface do OSONE, que sabe onde cada botão está — inclusive os
+            //       que são só ícone, onde não há o que reconhecer;
+            //   2ª) o reconhecimento de texto na tela, que serve para qualquer programa, mas
+            //       exige rótulo escrito e custa uma leitura da tela inteira.
             if (!args?.texto) return { error: "Informe 'texto' com o rótulo visível do elemento (ex: 'Instalar')." };
-            const achado = await post('/screen/find-text', { texto: String(args.texto) });
-            if (!achado?.error && achado?.ocorrencias?.length) {
-              const c = achado.ocorrencias[0]?.escala0a1000;
-              if (c) {
-                ultimaCapturaRef.current = {
-                  quando: Date.now(),
-                  ampliada: true,
-                  regiao: { x0: c.x - 1, y0: c.y - 1, x1: c.x + 1, y1: c.y + 1 }
+            const procurado = String(args.texto);
+
+            // Marca a posição como já conferida: ela é uma medição, e exigir uma ampliação por
+            // cima de uma medição seria só atraso sem ganho.
+            const registrarMedicao = (escala0a1000?: { x: number; y: number }, pixel?: { x: number; y: number }) => {
+              if (!escala0a1000) return;
+              ultimaCapturaRef.current = {
+                quando: Date.now(),
+                ampliada: true,
+                regiao: { x0: escala0a1000.x - 1, y0: escala0a1000.y - 1, x1: escala0a1000.x + 1, y1: escala0a1000.y + 1 }
+              };
+              if (pixel) ultimaMiraRef.current = { quando: Date.now(), escala0a1000, pixel };
+            };
+
+            let porQueNaoNaInterface = 'a interface própria não foi consultada';
+            const tela = await dimensoesDaTela();
+            if (tela) {
+              const mira = await mirarNaInterface(procurado, tela, async (x, y) => {
+                const r = await post('/mouse/move', { x, y });
+                if (r?.error) return null;
+                // ficouPx é onde o sistema operacional diz que o cursor parou; pediuPx é o que foi
+                // mandado. Preferir o primeiro mantém a medição presa ao fato.
+                return r?.ficouPx || r?.pediuPx || null;
+              });
+
+              if (!mira.encontrado || !mira.alvo) {
+                porQueNaoNaInterface = mira.motivo || 'a mira na interface não confirmou a posição';
+              } else {
+                registrarMedicao(mira.alvo.escala0a1000, mira.alvo.pixel);
+                return {
+                  encontrado: true,
+                  comoFoiLocalizado: 'interface do OSONE',
+                  total: 1,
+                  ocorrencias: [{
+                    texto: mira.alvo.rotulo,
+                    pixel: mira.alvo.pixel,
+                    escala0a1000: mira.alvo.escala0a1000,
+                    tamanhoPx: mira.alvo.tamanhoPx
+                  }],
+                  telaPx: { width: tela.width, height: tela.height },
+                  resumo: `Localizado na própria interface: "${mira.alvo.rotulo}" (${mira.alvo.origemDoNome}) ` +
+                    `em x=${mira.alvo.escala0a1000.x}, y=${mira.alvo.escala0a1000.y} — pixel ${mira.alvo.pixel.x},${mira.alvo.pixel.y}, ` +
+                    `confirmado com ${mira.alvo.movimentos} movimento(s).`,
+                  comoUsar: `Posição MEDIDA e CONFIRMADA pelo próprio navegador: o cursor já está em cima de "${mira.alvo.rotulo}". ` +
+                    `Chame 'clicar' com exatamente x=${mira.alvo.escala0a1000.x} e y=${mira.alvo.escala0a1000.y}, sem somar nem subtrair nada.`
                 };
               }
+            } else {
+              porQueNaoNaInterface = 'não foi possível ler as dimensões da tela para converter a posição da interface';
             }
-            return achado;
+
+            const achado = await post('/screen/find-text', { texto: procurado });
+            if (achado?.error) {
+              // Os dois caminhos falharam: a resposta diz por que CADA um falhou. Antes só o
+              // segundo motivo aparecia, e uma falha de janela em segundo plano era relatada como
+              // se fosse problema de OCR — mandando procurar o defeito no lugar errado.
+              return {
+                ...achado,
+                error: `${achado.error} | Na própria interface do OSONE também não deu: ${porQueNaoNaInterface}`
+              };
+            }
+
+            const c = achado?.ocorrencias?.[0];
+            // O pixel do OCR é contado a partir do canto da captura, e a captura começa na origem
+            // da tela virtual — que num monitor à esquerda do principal é negativa no Windows.
+            // Sem somar o deslocamento, o pixel "exato" apontaria para outro monitor.
+            const pixelAbsoluto = c?.pixel && tela
+              ? { x: c.pixel.x + (tela.offsetX || 0), y: c.pixel.y + (tela.offsetY || 0) }
+              : undefined;
+            registrarMedicao(c?.escala0a1000, pixelAbsoluto);
+            return {
+              ...achado,
+              comoFoiLocalizado: 'reconhecimento de texto na tela',
+              resumo: c?.escala0a1000
+                ? `Localizado por reconhecimento de texto em x=${c.escala0a1000.x}, y=${c.escala0a1000.y} ` +
+                  `(na interface do OSONE não deu: ${porQueNaoNaInterface}).`
+                : undefined
+            };
           }
           case 'capturar_tela': {
             // Com x/y, a captura volta ampliada em volta daquele ponto — o segundo passo da mira
