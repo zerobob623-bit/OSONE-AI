@@ -22,6 +22,26 @@ let mainWindow = null;
 const DEFAULT_PORT = Number(process.env.PORT) || 3000;
 
 /**
+ * O QUE ACONTECEU COM A JANELA DE LOGIN — o dado que faltava para sair do escuro.
+ *
+ * O login falha e o Firebase devolve "popup fechado pelo usuário", que é o mesmo código para
+ * situações opostas: a pessoa desistiu, o Google recusou o navegador, a página não carregou, ou a
+ * janela nem chegou a abrir. Do lado da interface esses casos são indistinguíveis, e foi por isso
+ * que a primeira suspeita (o user agent do Electron) foi tratada como causa sem prova.
+ *
+ * Aqui o processo principal registra o que a janela realmente fez: se abriu, para onde navegou e
+ * onde parou. O endereço final é a resposta — uma URL de recusa do Google diz uma coisa, uma falha
+ * de carregamento diz outra, e nenhuma janela aberta diz uma terceira.
+ */
+const eventosDoLogin = [];
+
+function registrarEventoDeLogin(oQue, url) {
+  eventosDoLogin.unshift({ quando: new Date().toISOString(), oQue, url: String(url || '').slice(0, 300) });
+  if (eventosDoLogin.length > 12) eventosDoLogin.pop();
+  console.log(`[Login] ${oQue}${url ? ' — ' + url : ''}`);
+}
+
+/**
  * Tira do user agent as marcas que denunciam um navegador embutido.
  *
  * O Google recusa a tela de login quando reconhece um navegador embutido, respondendo "este
@@ -336,6 +356,28 @@ function createWindow() {
     return { action: 'allow' };
   });
 
+  /**
+   * A janela do Google é acompanhada do início ao fim.
+   *
+   * 'did-create-window' entrega a janela que o setWindowOpenHandler autorizou. Sem isto, tudo o
+   * que se sabe do login é o código genérico que o Firebase devolve no fim.
+   */
+  mainWindow.webContents.on('did-create-window', (janela, detalhes) => {
+    if (!ehJanelaDeLogin(detalhes?.url || '')) return;
+    registrarEventoDeLogin('janela de login aberta', detalhes.url);
+
+    const conteudo = janela.webContents;
+    conteudo.on('did-navigate', (_e, url) => registrarEventoDeLogin('navegou para', url));
+    conteudo.on('did-navigate-in-page', (_e, url) => registrarEventoDeLogin('mudou de tela em', url));
+    conteudo.on('did-fail-load', (_e, codigo, descricao, url) => {
+      registrarEventoDeLogin(`FALHOU ao carregar (${codigo} ${descricao})`, url);
+    });
+    conteudo.on('render-process-gone', (_e, detalhe) => {
+      registrarEventoDeLogin(`a janela travou (${detalhe?.reason || 'motivo desconhecido'})`, '');
+    });
+    janela.on('closed', () => registrarEventoDeLogin('janela de login fechada', ''));
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -364,6 +406,13 @@ const estadoDaAtualizacao = {
   mensagem: '',
   ultimaChecagem: null
 };
+
+function publicarDiagnosticoDeLogin() {
+  globalThis.__osoneLogin = {
+    userAgent: app.userAgentFallback,
+    eventos: () => eventosDoLogin.slice()
+  };
+}
 
 function publicarControleDeAtualizacao() {
   globalThis.__osoneAtualizador = {
@@ -507,6 +556,7 @@ app.whenReady().then(async () => {
   // O controle vai para o ar ANTES do servidor: é ele que o servidor procura ao responder as
   // rotas de atualização, e um servidor que suba primeiro não encontraria nada.
   publicarControleDeAtualizacao();
+  publicarDiagnosticoDeLogin();
   await startBackendServer();
 
   if (!startupError) {

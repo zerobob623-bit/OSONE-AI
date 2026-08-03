@@ -3996,6 +3996,22 @@ ${processedChunk}`;
     return false;
   };
 
+  /**
+   * O que a janela de login fez, segundo o processo do Electron.
+   *
+   * O Firebase responde "popup fechado pelo usuário" tanto quando a pessoa desistiu quanto quando
+   * o Google recusou a janela — códigos iguais para causas opostas. Aqui vem o endereço onde ela
+   * realmente parou, que é o que separa uma coisa da outra.
+   */
+  app.get("/api/login/diagnostico", (req, res) => {
+    if (!somenteDaPropriaMaquina(req, res)) return;
+    const diag = (globalThis as any).__osoneLogin;
+    if (!diag) {
+      return res.json({ noAppInstalado: false, eventos: [], userAgent: req.headers['user-agent'] || '' });
+    }
+    return res.json({ noAppInstalado: true, userAgent: diag.userAgent, eventos: diag.eventos() });
+  });
+
   app.get("/api/atualizacao/estado", (req, res) => {
     if (!somenteDaPropriaMaquina(req, res)) return;
     const controle = controleDeAtualizacao();
