@@ -31,6 +31,16 @@ export function useLocalAgent() {
    */
   const motorParadoRef = useRef(false);
   const [motorParado, setMotorParado] = useState(false);
+  /**
+   * Quando a tela foi olhada pela última vez, e se foi uma ampliação.
+   *
+   * Existe porque pedir no prompt não bastou: medido em uso real, o modelo clicou três vezes
+   * seguidas sem NUNCA chamar 'capturar_tela', sempre no mesmo y — ou seja, chutando de memória
+   * em vez de medir. Toda a mira em dois tempos era ignorada porque nada a exigia. Guardando a
+   * última captura, o clique passa a poder ser recusado quando não houve leitura recente, o que
+   * transforma o procedimento de recomendação em pré-requisito.
+   */
+  const ultimaCapturaRef = useRef<{ quando: number; ampliada: boolean; regiao?: { x0: number; y0: number; x1: number; y1: number } } | null>(null);
 
   /** Interrompe a sequência: a ação em curso termina, as seguintes são recusadas. */
   const pararMotor = () => {
@@ -276,6 +286,40 @@ export function useLocalAgent() {
             }
             let relato: any = null;
             if (x !== undefined && y !== undefined) {
+              /**
+               * Clicar sem ter olhado é recusado.
+               *
+               * Medido em uso real: três cliques seguidos, todos no mesmo y, sem nenhuma chamada
+               * de 'capturar_tela' entre eles — o modelo estava chutando de memória enquanto a
+               * grade e a ampliação existiam sem serem usadas. Pedir no prompt não mudou isso, e
+               * um clique cego no computador de alguém não é algo que deva depender de boa
+               * vontade. Aqui o procedimento vira pré-requisito: sem leitura recente da tela, a
+               * ação não acontece e a resposta diz exatamente o que fazer.
+               */
+              const JANELA_VALIDA_MS = 30000;
+              const ultima = ultimaCapturaRef.current;
+              const idadeMs = ultima ? Date.now() - ultima.quando : Infinity;
+
+              if (!ultima || idadeMs > JANELA_VALIDA_MS) {
+                return {
+                  error: "CLIQUE RECUSADO: você não olhou a tela antes. Nunca clique de memória — a tela muda. " +
+                    "Chame 'capturar_tela' (sem x/y) para ver onde as coisas estão, depois 'capturar_tela' de novo passando x/y aproximados do alvo " +
+                    "para receber a região ampliada com grade fina, leia a coordenada exata ali e só então clique."
+                };
+              }
+
+              const dentroDaAmpliacao = ultima.ampliada && ultima.regiao
+                && x >= ultima.regiao.x0 && x <= ultima.regiao.x1
+                && y >= ultima.regiao.y0 && y <= ultima.regiao.y1;
+
+              if (!dentroDaAmpliacao) {
+                return {
+                  error: "CLIQUE RECUSADO: falta a conferência ampliada deste ponto. " +
+                    `Chame 'capturar_tela' passando x=${Math.round(x)} e y=${Math.round(y)} — você receberá essa região ampliada com grade de 10 em 10, ` +
+                    "numerada já nas coordenadas finais. Leia ali o centro exato do alvo e clique nesse valor lido, não no estimado."
+                };
+              }
+
               const pixels = await paraPixels(x, y);
               if (!pixels) return { error: "Não foi possível ler as dimensões da tela para posicionar o clique. No Linux é necessário ter o pacote 'xdotool' instalado." };
               const moveResult = await post('/mouse/move', pixels);
@@ -339,6 +383,14 @@ export function useLocalAgent() {
             }
             const consulta = params.toString() ? `?${params.toString()}` : '';
             const res = await fetch(`${LOCAL_AGENT_URL}/screen/capture${consulta}`, { method: 'GET', headers });
+            if (res.ok) {
+              const espiada = await res.clone().json().catch(() => null);
+              ultimaCapturaRef.current = {
+                quando: Date.now(),
+                ampliada: !!espiada?.ampliada,
+                regiao: espiada?.regiao
+              };
+            }
             const data = await res.json().catch(() => null);
             if (!res.ok) return { error: data?.error || 'Não foi possível capturar a tela.' };
             return data;
