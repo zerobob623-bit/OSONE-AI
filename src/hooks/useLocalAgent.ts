@@ -41,6 +41,17 @@ export function useLocalAgent() {
    * transforma o procedimento de recomendação em pré-requisito.
    */
   const ultimaCapturaRef = useRef<{ quando: number; ampliada: boolean; regiao?: { x0: number; y0: number; x1: number; y1: number } } | null>(null);
+  /**
+   * Quando o motor mexeu no computador pela última vez.
+   *
+   * O compartilhamento de tela lê esta marca para PARAR de mandar frames enquanto uma sequência
+   * de controle está em curso. Enquanto o vídeo continuava correndo, o modelo tinha duas fontes
+   * de imagem: a captura (tela inteira, alinhada com o clique) e o compartilhamento — que
+   * costuma mostrar só a aba, começando abaixo da barra do navegador. Medir numa e clicar na
+   * outra produz um desvio fixo, e era exatamente o que os registros mostravam: erro constante
+   * de cerca de 45px para cima em toda tentativa, imune a qualquer melhoria na leitura.
+   */
+  const ultimaAcaoNoPcRef = useRef(0);
 
   /** Interrompe a sequência: a ação em curso termina, as seguintes são recusadas. */
   const pararMotor = () => {
@@ -95,6 +106,8 @@ export function useLocalAgent() {
     if (motorParadoRef.current) {
       return { error: "O usuário PAROU o motor de ações. Não execute mais nada no computador dele e pergunte se ele quer retomar." };
     }
+
+    if (toolName === 'controlar_pc') ultimaAcaoNoPcRef.current = Date.now();
 
     const idAcao = Math.random().toString(36).slice(2, 9);
     setAcoesDoMotor(prev => [
@@ -715,6 +728,7 @@ export function useLocalAgent() {
     executeLocalAgentCall,
     acoesDoMotor,
     motorParado,
+    ultimaAcaoNoPcRef,
     pararMotor,
     retomarMotor,
     limparAcoesDoMotor
