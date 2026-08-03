@@ -21,6 +21,33 @@ const require = createRequire(import.meta.url);
 let mainWindow = null;
 const DEFAULT_PORT = Number(process.env.PORT) || 3000;
 
+/**
+ * Tira do user agent as marcas que denunciam um navegador embutido.
+ *
+ * O Google recusa a tela de login quando reconhece um navegador embutido, respondendo "este
+ * navegador ou app pode não ser seguro" em vez do formulário. O user agent do Electron traz duas
+ * marcas assim: o token "Electron/versão" e o nome do próprio app logo antes de "Chrome/". Sem
+ * elas sobra um user agent de Chrome comum, que é o que a janela de login realmente é.
+ *
+ * O sintoma disso era pior do que um erro: a janela de login abria, o Google recusava, o usuário
+ * fechava — e "popup fechado pelo usuário" não é tratado como erro, então o app não dizia nada.
+ * Clicar em entrar e não acontecer absolutamente nada era o resultado no app instalado, enquanto
+ * no navegador o mesmo login funcionava.
+ *
+ * O nome do app é removido pela POSIÇÃO (o que estiver entre "like Gecko)" e "Chrome/"), e não
+ * pelo texto: o nome muda entre o modo de desenvolvimento e o app empacotado, e um dos dois
+ * escaparia de qualquer regra escrita com o nome fixo.
+ */
+function userAgentDeNavegadorComum(original) {
+  return String(original || '')
+    .replace(/(\(KHTML, like Gecko\)\s).*?(Chrome\/)/, '$1$2')
+    .replace(/\sElectron\/[^\s]+/i, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+app.userAgentFallback = userAgentDeNavegadorComum(app.userAgentFallback);
+
 // A porta em que o servidor interno realmente subiu, e o último erro fatal de inicialização
 // (usado para mostrar uma tela de erro legível em vez de uma janela preta e muda).
 let activePort = DEFAULT_PORT;

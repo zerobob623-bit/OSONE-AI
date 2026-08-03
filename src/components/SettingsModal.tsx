@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Cpu, Palette, Key, Smartphone, Info, Power, Activity, CheckCircle2, AlertCircle, Loader2, Home, UserCircle, Pin, Volume2, RefreshCw, Copy, Check, Image, Eye, EyeOff, Fingerprint, Sparkles, KeyRound } from 'lucide-react';
+import { X, Cpu, Palette, Key, Info, Activity, CheckCircle2, AlertCircle, Loader2, Home, UserCircle, Volume2, RefreshCw, Copy, Image, Eye, EyeOff, Fingerprint, Sparkles, KeyRound } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { ApiKeys, OrbStyle, AppTheme, AIProfile, VoiceModulation } from '../types';
 import { PERSONAS, Persona } from './PersonaSwitcher';
@@ -13,7 +13,7 @@ const VOICE_DETAILS = [
   { id: 'Scarlet', name: 'Sensus (Scarlet)', desc: 'Quântica • Adaptativa, profunda e misteriosa', category: 'Especiais' }
 ];
 
-type TabId = 'general' | 'elevenlabs' | 'interface' | 'profile' | 'automation' | 'sync';
+type TabId = 'general' | 'elevenlabs' | 'interface' | 'profile' | 'automation';
 type ConnectionStatus = 'idle' | 'testing' | 'connected' | 'error';
 
 export const SettingsModal = ({ 
@@ -40,7 +40,6 @@ export const SettingsModal = ({
   aiProfile,
   setAiProfile,
   onAddNotification,
-  onRestoreState,
   vocalProfileEscarlate,
   setVocalProfileEscarlate,
   selectedPersona,
@@ -72,7 +71,6 @@ export const SettingsModal = ({
   aiProfile: AIProfile;
   setAiProfile: (profile: AIProfile) => void;
   onAddNotification?: (msg: string, type: 'success' | 'info' | 'error') => void;
-  onRestoreState?: (payload: Record<string, string>) => void;
   vocalProfileEscarlate: string;
   setVocalProfileEscarlate: (val: string) => void;
   selectedPersona: Persona;
@@ -200,136 +198,6 @@ export const SettingsModal = ({
     }
   };
 
-  // ====== NEURAL CONNECTION MEMORY SYNC STATES ======
-  const [syncLinkId, setSyncLinkId] = useState<string>(() => {
-    return localStorage.getItem('osone_sync_link_id') || '';
-  });
-  const [inputId, setInputId] = useState('');
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
-  const [syncMessage, setSyncMessage] = useState('');
-  const [isCopied, setIsCopied] = useState(false);
-
-  // Backup state to Cloud Sync
-  const handleBackupToCloud = async (customId?: string) => {
-    setIsSyncing(true);
-    setSyncStatus('testing');
-    setSyncMessage('Codificando e blindando perfil de canais neurais...');
-    try {
-      // Gather all local storage keys starting with 'osone_'
-      const payload: Record<string, string> = {};
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith('osone_')) {
-          const val = localStorage.getItem(key);
-          if (val) {
-            payload[key] = val;
-          }
-        }
-      }
-
-      // Hot-override with current live state props to guarantee zero latency on input values
-      payload['osone_api_keys'] = JSON.stringify(keys);
-      payload['osone_voice_engine'] = voiceEngine;
-      payload['osone_selected_voice'] = selectedVoice;
-      payload['osone_chat_auto_speak'] = String(isChatAutoSpeakActive);
-      payload['osone_voice_modulation'] = JSON.stringify(voiceModulation);
-      payload['osone_orb_style'] = orbStyle;
-      payload['osone_orb_size'] = String(orbSize);
-      payload['osone_orb_center_mode'] = String(orbCenterMode);
-      payload['osone_app_theme'] = appTheme;
-      payload['osone_ai_profile'] = JSON.stringify(aiProfile);
-
-      const response = await fetch('/api/memory-sync/save', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          syncId: customId || syncLinkId || undefined,
-          payload
-        })
-      });
-
-      const data = await response.json();
-      if (response.ok && data.status === 'success') {
-        setSyncLinkId(data.syncId);
-        localStorage.setItem('osone_sync_link_id', data.syncId);
-        setSyncStatus('success');
-        setSyncMessage(`Sincronização concluída! Link de Conexão Neural ativo: ${data.syncId}`);
-        if (onAddNotification) {
-          onAddNotification(`Conexão salva sob o ID: ${data.syncId}`, 'success');
-        }
-      } else {
-        setSyncStatus('error');
-        setSyncMessage(data.error || 'Erro ao sincronizar dados com o canal neural.');
-      }
-    } catch (err: any) {
-      setSyncStatus('error');
-      setSyncMessage('Erro de rede: canal de comunicação offline.');
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
-  // Restore state from Cloud Sync and reboot
-  const handleRestoreFromCloud = async (id: string) => {
-    if (!id.trim()) {
-      setSyncStatus('error');
-      setSyncMessage('Insira um ID de Conexão Neural válido.');
-      return;
-    }
-    setIsSyncing(true);
-    setSyncStatus('testing');
-    setSyncMessage('Baixando dados e restabelecendo sinapses do OSONE...');
-    try {
-      const cleanedId = id.trim().toUpperCase();
-      const response = await fetch(`/api/memory-sync/load/${cleanedId}`);
-      const data = await response.json();
-      
-      if (response.ok && data.status === 'success') {
-        const payload = data.payload;
-        
-        // Save all keys back into localStorage
-        Object.keys(payload).forEach(key => {
-          if (key.startsWith('osone_')) {
-            localStorage.setItem(key, payload[key]);
-          }
-        });
-        
-        // Propagate current fields/state values to parent app state immediately
-        if (onRestoreState) {
-          onRestoreState(payload);
-        }
-        
-        setSyncLinkId(cleanedId);
-        localStorage.setItem('osone_sync_link_id', cleanedId);
-        setSyncStatus('success');
-        setSyncMessage('Sincronia concluída com sucesso! Todos os campos foram preenchidos e a sessão foi restabelecida.');
-        
-        if (onAddNotification) {
-          onAddNotification(`Perfil restaurado! Todas as sinapses e chaves foram preenchidas com sucesso.`, 'success');
-        }
-        
-        // Instead of reloading immediately, let the user see the updated states. 
-        // We can reload after a longer delay or not reload at all (giving a seamless experience).
-        // Let's reload after 3 seconds so the user can verify the fully populated inputs first!
-        setTimeout(() => {
-          window.location.reload();
-        }, 3000);
-
-      } else {
-        setSyncStatus('error');
-        setSyncMessage(data.error || 'ID de sincronização inválido ou expirado.');
-      }
-    } catch (err) {
-      setSyncStatus('error');
-      setSyncMessage('Erro de rede: sem resposta do canal neural.');
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
   const handleTestConnection = async () => {
     setConnectionStatus('testing');
     setConnectionMessage('Verificando configuração do Google Home no servidor...');
@@ -439,7 +307,6 @@ export const SettingsModal = ({
     { id: 'interface', label: 'Interface', icon: Palette },
     { id: 'profile', label: 'Perfil', icon: UserCircle },
     { id: 'automation', label: 'Automação', icon: Cpu },
-    { id: 'sync', label: 'Sincronia', icon: RefreshCw },
   ];
 
   return (
@@ -514,7 +381,7 @@ export const SettingsModal = ({
                       <div className="space-y-1">
                         <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400 block">Aviso de Segurança & Privacidade</span>
                         <p className="text-[10px] text-her-muted/80 leading-relaxed font-light">
-                          Suas chaves de API são armazenadas estritamente de forma local no seu navegador (<code className="text-amber-300 font-mono">localStorage</code>) e enviadas via TLS/HTTPS criptografado. Para sua segurança, nunca compartilhe sua tela em transmissões públicas com as chaves abertas.
+                          Suas chaves ficam neste aparelho (<code className="text-amber-300 font-mono">localStorage</code>) e também na sua conta Google, para voltarem sozinhas quando você entrar de novo ou usar outro computador. Na nuvem elas ficam num documento que só a sua conta autenticada consegue abrir. O token do Agente Local é o único que não viaja: ele pertence a esta instalação e é gerado sozinho em cada máquina. Nunca compartilhe a tela em transmissões públicas com as chaves abertas.
                         </p>
                       </div>
                     </div>
@@ -1785,158 +1652,6 @@ export const SettingsModal = ({
                         </div>
                       )}
                     </div>
-                  </motion.div>
-                )}
-
-                {activeTab === 'sync' && (
-                  <motion.div
-                    key="sync"
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: 10 }}
-                    className="space-y-6"
-                  >
-                    <div className="p-6 bg-gradient-to-br from-[#0c0f12] to-[#080d16] border border-white/[0.05] rounded-[2rem] space-y-4 shadow-inner relative overflow-hidden">
-                      <div className="absolute top-0 right-0 w-24 h-24 bg-her-accent/5 rounded-full blur-2xl pointer-events-none select-none" />
-                      
-                      <div className="flex items-center gap-4">
-                        <div className="p-3.5 bg-her-accent/10 rounded-2xl border border-her-accent/25 shadow-[0_0_15px_rgba(var(--her-accent),0.1)]">
-                          <RefreshCw className="text-her-accent animate-spin" style={{ animationDuration: '8s' }} size={24} />
-                        </div>
-                        <div>
-                          <h3 className="text-sm font-bold text-her-ink">Link de Conexão Neural</h3>
-                          <p className="text-[10px] text-her-muted uppercase tracking-widest font-mono">Portabilidade Fina de Memória</p>
-                        </div>
-                      </div>
-                      
-                      <p className="text-xs text-her-muted leading-relaxed font-light">
-                        Vincule toda a sua experiência OSONE — incluindo <strong>chaves de API</strong>, <strong>histórico total de conversas</strong>, <strong>perfil mental</strong> de IA, <strong>memória de longo prazo</strong> e personalizações — a um único token na nuvem. Use este token em qualquer navegador ou ambiente para restabelecer suas sinapses instantaneamente.
-                      </p>
-                    </div>
-
-                    {/* SEÇÃO 1: SALVAR / ATUALIZAR CONFIGURAÇÃO NA NUVEM */}
-                    <div className="p-5 bg-white/[0.01] border border-white/[0.03] rounded-3xl space-y-4">
-                      <span className="block text-[9px] uppercase tracking-[0.2em] text-her-muted font-bold mb-1">Backup e Sincronização de Estado</span>
-                      
-                      {syncLinkId ? (
-                        <div className="bg-black/40 border border-white/5 rounded-2xl p-4 flex flex-col gap-3">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] text-her-muted font-mono">ID de Conexão Ativo:</span>
-                            <span className="text-[9px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full font-mono uppercase">Vinculado</span>
-                          </div>
-                          
-                          <div className="flex items-center gap-2">
-                            <div className="flex-1 bg-black border border-white/10 px-4 py-3 rounded-xl font-mono text-xs text-center select-all text-white font-bold uppercase tracking-wider">
-                              {syncLinkId}
-                            </div>
-                            <button
-                              onClick={() => {
-                                navigator.clipboard.writeText(syncLinkId);
-                                setIsCopied(true);
-                                if (onAddNotification) onAddNotification("ID de Conexão copiado!", "success");
-                                setTimeout(() => setIsCopied(false), 2000);
-                              }}
-                              className="p-3.5 bg-white/[0.03] hover:bg-white/[0.08] border border-white/10 rounded-xl text-her-ink transition active:scale-95 flex items-center justify-center shrink-0"
-                              title="Copiar ID de Conexão"
-                            >
-                              {isCopied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} className="text-her-accent" />}
-                            </button>
-                          </div>
-                          
-                          <p className="text-[9.5px] text-her-muted/40 italic text-center">
-                            Compartilhe ou guarde este ID para carregar toda a sua experiência instantaneamente em outro computador ou navegador.
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="p-4 bg-white/[0.01] rounded-2xl border border-dashed border-white/10 text-center space-y-1">
-                          <p className="text-xs text-her-muted font-light">Nenhum ID de sincronização ativo neste navegador.</p>
-                          <p className="text-[10px] text-her-muted/60 font-mono">Crie um canal de Conexão único ao salvar seu estado atual.</p>
-                        </div>
-                      )}
-
-                      <button
-                        onClick={() => handleBackupToCloud()}
-                        disabled={isSyncing}
-                        className={cn(
-                          "w-full py-3.5 rounded-2xl text-[10px] uppercase tracking-[0.2em] font-bold transition-all flex items-center justify-center gap-2 cursor-pointer",
-                          isSyncing ? "bg-white/5 text-her-muted cursor-wait" : "bg-her-accent hover:bg-her-accent/80 text-white shadow-lg shadow-her-accent/10 active:scale-[0.98]"
-                        )}
-                      >
-                        {isSyncing ? (
-                          <>
-                            <Loader2 size={13} className="animate-spin" />
-                            Sincronizando Estado...
-                          </>
-                        ) : (
-                          <>
-                            <RefreshCw size={13} />
-                            {syncLinkId ? 'Sincronizar Atualizações na Nuvem' : 'Gerar ID e Salvar na Nuvem'}
-                          </>
-                        )}
-                      </button>
-                    </div>
-
-                    {/* SEÇÃO 2: IMPORTAR / RESTAURAR ID DA NUVEM */}
-                    <div className="p-5 bg-white/[0.01] border border-white/[0.03] rounded-3xl space-y-4">
-                      <span className="block text-[9px] uppercase tracking-[0.2em] text-her-muted font-bold">Resgatar Conexão Existente</span>
-                      <p className="text-[11px] text-her-muted/70 leading-relaxed font-light">
-                        Mudou de navegador ou dispositivo comercial? Cole seu ID de Conexão Neural existente para reviver todas as suas mensagens e chaves.
-                      </p>
-
-                      <div className="space-y-2">
-                        <input 
-                          type="text"
-                          value={inputId}
-                          onChange={(e) => setInputId(e.target.value)}
-                          className="w-full bg-black/40 border border-white/10 rounded-2xl px-5 py-3.5 font-mono text-sm uppercase tracking-wide focus:outline-none focus:border-her-accent/30 transition-all text-center text-white placeholder:text-her-muted/30"
-                          placeholder="EX: OSONE-ABCD-EFGH"
-                        />
-                      </div>
-
-                      <button
-                        onClick={() => handleRestoreFromCloud(inputId)}
-                        disabled={isSyncing || !inputId.trim()}
-                        className={cn(
-                          "w-full py-3.5 rounded-2xl text-[10px] uppercase tracking-[0.2em] font-bold transition-all flex items-center justify-center gap-2 cursor-pointer",
-                          (isSyncing || !inputId.trim()) 
-                            ? "bg-white/5 text-her-muted/40 cursor-not-allowed" 
-                            : "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/25 active:scale-[0.98]"
-                        )}
-                      >
-                        {isSyncing ? (
-                          <>
-                            <Loader2 size={13} className="animate-spin text-emerald-400" />
-                            Injetando Dados...
-                          </>
-                        ) : (
-                          <>
-                            <Power size={13} />
-                            Desestruturar ID e Reiniciar Sessão
-                          </>
-                        )}
-                      </button>
-                    </div>
-
-                    {/* NOTIFICAÇÃO INTERNA DE STATUS */}
-                    {syncStatus !== 'idle' && (
-                      <div className={cn(
-                        "p-4 rounded-2xl text-xs leading-relaxed font-light flex items-start gap-3 border animate-in fade-in slide-in-from-top-2 duration-200",
-                        syncStatus === 'success' ? "bg-emerald-500/5 text-emerald-300/90 border-emerald-500/10" :
-                        "bg-red-500/5 text-red-300/95 border-red-500/10"
-                      )}>
-                        {syncStatus === 'success' ? (
-                          <CheckCircle2 size={14} className="shrink-0 mt-0.5 text-emerald-400" />
-                        ) : (
-                          <AlertCircle size={14} className="shrink-0 mt-0.5 text-red-400" />
-                        )}
-                        <div className="space-y-1">
-                          <p className="font-medium text-[11px] uppercase tracking-wider">
-                            {syncStatus === 'success' ? 'Operação Concluída' : 'Erro de Registro'}
-                          </p>
-                          <p className="font-sans text-[11px] opacity-80">{syncMessage}</p>
-                        </div>
-                      </div>
-                    )}
                   </motion.div>
                 )}
               </AnimatePresence>

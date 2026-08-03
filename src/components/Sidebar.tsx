@@ -1,31 +1,150 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Volume2, FileText, Code2, Folder, Music, Gamepad2, Zap, Activity, LogOut, User, Cpu, Puzzle, MessageSquare, Sliders, Compass, Database, Video, Radio, Eye, Heart, BookOpen, Settings } from 'lucide-react';
+import {
+  X, Volume2, FileText, Code2, Music, Gamepad2, Zap, Activity, LogOut, MessageSquare,
+  Compass, Database, Video, Radio, Eye, Heart, BookOpen, Settings, type LucideIcon
+} from 'lucide-react';
 import { cn } from '../lib/utils';
 import { WorkspaceMode } from '../types';
 
-export const Sidebar = ({ isOpen, onClose, mode, setMode, user, onLogout, onLogin, onOpenProfileModal, onOpenSettings }: { 
-  isOpen: boolean; 
+/**
+ * Uma entrada do menu.
+ *
+ * A barra era quinze blocos de JSX praticamente idênticos, cada um com sua cor escrita à mão. Em
+ * lista, a ORDEM vira um dado que se lê de uma vez — e reordenar deixa de significar mover
+ * dezenas de linhas de marcação, que é o tipo de mudança em que um item se perde pelo caminho.
+ */
+interface ItemDoMenu {
+  rotulo: string;
+  icone: LucideIcon;
+  /** Aba de destino. Ausente nos itens que abrem um painel em vez de trocar de aba. */
+  modo?: WorkspaceMode;
+  /** Outros modos que também deixam este item aceso (a aba de Smart Home tem dois). */
+  tambemEm?: WorkspaceMode[];
+  /** Classes do estado ativo. Sem isto, todos os itens acendem na cor padrão do sistema. */
+  ativo?: string;
+  corDoIcone?: string;
+  pulsa?: boolean;
+}
+
+interface GrupoDoMenu {
+  titulo: string;
+  itens: ItemDoMenu[];
+}
+
+const ATIVO_PADRAO = "bg-her-accent/10 text-her-accent border border-her-accent/20";
+
+/**
+ * O menu em ordem de importância, e não de idade.
+ *
+ * A ordem anterior era a de quem foi construído primeiro: "Biblioteca" de sons aparecia em
+ * segundo, logo abaixo de Início, enquanto o WhatsApp, a automação da casa e o controle do
+ * computador — o que o OSONE faz o dia inteiro — ficavam no meio e no fim de uma lista de treze.
+ * Configurações ficava enfiado entre duas abas de trabalho.
+ *
+ * Aqui o primeiro grupo é o que se usa todo dia, o segundo é criação, o terceiro é a memória do
+ * sistema, e o último junta o que se abre de vez em quando.
+ */
+const GRUPOS: GrupoDoMenu[] = [
+  {
+    titulo: 'Principal',
+    itens: [
+      { rotulo: 'Início', icone: Volume2, modo: 'home' },
+      {
+        rotulo: 'OSONE ZAP', icone: MessageSquare, modo: 'whatsapp',
+        ativo: "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+      },
+      {
+        rotulo: 'Automação & Smart Home', icone: Zap, modo: 'smarthome', tambemEm: ['local_control'],
+        ativo: "bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.15)]",
+        corDoIcone: "text-cyan-400", pulsa: true
+      },
+      {
+        rotulo: 'Controle por Visão', icone: Eye, modo: 'vision_control',
+        ativo: "bg-teal-500/10 text-teal-300 border border-teal-500/25 shadow-[0_0_15px_rgba(20,184,166,0.15)]",
+        corDoIcone: "text-teal-400"
+      }
+    ]
+  },
+  {
+    titulo: 'Criação',
+    itens: [
+      {
+        rotulo: 'Criador Viral', icone: Video, modo: 'creator',
+        ativo: "bg-orange-500/10 text-orange-400 border border-orange-500/20 shadow-[0_0_15px_rgba(249,115,22,0.15)]",
+        corDoIcone: "text-orange-400"
+      },
+      { rotulo: 'Escrita', icone: FileText, modo: 'writing' },
+      {
+        rotulo: 'OSONE CODE', icone: Code2, modo: 'code',
+        ativo: "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.12)]",
+        corDoIcone: "text-cyan-400"
+      },
+      {
+        rotulo: 'TikTok Live Co-piloto', icone: Radio, modo: 'tiktok',
+        ativo: "bg-rose-500/10 text-rose-400 border border-rose-500/20 shadow-[0_0_15px_rgba(244,63,94,0.15)]",
+        corDoIcone: "text-rose-400"
+      }
+    ]
+  },
+  {
+    titulo: 'Memória',
+    itens: [
+      {
+        rotulo: 'Cérebro Sensus ("Her")', icone: Heart, modo: 'sensus_evolution',
+        ativo: "bg-amber-500/10 text-amber-400 border border-amber-500/25 shadow-[0_0_15px_rgba(245,158,11,0.15)]",
+        corDoIcone: "text-amber-500", pulsa: true
+      },
+      {
+        rotulo: 'Livro de Memórias', icone: BookOpen, modo: 'memory_book',
+        ativo: "bg-pink-500/10 text-pink-300 border border-pink-500/25 shadow-[0_0_15px_rgba(244,63,94,0.15)]",
+        corDoIcone: "text-pink-400"
+      },
+      {
+        rotulo: 'RAG • Conector PC', icone: Database, modo: 'rag',
+        ativo: "bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.15)]",
+        corDoIcone: "text-cyan-400"
+      }
+    ]
+  },
+  {
+    titulo: 'Mais',
+    itens: [
+      { rotulo: 'Saúde & Estilo', icone: Activity, modo: 'wellness' },
+      { rotulo: 'Biblioteca de Sons', icone: Music, modo: 'sounds' },
+      { rotulo: 'Interativo', icone: Gamepad2, modo: 'canvas' },
+      {
+        rotulo: 'Mapa OS', icone: Compass, modo: 'map',
+        ativo: "bg-purple-500/10 text-purple-300 border border-purple-500/20 shadow-[0_0_15px_rgba(168,85,247,0.15)]",
+        corDoIcone: "text-purple-400"
+      }
+    ]
+  }
+];
+
+const CLASSE_DO_BOTAO = "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm";
+
+export const Sidebar = ({ isOpen, onClose, mode, setMode, user, onLogout, onOpenProfileModal, onOpenSettings }: {
+  isOpen: boolean;
   onClose: () => void;
   mode: WorkspaceMode;
   setMode: (mode: WorkspaceMode) => void;
   user?: any;
   onLogout?: () => void;
-  onLogin?: () => void;
   onOpenProfileModal?: () => void;
   onOpenSettings?: () => void;
 }) => (
   <AnimatePresence>
     {isOpen && (
       <>
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onClick={onClose}
           className="fixed inset-0 z-40 bg-black/10 backdrop-blur-[2px]"
         />
-        <motion.div 
+        <motion.div
           initial={{ x: -300 }}
           animate={{ x: 0 }}
           exit={{ x: -300 }}
@@ -40,189 +159,45 @@ export const Sidebar = ({ isOpen, onClose, mode, setMode, user, onLogout, onLogi
           </div>
 
           <div className="space-y-10 flex-1 overflow-y-auto pr-2 custom-scrollbar">
-            <div>
-              <h3 className="text-[9px] uppercase tracking-[0.3em] text-her-muted mb-6 font-light">Navegação</h3>
-              <div className="space-y-3">
-                <button 
-                  onClick={() => { setMode('home'); onClose(); }}
-                  className={cn(
-                    "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm",
-                    mode === 'home' ? "bg-her-accent/10 text-her-accent border border-her-accent/20" : "hover:bg-white/[0.02] text-her-ink/60"
-                  )}
-                >
-                  <Volume2 size={18} />
-                  <span>Início</span>
-                </button>
-                <button 
-                  onClick={() => { setMode('sounds'); onClose(); }}
-                  className={cn(
-                    "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm",
-                    mode === 'sounds' ? "bg-her-accent/10 text-her-accent border border-her-accent/20" : "hover:bg-white/[0.02] text-her-ink/60"
-                  )}
-                >
-                  <Music size={18} />
-                  <span>Biblioteca</span>
-                </button>
+            {GRUPOS.map(grupo => (
+              <div key={grupo.titulo}>
+                <h3 className="text-[9px] uppercase tracking-[0.3em] text-her-muted mb-6 font-light">{grupo.titulo}</h3>
+                <div className="space-y-3">
+                  {grupo.itens.map(item => {
+                    const Icone = item.icone;
+                    const estaAtivo = item.modo === mode || (item.tambemEm || []).includes(mode);
+                    return (
+                      <button
+                        key={item.rotulo}
+                        onClick={() => { if (item.modo) setMode(item.modo); onClose(); }}
+                        className={cn(
+                          CLASSE_DO_BOTAO,
+                          estaAtivo ? (item.ativo || ATIVO_PADRAO) : "hover:bg-white/[0.02] text-her-ink/60"
+                        )}
+                      >
+                        <Icone size={18} className={cn(item.corDoIcone, item.pulsa && "animate-pulse")} />
+                        <span>{item.rotulo}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-
-            <div>
-              <h3 className="text-[9px] uppercase tracking-[0.3em] text-her-muted mb-6 font-light">Workspace</h3>
-              <div className="space-y-3">
-                <button 
-                  onClick={() => { setMode('writing'); onClose(); }}
-                  className={cn(
-                    "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm",
-                    mode === 'writing' ? "bg-her-accent/10 text-her-accent border border-her-accent/20" : "hover:bg-white/[0.02] text-her-ink/60"
-                  )}
-                >
-                  <FileText size={18} />
-                  <span>Escrita</span>
-                </button>
-
-                <button 
-                  onClick={() => { setMode('code'); onClose(); }}
-                  className={cn(
-                    "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm",
-                    mode === 'code' ? "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.12)]" : "hover:bg-white/[0.02] text-her-ink/60"
-                  )}
-                >
-                  <Code2 size={18} className="text-cyan-400" />
-                  <span>OSONE CODE</span>
-                </button>
-
-                <button 
-                  onClick={() => { setMode('wellness'); onClose(); }}
-                  className={cn(
-                    "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm",
-                    mode === 'wellness' ? "bg-her-accent/10 text-her-accent border border-her-accent/20" : "hover:bg-white/[0.02] text-her-ink/60"
-                  )}
-                >
-                  <Activity size={18} />
-                  <span>Saúde & Estilo</span>
-                </button>
-                <button 
-                  onClick={() => { setMode('canvas'); onClose(); }}
-                  className={cn(
-                    "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm",
-                    mode === 'canvas' ? "bg-her-accent/10 text-her-accent border border-her-accent/20" : "hover:bg-white/[0.02] text-her-ink/60"
-                  )}
-                >
-                  <Gamepad2 size={18} />
-                  <span>Interativo</span>
-                </button>
-                <button 
-                  onClick={() => { setMode('map'); onClose(); }}
-                  className={cn(
-                    "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm",
-                    mode === 'map' ? "bg-purple-500/10 text-purple-300 border border-purple-500/20 shadow-[0_0_15px_rgba(168,85,247,0.15)]" : "hover:bg-white/[0.02] text-her-ink/60"
-                  )}
-                >
-                  <Compass size={18} className="text-purple-400" />
-                  <span>Mapa OS</span>
-                </button>
-                <button 
-                  onClick={() => { if (onOpenSettings) onOpenSettings(); onClose(); }}
-                  className="w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm hover:bg-white/[0.02] text-her-ink/60 cursor-pointer"
-                >
-                  <Settings size={18} className="text-her-accent" />
-                  <span>Configurações ⚙️</span>
-                </button>
-
-                <button 
-                  onClick={() => { setMode('smarthome'); onClose(); }}
-                  className={cn(
-                    "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm",
-                    mode === 'smarthome' || mode === 'local_control' ? "bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.15)]" : "hover:bg-white/[0.02] text-her-ink/60"
-                  )}
-                >
-                  <Zap size={18} className="text-cyan-400 animate-pulse" />
-                  <span>Automação & Smart Home</span>
-                </button>
-
-                <button 
-                  onClick={() => { setMode('whatsapp'); onClose(); }}
-                  className={cn(
-                    "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm",
-                    mode === 'whatsapp' ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "hover:bg-white/[0.02] text-her-ink/60"
-                  )}
-                >
-                  <MessageSquare size={18} />
-                  <span>OSONE ZAP</span>
-                </button>
-
-                <button 
-                  onClick={() => { setMode('rag'); onClose(); }}
-                  className={cn(
-                    "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm",
-                    mode === 'rag' ? "bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.15)]" : "hover:bg-white/[0.02] text-her-ink/60"
-                  )}
-                >
-                  <Database size={18} className="text-cyan-400" />
-                  <span>RAG • Conector PC</span>
-                </button>
-
-                <button 
-                  onClick={() => { setMode('creator'); onClose(); }}
-                  className={cn(
-                    "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm",
-                    mode === 'creator' ? "bg-orange-500/10 text-orange-400 border border-orange-500/20 shadow-[0_0_15px_rgba(249,115,22,0.15)]" : "hover:bg-white/[0.02] text-her-ink/60"
-                  )}
-                >
-                  <Video size={18} className="text-orange-400" />
-                  <span>Criador Viral</span>
-                </button>
-
-                <button 
-                  onClick={() => { setMode('tiktok'); onClose(); }}
-                  className={cn(
-                    "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm",
-                    mode === 'tiktok' ? "bg-rose-500/10 text-rose-400 border border-rose-500/20 shadow-[0_0_15px_rgba(244,63,94,0.15)]" : "hover:bg-white/[0.02] text-her-ink/60"
-                  )}
-                >
-                  <Radio size={18} className="text-rose-400 scale-105" />
-                  <span>TikTok Live Co-piloto</span>
-                </button>
-
-                <button 
-                  onClick={() => { setMode('sensus_evolution'); onClose(); }}
-                  className={cn(
-                    "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm",
-                    mode === 'sensus_evolution' ? "bg-amber-500/10 text-amber-400 border border-amber-500/25 shadow-[0_0_15px_rgba(245,158,11,0.15)]" : "hover:bg-white/[0.02] text-her-ink/60"
-                  )}
-                >
-                  <Heart size={18} className="text-amber-500 animate-pulse" />
-                  <span>Cérebro Sensus ("Her")</span>
-                </button>
-
-                <button 
-                  onClick={() => { setMode('memory_book'); onClose(); }}
-                  className={cn(
-                    "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm",
-                    mode === 'memory_book' ? "bg-pink-500/10 text-pink-300 border border-pink-500/25 shadow-[0_0_15px_rgba(244,63,94,0.15)]" : "hover:bg-white/[0.02] text-her-ink/60"
-                  )}
-                >
-                  <BookOpen size={18} className="text-pink-400" />
-                  <span>Livro de Memórias</span>
-                </button>
-
-                <button
-                  onClick={() => { setMode('vision_control'); onClose(); }}
-                  className={cn(
-                    "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm",
-                    mode === 'vision_control' ? "bg-teal-500/10 text-teal-300 border border-teal-500/25 shadow-[0_0_15px_rgba(20,184,166,0.15)]" : "hover:bg-white/[0.02] text-her-ink/60"
-                  )}
-                >
-                  <Eye size={18} className="text-teal-400" />
-                  <span>Controle por Visão</span>
-                </button>
-              </div>
-            </div>
+            ))}
           </div>
 
+          {/* Configurações fica junto do perfil, e não no meio das abas de trabalho: é ajuste do
+              sistema, não um lugar para onde se vai trabalhar. */}
           <div className="mt-auto pt-6 border-t border-white/[0.03]">
-            {user ? (
-              <div 
+            <button
+              onClick={() => { if (onOpenSettings) onOpenSettings(); onClose(); }}
+              className={cn(CLASSE_DO_BOTAO, "mb-3 hover:bg-white/[0.02] text-her-ink/60 cursor-pointer")}
+            >
+              <Settings size={18} className="text-her-accent" />
+              <span>Configurações</span>
+            </button>
+
+            {user && (
+              <div
                 onClick={onOpenProfileModal}
                 className="mb-4 p-4 rounded-3xl bg-cyan-500/[0.01] hover:bg-cyan-500/[0.04] border border-cyan-500/10 hover:border-cyan-500/25 flex items-center justify-between gap-3 cursor-pointer transition-all min-w-0"
               >
@@ -237,15 +212,11 @@ export const Sidebar = ({ isOpen, onClose, mode, setMode, user, onLogout, onLogi
                   <div className="min-w-0">
                     <p className="text-[11px] font-bold text-her-ink/80 truncate leading-tight">{user.displayName}</p>
                     <p className="text-[8px] text-zinc-400 truncate mt-0.5">{user.email}</p>
-                    {user.isLocal ? (
-                      <p className="text-[7px] text-cyan-400 mt-1 uppercase tracking-wider font-semibold">Cérebro Local</p>
-                    ) : (
-                      <p className="text-[7px] text-emerald-400 mt-1 uppercase tracking-wider font-semibold">Firebase Secure</p>
-                    )}
+                    <p className="text-[7px] text-emerald-400 mt-1 uppercase tracking-wider font-semibold">Firebase Secure</p>
                   </div>
                 </div>
                 {onLogout && (
-                  <button 
+                  <button
                     onClick={(e) => { e.stopPropagation(); onLogout(); }}
                     className="p-1.5 hover:bg-rose-500/10 rounded-lg text-rose-400 hover:text-rose-300 transition-all cursor-pointer"
                     title="Desconectar"
@@ -254,31 +225,7 @@ export const Sidebar = ({ isOpen, onClose, mode, setMode, user, onLogout, onLogi
                   </button>
                 )}
               </div>
-            ) : (
-              <div 
-                onClick={onOpenProfileModal}
-                className="mb-4 p-4 rounded-3xl bg-zinc-500/[0.02] hover:bg-white/[0.02] border border-zinc-500/10 flex items-center justify-between gap-3 text-left cursor-pointer transition-all"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-zinc-400 font-bold text-xs select-none">
-                    ?
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-bold text-her-ink/65 truncate leading-tight uppercase tracking-wider">Modo Visitante</p>
-                    <p className="text-[8px] text-zinc-500 mt-0.5 uppercase tracking-wide">Sem Identidade</p>
-                  </div>
-                </div>
-                {onOpenProfileModal && (
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); onOpenProfileModal(); }}
-                    className="py-1 px-2.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all border border-cyan-500/25 cursor-pointer"
-                  >
-                    Entrar
-                  </button>
-                )}
-              </div>
             )}
-
           </div>
         </motion.div>
       </>
