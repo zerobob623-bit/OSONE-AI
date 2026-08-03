@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { Loader2, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { Loader2, AlertTriangle, ShieldCheck, ExternalLink } from 'lucide-react';
 
 /**
  * A porta do OSONE: sem conta Google, o app não abre.
@@ -29,6 +29,34 @@ export const TelaDeEntrada = ({
 }) => {
   const semConfiguracao = configFaltando.length > 0;
   const endereco = typeof window !== 'undefined' ? window.location.origin : '';
+
+  /**
+   * O que a janela do Google fez, contado pelo processo do app instalado.
+   *
+   * O Firebase responde "popup fechado pelo usuário" tanto quando a pessoa desistiu quanto quando
+   * o Google recusou a janela — o mesmo código para causas opostas, e é por isso que a primeira
+   * suspeita virou correção sem prova. Aqui aparece o endereço onde a janela realmente parou.
+   */
+  const [rastroDoLogin, setRastroDoLogin] = useState<Array<{ oQue: string; url: string }>>([]);
+  useEffect(() => {
+    if (!erro) return;
+    let cancelado = false;
+    fetch('/api/login/diagnostico')
+      .then(r => r.json())
+      .then(d => { if (!cancelado && Array.isArray(d?.eventos)) setRastroDoLogin(d.eventos.slice(0, 5)); })
+      .catch(() => { /* fora do app instalado não há o que contar */ });
+    return () => { cancelado = true; };
+  }, [erro]);
+
+  /**
+   * Sai para o navegador do sistema, na MESMA página.
+   *
+   * O servidor do OSONE já está no ar nesse endereço; o que muda é só a janela que desenha a
+   * interface. Existe porque uma porta única sem saída deixa de ser decisão de produto e vira
+   * pessoa trancada do lado de fora — e no navegador comum o login do Google funciona.
+   * O Electron manda todo endereço que não é de login para o navegador padrão (ver main.js).
+   */
+  const abrirNoNavegador = () => window.open(window.location.href, '_blank');
 
   return (
     <div className="relative w-full h-[100dvh] overflow-hidden flex flex-col items-center justify-center bg-[#0d0c0b] px-6">
@@ -94,6 +122,34 @@ export const TelaDeEntrada = ({
             {/* O texto do erro é longo de propósito — ele traz a tela do Console e o valor a
                 preencher. Cortá-lo devolveria o "deu erro" que não diz nada. */}
             <p className="mt-1.5 text-[12px] leading-relaxed text-red-200/80">{erro}</p>
+
+            {rastroDoLogin.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-red-500/15">
+                <span className="text-[9px] uppercase tracking-widest text-red-300/60">O que a janela do Google fez</span>
+                <ul className="mt-1.5 space-y-1">
+                  {rastroDoLogin.map((e, i) => (
+                    <li key={i} className="text-[10px] font-mono text-red-200/60 break-all leading-snug">
+                      {e.oQue}{e.url ? ` — ${e.url}` : ''}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={abrirNoNavegador}
+              className="mt-3 w-full py-2.5 rounded-xl border border-white/15 hover:border-white/30
+                         bg-white/[0.03] hover:bg-white/[0.07] text-neutral-200 text-[12px] font-medium
+                         flex items-center justify-center gap-2 transition-all"
+            >
+              <ExternalLink size={13} />
+              Abrir o OSONE no navegador
+            </button>
+            <p className="mt-1.5 text-[10px] leading-relaxed text-neutral-500">
+              É o mesmo OSONE, no mesmo endereço e com os mesmos dados — só desenhado pelo seu
+              navegador, onde o login do Google costuma passar.
+            </p>
           </motion.div>
         )}
 
