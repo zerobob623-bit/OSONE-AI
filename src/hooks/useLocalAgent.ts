@@ -396,6 +396,86 @@ export function useLocalAgent() {
             return post('/keyboard/key', { key: String(args.tecla), modifiers: modificadores });
           }
           case 'achar_texto': {
+            /**
+             * Antes do OCR, procura o elemento na PRÓPRIA PÁGINA do OSONE.
+             *
+             * Quando o alvo é um botão do próprio OSONE, o navegador já sabe onde ele está com
+             * precisão absoluta — não há nada a reconhecer nem a estimar. Isso resolve o caso que
+             * nenhum dos outros caminhos alcançava: botões que são só ÍCONE, sem texto visível,
+             * como os da barra inferior. O OCR não tem o que ler neles, e a estimativa erra; mas
+             * eles têm um rótulo acessível (title) que o navegador enxerga.
+             *
+             * As coordenadas da página são convertidas para coordenadas de TELA somando a posição
+             * da janela e a altura da barra do navegador, e multiplicando pela densidade de
+             * pixels — é essa conversão que alinha o que a página conhece com o que o mouse usa.
+             */
+            const acharNaPagina = (alvo: string) => {
+              try {
+                const norm = (t: string) => t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+                const b = norm(alvo);
+                if (!b) return null;
+
+                const candidatos = Array.from(
+                  document.querySelectorAll<HTMLElement>('button, a, [role="button"], [title], [aria-label], input, summary')
+                );
+                const casam = candidatos.filter(el => {
+                  const r = el.getBoundingClientRect();
+                  if (r.width < 6 || r.height < 6) return false;
+                  if (r.bottom < 0 || r.right < 0 || r.top > window.innerHeight || r.left > window.innerWidth) return false;
+                  const st = window.getComputedStyle(el);
+                  if (st.visibility === 'hidden' || st.display === 'none' || Number(st.opacity) < 0.05) return false;
+                  const rotulos = [el.getAttribute('title'), el.getAttribute('aria-label'), el.textContent]
+                    .filter(Boolean).map(t => norm(String(t)));
+                  return rotulos.some(r2 => r2 === b || (b.length >= 3 && r2.includes(b)));
+                });
+                if (casam.length === 0) return null;
+
+                // O menor elemento que casa é o mais específico: evita acertar o contêiner que
+                // apenas CONTÉM o botão em vez do botão em si.
+                casam.sort((a, b2) => {
+                  const ra = a.getBoundingClientRect(), rb = b2.getBoundingClientRect();
+                  return (ra.width * ra.height) - (rb.width * rb.height);
+                });
+
+                const dpr = window.devicePixelRatio || 1;
+                const alturaDoCromo = Math.max(0, window.outerHeight - window.innerHeight);
+                return casam.slice(0, 5).map(el => {
+                  const r = el.getBoundingClientRect();
+                  const px = Math.round((window.screenX + r.left + r.width / 2) * dpr);
+                  const py = Math.round((window.screenY + alturaDoCromo + r.top + r.height / 2) * dpr);
+                  return {
+                    rotulo: (el.getAttribute('title') || el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 60),
+                    pixel: { x: px, y: py }
+                  };
+                });
+              } catch {
+                return null;
+              }
+            };
+
+            if (args?.texto) {
+              const naPagina = acharNaPagina(String(args.texto));
+              const tela = naPagina && naPagina.length ? await dimensoesDaTela() : null;
+              if (naPagina && naPagina.length && tela) {
+                const alvo = naPagina[0];
+                const un = {
+                  x: Math.round(alvo.pixel.x / tela.width * 1000),
+                  y: Math.round(alvo.pixel.y / tela.height * 1000)
+                };
+                ultimaCapturaRef.current = {
+                  quando: Date.now(), ampliada: true,
+                  regiao: { x0: un.x - 1, y0: un.y - 1, x1: un.x + 1, y1: un.y + 1 }
+                };
+                return {
+                  encontrado: true, origem: 'pagina', total: naPagina.length,
+                  ocorrencias: naPagina.map(o => ({ texto: o.rotulo, pixel: o.pixel })),
+                  telaPx: { width: tela.width, height: tela.height },
+                  resumo: `"${alvo.rotulo}" localizado na própria interface do OSONE: x=${un.x}, y=${un.y}`,
+                  comoUsar: `Posição EXATA de "${alvo.rotulo}", lida da própria interface (não é estimativa nem OCR). Clique em x=${un.x}, y=${un.y} sem ajustar nada.`
+                };
+              }
+            }
+
             // Caminho preferido para clicar: em vez de estimar coordenadas olhando a tela, o
             // elemento é localizado pelo texto e o centro dele é uma MEDIÇÃO. Marca a última
             // captura como válida e ampliada porque a posição devolvida é exata — exigir uma
