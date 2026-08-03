@@ -3400,8 +3400,9 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
       const explicacao = explicarErroDeLogin(err);
       setErroDeEntrada(
         explicacao ||
-        'A janela do Google foi fechada antes de concluir. Se ela mostrou "este navegador ou app pode não ser seguro", ' +
-        'feche o OSONE por completo e abra de novo — a versão nova do app se identifica ao Google como um navegador comum.'
+        'A janela do Google terminou sem devolver a conta. O Firebase usa o mesmo código ' +
+        `(${err?.code || 'sem código'}) tanto para "você fechou a janela" quanto para "o Google recusou a janela", ` +
+        'então o rastro abaixo é o que separa um caso do outro.'
       );
       if (explicacao) addNotification(explicacao, "error");
     } finally {
