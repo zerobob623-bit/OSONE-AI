@@ -1828,6 +1828,111 @@ async function ampliarRegiao(
   return { x0: u0, y0: v0, x1: u1, y1: v1 };
 }
 
+/**
+ * POST /screen/find-text — acha na tela um elemento pelo TEXTO visível e devolve o centro dele.
+ *
+ * Existe porque estimar coordenadas olhando uma imagem é o elo fraco de toda a cadeia, e isso
+ * ficou medido: em três tentativas seguidas o erro em Y foi constante (-45px nas três) enquanto o
+ * erro em X variou ao acaso. Erro de leitura seria aleatório nos dois eixos; um desvio fixo num
+ * eixo só revela que a imagem não estava sendo lida — a coordenada vinha de uma crença anterior.
+ * Nenhuma melhoria na régua, na grade ou na ampliação corrige isso, porque todas dependem de o
+ * modelo escolher olhar.
+ *
+ * Aqui não há estimativa: o texto é localizado por OCR e o centro da palavra é uma medição. Para
+ * botão, menu ou link — que quase sempre têm texto — o clique deixa de ser um palpite.
+ *
+ * Depende do tesseract instalado. Quando falta, a resposta diz exatamente isso e como instalar,
+ * em vez de devolver uma coordenada inventada: um erro claro é melhor que um acerto por sorte.
+ */
+const handleFindText = async (req: Request, res: Response) => {
+  const alvo = String(req.body?.texto || '').trim();
+  if (!alvo) return res.status(400).json({ error: "Informe 'texto' com o rótulo visível do elemento (ex: 'Instalar')." });
+
+  const base = path.join(os.tmpdir(), `osone-ocr-${crypto.randomBytes(6).toString('hex')}`);
+  const png = `${base}.png`;
+  try {
+    if (process.platform === 'linux') {
+      await runShell(`import -window root -silent "${png}"`, 15000);
+    } else if (process.platform === 'win32') {
+      const p = png.replace(/'/g, "''");
+      const script = `Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen; $bmp = New-Object System.Drawing.Bitmap($vs.Width, $vs.Height); $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($vs.X, $vs.Y, 0, 0, $bmp.Size); $bmp.Save('${p}', [System.Drawing.Imaging.ImageFormat]::Png); $g.Dispose(); $bmp.Dispose();`;
+      await runShell(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`, 15000);
+    } else {
+      return res.status(501).json({ error: `Busca por texto ainda não suportada em '${process.platform}'.` });
+    }
+
+    // TSV traz uma linha por palavra, com caixa delimitadora e confiança — é o que permite
+    // devolver o CENTRO exato em vez de só dizer que o texto existe.
+    let tsv = '';
+    try {
+      const r = await execFileShellSafe('tesseract', [png, 'stdout', '-l', 'por+eng', '--psm', '11', 'tsv'], 30000);
+      tsv = r.stdout;
+    } catch (err: any) {
+      return res.status(500).json({
+        error: "O reconhecimento de texto (tesseract) não está instalado nesta máquina, então não dá para localizar elementos pelo nome. " +
+          "No Linux: sudo apt install tesseract-ocr tesseract-ocr-por. No Windows, instale o Tesseract e garanta que ele esteja no PATH. " +
+          "Sem ele, só resta estimar coordenadas olhando a tela, que é bem menos preciso.",
+        detalhe: err?.message || String(err)
+      });
+    }
+
+    const linhas = tsv.split('\n').slice(1).map(l => l.split('\t')).filter(c => c.length >= 12);
+    const normalizar = (t: string) => t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+    const buscado = normalizar(alvo);
+
+    const achados = linhas
+      .map(c => ({
+        texto: c[11], conf: Number(c[10]),
+        left: Number(c[6]), top: Number(c[7]), width: Number(c[8]), height: Number(c[9])
+      }))
+      .filter(p => p.texto && Number.isFinite(p.left) && p.conf > 40)
+      .filter(p => {
+        const n = normalizar(p.texto);
+        return n === buscado || (buscado.length >= 3 && n.includes(buscado));
+      });
+
+    if (achados.length === 0) {
+      const visiveis = linhas.map(c => c[11]).filter(t => t && t.trim().length > 1).slice(0, 60);
+      return res.status(404).json({
+        error: `Não encontrei nenhum elemento escrito "${alvo}" na tela.`,
+        textosVisiveis: visiveis,
+        dica: "Confira a grafia pela lista acima, ou role a tela até o elemento aparecer."
+      });
+    }
+
+    let tela: { width: number; height: number } | null = null;
+    try {
+      const t = await obterDimensoesDaTela();
+      tela = { width: t.width, height: t.height };
+    } catch (_) { /* opcional */ }
+
+    const ocorrencias = achados.map(p => {
+      const cx = p.left + p.width / 2;
+      const cy = p.top + p.height / 2;
+      return {
+        texto: p.texto,
+        confianca: Math.round(p.conf),
+        pixel: { x: Math.round(cx), y: Math.round(cy) },
+        ...(tela ? { escala0a1000: { x: Math.round(cx / tela.width * 1000), y: Math.round(cy / tela.height * 1000) } } : {})
+      };
+    });
+
+    return res.status(200).json({
+      encontrado: true,
+      total: ocorrencias.length,
+      ocorrencias,
+      ...(tela ? { telaPx: tela } : {}),
+      comoUsar: ocorrencias.length === 1
+        ? `Posição MEDIDA (não estimada) de "${alvo}". Clique exatamente em x=${ocorrencias[0].escala0a1000?.x}, y=${ocorrencias[0].escala0a1000?.y}, sem ajustar nada.`
+        : `"${alvo}" aparece ${ocorrencias.length} vezes na tela. Escolha a ocorrência certa pela posição e clique exatamente na coordenada dela, sem ajustar.`
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: `Falha ao procurar "${alvo}" na tela: ${err?.message || err}` });
+  } finally {
+    fs.unlink(png, () => {});
+  }
+};
+
 const handleScreenCapture = async (req: Request, res: Response) => {
   const platform = process.platform;
   const tmpFile = path.join(os.tmpdir(), `osone-screenshot-${crypto.randomBytes(6).toString('hex')}.png`);
@@ -2229,6 +2334,7 @@ agentRouter.post('/mouse/scroll', handleMouseScroll);
 agentRouter.post('/keyboard/type', handleKeyboardType);
 agentRouter.post('/keyboard/key', handleKeyboardKey);
 agentRouter.get('/screen/capture', handleScreenCapture);
+agentRouter.post('/screen/find-text', handleFindText);
 
 /**
  * GET /diagnostico-mira — mostra os últimos movimentos de mouse: o que foi pedido, onde o cursor
