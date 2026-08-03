@@ -1,6 +1,13 @@
 import { useState, useRef } from 'react';
 import { PendingLocalAgentConfirmation } from '../components/LocalAgentConfirmModal';
 import { mirarNaInterface } from '../lib/mirarNaInterface';
+import { mirarPorVisao } from '../lib/mirarPorVisao';
+
+/** Chave e modelo usados quando o motor precisa OLHAR a tela para achar um alvo. */
+export interface VisaoDoMotor {
+  chaveGemini?: string;
+  modeloGemini?: string;
+}
 
 /**
  * Bridge com o Agente Local OSONE (app desktop opcional instalado pelo usuário) via /api/agent.
@@ -41,6 +48,8 @@ export function useLocalAgent() {
    */
   const motorParadoRef = useRef(false);
   const [motorParado, setMotorParado] = useState(false);
+  /** Rótulo da ação em andamento, ou null. É o que impede duas ações ao mesmo tempo. */
+  const emExecucaoRef = useRef<string | null>(null);
   /**
    * Quando a tela foi olhada pela última vez, e se foi uma ampliação.
    *
@@ -100,7 +109,7 @@ export function useLocalAgent() {
       digitar: 'Digitar', tecla: 'Pressionar tecla', capturar_tela: 'Olhar a tela',
       abrir: 'Abrir', fechar: 'Fechar', terminal: 'Rodar comando',
       criar_pasta: 'Criar pasta', escrever_arquivo: 'Escrever arquivo', listar: 'Listar',
-      achar_texto: 'Procurar na tela'
+      localizar: 'Achar na tela', achar_texto: 'Achar na tela'
     };
     return mapa[a] || a || toolName;
   };
@@ -112,18 +121,37 @@ export function useLocalAgent() {
       return args?.x !== undefined ? `x=${args.x}, y=${args.y}` : undefined;
     }
     if (a === 'capturar_tela') return args?.x !== undefined ? `ampliando em x=${args.x}, y=${args.y}` : 'tela inteira';
-    if (a === 'achar_texto') return `"${String(args?.texto || '')}"`;
+    if (a === 'localizar' || a === 'achar_texto') return `"${String(args?.alvo || args?.texto || '')}"`;
     if (a === 'digitar') return String(args?.texto || '').slice(0, 40);
     if (a === 'tecla') return String(args?.tecla || '');
     if (a === 'terminal') return String(args?.comando || '').slice(0, 60);
     return args?.caminho ? String(args.caminho).slice(0, 60) : undefined;
   };
 
-  const executeLocalAgentCall = async (toolName: string, args: any, localAgentToken?: string, isVoiceSession: boolean = false): Promise<any> => {
+  const executeLocalAgentCall = async (toolName: string, args: any, localAgentToken?: string, isVoiceSession: boolean = false, visao?: VisaoDoMotor): Promise<any> => {
     // Parada pedida pelo usuário: recusa antes de tocar na máquina dele. A mensagem vai para o
     // modelo para ele não insistir nem fingir que executou.
     if (motorParadoRef.current) {
       return { error: "O usuário PAROU o motor de ações. Não execute mais nada no computador dele e pergunte se ele quer retomar." };
+    }
+
+    /**
+     * UMA AÇÃO POR VEZ.
+     *
+     * Sem esta trava, cada frase do usuário abria uma rodada nova enquanto a anterior ainda
+     * rodava, e as ações se empilhavam sem limite — medido em uso real: cinco leituras de tela
+     * simultâneas, cada uma consumindo quase um núcleo inteiro, e a máquina inteira parando. O
+     * usuário via o efeito exato disso: "falo qualquer coisa e ele manda outra ação e outra e
+     * outra e trava".
+     *
+     * A segunda ação é RECUSADA, não enfileirada: enfileirar só adiaria a mesma pilha. A recusa
+     * volta como texto para o modelo, que assim sabe esperar em vez de insistir.
+     */
+    if (emExecucaoRef.current) {
+      return {
+        error: `Já existe uma ação em andamento no computador ("${emExecucaoRef.current}"). ` +
+          `Espere ela terminar e usar o resultado dela antes de pedir outra — não repita nem tente um caminho alternativo agora.`
+      };
     }
 
     if (toolName === 'controlar_pc') ultimaAcaoNoPcRef.current = Date.now();
@@ -156,10 +184,15 @@ export function useLocalAgent() {
       return resultado;
     };
 
-    return concluir(await executarAcao(toolName, args, localAgentToken, isVoiceSession));
+    emExecucaoRef.current = rotularAcao(toolName, args);
+    try {
+      return concluir(await executarAcao(toolName, args, localAgentToken, isVoiceSession, visao));
+    } finally {
+      emExecucaoRef.current = null;
+    }
   };
 
-  const executarAcao = async (toolName: string, args: any, localAgentToken?: string, isVoiceSession: boolean = false): Promise<any> => {
+  const executarAcao = async (toolName: string, args: any, localAgentToken?: string, isVoiceSession: boolean = false, visao?: VisaoDoMotor): Promise<any> => {
     // Sem fallback para um token fixo: cada instalação gera seu próprio token forte em
     // config.json na primeira vez que o servidor sobe (ver localAgentService.ts). Usar um
     // valor padrão aqui seria o mesmo token público em toda instalação do OSONE — quem lesse
@@ -351,8 +384,7 @@ export function useLocalAgent() {
               if (!ultima || idadeMs > JANELA_VALIDA_MS) {
                 return {
                   error: "CLIQUE RECUSADO: você não olhou a tela antes. Nunca clique de memória — a tela muda. " +
-                    "Chame 'capturar_tela' (sem x/y) para ver onde as coisas estão, depois 'capturar_tela' de novo passando x/y aproximados do alvo " +
-                    "para receber a região ampliada com grade fina, leia a coordenada exata ali e só então clique."
+                    "Chame 'localizar' com a descrição do alvo: ele olha a tela e devolve a coordenada pronta. Depois clique nela."
                 };
               }
 
@@ -362,9 +394,8 @@ export function useLocalAgent() {
 
               if (!dentroDaAmpliacao) {
                 return {
-                  error: "CLIQUE RECUSADO: falta a conferência ampliada deste ponto. " +
-                    `Chame 'capturar_tela' passando x=${Math.round(x)} e y=${Math.round(y)} — você receberá essa região ampliada com grade de 10 em 10, ` +
-                    "numerada já nas coordenadas finais. Leia ali o centro exato do alvo e clique nesse valor lido, não no estimado."
+                  error: "CLIQUE RECUSADO: esta coordenada é estimada, e estimativa erra de 44 a 510 pixels — já foi medido. " +
+                    "Chame 'localizar' descrevendo o alvo ('o botão Instalar', 'o ícone de lupa no topo à direita') e clique na coordenada que ele devolver, sem ajustar."
                 };
               }
 
@@ -431,20 +462,30 @@ export function useLocalAgent() {
             const modificadores = Array.isArray(args?.modificadores) ? args.modificadores : [];
             return post('/keyboard/key', { key: String(args.tecla), modifiers: modificadores });
           }
+          case 'localizar':
           case 'achar_texto': {
-            // Caminho preferido para clicar: em vez de estimar coordenadas olhando a tela, a
-            // posição do elemento é MEDIDA. Há duas formas de medir, e elas são tentadas nesta
-            // ordem porque a primeira é mais rápida, mais exata e funciona sem texto nenhum:
-            //
-            //   1ª) a própria interface do OSONE, que sabe onde cada botão está — inclusive os
-            //       que são só ícone, onde não há o que reconhecer;
-            //   2ª) o reconhecimento de texto na tela, que serve para qualquer programa, mas
-            //       exige rótulo escrito e custa uma leitura da tela inteira.
-            if (!args?.texto) return { error: "Informe 'texto' com o rótulo visível do elemento (ex: 'Instalar')." };
-            const procurado = String(args.texto);
+            /**
+             * ONDE ESTÁ O ALVO — a pergunta que todo clique depende de responder.
+             *
+             * São dois caminhos, e nenhum deles é uma lista de botões conhecidos:
+             *
+             *   1º) Se o alvo for um elemento da PRÓPRIA interface do OSONE, o navegador já sabe a
+             *       posição exata dele. Custa alguns milissegundos e acerta ao pixel, então seria
+             *       desperdício não perguntar antes.
+             *   2º) Qualquer outra coisa — outro programa, ícone sem texto, item de menu, miniatura
+             *       de vídeo — o modelo OLHA a captura e diz onde está. É o mesmo que uma pessoa
+             *       faz, e não depende de o alvo ter texto escrito.
+             *
+             * Antes o segundo caminho era reconhecimento de texto, que só achava o que estava
+             * escrito e custava minutos de processador. Ele foi removido.
+             */
+            const procurado = String(args?.alvo || args?.texto || '').trim();
+            if (!procurado) {
+              return { error: "Informe 'alvo' descrevendo o que você quer achar na tela (ex: 'o botão Instalar', 'o ícone de lupa no topo à direita')." };
+            }
 
-            // Marca a posição como já conferida: ela é uma medição, e exigir uma ampliação por
-            // cima de uma medição seria só atraso sem ganho.
+            // Marca a posição como já conferida: ela é uma medição, e exigir uma conferência
+            // ampliada por cima de uma medição seria só atraso sem ganho.
             const registrarMedicao = (escala0a1000?: { x: number; y: number }, pixel?: { x: number; y: number }) => {
               if (!escala0a1000) return;
               ultimaCapturaRef.current = {
@@ -473,51 +514,58 @@ export function useLocalAgent() {
                 return {
                   encontrado: true,
                   comoFoiLocalizado: 'interface do OSONE',
-                  total: 1,
-                  ocorrencias: [{
-                    texto: mira.alvo.rotulo,
-                    pixel: mira.alvo.pixel,
-                    escala0a1000: mira.alvo.escala0a1000,
-                    tamanhoPx: mira.alvo.tamanhoPx
-                  }],
+                  x: mira.alvo.escala0a1000.x,
+                  y: mira.alvo.escala0a1000.y,
                   telaPx: { width: tela.width, height: tela.height },
-                  resumo: `Localizado na própria interface: "${mira.alvo.rotulo}" (${mira.alvo.origemDoNome}) ` +
-                    `em x=${mira.alvo.escala0a1000.x}, y=${mira.alvo.escala0a1000.y} — pixel ${mira.alvo.pixel.x},${mira.alvo.pixel.y}, ` +
-                    `confirmado com ${mira.alvo.movimentos} movimento(s).`,
-                  comoUsar: `Posição MEDIDA e CONFIRMADA pelo próprio navegador: o cursor já está em cima de "${mira.alvo.rotulo}". ` +
-                    `Chame 'clicar' com exatamente x=${mira.alvo.escala0a1000.x} e y=${mira.alvo.escala0a1000.y}, sem somar nem subtrair nada.`
+                  resumo: `Localizado na própria interface: "${mira.alvo.rotulo}" em x=${mira.alvo.escala0a1000.x}, y=${mira.alvo.escala0a1000.y} ` +
+                    `(pixel ${mira.alvo.pixel.x},${mira.alvo.pixel.y}, confirmado com ${mira.alvo.movimentos} movimento(s)).`,
+                  comoUsar: `Posição MEDIDA e CONFIRMADA pelo navegador: o cursor já está sobre "${mira.alvo.rotulo}". ` +
+                    `Chame 'clicar' com exatamente x=${mira.alvo.escala0a1000.x} e y=${mira.alvo.escala0a1000.y}.`
                 };
               }
             } else {
-              porQueNaoNaInterface = 'não foi possível ler as dimensões da tela para converter a posição da interface';
+              porQueNaoNaInterface = 'não foi possível ler as dimensões da tela';
             }
 
-            const achado = await post('/screen/find-text', { texto: procurado });
-            if (achado?.error) {
-              // Os dois caminhos falharam: a resposta diz por que CADA um falhou. Antes só o
-              // segundo motivo aparecia, e uma falha de janela em segundo plano era relatada como
-              // se fosse problema de OCR — mandando procurar o defeito no lugar errado.
+            // Segundo caminho: OLHAR. Captura CRUA, sem a grade vermelha — ela é régua para leitura
+            // humana e, riscada por cima do conteúdo, só atrapalha quem vai reconhecer o que está lá.
+            const respostaCaptura = await fetch(`${LOCAL_AGENT_URL}/screen/capture?grade=0`, { method: 'GET', headers });
+            const captura = await respostaCaptura.json().catch(() => null);
+            if (!respostaCaptura.ok || !captura?.image) {
+              return { error: captura?.error || 'Não foi possível capturar a tela para procurar o alvo.' };
+            }
+            ultimaCapturaRef.current = { quando: Date.now(), ampliada: false };
+
+            const visto = await mirarPorVisao(
+              procurado,
+              captura.image,
+              captura.mimeType || 'image/png',
+              visao?.chaveGemini || '',
+              visao?.modeloGemini || 'gemini-3.6-flash'
+            );
+
+            if (!visto.encontrado || !visto.alvo) {
               return {
-                ...achado,
-                error: `${achado.error} | Na própria interface do OSONE também não deu: ${porQueNaoNaInterface}`
+                error: `Não achei "${procurado}" na tela: ${visto.motivo}`,
+                // Os dois motivos vão juntos. Antes só o último aparecia, e uma janela em segundo
+                // plano era relatada como se fosse falha de leitura — apontando para o lugar errado.
+                naInterfaceDoOsone: porQueNaoNaInterface,
+                duracaoDaVisaoMs: visto.duracaoMs
               };
             }
 
-            const c = achado?.ocorrencias?.[0];
-            // O pixel do OCR é contado a partir do canto da captura, e a captura começa na origem
-            // da tela virtual — que num monitor à esquerda do principal é negativa no Windows.
-            // Sem somar o deslocamento, o pixel "exato" apontaria para outro monitor.
-            const pixelAbsoluto = c?.pixel && tela
-              ? { x: c.pixel.x + (tela.offsetX || 0), y: c.pixel.y + (tela.offsetY || 0) }
-              : undefined;
-            registrarMedicao(c?.escala0a1000, pixelAbsoluto);
+            registrarMedicao(visto.alvo.centro);
             return {
-              ...achado,
-              comoFoiLocalizado: 'reconhecimento de texto na tela',
-              resumo: c?.escala0a1000
-                ? `Localizado por reconhecimento de texto em x=${c.escala0a1000.x}, y=${c.escala0a1000.y} ` +
-                  `(na interface do OSONE não deu: ${porQueNaoNaInterface}).`
-                : undefined
+              encontrado: true,
+              comoFoiLocalizado: 'visão do modelo sobre a captura',
+              x: visto.alvo.centro.x,
+              y: visto.alvo.centro.y,
+              caixa: visto.alvo.caixa,
+              vi: visto.alvo.descricao,
+              telaPx: tela ? { width: tela.width, height: tela.height } : undefined,
+              resumo: `Vi "${visto.alvo.descricao}" em x=${visto.alvo.centro.x}, y=${visto.alvo.centro.y} (${visto.duracaoMs}ms).`,
+              comoUsar: `Chame 'clicar' com exatamente x=${visto.alvo.centro.x} e y=${visto.alvo.centro.y}, sem somar nem subtrair nada. ` +
+                `Se depois do clique a tela não mudar como esperado, olhe de novo e corrija — nunca repita a mesma coordenada.`
             };
           }
           case 'capturar_tela': {
