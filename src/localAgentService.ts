@@ -874,10 +874,22 @@ function runShell(cmd: string, timeoutMs: number = 10000, cwd: string = USER_HOM
  * interpolado numa string de comando de shell (aspas, '$()', ';' etc. quebrariam o comando ou,
  * pior, seriam interpretados como injeção de shell).
  */
-function execFileShellSafe(bin: string, args: string[], timeoutMs: number = 10000): Promise<{ stdout: string; stderr: string }> {
+function execFileShellSafe(
+  bin: string,
+  args: string[],
+  timeoutMs: number = 10000,
+  maxBuffer: number = 1024 * 1024
+): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    execFile(bin, args, { timeout: timeoutMs, windowsHide: true }, (error, stdout, stderr) => {
-      if (error) return reject(new Error(stderr?.toString().trim() || error.message));
+    execFile(bin, args, { timeout: timeoutMs, windowsHide: true, maxBuffer }, (error: any, stdout, stderr) => {
+      if (error) {
+        // Preserva o código do erro: sem isso, "programa não existe" (ENOENT), "saída grande
+        // demais" (ENOBUFS) e "falhou de verdade" viram a mesma mensagem, e quem trata o erro
+        // acaba adivinhando a causa errada.
+        const e: any = new Error(stderr?.toString().trim() || error.message);
+        e.code = error.code;
+        return reject(e);
+      }
       resolve({ stdout: stdout?.toString() || '', stderr: stderr?.toString() || '' });
     });
   });
@@ -1865,38 +1877,108 @@ const handleFindText = async (req: Request, res: Response) => {
     // devolver o CENTRO exato em vez de só dizer que o texto existe.
     let tsv = '';
     try {
-      const r = await execFileShellSafe('tesseract', [png, 'stdout', '-l', 'por+eng', '--psm', '11', 'tsv'], 30000);
+      // maxBuffer generoso: o TSV de uma tela cheia passa fácil do padrão de 1 MB do Node, e
+      // estourar o buffer gera um erro que nada tem a ver com o tesseract faltar — foi assim que
+      // a busca passou a relatar "não instalado" numa máquina onde ele estava instalado.
+      const r = await execFileShellSafe(png ? 'tesseract' : 'tesseract',
+        [png, 'stdout', '-l', 'por+eng', '--psm', '11', 'tsv'], 40000, 64 * 1024 * 1024);
       tsv = r.stdout;
     } catch (err: any) {
+      const faltaInstalar = err?.code === 'ENOENT' || /not found|não encontrado|is not recognized/i.test(String(err?.message || ''));
+      if (faltaInstalar) {
+        return res.status(500).json({
+          error: "O reconhecimento de texto (tesseract) não está instalado nesta máquina. " +
+            "No Linux: sudo apt install tesseract-ocr tesseract-ocr-por. No Windows, instale o Tesseract e garanta que ele esteja no PATH.",
+          detalhe: err?.message || String(err)
+        });
+      }
+      // Qualquer outra falha é relatada como o que ela é. Tratar tudo como "não instalado"
+      // mandava o usuário instalar algo que já estava instalado, escondendo a causa real.
       return res.status(500).json({
-        error: "O reconhecimento de texto (tesseract) não está instalado nesta máquina, então não dá para localizar elementos pelo nome. " +
-          "No Linux: sudo apt install tesseract-ocr tesseract-ocr-por. No Windows, instale o Tesseract e garanta que ele esteja no PATH. " +
-          "Sem ele, só resta estimar coordenadas olhando a tela, que é bem menos preciso.",
-        detalhe: err?.message || String(err)
+        error: `O tesseract está instalado, mas a leitura da tela falhou: ${err?.message || err}`,
+        codigo: err?.code || null,
+        dica: err?.code === 'ENOBUFS'
+          ? "A saída passou do limite de buffer."
+          : "Se for tempo esgotado, a tela pode estar muito cheia — feche janelas e tente de novo."
       });
     }
 
-    const linhas = tsv.split('\n').slice(1).map(l => l.split('\t')).filter(c => c.length >= 12);
+    const colunas = tsv.split('\n').slice(1).map(l => l.split('\t')).filter(c => c.length >= 12);
     const normalizar = (t: string) => t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
     const buscado = normalizar(alvo);
 
-    const achados = linhas
+    interface Palavra { texto: string; conf: number; left: number; top: number; width: number; height: number; linha: string; }
+    const palavras: Palavra[] = colunas
       .map(c => ({
         texto: c[11], conf: Number(c[10]),
-        left: Number(c[6]), top: Number(c[7]), width: Number(c[8]), height: Number(c[9])
+        left: Number(c[6]), top: Number(c[7]), width: Number(c[8]), height: Number(c[9]),
+        // page|block|par|line identifica a LINHA a que a palavra pertence.
+        linha: `${c[1]}|${c[2]}|${c[3]}|${c[4]}`
       }))
-      .filter(p => p.texto && Number.isFinite(p.left) && p.conf > 40)
-      .filter(p => {
-        const n = normalizar(p.texto);
-        return n === buscado || (buscado.length >= 3 && n.includes(buscado));
-      });
+      .filter(p => p.texto && p.texto.trim() && Number.isFinite(p.left) && p.conf > 40);
+
+    /**
+     * Junta as palavras de cada linha antes de comparar.
+     *
+     * O tesseract devolve UMA palavra por registro, então um rótulo de duas palavras como
+     * "VOZ LIVRE" nunca casaria comparando registro a registro — era o motivo de a busca
+     * responder "não encontrei" com o elemento visível na tela. Agrupando por linha, o texto
+     * comparado passa a ser o rótulo inteiro, e a caixa devolvida engloba todas as palavras
+     * dele: o centro cai no meio do botão, não no meio da primeira palavra.
+     */
+    const porLinha = new Map<string, Palavra[]>();
+    for (const p of palavras) {
+      if (!porLinha.has(p.linha)) porLinha.set(p.linha, []);
+      porLinha.get(p.linha)!.push(p);
+    }
+
+    type Candidato = { texto: string; conf: number; left: number; top: number; right: number; bottom: number };
+    const candidatos: Candidato[] = [];
+
+    for (const grupo of porLinha.values()) {
+      const ordenado = [...grupo].sort((a, b) => a.left - b.left);
+      // Testa todas as sequências contíguas de palavras da linha: assim tanto "Instalar"
+      // (uma palavra) quanto "VOZ LIVRE" (duas) são encontráveis, e a menor correspondência
+      // possível é preferida por vir antes na ordem de tamanho.
+      for (let i = 0; i < ordenado.length; i++) {
+        for (let j = i; j < Math.min(ordenado.length, i + 6); j++) {
+          const trecho = ordenado.slice(i, j + 1);
+          const junto = normalizar(trecho.map(p => p.texto).join(''));
+          if (!junto) continue;
+          const casa = junto === buscado || (buscado.length >= 3 && junto.includes(buscado));
+          if (!casa) continue;
+          candidatos.push({
+            texto: trecho.map(p => p.texto).join(' '),
+            conf: Math.round(trecho.reduce((s, p) => s + p.conf, 0) / trecho.length),
+            left: Math.min(...trecho.map(p => p.left)),
+            top: Math.min(...trecho.map(p => p.top)),
+            right: Math.max(...trecho.map(p => p.left + p.width)),
+            bottom: Math.max(...trecho.map(p => p.top + p.height))
+          });
+        }
+      }
+    }
+
+    // Correspondências sobrepostas (ex: "Instalar" e "Instalar agora") são reduzidas à mais
+    // curta, que é a mais próxima do que foi pedido.
+    candidatos.sort((a, b) => (a.right - a.left) - (b.right - b.left));
+    const achados: Candidato[] = [];
+    for (const c of candidatos) {
+      const jaCoberto = achados.some(a => !(c.right < a.left || c.left > a.right || c.bottom < a.top || c.top > a.bottom));
+      if (!jaCoberto) achados.push(c);
+    }
 
     if (achados.length === 0) {
-      const visiveis = linhas.map(c => c[11]).filter(t => t && t.trim().length > 1).slice(0, 60);
+      // Mostra as linhas inteiras, não palavras soltas: é assim que o rótulo aparece na tela, e
+      // é o que permite conferir a grafia de verdade.
+      const visiveis = Array.from(porLinha.values())
+        .map(g => [...g].sort((a, b) => a.left - b.left).map(p => p.texto).join(' ').trim())
+        .filter(t => t.length > 1)
+        .slice(0, 60);
       return res.status(404).json({
         error: `Não encontrei nenhum elemento escrito "${alvo}" na tela.`,
         textosVisiveis: visiveis,
-        dica: "Confira a grafia pela lista acima, ou role a tela até o elemento aparecer."
+        dica: "Confira a grafia pela lista acima (ela mostra o que o OCR realmente leu), ou role a tela até o elemento aparecer."
       });
     }
 
@@ -1907,11 +1989,11 @@ const handleFindText = async (req: Request, res: Response) => {
     } catch (_) { /* opcional */ }
 
     const ocorrencias = achados.map(p => {
-      const cx = p.left + p.width / 2;
-      const cy = p.top + p.height / 2;
+      const cx = (p.left + p.right) / 2;
+      const cy = (p.top + p.bottom) / 2;
       return {
         texto: p.texto,
-        confianca: Math.round(p.conf),
+        confianca: p.conf,
         pixel: { x: Math.round(cx), y: Math.round(cy) },
         ...(tela ? { escala0a1000: { x: Math.round(cx / tela.width * 1000), y: Math.round(cy / tela.height * 1000) } } : {})
       };
