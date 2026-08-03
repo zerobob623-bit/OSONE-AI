@@ -118,7 +118,8 @@ import { useSensusEvolution } from './hooks/useSensusEvolution';
 import { getMemoryItem, setMemoryItem } from './lib/indexedDbMemory';
 import { generatePDF } from './lib/pdfUtils';
 import { resolveAudioUrl, deleteAudio } from './lib/audioDb';
-import { auth, googleProvider, signInWithPopup, signOut, onAuthStateChanged, db, doc, setDoc, getDoc, OperationType, handleFirestoreError } from './firebase';
+import { auth, googleProvider, signInWithPopup, signOut, onAuthStateChanged, db, doc, setDoc, getDoc, OperationType, handleFirestoreError, isFirebaseFullyConfigured, firebaseConfigFaltando, explicarErroDeLogin } from './firebase';
+import { TelaDeEntrada } from './components/TelaDeEntrada';
 
 import { WritingStudioSection } from './components/WritingStudioSection';
 import { CodeWorkspaceSection } from './components/CodeWorkspaceSection';
@@ -681,13 +682,37 @@ export default function App() {
   const [user, setUser] = useState<User | null>(() => {
     try {
       const saved = localStorage.getItem('osone_last_active_user');
-      return saved ? JSON.parse(saved) : null;
+      if (!saved) return null;
+      const salvo = JSON.parse(saved);
+      /**
+       * Perfil local deixou de ser uma forma de entrar.
+       *
+       * Quem estava com um perfil local ativo quando o app mudou continuaria "dentro" por causa
+       * deste registro, num estado que a interface não oferece mais e do qual não haveria como
+       * sair. Apagar o ponteiro devolve essa pessoa à tela de entrada; a memória do perfil em si
+       * (osone_local_profiles e as chaves osone_user_<uid>_*) fica intacta no disco.
+       */
+      if (salvo?.isLocal) {
+        localStorage.removeItem('osone_last_active_user');
+        return null;
+      }
+      return salvo;
     } catch {
       return null;
     }
   });
   const isCloudSyncReady = useRef<boolean>(false);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
+  /** O que impediu a última tentativa de entrar, já traduzido para o que fazer a respeito. */
+  const [erroDeEntrada, setErroDeEntrada] = useState<string | null>(null);
+  /**
+   * Ainda estamos perguntando ao Firebase se já existe sessão aberta.
+   *
+   * Sem isso, quem já está logado veria a tela de entrada por um instante a cada abertura do app,
+   * porque a resposta do Firebase vem do disco e demora alguns quadros. Começa ligado apenas
+   * quando há Firebase para responder — sem configuração não há o que esperar.
+   */
+  const [verificandoSessao, setVerificandoSessao] = useState(isFirebaseFullyConfigured);
 
   // Ambiente real da máquina (sistema operacional, pastas do usuário com os nomes que
   // realmente têm no disco). Descoberto uma vez e injetado no prompt, para o modelo agir
@@ -711,14 +736,6 @@ export default function App() {
    * usá-la. Fica em ref, não em estado, porque é lido dentro do intervalo que já está rodando.
    */
   const pausarEnvioDeTelaAte = useRef(0);
-  const [isGuestMode, setIsGuestMode] = useState(() => {
-    try {
-      const saved = localStorage.getItem('osone_last_active_user');
-      return !saved;
-    } catch {
-      return true;
-    }
-  });
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
@@ -3064,13 +3081,31 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
       chatHistory?: Message[];
       longTermMemory?: string;
       intimateAnswers?: { [id: number]: string };
+      apiKeys?: ApiKeys;
     }
   ) => {
     if (!targetUser) return;
     try {
       const userDocRef = doc(db, "users", targetUser.uid);
       const payload: any = { updatedAt: new Date().toISOString() };
-      
+
+      if (data.apiKeys !== undefined) {
+        /**
+         * As chaves acompanham a conta — menos o token do Agente Local.
+         *
+         * Esse token não é uma chave de serviço: é o segredo do agente que roda NAQUELA máquina,
+         * gerado no config.json de cada instalação. Levá-lo para outro computador entregaria ao
+         * segundo app o token do primeiro, e a checagem que preenche o token sozinho só age quando
+         * o campo está vazio — então o token errado ficaria lá, e todo controle de PC responderia
+         * 401 para sempre, sem nada na tela explicando por quê.
+         *
+         * Elas ficam em users/<uid>, que as regras do Firestore abrem apenas para o próprio dono
+         * autenticado (ver firestore.rules).
+         */
+        const { localAgentToken, ...chavesPortateis } = data.apiKeys;
+        payload.apiKeys = chavesPortateis;
+      }
+
       if (data.aiProfile !== undefined) payload.aiProfile = data.aiProfile;
       if (data.healthData !== undefined) payload.healthData = data.healthData;
       if (data.chatHistory !== undefined) {
@@ -3125,6 +3160,12 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
         const cloudData = userDocSnap.data();
         let loadedSomething = false;
 
+        if (cloudData.apiKeys) {
+          // O token do Agente Local vem do que já existe NESTA máquina, nunca da nuvem: ele
+          // identifica esta instalação, e não a conta. O resto das chaves volta como estava.
+          setApiKeys(prev => ({ ...prev, ...cloudData.apiKeys, localAgentToken: prev.localAgentToken || '' }));
+          loadedSomething = true;
+        }
         if (cloudData.aiProfile) {
           setAiProfile(cloudData.aiProfile);
           localStorage.setItem('osone_ai_profile', JSON.stringify(cloudData.aiProfile));
@@ -3194,7 +3235,6 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
     setUser(targetUser);
     
     if (targetUser) {
-      setIsGuestMode(false);
       localStorage.setItem('osone_last_active_user', JSON.stringify(targetUser));
       
       const userPrefix = `osone_user_${targetUser.uid}_`;
@@ -3298,7 +3338,6 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
         addNotification(`Perfil Local: Bem-vindo de volta, ${targetUser.displayName}!`, "success");
       }
     } else {
-      setIsGuestMode(true);
       localStorage.removeItem('osone_last_active_user');
       setChatHistory([
         {
@@ -3336,6 +3375,7 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   const handleLogin = async () => {
     try {
       setIsAuthLoading(true);
+      setErroDeEntrada(null);
       const result = await signInWithPopup(auth, googleProvider);
       const userObj: User = {
         uid: result.user.uid,
@@ -3347,9 +3387,21 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
       addNotification(`Bem-vindo, ${userObj.displayName}! Login realizado via Gmail.`, "success");
     } catch (err: any) {
       console.error("Erro no login com Google/Gmail:", err);
-      if (err.code !== "auth/popup-closed-by-user") {
-        addNotification(`Erro ao autenticar com Gmail: ${err.message}`, "error");
-      }
+      /**
+       * A falha vira instrução, e fica na tela.
+       *
+       * Antes ela ia como notificação passageira com a mensagem crua do Firebase, e o caso mais
+       * comum — o usuário fechar a janela do Google — era engolido em silêncio: clicar em entrar e
+       * não acontecer nada era indistinguível de um botão quebrado. Agora o motivo fica visível na
+       * própria tela de entrada, com a tela do Console e o valor a preencher quando é o caso.
+       */
+      const explicacao = explicarErroDeLogin(err);
+      setErroDeEntrada(
+        explicacao ||
+        'A janela do Google foi fechada antes de concluir. Se ela mostrou "este navegador ou app pode não ser seguro", ' +
+        'feche o OSONE por completo e abra de novo — a versão nova do app se identifica ao Google como um navegador comum.'
+      );
+      if (explicacao) addNotification(explicacao, "error");
     } finally {
       setIsAuthLoading(false);
     }
@@ -3385,23 +3437,13 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
         };
         switchUser(userObj);
       } else {
-        setUser(prev => {
-          if (prev && prev.isLocal) return prev;
-          return null;
-        });
-        setIsGuestMode(prev => {
-          const saved = localStorage.getItem('osone_last_active_user');
-          if (saved) {
-            try {
-              const u = JSON.parse(saved);
-              if (u && u.isLocal) return false;
-            } catch {}
-          }
-          return true;
-        });
+        // Sem sessão no Firebase não há usuário nenhum: o perfil local, que antes era preservado
+        // aqui, deixou de ser uma forma de entrar.
+        setUser(null);
         isCloudSyncReady.current = false;
       }
       setIsAuthLoading(false);
+      setVerificandoSessao(false);
     });
     return () => unsubscribe();
   }, []);
@@ -5972,9 +6014,24 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
     }
   }, [selectedVoice]);
 
+  /**
+   * As chaves são gravadas na máquina e, logo depois, na conta.
+   *
+   * Sem a segunda metade, sair da conta e voltar significava reconfigurar tudo à mão — e era
+   * justamente para isso que existia a aba de sincronia por código, que guardava o mesmo conteúdo
+   * num identificador de seis caracteres, sem senha, ao alcance de quem o adivinhasse. Preso à
+   * conta Google, o mesmo resultado passa a valer só para o dono.
+   *
+   * A espera de um segundo e meio existe porque este efeito dispara a cada tecla digitada num
+   * campo de chave: sem ela, escrever uma chave de 40 caracteres viraria 40 escritas na nuvem.
+   */
   useEffect(() => {
     localStorage.setItem('osone_api_keys', JSON.stringify(apiKeys));
-  }, [apiKeys]);
+
+    if (!user || !isCloudSyncReady.current) return;
+    const aguardar = setTimeout(() => { syncUserDataToCloud(user, { apiKeys }); }, 1500);
+    return () => clearTimeout(aguardar);
+  }, [apiKeys, user]);
 
   /**
    * Provisiona o token do Agente Local automaticamente, sem o usuário precisar fazer nada.
@@ -11283,9 +11340,35 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
     setReferenceImages(prev => prev.filter((_, i) => i !== index));
   };
 
+  /**
+   * PORTA DE ENTRADA — daqui não se passa sem conta Google.
+   *
+   * Fica depois de todos os hooks de propósito: sair antes deles mudaria a quantidade de hooks
+   * entre renderizações, que é justamente o que o React proíbe. Aqui embaixo, a única coisa que
+   * muda é o que vai para a tela.
+   */
+  if (verificandoSessao) {
+    return (
+      <div className="w-full h-[100dvh] flex flex-col items-center justify-center gap-3 bg-[#0d0c0b]">
+        <Loader2 className="w-5 h-5 animate-spin text-her-accent" />
+        <span className="text-[10px] tracking-[0.35em] uppercase text-neutral-600">Verificando sessão</span>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <TelaDeEntrada
+        onEntrarComGoogle={handleLogin}
+        carregando={isAuthLoading}
+        erro={erroDeEntrada}
+        configFaltando={firebaseConfigFaltando}
+      />
+    );
+  }
 
   return (
-    <motion.div 
+    <motion.div
       onPanEnd={(e, info) => {
         // Only trigger gesture when on the initial home interface
         if (workspaceMode !== 'home') return;
@@ -12669,7 +12752,6 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         setMode={setWorkspaceMode}
         user={user}
         onLogout={handleLogout}
-        onLogin={handleLogin}
         onOpenProfileModal={() => setIsProfileModalOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
       />
@@ -12712,89 +12794,6 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         onOpenIdentityDossier={() => setIsIntimateMissionOpen(true)}
         intimateAnswersCount={Object.keys(intimateAnswers).length}
         onOpenAiDossier={() => setIsAiDossierOpen(true)}
-        onRestoreState={(payload) => {
-          try {
-            const apiKeysVal = payload['osone_api_keys'];
-            if (apiKeysVal) setApiKeys(JSON.parse(apiKeysVal));
-
-            const chatHistoryVal = payload['osone_chat_history'];
-            if (chatHistoryVal) setChatHistory(JSON.parse(chatHistoryVal));
-
-            const voiceEngineVal = payload['osone_voice_engine'];
-            if (voiceEngineVal === 'gemini' || voiceEngineVal === 'elevenlabs') setVoiceEngine(voiceEngineVal as any);
-
-            const selectedVoiceVal = payload['osone_selected_voice'];
-            if (selectedVoiceVal) setSelectedVoice(selectedVoiceVal);
-
-            const vocalProfileEscarlateVal = payload['osone_vocal_profile_escarlate'];
-            if (vocalProfileEscarlateVal) setVocalProfileEscarlate(vocalProfileEscarlateVal);
-
-            const selectedPersonaVal = payload['osone_selected_persona'];
-            if (selectedPersonaVal) {
-              const found = PERSONAS.find(p => p.id === selectedPersonaVal);
-              if (found) setSelectedPersona(found);
-            }
-
-            const aiProfileVal = payload['osone_ai_profile'];
-            if (aiProfileVal) setAiProfile(JSON.parse(aiProfileVal));
-
-            const voiceModulationVal = payload['osone_voice_modulation'];
-            if (voiceModulationVal) setVoiceModulation(JSON.parse(voiceModulationVal));
-
-            const healthDataVal = payload['osone_health_data'];
-            if (healthDataVal) setHealthData(JSON.parse(healthDataVal));
-
-            const orbStyleVal = payload['osone_orb_style'] as OrbStyle;
-            if (orbStyleVal) setOrbStyle(orbStyleVal);
-
-            const orbSizeVal = payload['osone_orb_size'];
-            if (orbSizeVal) setOrbSize(parseInt(orbSizeVal, 10));
-
-            const orbCenterModeVal = payload['osone_orb_center_mode'];
-            if (orbCenterModeVal) setOrbCenterMode(orbCenterModeVal === 'true');
-
-            const isChatAutoSpeakActiveVal = payload['osone_chat_auto_speak'];
-            if (isChatAutoSpeakActiveVal) setIsChatAutoSpeakActive(isChatAutoSpeakActiveVal === 'true');
-
-            const workspaceTextVal = payload['osone_workspace_text'];
-            if (workspaceTextVal) setWorkspaceText(workspaceTextVal);
-
-            const fileSystemVal = payload['osone_file_system'];
-            if (fileSystemVal) setFileSystem(JSON.parse(fileSystemVal));
-
-            const intimateMissionVal = payload['osone_intimate_mission_answers'];
-            if (intimateMissionVal) setIntimateAnswers(JSON.parse(intimateMissionVal));
-
-            const drawingObjectsVal = payload['osone_drawing_objects'];
-            if (drawingObjectsVal) setDrawingObjects(JSON.parse(drawingObjectsVal));
-
-            const writingFontVal = payload['osone_writing_font'] as any;
-            if (writingFontVal) setWritingFont(writingFontVal);
-
-            const writingFontSizeVal = payload['osone_writing_font_size'];
-            if (writingFontSizeVal) setWritingFontSize(Number(writingFontSizeVal));
-
-            const writingThemeVal = payload['osone_writing_theme'] as any;
-            if (writingThemeVal) setWritingTheme(writingThemeVal);
-
-            const writingFocusModeVal = payload['osone_writing_focus'];
-            if (writingFocusModeVal) setWritingFocusMode(writingFocusModeVal === 'true');
-
-            const writingWordGoalVal = payload['osone_writing_word_goal'];
-            if (writingWordGoalVal) setWritingWordGoal(Number(writingWordGoalVal));
-
-            const writingWidthModeVal = payload['osone_writing_width'] as any;
-            if (writingWidthModeVal) setWritingWidthMode(writingWidthModeVal);
-
-            const writingSoundsVal = payload['osone_writing_sounds'];
-            if (writingSoundsVal) setWritingSounds(writingSoundsVal === 'true');
-
-            const isGoogleSearchActiveVal = payload['osone_google_search_active'];
-            if (isGoogleSearchActiveVal) setIsGoogleSearchActive(isGoogleSearchActiveVal !== 'false');
-          } catch (e) {
-            console.error("Erro ao restaurar sinapses em tempo real:", e);
-          }
-        }}
       />
 
       <IntimateMissionModal 
@@ -12821,8 +12820,6 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         isOpen={isProfileModalOpen}
         onClose={() => setIsProfileModalOpen(false)}
         currentUser={user}
-        onSwitchUser={switchUser}
-        onGoogleLogin={handleLogin}
         onLogout={handleLogout}
         isAuthLoading={isAuthLoading}
         onOpenDossier={() => setIsIntimateMissionOpen(true)}
