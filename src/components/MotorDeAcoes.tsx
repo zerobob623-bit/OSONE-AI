@@ -89,8 +89,10 @@ export const MotorDeAcoes = ({
                   {a.rotulo}
                   {a.detalhe && <span className="text-neutral-500"> · {a.detalhe}</span>}
                 </div>
+                {/* Erros podem trazer a lista do que o OCR leu: é longa, e é justamente o dado
+                    útil para descobrir por que a busca falhou — por isso rola em vez de ser cortada. */}
                 {a.resultado && (
-                  <div className={`text-[10px] leading-tight mt-0.5 ${a.estado === 'erro' ? 'text-red-400/90' : 'text-neutral-500'}`}>
+                  <div className={`text-[10px] leading-tight mt-0.5 max-h-24 overflow-y-auto ${a.estado === 'erro' ? 'text-red-400/90' : 'text-neutral-500'}`}>
                     {a.resultado}
                   </div>
                 )}

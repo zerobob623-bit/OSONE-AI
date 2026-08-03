@@ -1964,7 +1964,11 @@ const handleFindText = async (req: Request, res: Response) => {
       // (uma palavra) quanto "VOZ LIVRE" (duas) são encontráveis, e a menor correspondência
       // possível é preferida por vir antes na ordem de tamanho.
       for (let i = 0; i < ordenado.length; i++) {
-        for (let j = i; j < Math.min(ordenado.length, i + 6); j++) {
+        // Janela larga de propósito: interfaces com letras espaçadas (o OSONE usa exatamente
+        // isso nos botões) fazem o tesseract devolver UMA LETRA por registro, então um rótulo
+        // como "VOZ LIVRE" chega como 8 registros. Com uma janela de 6 ele nunca se formava, e
+        // a busca respondia "não encontrei" com o botão bem visível na tela.
+        for (let j = i; j < Math.min(ordenado.length, i + 14); j++) {
           const trecho = ordenado.slice(i, j + 1);
           const junto = normalizar(trecho.map(p => p.texto).join(''));
           if (!junto) continue;
