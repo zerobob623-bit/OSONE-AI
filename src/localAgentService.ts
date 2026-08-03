@@ -883,11 +883,18 @@ function execFileShellSafe(
   return new Promise((resolve, reject) => {
     execFile(bin, args, { timeout: timeoutMs, windowsHide: true, maxBuffer }, (error: any, stdout, stderr) => {
       if (error) {
-        // Preserva o código do erro: sem isso, "programa não existe" (ENOENT), "saída grande
-        // demais" (ENOBUFS) e "falhou de verdade" viram a mesma mensagem, e quem trata o erro
-        // acaba adivinhando a causa errada.
-        const e: any = new Error(stderr?.toString().trim() || error.message);
-        e.code = error.code;
+        /**
+         * A mensagem do erro vem do PRÓPRIO erro; o stderr entra só como contexto.
+         *
+         * Antes o stderr tinha prioridade, e programas que escrevem avisos inofensivos ali —
+         * o tesseract sempre imprime "Invalid resolution 0 dpi" — faziam o aviso se passar
+         * pela causa da falha. O resultado era uma mensagem que parecia diagnóstico e apontava
+         * para o lugar errado, escondendo o motivo real (tempo esgotado, buffer estourado).
+         */
+        const e: any = new Error(error.killed ? `tempo esgotado após ${timeoutMs}ms` : error.message);
+        e.code = error.code || (error.killed ? 'ETIMEDOUT' : undefined);
+        e.saidaDeErro = stderr?.toString().trim() || '';
+        e.encerradoPorTempo = !!error.killed;
         return reject(e);
       }
       resolve({ stdout: stdout?.toString() || '', stderr: stderr?.toString() || '' });
@@ -1880,8 +1887,16 @@ const handleFindText = async (req: Request, res: Response) => {
       // maxBuffer generoso: o TSV de uma tela cheia passa fácil do padrão de 1 MB do Node, e
       // estourar o buffer gera um erro que nada tem a ver com o tesseract faltar — foi assim que
       // a busca passou a relatar "não instalado" numa máquina onde ele estava instalado.
-      const r = await execFileShellSafe(png ? 'tesseract' : 'tesseract',
-        [png, 'stdout', '-l', 'por+eng', '--psm', '11', 'tsv'], 40000, 64 * 1024 * 1024);
+      // --dpi 96 informa a resolução em vez de deixar o tesseract adivinhá-la a cada execução
+      // (é a origem do aviso "Invalid resolution 0 dpi"). --psm 11 é o modo certo para texto
+      // espalhado por uma interface, mas é lento numa tela inteira: daí os 3 minutos, folga
+      // suficiente para uma máquina modesta terminar em vez de a busca morrer pela metade.
+      const r = await execFileShellSafe(
+        'tesseract',
+        [png, 'stdout', '-l', 'por+eng', '--psm', '11', '--dpi', '96', 'tsv'],
+        180000,
+        64 * 1024 * 1024
+      );
       tsv = r.stdout;
     } catch (err: any) {
       const faltaInstalar = err?.code === 'ENOENT' || /not found|não encontrado|is not recognized/i.test(String(err?.message || ''));
@@ -1894,12 +1909,20 @@ const handleFindText = async (req: Request, res: Response) => {
       }
       // Qualquer outra falha é relatada como o que ela é. Tratar tudo como "não instalado"
       // mandava o usuário instalar algo que já estava instalado, escondendo a causa real.
+      const porTempo = err?.encerradoPorTempo || err?.code === 'ETIMEDOUT';
       return res.status(500).json({
-        error: `O tesseract está instalado, mas a leitura da tela falhou: ${err?.message || err}`,
+        error: porTempo
+          ? "A leitura da tela demorou demais e foi interrompida. Esta máquina precisa de mais tempo para ler a tela inteira."
+          : `O tesseract está instalado, mas a leitura da tela falhou: ${err?.message || err}`,
         codigo: err?.code || null,
-        dica: err?.code === 'ENOBUFS'
-          ? "A saída passou do limite de buffer."
-          : "Se for tempo esgotado, a tela pode estar muito cheia — feche janelas e tente de novo."
+        // Os avisos vão separados da causa. Juntá-los fazia o aviso rotineiro do tesseract
+        // ("Invalid resolution 0 dpi") se passar pelo motivo da falha e apontar para o lugar errado.
+        avisosDoTesseract: err?.saidaDeErro || undefined,
+        dica: porTempo
+          ? "Meça quanto tempo leva na sua máquina: tire uma captura e rode 'time tesseract captura.png stdout --psm 11 --dpi 96 tsv'. Se passar de 3 minutos, feche janelas para reduzir o texto na tela."
+          : err?.code === 'ENOBUFS'
+            ? "A saída passou do limite de buffer."
+            : "Rode o mesmo comando no terminal para ver a saída completa."
       });
     }
 
