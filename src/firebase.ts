@@ -103,6 +103,8 @@ export function explicarErroDeLogin(err: any): string {
       return 'O Google bloqueou temporariamente as tentativas deste computador. Espere alguns minutos e tente de novo.';
     case 'auth/popup-closed-by-user':
     case 'auth/cancelled-popup-request':
+      // Vazio de propósito: quem chama põe no lugar um texto que também serve para o caso em que
+      // a janela foi recusada pelo Google, porque o Firebase usa este mesmo código para os dois.
       return '';
     case 'auth/internal-error':
       return 'O Firebase respondeu com erro interno. Costuma ser chave incompleta ou domínio não autorizado — confira ' +
