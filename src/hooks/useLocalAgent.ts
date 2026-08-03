@@ -117,8 +117,16 @@ export function useLocalAgent() {
 
     const concluir = (resultado: any) => {
       const deuErro = !!resultado?.error;
+      // Quando a busca por texto não acha, o que interessa não é o "não encontrei" e sim O QUE o
+      // OCR leu de fato — é isso que revela se o problema é grafia, letra espaçada ou leitura
+      // ruim. Sem mostrar essa lista, cada falha exigia adivinhação.
+      const detalheDoErro = deuErro
+        ? String(resultado.error) + (Array.isArray(resultado.textosVisiveis) && resultado.textosVisiveis.length
+            ? ` | O OCR leu: ${resultado.textosVisiveis.slice(0, 25).join(' / ')}`
+            : '')
+        : undefined;
       setAcoesDoMotor(prev => prev.map(a => a.id === idAcao
-        ? { ...a, estado: deuErro ? ('erro' as const) : ('ok' as const), resultado: deuErro ? String(resultado.error).slice(0, 160) : (resultado?.resumo ? String(resultado.resumo).slice(0, 160) : undefined) }
+        ? { ...a, estado: deuErro ? ('erro' as const) : ('ok' as const), resultado: deuErro ? detalheDoErro!.slice(0, 600) : (resultado?.resumo ? String(resultado.resumo).slice(0, 160) : undefined) }
         : a));
       return resultado;
     };
