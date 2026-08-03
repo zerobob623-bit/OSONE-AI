@@ -6355,24 +6355,30 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
     }
   };
 
+  /**
+   * Gera o código com a IA e DEVOLVE o resultado para quem pediu — não grava nada.
+   *
+   * Antes esta função escolhia sozinha os dois lados: lia repoFiles[0] como se fosse o arquivo
+   * aberto e gravava no index.html. Quem editava um script.js recebia edições feitas em cima do
+   * HTML, e quando o primeiro da lista não era o index.html o conteúdo de um arquivo era gravado
+   * por cima de outro. Além disso escrevia direto no localStorage, por fora do histórico do
+   * OSONE CODE — a alteração mais destrutiva do editor era a única impossível de desfazer.
+   *
+   * O arquivo agora vem em 'alvo', escolhido por quem está com ele aberto, e a gravação acontece
+   * num lugar só, do lado do editor.
+   */
   const handleCodeWorkspacePrompt = async (
     promptText: string,
     referenceImages?: Array<{ mimeType: string; data: string }>,
-    maxEffort?: boolean
-  ) => {
+    maxEffort?: boolean,
+    alvo?: { nome: string; conteudo: string }
+  ): Promise<{ conteudo: string; resumo: string } | null> => {
     const effectiveApiKey = apiKeys.gemini || '';
-    if (!promptText.trim()) return;
+    if (!promptText.trim()) return null;
 
     setIsGenerating(true);
     try {
-      let repoFiles: any[] = [];
-      try {
-        const saved = localStorage.getItem('osone_code_repository_files');
-        if (saved) repoFiles = JSON.parse(saved);
-      } catch (e) {}
-
-      const activeFile = (repoFiles && repoFiles.length > 0) ? repoFiles[0] : null;
-      const currentCode = activeFile ? activeFile.content : '';
+      const currentCode = alvo?.conteudo || '';
 
       const systemInstruction = buildCodeEditSystemInstruction(
         "Você é o arquiteto de software de elite do OSONE Studio. Sua missão é gerar ou editar código (HTML5, CSS, JS, React, Tailwind, Python ou similar)."
@@ -6421,39 +6427,24 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
       const data = await response.json();
       if (data.blocked) {
         addNotification("⚠️ O Gemini bloqueou a resposta pelo filtro de segurança (finishReason: " + data.finishReason + "). Tente reformular o pedido.", "error");
-      } else if (data.text) {
-        const { content: newContent, summary, hadFailures } = applyModelCodeResponse(data.text, currentCode);
-
-        if (!Array.isArray(repoFiles) || repoFiles.length === 0) {
-          repoFiles = [{
-            id: 'main-app',
-            name: 'index.html',
-            language: 'html',
-            isMain: true,
-            updatedAt: Date.now(),
-            content: newContent
-          }];
-        } else {
-          const mainIdx = repoFiles.findIndex((f: any) => f.name?.toLowerCase() === 'index.html' || f.id === 'main-app' || f.isMain);
-          const targetIdx = mainIdx !== -1 ? mainIdx : 0;
-          repoFiles[targetIdx].content = newContent;
-          repoFiles[targetIdx].updatedAt = Date.now();
-        }
-
-        localStorage.setItem('osone_code_repository_files', JSON.stringify(repoFiles));
-        window.dispatchEvent(new Event('osone_repository_updated'));
-
-        if (data.truncated) {
-          addNotification("⚠️ A resposta foi cortada por limite de tokens — o código pode estar incompleto. Tente pedir novamente ou dividir o pedido em partes menores.", "info");
-        } else if (hadFailures) {
-          addNotification(`Código atualizado com ressalvas: ${summary}`, "info");
-        } else {
-          addNotification(summary ? `Código atualizado! ${summary}` : "Código gerado e atualizado no Repositório do OSONE!", "success");
-        }
+        return null;
       }
+      if (!data.text) return null;
+
+      const { content: newContent, summary, hadFailures } = applyModelCodeResponse(data.text, currentCode);
+      if (!newContent || !newContent.trim()) return null;
+
+      if (data.truncated) {
+        addNotification("⚠️ A resposta foi cortada por limite de tokens — o código pode estar incompleto. Tente pedir novamente ou dividir o pedido em partes menores.", "info");
+      } else if (hadFailures) {
+        addNotification(`Código atualizado com ressalvas: ${summary}`, "info");
+      }
+
+      return { conteudo: newContent, resumo: summary || '' };
     } catch (error: any) {
       console.error("Erro na geração do Repositório de Código:", error);
       addNotification(`Erro ao gerar código: ${error.message || "Verifique sua chave de API."}`, "error");
+      return null;
     } finally {
       setIsGenerating(false);
     }

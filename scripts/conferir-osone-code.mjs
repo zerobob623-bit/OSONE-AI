@@ -1,0 +1,223 @@
+/**
+ * Roda a aba OSONE CODE de verdade num Chromium e verifica que código não se perde.
+ *
+ * Por que existe: os defeitos que esta aba tinha não apareciam na tela. Gerar código com o
+ * script.js aberto gravava o resultado por cima do index.html, e o usuário só descobria ao abrir
+ * o index.html muito depois. Nenhum deles dava erro, nenhum acendia aviso — a única prova possível
+ * é montar um repositório conhecido, mexer na interface como uma pessoa mexeria, e conferir o que
+ * sobrou gravado.
+ *
+ * Cada caso aqui reprova exatamente um desses defeitos. Rodado contra a versão anterior ao
+ * conserto, o primeiro caso mostra o index.html perdido e o de desfazer nem encontra o botão
+ * habilitado, porque a alteração da IA não entrava no histórico.
+ *
+ * Como rodar:
+ *   npm i -D playwright   (uma vez; o navegador já vem no ambiente de desenvolvimento)
+ *   node scripts/conferir-osone-code.mjs
+ */
+import { build } from 'esbuild';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
+const RAIZ = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+
+let chromium;
+try {
+  ({ chromium } = await import('playwright'));
+} catch {
+  console.error("Este conferidor precisa do playwright: rode 'npm i -D playwright' e tente de novo.");
+  process.exit(2);
+}
+
+const pastaTemp = fs.mkdtempSync(path.join(os.tmpdir(), 'osone-code-'));
+const entrada = path.join(pastaTemp, 'entrada.tsx');
+const pagina = path.join(pastaTemp, 'index.html');
+
+// A aba é montada sozinha, com a IA substituída por uma resposta combinada: o que se está
+// verificando é o caminho do código DEPOIS que o modelo responde, não o modelo.
+fs.writeFileSync(entrada, `
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import { CodeWorkspace } from ${JSON.stringify(path.join(RAIZ, 'src/components/CodeWorkspace'))};
+
+createRoot(document.getElementById('raiz')).render(
+  React.createElement('div', { style: { height: '100vh' } },
+    React.createElement(CodeWorkspace, {
+      onClose: () => {},
+      onStartLiveVoice: () => {},
+      apiKeys: { gemini: 'x' },
+      isGenerating: false,
+      onGenerateCodeRequest: async (_p, _i, _m, alvo) => {
+        window.__alvoRecebido = alvo;
+        return { conteudo: window.__respostaDaIA, resumo: 'teste' };
+      }
+    })
+  )
+);
+`);
+fs.writeFileSync(pagina, `<!doctype html><html><head><meta charset="utf-8"></head>
+<body style="margin:0;background:#07080d;color:#ccc"><div id="raiz"></div><script src="./code.js"></script></body></html>`);
+
+await build({
+  entryPoints: [entrada],
+  bundle: true,
+  outfile: path.join(pastaTemp, 'code.js'),
+  define: { 'process.env.NODE_ENV': '"production"' },
+  // O ponto de entrada é gerado fora do projeto, então o esbuild precisa ser apontado para os
+  // módulos daqui — senão nem o React ele encontra.
+  nodePaths: [path.join(RAIZ, 'node_modules')],
+  absWorkingDir: RAIZ,
+  logLevel: 'silent'
+});
+
+const CHAVE = 'osone_code_repository_files';
+const NOVO = '/* CODIGO NOVO DA IA */';
+const REPO = [
+  { id: 'main-app', name: 'index.html', language: 'html', isMain: true, updatedAt: 1,
+    content: '<link rel="stylesheet" href="styles.css"><h1>HTML ORIGINAL</h1>' },
+  { id: 'css-1', name: 'styles.css', language: 'css', updatedAt: 1, content: 'body { color: red; }' },
+  { id: 'js-1', name: 'script.js', language: 'javascript', updatedAt: 1, content: '// JS ORIGINAL' }
+];
+
+const casos = [];
+const registrar = (nome, passou, detalhe) => {
+  casos.push({ nome, passou });
+  console.log(`${passou ? '  ok  ' : 'FALHOU'}  ${nome}${detalhe ? `  — ${detalhe}` : ''}`);
+};
+
+const executavel = process.env.CHROMIUM_PATH
+  || ['/opt/pw-browsers/chromium-1194/chrome-linux/chrome', '/opt/pw-browsers/chromium/chrome-linux/chrome'].find(p => fs.existsSync(p));
+const nav = await chromium.launch(executavel ? { executablePath: executavel } : {});
+
+const abrir = async () => {
+  const ctx = await nav.newContext({ viewport: { width: 1400, height: 900 } });
+  const pag = await ctx.newPage();
+  await pag.addInitScript(([repo, chave, resposta]) => {
+    localStorage.setItem(chave, JSON.stringify(repo));
+    localStorage.setItem('osone_code_active_project_id', 'proj-1');
+    window.__respostaDaIA = resposta;
+  }, [REPO, CHAVE, NOVO]);
+  await pag.goto('file://' + pagina);
+  await pag.waitForTimeout(500);
+  return { pag, ctx };
+};
+
+const lerRepo = (pag) => pag.evaluate(chave => JSON.parse(localStorage.getItem(chave) || '[]'), CHAVE);
+const conteudoDe = (repo, nome) => (repo.find(f => f.name === nome) || {}).content;
+const gerar = async (pag, texto) => {
+  await pag.getByPlaceholder('Descreva a alteração').fill(texto);
+  await pag.getByRole('button', { name: 'Gerar Código' }).click();
+  await pag.waitForTimeout(800);
+};
+/** O botão muda de título conforme tenha ou não o que desfazer — daí os dois nomes. */
+const botaoDesfazer = (pag) => pag.locator('button[title="Desfazer alteração no código (Ctrl+Z)"], button[title="Nada para desfazer"]').first();
+
+// 1) O arquivo ABERTO é o que a IA recebe e o que recebe o resultado.
+{
+  const { pag, ctx } = await abrir();
+  await pag.getByText('script.js', { exact: true }).first().click();
+  await pag.waitForTimeout(200);
+  await gerar(pag, 'muda alguma coisa');
+
+  const repo = await lerRepo(pag);
+  const alvo = await pag.evaluate(() => window.__alvoRecebido);
+  const html = conteudoDe(repo, 'index.html');
+  const cabecalho = (await pag.locator('.text-cyan-400.font-semibold').first().innerText().catch(() => '')).trim();
+
+  registrar('gerar com script.js aberto grava no script.js, e não no index.html',
+    alvo?.nome === 'script.js' && conteudoDe(repo, 'script.js') === NOVO && html?.includes('<h1>HTML ORIGINAL</h1>'),
+    `a IA recebeu "${alvo?.nome}"; index.html ${html?.includes('<h1>HTML ORIGINAL</h1>') ? 'intacto' : 'PERDIDO'}`);
+
+  registrar('o editor passa a mostrar o arquivo que a IA mudou',
+    cabecalho === 'script.js', `cabeçalho mostra "${cabecalho}"`);
+
+  // 2) Alteração feita pela IA precisa ser reversível.
+  const desfazer = botaoDesfazer(pag);
+  const semHistorico = await desfazer.isDisabled();
+  if (semHistorico) {
+    registrar('desfazer reverte a alteração feita pela IA', false, 'a alteração da IA não entrou no histórico (botão desabilitado)');
+  } else {
+    await desfazer.click();
+    await pag.waitForTimeout(400);
+    const depois = await lerRepo(pag);
+    registrar('desfazer reverte a alteração feita pela IA',
+      conteudoDe(depois, 'script.js') === '// JS ORIGINAL',
+      `script.js voltou para "${conteudoDe(depois, 'script.js')}"`);
+  }
+  await ctx.close();
+}
+
+// 3) Ser o primeiro da lista não pode ser critério para virar alvo.
+{
+  const { pag, ctx } = await abrir();
+  await pag.getByText('styles.css', { exact: true }).first().click();
+  await pag.waitForTimeout(200);
+  await gerar(pag, 'ajusta o css');
+
+  const repo = await lerRepo(pag);
+  registrar('gerar com styles.css aberto não toca no index.html',
+    conteudoDe(repo, 'styles.css') === NOVO && conteudoDe(repo, 'index.html')?.includes('<h1>HTML ORIGINAL</h1>'),
+    `index.html ${conteudoDe(repo, 'index.html')?.includes('<h1>HTML ORIGINAL</h1>') ? 'intacto' : 'PERDIDO'}`);
+  await ctx.close();
+}
+
+// 4) O "refazer" não pode atravessar a troca de projeto carregando os arquivos do anterior.
+{
+  const { pag, ctx } = await abrir();
+  // O histórico é criado com uma edição À MÃO, e não pela IA: é o caminho que existe nas duas
+  // versões do código, então o que este caso reprova é a pilha de refazer sobreviver à troca de
+  // projeto — e não a alteração da IA entrar no histórico, que o caso 2 já cobre.
+  await pag.locator('textarea').first().fill('<h1>EDITADO A MAO NO PROJETO 1</h1>');
+  await pag.waitForTimeout(400);
+  const desfazer = botaoDesfazer(pag);
+  if (!(await desfazer.isDisabled())) {
+    await desfazer.click();
+    await pag.waitForTimeout(400);
+  }
+
+  await pag.getByText('Projeto 2', { exact: true }).first().click();
+  await pag.waitForTimeout(600);
+  const antes = await lerRepo(pag);
+
+  const refazer = pag.locator('button[title="Refazer alteração no código (Ctrl+Shift+Z)"]').first();
+  if (await refazer.count() && !(await refazer.isDisabled())) {
+    await refazer.click();
+    await pag.waitForTimeout(500);
+  }
+  const depois = await lerRepo(pag);
+  const vazou = JSON.stringify(depois).includes('EDITADO A MAO') || JSON.stringify(depois).includes('HTML ORIGINAL');
+
+  registrar('refazer depois de trocar de projeto não invade o projeto novo',
+    !vazou && JSON.stringify(antes) === JSON.stringify(depois),
+    vazou ? 'ARQUIVOS DO PROJETO ANTERIOR VAZARAM' : 'o Projeto 2 ficou como estava');
+  await ctx.close();
+}
+
+// 5) Editar o CSS mostra a página montada no preview, e não o CSS cru.
+{
+  const { pag, ctx } = await abrir();
+  await pag.getByText('styles.css', { exact: true }).first().click();
+  await pag.waitForTimeout(200);
+  await pag.locator('textarea').first().fill('body { color: rebeccapurple; }');
+  await pag.waitForTimeout(600);
+
+  // A conferência é feita no srcdoc entregue ao iframe, e não no que ele desenha: o preview
+  // carrega Tailwind e fontes por CDN, e num teste sem internet essas buscas ficam pendentes —
+  // esperar a pintura mediria a rede, não a montagem.
+  const srcdoc = (await pag.locator('iframe').first().getAttribute('srcdoc')) || '';
+  const temPagina = srcdoc.includes('<h1>HTML ORIGINAL</h1>');
+  const temCssNovo = srcdoc.includes('rebeccapurple');
+
+  registrar('com o styles.css aberto, o preview recebe a página com o CSS embutido',
+    temPagina && temCssNovo,
+    `página ${temPagina ? 'presente' : 'AUSENTE'}; CSS em edição ${temCssNovo ? 'embutido' : 'AUSENTE'}`);
+  await ctx.close();
+}
+
+await nav.close();
+fs.rmSync(pastaTemp, { recursive: true, force: true });
+
+const falhas = casos.filter(c => !c.passou).length;
+console.log(`\n${casos.length - falhas}/${casos.length} conferências passaram.`);
+process.exit(falhas ? 1 : 0);
