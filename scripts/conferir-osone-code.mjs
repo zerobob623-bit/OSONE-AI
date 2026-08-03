@@ -74,7 +74,8 @@ await build({
 const CHAVE = 'osone_code_repository_files';
 const NOVO = '/* CODIGO NOVO DA IA */';
 const REPO = [
-  { id: 'main-app', name: 'index.html', language: 'html', isMain: true, updatedAt: 1, content: '<h1>HTML ORIGINAL</h1>' },
+  { id: 'main-app', name: 'index.html', language: 'html', isMain: true, updatedAt: 1,
+    content: '<link rel="stylesheet" href="styles.css"><h1>HTML ORIGINAL</h1>' },
   { id: 'css-1', name: 'styles.css', language: 'css', updatedAt: 1, content: 'body { color: red; }' },
   { id: 'js-1', name: 'script.js', language: 'javascript', updatedAt: 1, content: '// JS ORIGINAL' }
 ];
@@ -125,8 +126,8 @@ const botaoDesfazer = (pag) => pag.locator('button[title="Desfazer alteração n
   const cabecalho = (await pag.locator('.text-cyan-400.font-semibold').first().innerText().catch(() => '')).trim();
 
   registrar('gerar com script.js aberto grava no script.js, e não no index.html',
-    alvo?.nome === 'script.js' && conteudoDe(repo, 'script.js') === NOVO && html === '<h1>HTML ORIGINAL</h1>',
-    `a IA recebeu "${alvo?.nome}"; index.html ${html === '<h1>HTML ORIGINAL</h1>' ? 'intacto' : 'PERDIDO'}`);
+    alvo?.nome === 'script.js' && conteudoDe(repo, 'script.js') === NOVO && html?.includes('<h1>HTML ORIGINAL</h1>'),
+    `a IA recebeu "${alvo?.nome}"; index.html ${html?.includes('<h1>HTML ORIGINAL</h1>') ? 'intacto' : 'PERDIDO'}`);
 
   registrar('o editor passa a mostrar o arquivo que a IA mudou',
     cabecalho === 'script.js', `cabeçalho mostra "${cabecalho}"`);
@@ -156,8 +157,8 @@ const botaoDesfazer = (pag) => pag.locator('button[title="Desfazer alteração n
 
   const repo = await lerRepo(pag);
   registrar('gerar com styles.css aberto não toca no index.html',
-    conteudoDe(repo, 'styles.css') === NOVO && conteudoDe(repo, 'index.html') === '<h1>HTML ORIGINAL</h1>',
-    `index.html ${conteudoDe(repo, 'index.html') === '<h1>HTML ORIGINAL</h1>' ? 'intacto' : 'PERDIDO'}`);
+    conteudoDe(repo, 'styles.css') === NOVO && conteudoDe(repo, 'index.html')?.includes('<h1>HTML ORIGINAL</h1>'),
+    `index.html ${conteudoDe(repo, 'index.html')?.includes('<h1>HTML ORIGINAL</h1>') ? 'intacto' : 'PERDIDO'}`);
   await ctx.close();
 }
 
@@ -190,6 +191,27 @@ const botaoDesfazer = (pag) => pag.locator('button[title="Desfazer alteração n
   registrar('refazer depois de trocar de projeto não invade o projeto novo',
     !vazou && JSON.stringify(antes) === JSON.stringify(depois),
     vazou ? 'ARQUIVOS DO PROJETO ANTERIOR VAZARAM' : 'o Projeto 2 ficou como estava');
+  await ctx.close();
+}
+
+// 5) Editar o CSS mostra a página montada no preview, e não o CSS cru.
+{
+  const { pag, ctx } = await abrir();
+  await pag.getByText('styles.css', { exact: true }).first().click();
+  await pag.waitForTimeout(200);
+  await pag.locator('textarea').first().fill('body { color: rebeccapurple; }');
+  await pag.waitForTimeout(600);
+
+  // A conferência é feita no srcdoc entregue ao iframe, e não no que ele desenha: o preview
+  // carrega Tailwind e fontes por CDN, e num teste sem internet essas buscas ficam pendentes —
+  // esperar a pintura mediria a rede, não a montagem.
+  const srcdoc = (await pag.locator('iframe').first().getAttribute('srcdoc')) || '';
+  const temPagina = srcdoc.includes('<h1>HTML ORIGINAL</h1>');
+  const temCssNovo = srcdoc.includes('rebeccapurple');
+
+  registrar('com o styles.css aberto, o preview recebe a página com o CSS embutido',
+    temPagina && temCssNovo,
+    `página ${temPagina ? 'presente' : 'AUSENTE'}; CSS em edição ${temCssNovo ? 'embutido' : 'AUSENTE'}`);
   await ctx.close();
 }
 

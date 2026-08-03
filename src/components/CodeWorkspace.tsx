@@ -12,6 +12,7 @@ import { cn } from '../lib/utils';
 import { CodePreview } from './CodePreview';
 import { CodeRepositoryFile } from '../types';
 import { buildCodeEditSystemInstruction, applyModelCodeResponse, parseSections } from '../lib/codeEdits';
+import { montarPreview } from '../lib/montarPreview';
 
 // Geração/edição de código (Hunter e Enxame/Swarm) sempre usa o melhor modelo GRATUITO
 // disponível para código (gemini-3.6-flash: mais recente, líder em benchmarks de código como
@@ -93,6 +94,9 @@ const DEFAULT_FILES: CodeRepositoryFile[] = [
   <title>OSONE CODE App</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Os arquivos do projeto entram por aqui: o preview resolve estes endereços contra o
+       repositório e embute o conteúdo, então editar styles.css ou script.js muda a página. -->
+  <link rel="stylesheet" href="styles.css">
   <style>
     body { background-color: #090a0f; color: #f3f4f6; font-family: system-ui, sans-serif; }
     .glass { background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); }
@@ -124,6 +128,7 @@ const DEFAULT_FILES: CodeRepositoryFile[] = [
     </button>
   </div>
 
+  <script src="script.js"></script>
   <script>
     lucide.createIcons();
     let count = 0;
@@ -1742,7 +1747,10 @@ FORMATO OBRIGATÓRIO (JSON estrito):
               "flex flex-col min-h-0 bg-black transition-all overflow-hidden relative",
               viewLayout === 'split' ? "w-1/2" : "w-full"
             )}>
-              <CodePreview code={activeFile ? activeFile.content : ''} />
+              {/* O preview recebe o PROJETO montado, não o arquivo aberto: é o que faz o
+                  styles.css e o script.js existirem de verdade, e o que evita desenhar CSS
+                  cru como se fosse página quando o arquivo aberto não é uma. */}
+              <CodePreview code={montarPreview(files, activeFile)} />
             </div>
           )}
 
