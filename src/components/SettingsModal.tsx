@@ -607,7 +607,7 @@ export const SettingsModal = ({
                             value={keys.googleCustomSearchApiKey || ''}
                             onChange={(e) => setKeys({ ...keys, googleCustomSearchApiKey: e.target.value })}
                             className="w-full bg-white/[0.02] border border-white/[0.05] rounded-2xl px-5 py-3 focus:outline-none focus:border-purple-500/30 transition-all text-xs font-mono text-white placeholder:text-her-muted/20"
-                            placeholder="Ex: AIzaSyD..."
+                            placeholder="Ex: AQ.Ab8... ou AIzaSyD..."
                           />
                         </div>
                         <div>
