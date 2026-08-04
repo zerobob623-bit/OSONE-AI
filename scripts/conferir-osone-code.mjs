@@ -48,8 +48,12 @@ createRoot(document.getElementById('raiz')).render(
       onStartLiveVoice: () => {},
       apiKeys: { gemini: 'x' },
       isGenerating: false,
-      onGenerateCodeRequest: async (_p, _i, _m, alvo) => {
+      onGenerateCodeRequest: async (p, _i, _m, alvo) => {
         window.__alvoRecebido = alvo;
+        window.__pedidoRecebido = p;
+        // 'null' e 'identico' reproduzem as duas formas de a geração não dar em nada.
+        if (window.__respostaDaIA === null) return null;
+        if (window.__respostaDaIA === 'identico') return { conteudo: alvo.conteudo, resumo: '' };
         return { conteudo: window.__respostaDaIA, resumo: 'teste' };
       }
     })
@@ -408,6 +412,63 @@ const botaoDesfazer = (pag) => pag.locator('button[title="Desfazer alteração n
   const { pag, ctx } = await abrir();
   await pag.getByRole('button', { name: 'Novo Arquivo' }).click().catch(() => {});
   // O nome do arquivo vem por window.prompt; respondido antes de clicar.
+  await ctx.close();
+}
+
+
+// ====== A GERAÇÃO QUE NÃO DÁ EM NADA PRECISA APARECER ======
+//
+// Relatado: "ninguém tá conseguindo gerar nada". Parte disso era falha de verdade, e parte era o
+// editor não dizer NADA quando a geração terminava sem código: a pessoa escrevia o pedido,
+// apertava gerar, a caixa esvaziava e acabava — sem erro, sem aviso, sem código. Do lado de quem
+// usa, uma falha muda é indistinguível de um app quebrado.
+
+// 19) Geração que volta vazia precisa avisar E devolver o texto do pedido.
+{
+  const ctx = await nav.newContext({ viewport: { width: 1400, height: 900 } });
+  const pag = await ctx.newPage();
+  await pag.addInitScript(([repo, chave]) => {
+    localStorage.setItem(chave, JSON.stringify(repo));
+    localStorage.setItem('osone_code_active_project_id', 'proj-1');
+    window.__respostaDaIA = null;
+  }, [REPO, CHAVE]);
+  await pag.goto('file://' + pagina);
+  await pag.waitForTimeout(500);
+
+  await pag.getByPlaceholder('Descreva a alteração').fill('faz um jogo da velha');
+  await pag.getByRole('button', { name: 'Gerar Código' }).click();
+  await pag.waitForTimeout(700);
+
+  const avisou = await pag.getByText(/não devolveu código/i).count();
+  const pedidoDeVolta = await pag.getByPlaceholder('Descreva a alteração').inputValue();
+  registrar('geração vazia avisa na tela e devolve o pedido para a caixa',
+    avisou > 0 && pedidoDeVolta === 'faz um jogo da velha',
+    avisou > 0 ? `avisou; a caixa voltou com "${pedidoDeVolta}"` : 'FICOU EM SILÊNCIO');
+  await ctx.close();
+}
+
+// 20) Modelo respondeu mas nada mudou: era anunciado como "atualizado" enquanto o editor não
+//     mudava um caractere. Agora precisa dizer que nada mudou.
+{
+  const ctx = await nav.newContext({ viewport: { width: 1400, height: 900 } });
+  const pag = await ctx.newPage();
+  await pag.addInitScript(([repo, chave]) => {
+    localStorage.setItem(chave, JSON.stringify(repo));
+    localStorage.setItem('osone_code_active_project_id', 'proj-1');
+    window.__respostaDaIA = 'identico';
+  }, [REPO, CHAVE]);
+  await pag.goto('file://' + pagina);
+  await pag.waitForTimeout(500);
+
+  await pag.getByPlaceholder('Descreva a alteração').fill('muda a cor do botão');
+  await pag.getByRole('button', { name: 'Gerar Código' }).click();
+  await pag.waitForTimeout(700);
+
+  const disseQueNadaMudou = await pag.getByText(/nada mudou no arquivo/i).count();
+  const disseQueAplicou = await pag.getByText(/Código aplicado/i).count();
+  registrar('resposta que não muda nada é relatada como tal, e não como sucesso',
+    disseQueNadaMudou > 0 && disseQueAplicou === 0,
+    disseQueNadaMudou > 0 ? 'avisou que nada mudou' : 'NÃO avisou (ou disse que aplicou)');
   await ctx.close();
 }
 

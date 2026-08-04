@@ -43,12 +43,16 @@ const registrar = (nome, passou, detalhe) => {
  * `carregamentos` diz quanto tempo CADA passo leva para a tela parar de mudar. É esse número que o
  * motor precisa descobrir sozinho, medindo — ele nunca o recebe.
  */
-function criarComputador({ carregamentos = {}, falharNoPasso = -1, telaNaoMudaNoPasso = -1 } = {}) {
+function criarComputador({ carregamentos = {}, falharNoPasso = -1, telaNaoMudaNoPasso = -1,
+                          falharAteATentativa = Infinity, naoMudarAteATentativa = Infinity } = {}) {
   let t = 1_000_000;
   let passo = -1;
   let mudaAte = 0;
   let versaoDaTela = 0;
   const executados = [];
+  // Tentativas por passo: é o que separa "este passo falhou" de "este passo falhou DE NOVO", e
+  // sem essa distinção não dá para testar o novo comportamento de tentar outra vez.
+  const tentativasPorPasso = {};
 
   const deps = {
     agora: () => t,
@@ -72,11 +76,19 @@ function criarComputador({ carregamentos = {}, falharNoPasso = -1, telaNaoMudaNo
       return a;
     },
     executar: async (acao, args) => {
-      passo++;
-      executados.push({ acao, args });
+      // Um passo novo começa quando a descrição muda; repetições do mesmo passo não avançam.
+      const chave = JSON.stringify({ acao, args });
+      if (executados.length === 0 || executados[executados.length - 1].chave !== chave) passo++;
+      tentativasPorPasso[passo] = (tentativasPorPasso[passo] || 0) + 1;
+      const tentativa = tentativasPorPasso[passo];
+      executados.push({ acao, args, chave, passo, tentativa });
       t += 30; // a ida ao agente local
-      if (passo === falharNoPasso) return { error: 'o agente local recusou a ação' };
-      if (passo !== telaNaoMudaNoPasso) {
+
+      if (passo === falharNoPasso && tentativa <= falharAteATentativa) {
+        return { error: 'o agente local recusou a ação' };
+      }
+      const telaFicaParada = passo === telaNaoMudaNoPasso && tentativa <= naoMudarAteATentativa;
+      if (!telaFicaParada) {
         versaoDaTela++;
         mudaAte = t + (carregamentos[passo] ?? 500);
       }
@@ -86,7 +98,10 @@ function criarComputador({ carregamentos = {}, falharNoPasso = -1, telaNaoMudaNo
   return { deps, executados, relogio: () => t };
 }
 
-const passo = (acao, descricao, extra = {}) => ({ acao, descricao, args: {}, ...extra });
+// Cada passo leva uma marca própria nos argumentos: é assim que o computador de mentira sabe
+// distinguir "passo novo" de "o MESMO passo tentado de novo" — sem isso, dois cliques seguidos
+// seriam indistinguíveis e não haveria como testar a repetição.
+const passo = (acao, descricao, extra = {}) => ({ acao, descricao, args: { marca: descricao }, ...extra });
 
 // 1) O laço vai até o fim sozinho, sem perguntar nada.
 {
@@ -162,9 +177,11 @@ const passo = (acao, descricao, extra = {}) => ({ acao, descricao, args: {}, ...
   const r = await executarPlano([
     passo('clicar', 'Primeiro'), passo('clicar', 'Segundo'), passo('clicar', 'Terceiro')
   ], deps);
-  registrar('para no passo que falhou e não executa os seguintes',
-    r.motivo === 'erro-no-passo' && executados.length === 2,
-    `motivo "${r.motivo}", executou ${executados.length} de 3`);
+  const doSegundo = executados.filter(e => e.passo === 1).length;
+  registrar('passo que falha sempre é TENTADO DE NOVO e só então o plano para',
+    (r.motivo === 'erro-no-passo' || r.motivo === 'falhas-seguidas') && doSegundo === 3
+      && !executados.some(e => e.passo === 2),
+    `${doSegundo} tentativa(s) no passo 2; motivo "${r.motivo}"; o passo 3 ${executados.some(e => e.passo === 2) ? 'RODOU' : 'não rodou'}`);
 }
 
 // 6) PARA quando a tela não muda — o clique não pegou.
@@ -173,18 +190,19 @@ const passo = (acao, descricao, extra = {}) => ({ acao, descricao, args: {}, ...
   const r = await executarPlano([
     passo('clicar', 'Primeiro'), passo('clicar', 'Clique que não pega'), passo('clicar', 'Terceiro')
   ], deps);
-  registrar('para quando a tela não muda depois do clique, em vez de seguir às cegas',
-    r.motivo === 'tela-inesperada' && executados.length === 2,
-    `motivo "${r.motivo}", executou ${executados.length} de 3`);
+  const doSegundo = executados.filter(e => e.passo === 1).length;
+  registrar('clique que não pega é repetido e, sem confirmar, o plano para',
+    r.motivo === 'passo-nao-confirmado' && doSegundo === 3 && !executados.some(e => e.passo === 2),
+    `${doSegundo} tentativa(s); motivo "${r.motivo}"`);
 }
 
 // 7) O motivo da parada volta escrito, para o modelo replanejar com informação real.
 {
   const { deps } = criarComputador({ telaNaoMudaNoPasso: 0 });
   const r = await executarPlano([passo('clicar', 'Abrir o menu'), passo('clicar', 'Depois')], deps);
-  registrar('a parada explica o que houve e manda replanejar',
-    /não mudou/.test(r.resumo) && /refaça o plano/i.test(r.resumo),
-    r.resumo.slice(0, 80) + '…');
+  registrar('a parada explica o que houve, quantas vezes tentou, e manda replanejar',
+    /não mudou nenhuma vez/.test(r.resumo) && /tentativa/.test(r.resumo) && /refaça o plano/i.test(r.resumo),
+    r.resumo.slice(0, 90) + '…');
 }
 
 // 8) O botão de parar do usuário interrompe o laço.
@@ -304,6 +322,56 @@ const passo = (acao, descricao, extra = {}) => ({ acao, descricao, args: {}, ...
   registrar('tarefa comum não é barrada por engano pela trava de dinheiro',
     barradas.length === 0,
     barradas.length ? `barrou por engano: ${barradas.join(' | ')}` : 'nenhuma barrada');
+}
+
+// 19) O CASO CENTRAL DO PEDIDO: falhou uma vez, tenta de novo, dá certo, e SEGUE.
+{
+  const { deps, executados } = criarComputador({ falharNoPasso: 1, falharAteATentativa: 1 });
+  const r = await executarPlano([
+    passo('clicar', 'Primeiro'), passo('clicar', 'Falha só na primeira vez'), passo('clicar', 'Terceiro')
+  ], deps);
+  const doSegundo = executados.filter(e => e.passo === 1).length;
+  registrar('passo que falha uma vez é repetido, dá certo e o plano SEGUE até o fim',
+    r.motivo === 'concluido' && doSegundo === 2 && r.passos.length === 3,
+    `motivo "${r.motivo}"; o passo 2 levou ${doSegundo} tentativa(s); ${r.passos.length} passos concluídos`);
+}
+
+// 20) Clique que não pega na primeira mas pega na segunda também segue.
+{
+  const { deps } = criarComputador({ telaNaoMudaNoPasso: 0, naoMudarAteATentativa: 1 });
+  const r = await executarPlano([passo('clicar', 'Clique teimoso'), passo('clicar', 'Depois')], deps);
+  registrar('clique que só pega na segunda tentativa não derruba o plano',
+    r.motivo === 'concluido' && r.passos[0].tentativas === 2,
+    `motivo "${r.motivo}"; primeiro passo em ${r.passos[0].tentativas} tentativa(s)`);
+}
+
+// 21) O relatório diz quantas tentativas cada passo levou — é o que revela plano frágil.
+{
+  const { deps } = criarComputador({ falharNoPasso: 0, falharAteATentativa: 1 });
+  const r = await executarPlano([passo('clicar', 'Um'), passo('clicar', 'Dois')], deps);
+  registrar('o relatório registra as tentativas de cada passo e avisa no resumo',
+    r.passos[0].tentativas === 2 && r.passos[1].tentativas === 1 && /precisaram de mais de uma tentativa/.test(r.resumo),
+    `tentativas: ${r.passos.map(p => p.tentativas).join(', ')}`);
+}
+
+// 22) 'permanecer' que mudou NÃO é repetido: agir de novo sobre uma tela já errada piora.
+{
+  const { deps, executados } = criarComputador();
+  const r = await executarPlano([passo('clicar', 'Não devia mudar nada', { esperaDaTela: 'permanecer' })], deps);
+  registrar('passo que mudou a tela sem dever não é repetido',
+    r.motivo === 'tela-inesperada' && executados.length === 1,
+    `${executados.length} tentativa(s); motivo "${r.motivo}"`);
+}
+
+// 23) O botão de parar interrompe MESMO no meio das tentativas.
+{
+  const { deps, executados } = criarComputador({ falharNoPasso: 0 });
+  let n = 0;
+  deps.cancelado = () => { n++; return n > 3; };
+  const r = await executarPlano([passo('clicar', 'Um'), passo('clicar', 'Dois')], deps);
+  registrar('parar interrompe também no meio das tentativas de um passo',
+    r.motivo === 'parado-pelo-usuario' && executados.length < 6,
+    `motivo "${r.motivo}", ${executados.length} execução(ões)`);
 }
 
 fs.rmSync(pastaTemp, { recursive: true, force: true });
