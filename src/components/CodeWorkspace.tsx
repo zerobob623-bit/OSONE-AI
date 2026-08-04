@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { buscarNoProjeto, substituirNoProjeto, OcorrenciaNaBusca } from '../lib/buscarNoProjeto';
+import { realcar, linguagemDoArquivo } from '../lib/realce';
 import {
   Code2, Play, FileCode, Plus, Trash2, Edit3, Download, Copy, Check,
   FolderGit2, Sparkles, RefreshCw, Eye, Columns,
@@ -411,6 +412,7 @@ export const CodeWorkspace: React.FC<{
   // Editor de código: a área de escrita e a régua de números ao lado dela.
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const reguaRef = useRef<HTMLDivElement>(null);
+  const realceRef = useRef<HTMLPreElement>(null);
   /** Onde deixar o cursor depois que a próxima renderização trouxer o texto novo. */
   const selecaoPendenteRef = useRef<{ inicio: number; fim: number } | null>(null);
 
@@ -820,12 +822,57 @@ export const CodeWorkspace: React.FC<{
 
   // ====== EDITOR DE CÓDIGO: RÉGUA DE LINHAS E INDENTAÇÃO ======
 
+  /**
+   * A MEDIDA DO EDITOR, num lugar só.
+   *
+   * A régua de linhas, a camada de realce e a área de escrita precisam ter exatamente a mesma
+   * fonte, o mesmo tamanho, a mesma altura de linha e a mesma folga no topo. Um pixel de
+   * diferença e os números descolam do código; no realce, o texto colorido descola do texto real e
+   * o cursor aparece no lugar errado.
+   *
+   * Isso estava escrito como classes utilitárias repetidas em três lugares — três cópias que
+   * precisavam ser mudadas juntas, e nada avisaria se uma ficasse para trás. Aqui é um objeto só,
+   * aplicado nos três, o que também torna o alinhamento verificável fora do app: não depende de
+   * nenhuma folha de estilo ter carregado.
+   */
+  const METRICA_DO_EDITOR: React.CSSProperties = {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+    fontSize: '13px',
+    lineHeight: '1.625',
+    paddingTop: '16px',
+    paddingBottom: '16px',
+    whiteSpace: 'pre',
+    tabSize: 2,
+    margin: 0
+  };
+
   /** Quantas linhas o arquivo tem. Sempre pelo menos uma, para a régua nunca ficar vazia. */
   const totalDeLinhas = Math.max(1, (activeFile?.content || '').split('\n').length);
+
+  /**
+   * Largura real da régua de linhas, medida do elemento.
+   *
+   * A camada de realce começa onde a régua acaba, e a régua muda de largura sozinha quando o
+   * arquivo passa de 99 para 100 linhas. Um valor fixo aqui desalinharia o realce exatamente
+   * nesse momento, num arquivo grande — que é quando o realce mais serve.
+   */
+  const [larguraDaRegua, setLarguraDaRegua] = useState(0);
+  useEffect(() => {
+    const medir = () => setLarguraDaRegua(reguaRef.current?.offsetWidth || 0);
+    medir();
+    window.addEventListener('resize', medir);
+    return () => window.removeEventListener('resize', medir);
+  }, [totalDeLinhas, activeFileId, viewLayout, showRepoSidebar]);
 
   /** A régua acompanha a rolagem do texto — senão os números ficam parados enquanto o código anda. */
   const sincronizarRegua = (e: React.UIEvent<HTMLTextAreaElement>) => {
     if (reguaRef.current) reguaRef.current.scrollTop = e.currentTarget.scrollTop;
+    // A camada do realce acompanha nos DOIS eixos: com a quebra de linha desligada existe rolagem
+    // horizontal, e sincronizar só a vertical faria as cores deslizarem para o lado do texto.
+    if (realceRef.current) {
+      realceRef.current.scrollTop = e.currentTarget.scrollTop;
+      realceRef.current.scrollLeft = e.currentTarget.scrollLeft;
+    }
   };
 
   /**
@@ -1956,19 +2003,43 @@ FORMATO OBRIGATÓRIO (JSON estrito):
                   As duas colunas usam exatamente as mesmas classes de fonte, tamanho e altura de
                   linha, e a mesma folga no topo — qualquer diferença aí faria os números
                   descolarem do código conforme o arquivo cresce. */}
-              <div className="flex-1 relative w-full h-full bg-[#07080d] flex overflow-hidden">
+              <div style={{ position: 'relative' }} className="flex-1 w-full h-full bg-[#07080d] flex overflow-hidden">
                 <div
                   ref={reguaRef}
                   aria-hidden="true"
-                  className="regua-de-linhas shrink-0 select-none overflow-hidden py-4 pl-3 pr-2 text-right
-                             font-mono text-xs md:text-sm leading-relaxed text-zinc-600
-                             bg-black/25 border-r border-white/5"
+                  style={{ ...METRICA_DO_EDITOR, paddingLeft: '12px', paddingRight: '8px' }}
+                  className="regua-de-linhas shrink-0 select-none overflow-hidden text-right
+                             text-zinc-600 bg-black/25 border-r border-white/5"
                 >
                   {Array.from({ length: totalDeLinhas }, (_, i) => (
                     <div key={i + 1}>{i + 1}</div>
                   ))}
                 </div>
 
+                {/*
+                  CAMADA DO REALCE — desenhada ATRÁS da área de escrita, que fica transparente.
+
+                  As duas precisam ocupar exatamente o mesmo espaço: mesma fonte, mesmo tamanho,
+                  mesma altura de linha, mesma folga e a mesma regra de quebra (wrap desligado).
+                  Qualquer diferença aí faz o texto colorido descolar do texto real e o cursor
+                  aparecer no lugar errado — por isso as classes abaixo são as MESMAS da área de
+                  escrita, e o realce nunca acrescenta nem remove um caractere (ver lib/realce.ts).
+                */}
+                <pre
+                  ref={realceRef}
+                  aria-hidden="true"
+                  className="pointer-events-none overflow-hidden text-cyan-100/90"
+                  style={{
+                    ...METRICA_DO_EDITOR,
+                    position: 'absolute',
+                    top: 0, bottom: 0, right: 0,
+                    left: larguraDaRegua,
+                    paddingLeft: '12px',
+                    paddingRight: '16px',
+                    zIndex: 0
+                  }}
+                  dangerouslySetInnerHTML={{ __html: realcar(activeFile.content || '', linguagemDoArquivo(activeFile.name, activeFile.language)) + '\n' }}
+                />
                 <textarea
                   ref={editorRef}
                   value={activeFile.content}
@@ -1983,10 +2054,20 @@ FORMATO OBRIGATÓRIO (JSON estrito):
                   // A classe é o que autoriza o Ctrl+Z do OSONE a agir aqui dentro: o atalho global
                   // ignora campos de texto, e sem ela o desfazer nunca funcionava no editor —
                   // justamente onde ele mais faz falta.
-                  className="code-editor-textarea flex-1 h-full bg-transparent py-4 pl-3 pr-4
-                             font-mono text-xs md:text-sm text-cyan-100/90 leading-relaxed
+                  // O texto fica TRANSPARENTE e quem se vê é a camada de realce atrás; o cursor
+                  // continua visível por causa do caret-color, que não é afetado pela cor do texto.
+                  style={{
+                    ...METRICA_DO_EDITOR,
+                    position: 'relative',
+                    zIndex: 10,
+                    paddingLeft: '12px',
+                    paddingRight: '16px',
+                    background: 'transparent',
+                    color: 'transparent'
+                  }}
+                  className="code-editor-textarea flex-1 h-full caret-cyan-300
                              outline-none resize-none custom-scrollbar selection:bg-cyan-500/30
-                             whitespace-pre overflow-auto"
+                             overflow-auto"
                   placeholder="Escreva ou cole seu código aqui..."
                 />
               </div>
@@ -2002,7 +2083,12 @@ FORMATO OBRIGATÓRIO (JSON estrito):
               {/* O preview recebe o PROJETO montado, não o arquivo aberto: é o que faz o
                   styles.css e o script.js existirem de verdade, e o que evita desenhar CSS
                   cru como se fosse página quando o arquivo aberto não é uma. */}
-              <CodePreview code={montarPreview(files, activeFile)} />
+              <CodePreview
+                code={linguagemDoArquivo(activeFile?.name || '', activeFile?.language) === 'python'
+                  ? (activeFile?.content || '')
+                  : montarPreview(files, activeFile)}
+                linguagem={linguagemDoArquivo(activeFile?.name || '', activeFile?.language)}
+              />
             </div>
           )}
 

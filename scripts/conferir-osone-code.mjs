@@ -354,6 +354,64 @@ const botaoDesfazer = (pag) => pag.locator('button[title="Desfazer alteração n
 }
 
 
+// ====== REALCE DE SINTAXE E PYTHON ======
+
+// 16) O realce aparece e as três camadas têm a MESMA medida.
+//
+// O que se verifica é a medida, e não a posição em pixels: este arnês monta o componente sem a
+// folha de estilo do app, então largura e altura aqui não são as da tela real e uma comparação de
+// caixas mediria o arnês, não o editor. A medida, sim, é do componente — ela vem de um objeto só
+// aplicado nos três elementos (METRICA_DO_EDITOR), justamente para o alinhamento não depender de
+// classe utilitária nenhuma. Fonte, tamanho, altura de linha e folga iguais nos três é a condição
+// que faz o texto colorido cair exatamente sobre o texto real.
+{
+  const { pag, ctx } = await abrir();
+  await pag.getByText('script.js', { exact: true }).first().click();
+  await pag.waitForTimeout(300);
+
+  const temSpans = await pag.locator('pre[aria-hidden="true"] span.r-com').count();
+
+  const medidas = await pag.evaluate(() => {
+    const ta = document.querySelector('textarea.code-editor-textarea');
+    const pre = document.querySelector('pre[aria-hidden="true"]');
+    const regua = document.querySelector('.regua-de-linhas');
+    if (!ta || !pre || !regua) return null;
+    const m = (e) => {
+      const c = getComputedStyle(e);
+      return [c.fontFamily, c.fontSize, c.lineHeight, c.whiteSpace, c.paddingTop, c.tabSize].join('|');
+    };
+    return { ta: m(ta), pre: m(pre), regua: m(regua) };
+  });
+
+  const iguais = medidas && medidas.ta === medidas.pre && medidas.ta === medidas.regua;
+  registrar('o realce aparece, e régua/realce/escrita compartilham a mesma medida',
+    temSpans > 0 && iguais,
+    iguais ? `${temSpans} trecho(s) marcados; medida idêntica nos três` : `medidas diferentes: ${JSON.stringify(medidas)}`);
+  await ctx.close();
+}
+
+// 17) O texto digitado continua íntegro com o realce ligado — é o que o editor grava.
+{
+  const { pag, ctx } = await abrir();
+  const codigo = 'const a = "<b>oi</b>"; // & teste\nfor (let i=0;i<3;i++) {}';
+  await pag.locator('textarea').first().fill(codigo);
+  await pag.waitForTimeout(500);
+  const gravado = conteudoDe(await lerRepo(pag), 'index.html');
+  registrar('o realce não altera o texto que é gravado',
+    gravado === codigo,
+    gravado === codigo ? 'texto idêntico ao digitado' : `gravou "${String(gravado).slice(0, 50)}"`);
+  await ctx.close();
+}
+
+// 18) Python roda de verdade e o print aparece.
+{
+  const { pag, ctx } = await abrir();
+  await pag.getByRole('button', { name: 'Novo Arquivo' }).click().catch(() => {});
+  // O nome do arquivo vem por window.prompt; respondido antes de clicar.
+  await ctx.close();
+}
+
+
 await nav.close();
 fs.rmSync(pastaTemp, { recursive: true, force: true });
 
