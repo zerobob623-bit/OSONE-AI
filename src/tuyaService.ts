@@ -66,7 +66,7 @@ export function checkTuyaConfig() {
  * configurando pela primeira vez fica travado sem saber se errou a chave, a região ou a conta —
  * e é justamente na primeira vez que a pessoa mais precisa de direção.
  */
-function explicarErroTuya(mensagem: string): string {
+export function explicarErroTuya(mensagem: string): string {
   const m = String(mensagem || '');
 
   if (/sign invalid|1004/i.test(m)) {
@@ -88,7 +88,30 @@ function explicarErroTuya(mensagem: string): string {
       "quando parar de funcionar do nada, é provável que ele tenha mudado e precise ser atualizado lá. " +
       "Pelo mesmo motivo, hospedar o OSONE na Vercel não combina com essa trava: o IP de lá muda a cada execução.";
   }
-  if (/no permissions|permission deny|1106|28841002/i.test(m)) {
+  /**
+   * ASSINATURA VENCIDA ≠ FALTA DE AUTORIZAÇÃO. São causas diferentes com soluções diferentes.
+   *
+   * O código 28841002 estava jogado junto com "no permissions", e a resposta mandava ir na aba
+   * 'Service API' autorizar o IoT Core. Só que quem recebe este erro normalmente JÁ tem o IoT Core
+   * autorizado — foi verificado em uso real, com os cinco serviços autorizados na tela e o erro
+   * acontecendo mesmo assim. A instrução mandava a pessoa conferir de novo o que já estava certo, e
+   * o problema real ficava invisível: a Tuya dá o IoT Core como avaliação gratuita por tempo
+   * limitado, e quando esse prazo acaba a API para de responder sem que nada tenha sido desfeito.
+   *
+   * Por isso este teste vem ANTES do de permissão, e fala de renovar, não de autorizar.
+   */
+  if (/subscription has expired|subscription expired|28841002/i.test(m)) {
+    return "A assinatura do serviço IoT Core na Tuya VENCEU. Isto não é falta de autorização: se você olhar a " +
+      "aba 'Service API' do projeto, o IoT Core provavelmente continua lá, autorizado — o que acabou foi o " +
+      "prazo da avaliação gratuita, e sem ela a Tuya recusa toda chamada da API. " +
+      "Para resolver: em platform.tuya.com, com o projeto aberto, vá no menu lateral 'Purchase' (ou 'Cloud > " +
+      "Purchase') e procure o IoT Core na lista de serviços/assinaturas. A avaliação gratuita costuma ter um " +
+      "botão de renovar/estender por mais um período, sem custo. Renove, espere alguns minutos e clique em " +
+      "'Tentar de novo' aqui. " +
+      "Enquanto a assinatura estiver vencida, nenhuma credencial vai funcionar — não adianta gerar chave nova " +
+      "nem recriar o projeto.";
+  }
+  if (/no permissions|permission deny|1106/i.test(m)) {
     return "As credenciais são válidas, mas o projeto na Tuya não tem permissão para esta operação. " +
       "Em iot.tuya.com > Cloud > seu projeto > aba 'Service API', clique em 'Go to Authorize' e adicione " +
       "'IoT Core' (e 'Authorization Token Management', se aparecer). Depois espere ~5 minutos e tente de novo.";
