@@ -237,9 +237,19 @@ export async function handleExecute(commands: Array<{ devices: Array<{ id: strin
         try {
           if (execution.command === 'action.devices.commands.OnOff') {
             const resolved = await resolveDeviceSwitchCode(device.id);
-            const switchCode = resolved?.code || 'switch_1';
+            // Sem um liga/desliga conhecido, o comando NÃO é chutado como 'switch_1'.
+            //
+            // O handleQuery já respondia 'functionNotSupported' nesse caso, e o EXECUTE fazia o
+            // oposto: mandava um ponto de dados que o aparelho pode não ter e informava SUCCESS
+            // ao Google. O Assistente respondia "ok, liguei", o aparelho não mexia, e a resposta
+            // ainda envenenava o estado que o Google guarda. Recusar é o que as duas rotas
+            // precisam fazer de forma coerente.
+            if (!resolved) {
+              commandResults.push({ ids: [device.id], status: 'ERROR', errorCode: 'functionNotSupported' });
+              continue;
+            }
             const desiredOn = !!execution.params?.on;
-            await sendDeviceCommand(device.id, [{ code: switchCode, value: desiredOn }]);
+            await sendDeviceCommand(device.id, [{ code: resolved.code, value: desiredOn }]);
             commandResults.push({ ids: [device.id], status: 'SUCCESS', states: { online: true, on: desiredOn } });
           } else {
             commandResults.push({ ids: [device.id], status: 'ERROR', errorCode: 'functionNotSupported' });
