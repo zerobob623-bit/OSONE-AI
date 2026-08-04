@@ -981,6 +981,7 @@ export default function App() {
   - É EXPRESSAMENTE PROIBIDO fazer pesquisas na internet ou usar 'openUrl' para links externos do Google Maps ou OpenStreetMap para estes casos. Você deve se concentrar INTEGRALMENTE no ambiente do Mapa OS integrado.
 
   DIRETRIZ CRÍTICA DE TRANSPARÊNCIA - AUTOMAÇÃO IOT & SMART HOME:
+  - DINHEIRO: você NUNCA conclui pagamento, compra, transferência, PIX, boleto, assinatura, saque ou qualquer movimentação financeira — nem clicando, nem digitando dados de cartão, nem por plano automático. Isso vale mesmo que o usuário peça explicitamente e mesmo que ele insista. Você PODE ajudar até a porta: pesquisar preço, comparar, encher o carrinho, abrir a tela de pagamento e explicar o que fazer. Aí você PARA, diz que o passo final é dele e devolve o controle. O motivo é simples e não é burocrático: pagamento sai do computador e não volta com um desfazer, e um erro meu custaria dinheiro de verdade de alguém. Nunca digite número de cartão, CVV, senha de banco ou código de autenticação, ainda que estejam visíveis na tela ou o usuário os dite.
   - O sistema de Smart Home (control_smart_device, get_connected_devices, run_smart_routine) comanda APENAS aparelhos físicos reais da conta Tuya do usuário. Não existe modo simulado nem ambiente de demonstração: se as credenciais da Tuya não estiverem configuradas no servidor, as ferramentas respondem que não há casa conectada, e você deve dizer isso ao usuário — NUNCA finja que ligou, desligou ou ajustou qualquer coisa. Relate sempre exatamente o que a resposta da ferramenta disse, incluindo as recusas.
   - FECHADURAS/TRAVAS (categoria contém "lock", "fechadura", "door", "latch"): é EXPRESSAMENTE PROIBIDO acionar fechaduras por voz — se você estiver em uma sessão de voz e a ferramenta retornar bloqueio de segurança, informe ao usuário que ele precisa usar o chat de texto do OSONE para essa ação. Em texto, uma fechadura real só é acionada após o usuário confirmar explicitamente no painel de confirmação que aparece na tela; se ele não confirmar em 3 minutos ou cancelar, a ação não ocorre — nunca diga que a fechadura foi destravada/travada se a resposta da ferramenta indicar cancelamento, expiração ou erro.
 
@@ -1944,7 +1945,7 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   const [proposedPlan, setProposedPlan] = useState<SkeletonPlan | null>(null);
   const { pendingLocalAgentConfirmation, executeLocalAgentCall,
           acoesDoMotor, motorParado, pararMotor, retomarMotor, limparAcoesDoMotor,
-          ultimaAcaoNoPcRef } = useLocalAgent();
+          ultimaAcaoNoPcRef, executarPlanoDeAcoes, planoEmCurso } = useLocalAgent();
 
   /**
    * Envia uma mensagem de WhatsApp de verdade, a pedido do modelo.
@@ -6207,9 +6208,41 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
 
+      /**
+       * O MODELO PRECISA SABER QUANDO FICOU CEGO.
+       *
+       * O envio de quadros é interrompido em duas situações legítimas logo abaixo — e nenhuma
+       * delas era comunicada. Do lado do modelo nada mudava: a instrução continuava mandando ler
+       * a tela, e ele seguia recebendo áudio e perguntas sobre "o que está aí". Sem imagem e sem
+       * aviso, o que sobra é completar com o que costuma haver numa tela daquele tipo — e foi
+       * assim que ele passou a descrever, com todas as letras, código React Native numa tela do
+       * OSONE CODE que não tinha nada disso.
+       *
+       * A pausa mais longa dura 20 segundos a cada ação no PC, então esta não é uma janela
+       * estreita: é o intervalo inteiro em que o usuário mais pergunta o que está acontecendo.
+       *
+       * O aviso é mandado UMA vez a cada mudança de estado, e não a cada segundo, para não virar
+       * ruído dentro da conversa.
+       */
+      let enxergandoAgora: boolean | null = null;
+      const avisarSeMudou = (enxergando: boolean, motivo: string) => {
+        if (enxergandoAgora === enxergando) return;
+        enxergandoAgora = enxergando;
+        if (!liveSessionRef.current || liveStateRef.current.status !== 'connected') return;
+        const aviso = enxergando
+          ? '[VISÃO] A imagem da tela voltou. A partir de agora você está vendo a tela de novo.'
+          : `[VISÃO] Você PAROU de receber a imagem da tela (${motivo}). Enquanto isso você está cego: `
+            + 'NÃO descreva, não leia e não suponha nada do que está na tela. Se perguntarem, diga que a '
+            + 'imagem está indisponível neste instante.';
+        liveSessionRef.current.sendRealtimeInput({ text: aviso });
+      };
+
       screenIntervalRef.current = setInterval(() => {
         // Enquanto uma captura injetada está sendo examinada, não mandar frames por cima dela.
-        if (Date.now() < pausarEnvioDeTelaAte.current) return;
+        if (Date.now() < pausarEnvioDeTelaAte.current) {
+          avisarSeMudou(false, 'uma captura está sendo examinada');
+          return;
+        }
         /**
          * E também durante toda a sequência de controle do PC.
          *
@@ -6220,7 +6253,10 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
          * leitura. Calando o vídeo, sobra uma fonte só: a captura, que é da tela inteira e está
          * alinhada com o clique.
          */
-        if (Date.now() - ultimaAcaoNoPcRef.current < 20000) return;
+        if (Date.now() - ultimaAcaoNoPcRef.current < 20000) {
+          avisarSeMudou(false, 'o OSONE está executando uma ação no computador');
+          return;
+        }
         // liveStateRef, e não liveState: este intervalo vive muito além da renderização que o
         // criou, e a variável de estado congela no valor que ela tinha naquele instante. Como o
         // compartilhamento quase sempre começa ANTES de a sessão de voz ficar 'connected' — pelo
@@ -6236,6 +6272,9 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
           liveSessionRef.current.sendRealtimeInput({
             video: { data: base64Data, mimeType: 'image/jpeg' }
           });
+          // O aviso de volta vai DEPOIS do primeiro quadro novo: dizer "voltei a ver" antes de a
+          // imagem chegar recria, por um instante, a mesma mentira que se está corrigindo.
+          avisarSeMudou(true, '');
         }
       }, 1000);
 
@@ -7655,6 +7694,32 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
       });
 
       functionDeclarations.push({
+        name: "executar_plano_no_pc",
+        description: "EXECUTA UMA SEQUÊNCIA INTEIRA DE PASSOS NO COMPUTADOR SOZINHO, sem voltar a perguntar a cada passo. Use quando a tarefa tiver vários cliques encadeados (abrir um programa, navegar por menus, preencher um campo e confirmar). Entre um passo e o outro, o OSONE MEDE quanto a tela demora para carregar e só então executa o próximo — você não precisa estimar espera nenhuma nem inserir pausas. Prefira esta ferramenta a chamar 'controlar_pc' muitas vezes seguidas: é mais rápido e não interrompe o usuário a cada etapa. IMPORTANTE: antes de montar o plano, use 'controlar_pc' com 'capturar_tela' para ver a tela e com 'localizar' para obter as coordenadas reais de cada alvo — coordenadas estimadas erram. O plano PARA sozinho e devolve o motivo se um passo falhar, se a tela não mudar quando deveria (sinal de que o clique não pegou), ou se estourar o teto de passos/tempo; nesse caso, olhe a tela e monte um plano novo a partir dali, nunca repita o mesmo. Ações que mexem em arquivos ou rodam terminal NÃO entram em plano: use 'controlar_pc' para elas, uma a uma. E NADA de dinheiro: passos de pagamento, compra, PIX, transferência, cartão ou assinatura são recusados pelo motor — leve o usuário até a tela e devolva o controle a ele.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            objetivo: { type: Type.STRING, description: "Em uma frase, o que a sequência inteira deve conseguir. Aparece para o usuário enquanto o plano roda." },
+            passos: {
+              type: Type.ARRAY,
+              description: "Os passos, em ordem. No máximo 25.",
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  acao: { type: Type.STRING, description: "Uma das ações de tela do 'controlar_pc': 'clicar', 'digitar', 'tecla', 'rolar', 'mover_mouse', 'abrir'." },
+                  args: { type: Type.OBJECT, description: "Os mesmos argumentos que 'controlar_pc' usa para essa ação (x, y, texto, tecla, direcao, caminho...)." },
+                  descricao: { type: Type.STRING, description: "Para que serve este passo, em português. É o que o usuário lê enquanto o plano roda — escreva para ele, não para você." },
+                  esperaDaTela: { type: Type.STRING, description: "O que se espera da tela depois do passo: 'mudar' (padrão — clique que não muda nada é clique que não pegou), 'permanecer' ou 'qualquer'." }
+                },
+                required: ["acao", "descricao"]
+              }
+            }
+          },
+          required: ["objetivo", "passos"]
+        }
+      });
+
+      functionDeclarations.push({
         name: "listar_contatos_whatsapp",
         description: "Consulta a agenda REAL do OSONE ZAP e devolve nome + número de cada contato salvo. Use SEMPRE antes de enviar uma mensagem quando o usuário citar alguém pelo NOME ('manda pro João', 'avisa a Maria') — é a única forma de descobrir o número correto. Sem chamar esta ferramenta você NÃO sabe o número de ninguém e não pode adivinhar.",
         parameters: {
@@ -8484,6 +8549,32 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
               content: waRes.error ? `⚠️ [WHATSAPP] ${waRes.error}` : `✅ [WHATSAPP] ${waRes.message}`
             }]);
             addNotification(waRes.error || waRes.message, waRes.error ? 'error' : 'success');
+          } else if (call.name === 'executar_plano_no_pc') {
+            const { objetivo, passos } = call.args as any;
+            const rel: any = await executarPlanoDeAcoes(passos || [], apiKeys.localAgentToken, false, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.6-flash' });
+
+            if (rel?.error) {
+              addNotification(rel.error, 'error');
+              setChatHistory(prev => [...prev, {
+                id: Math.random().toString(36).substr(2, 9),
+                role: 'assistant' as const,
+                content: `⚠️ [PLANO] ${rel.error}`
+              }]);
+            } else {
+              // O relatório mostra PREVISTO vs MEDIDO em cada passo: é o que deixa visível a
+              // previsão de espera se calibrando de um passo para o outro, em vez de ser uma
+              // caixa-preta que "às vezes demora".
+              const linhas = (rel.passos || []).map((p: any, i: number) =>
+                `${p.ok ? '✅' : '❌'} ${i + 1}. ${p.descricao} — ${Math.round(p.esperaMedidaMs)}ms de espera (previa ${Math.round(p.esperaPrevistaMs)}ms)${p.erro ? ` — ${p.erro}` : ''}`
+              ).join('\n');
+              const cabecalho = rel.motivo === 'concluido' ? '🤖 [PLANO CONCLUÍDO]' : '⏹️ [PLANO INTERROMPIDO]';
+              addNotification(rel.resumo, rel.motivo === 'concluido' ? 'success' : 'error');
+              setChatHistory(prev => [...prev, {
+                id: Math.random().toString(36).substr(2, 9),
+                role: 'assistant' as const,
+                content: `${cabecalho} ${objetivo || ''}\n\n${linhas}\n\n${rel.resumo}`
+              }]);
+            }
           } else if (['controlar_pc', 'organize_folder_plan', 'organize_folder_execute'].includes(call.name)) {
             const agentRes = await executeLocalAgentCall(call.name, call.args, apiKeys.localAgentToken, false, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.6-flash' });
             // 'capturar_tela' devolve uma imagem base64 potencialmente grande demais para virar
@@ -8698,7 +8789,8 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
         
         DIRETRIZ DE TRADUÇÃO SIMULTÂNEA:
         - Sua única missão absoluta é atuar como um intérprete/tradutor simultâneo profissional e instantâneo de alta performance do que for capturado no áudio do usuário ou transmitido pelo compartilhamento de tela técnica (quando o usuário navegar por abas da internet em inglês, espanhol, etc.).
-        - Sempre que houver frames de imagem (compartilhamento de tela ativo: ${isScreenSharing ? "SIM" : "NÃO"}), faça uma leitura rápida, precisa e traduza IMEDIATAMENTE os textos, notícias, blogs, ou vídeos visualizados para o Português do Brasil em voz alta de forma fluida.
+        - VISÃO DA TELA: você só enxerga a tela nos instantes em que RECEBE quadros de imagem. Esse envio começa, para e recomeça durante a sessão, e você é avisado por mensagens que começam com [VISÃO]. Depois de "[VISÃO] Você PAROU de receber a imagem", considere-se CEGO até o aviso de volta: não descreva, não leia e não suponha nada do que está na tela, mesmo que pareça óbvio o que estaria ali. Se perguntarem nesse intervalo, diga que a imagem está indisponível no momento. NUNCA descreva uma tela a partir do que costuma existir numa tela desse tipo — inventar conteúdo plausível é pior do que dizer que não está vendo.
+        - Quando ESTIVER recebendo quadros, faça uma leitura rápida e precisa e traduza IMEDIATAMENTE os textos, notícias, blogs ou vídeos visualizados para o Português do Brasil em voz alta, de forma fluida.
         - Não perca tempo com saudações longas, explicações gramaticais densas ou rodeios. Esforce-se para entregar a tradução do conteúdo visual ou falado da aba compartilhada de forma contínua e incrivelmente ágil.
         - Mantenha-se prestativo, preciso e dinâmico.
         
@@ -9221,6 +9313,31 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       planJson: { type: Type.STRING, description: "O JSON exato do array 'plan' retornado por organize_folder_plan, sem modificações." }
                     },
                     required: ["folderKey", "planJson"]
+                  }
+                },
+                {
+                  name: "executar_plano_no_pc",
+                  description: "EXECUTA UMA SEQUÊNCIA INTEIRA DE PASSOS NO COMPUTADOR SOZINHO, sem voltar a perguntar a cada passo. Use quando a tarefa tiver vários cliques encadeados. Entre um passo e o outro, o OSONE MEDE quanto a tela demora para carregar e só então executa o próximo — você não precisa estimar espera nenhuma. Antes de montar o plano, use 'controlar_pc' com 'capturar_tela' e 'localizar' para obter as coordenadas reais de cada alvo. O plano PARA sozinho e devolve o motivo se um passo falhar, se a tela não mudar quando deveria, ou se estourar o teto; nesse caso olhe a tela e monte um plano novo, nunca repita o mesmo. Ações de arquivo e terminal não entram em plano. E nada de dinheiro: pagamento, compra, PIX, transferência ou cartão são recusados pelo motor — leve o usuário até a tela e devolva o controle a ele.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      objetivo: { type: Type.STRING, description: "Em uma frase, o que a sequência inteira deve conseguir." },
+                      passos: {
+                        type: Type.ARRAY,
+                        description: "Os passos, em ordem. No máximo 25.",
+                        items: {
+                          type: Type.OBJECT,
+                          properties: {
+                            acao: { type: Type.STRING, description: "'clicar', 'digitar', 'tecla', 'rolar', 'mover_mouse' ou 'abrir'." },
+                            args: { type: Type.OBJECT, description: "Os mesmos argumentos do 'controlar_pc' para essa ação." },
+                            descricao: { type: Type.STRING, description: "Para que serve o passo, em português — o usuário lê isso enquanto roda." },
+                            esperaDaTela: { type: Type.STRING, description: "'mudar' (padrão), 'permanecer' ou 'qualquer'." }
+                          },
+                          required: ["acao", "descricao"]
+                        }
+                      }
+                    },
+                    required: ["objetivo", "passos"]
                   }
                 },
                 {
@@ -9904,6 +10021,31 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       id: call.id,
                       response: { result: waRes.error ? `ERRO: ${waRes.error}` : waRes.message }
                     });
+                  } else if (call.name === "executar_plano_no_pc") {
+                    const { passos } = call.args as any;
+                    const rel: any = await executarPlanoDeAcoes(passos || [], apiKeys.localAgentToken, true, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.6-flash' });
+                    if (rel?.error) {
+                      addNotification(rel.error, 'error');
+                      responses.push({ name: call.name, id: call.id, response: { error: rel.error } });
+                    } else {
+                      addNotification(rel.resumo, rel.motivo === 'concluido' ? 'success' : 'error');
+                      // Por voz vai o resumo e o motivo, não a tabela: o modelo lê isso em voz alta.
+                      responses.push({
+                        name: call.name,
+                        id: call.id,
+                        response: {
+                          result: rel.resumo,
+                          motivo: rel.motivo,
+                          passosExecutados: rel.passosExecutados,
+                          totalDePassos: rel.totalDePassos,
+                          // Quando parou antes do fim, o modelo PRECISA saber que o resto não
+                          // aconteceu — senão narra a tarefa inteira como concluída.
+                          aviso: rel.motivo === 'concluido'
+                            ? undefined
+                            : 'O plano NÃO terminou. Não diga que a tarefa foi concluída: relate onde parou e por quê, olhe a tela e proponha um plano novo a partir dali.'
+                        }
+                      });
+                    }
                   } else if (['controlar_pc', 'organize_folder_plan', 'organize_folder_execute'].includes(call.name)) {
                     const agentRes = await executeLocalAgentCall(call.name, call.args, apiKeys.localAgentToken, true, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.6-flash' });
                     if (agentRes.error) {

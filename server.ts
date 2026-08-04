@@ -27,6 +27,11 @@ import {
 } from "./src/tuyaService";
 import { agentRouter, OSONE_INSTALL_DIR } from "./src/localAgentService";
 import {
+  carregarCredenciaisSalvas,
+  lerEstadoDasCredenciais,
+  salvarCredenciais
+} from "./src/credenciaisDoServidor";
+import {
   checkGoogleHomeConfig,
   issueAuthCode,
   exchangeToken,
@@ -38,6 +43,9 @@ import {
 } from "./src/googleHomeService";
 
 dotenv.config();
+// Antes de qualquer checagem: o que o usuário preencheu pela tela entra no ambiente aqui, senão a
+// subida reclamaria de credenciais que estão guardadas e a um passo de valer.
+carregarCredenciaisSalvas();
 logTuyaStartupCheck();
 
 // ALWAYS polyfill global WebSocket for Node.js environments.
@@ -4036,6 +4044,30 @@ ${processedChunk}`;
     const r = controle.instalar();
     if (!r?.ok) return res.status(400).json({ error: r?.erro || 'Não foi possível instalar agora.' });
     return res.json({ ok: true, mensagem: 'O OSONE vai fechar e abrir de novo já atualizado.' });
+  });
+
+  /**
+   * CREDENCIAIS DA CASA INTELIGENTE — preenchidas pela tela, guardadas no servidor.
+   *
+   * Só a própria máquina fala com estas rotas: elas gravam o segredo que assina as requisições da
+   * Tuya. Numa hospedagem remota (Vercel) a resposta é 403 de propósito — lá as credenciais entram
+   * pelas variáveis de ambiente do painel da hospedagem, que é o lugar certo delas.
+   */
+  app.get("/api/credenciais", (req, res) => {
+    if (!somenteDaPropriaMaquina(req, res)) return;
+    return res.json(lerEstadoDasCredenciais());
+  });
+
+  app.post("/api/credenciais", (req, res) => {
+    if (!somenteDaPropriaMaquina(req, res)) return;
+    try {
+      const { salvos, apagados } = salvarCredenciais(req.body || {});
+      // A resposta devolve o ESTADO, nunca os valores: o segredo entra na tela e não volta dela.
+      return res.json({ ok: true, salvos, apagados, ...lerEstadoDasCredenciais() });
+    } catch (err: any) {
+      console.error("Erro ao salvar credenciais:", err);
+      return res.status(500).json({ error: err?.message || "Não foi possível gravar as credenciais." });
+    }
   });
 
   // POST secure proxy endpoint for general Gemini content generation (supports history, tools, etc.)

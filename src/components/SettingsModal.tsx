@@ -262,6 +262,71 @@ export const SettingsModal = ({
     }
   };
 
+  /**
+   * CAMPOS DE CREDENCIAL — o que faltava para o checklist deixar de ser um beco sem saída.
+   *
+   * A tela mostrava "❌ TUYA_CLIENT_ID" e mandava definir a variável de ambiente do servidor, sem
+   * oferecer um campo para digitar. No app instalado não há .env que a pessoa possa abrir, então a
+   * instrução era impossível de cumprir. Os valores vão para o servidor e ficam lá: o segredo da
+   * Tuya assina as requisições e nunca volta para o navegador — daqui só sobe.
+   */
+  const [credenciais, setCredenciais] = useState<any[]>([]);
+  const [credenciaisDisponivel, setCredenciaisDisponivel] = useState<boolean>(true);
+  const [rascunhoCredenciais, setRascunhoCredenciais] = useState<Record<string, string>>({});
+  const [salvandoCredenciais, setSalvandoCredenciais] = useState(false);
+  const [mostrarSegredo, setMostrarSegredo] = useState<Record<string, boolean>>({});
+
+  const carregarCredenciais = async () => {
+    try {
+      const res = await fetch('/api/credenciais');
+      if (res.status === 403) {
+        // Hospedagem remota: lá as credenciais entram pelo painel do provedor, e não por aqui.
+        setCredenciaisDisponivel(false);
+        return;
+      }
+      const data = await res.json().catch(() => null);
+      if (data?.campos) {
+        setCredenciais(data.campos);
+        setCredenciaisDisponivel(true);
+      }
+    } catch {
+      setCredenciaisDisponivel(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen && activeTab === 'automation') carregarCredenciais();
+  }, [isOpen, activeTab]);
+
+  const salvarCredenciaisNoServidor = async () => {
+    if (Object.keys(rascunhoCredenciais).length === 0) return;
+    setSalvandoCredenciais(true);
+    try {
+      const res = await fetch('/api/credenciais', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(rascunhoCredenciais)
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        onAddNotification?.(data?.error || 'Não foi possível salvar as credenciais.', 'error');
+        return;
+      }
+      setCredenciais(data.campos || []);
+      setRascunhoCredenciais({});
+      // Vale na hora: a instrução antiga terminava em "e reinicie o OSONE", e no app instalado
+      // isso significava fechar tudo só para descobrir se o valor colado estava certo.
+      onAddNotification?.(
+        `Credenciais salvas e já valendo${data.salvos?.length ? ` (${data.salvos.length} campo(s))` : ''}. Nenhum reinício necessário.`,
+        'success'
+      );
+    } catch (err: any) {
+      onAddNotification?.(`Falha ao salvar: ${err?.message || err}`, 'error');
+    } finally {
+      setSalvandoCredenciais(false);
+    }
+  };
+
   const handleTestConnection = async () => {
     setConnectionStatus('testing');
     setConnectionMessage('Verificando configuração do Google Home no servidor...');
@@ -1686,6 +1751,91 @@ export const SettingsModal = ({
                           </>
                         )}
                       </button>
+
+                      {/*
+                        OS CAMPOS. Ficam ACIMA do checklist de propósito: o checklist diz o que
+                        falta, e o que falta precisa ter onde ser preenchido logo em seguida.
+                      */}
+                      {credenciaisDisponivel ? (
+                        <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/[0.06] space-y-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-[11px] font-bold text-white uppercase tracking-wider">Credenciais da Casa Inteligente</p>
+                              <p className="text-[10px] text-her-muted/70 leading-relaxed mt-0.5">
+                                Preencha aqui. Os valores ficam guardados no servidor desta máquina e passam a valer
+                                na hora — sem abrir arquivo e sem reiniciar o OSONE.
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2.5">
+                            {credenciais.map((campo: any) => {
+                              const emEdicao = campo.nome in rascunhoCredenciais;
+                              const revelar = !!mostrarSegredo[campo.nome];
+                              return (
+                                <div key={campo.nome}>
+                                  <label className="flex items-center justify-between text-[9px] uppercase tracking-[0.15em] text-her-muted font-bold mb-1 pl-1">
+                                    <span>{campo.rotulo}</span>
+                                    {campo.preenchido && !emEdicao && (
+                                      <span className={cn(
+                                        "normal-case tracking-normal font-mono text-[9px] px-1.5 py-0.5 rounded",
+                                        campo.origem === 'painel'
+                                          ? "bg-emerald-500/10 text-emerald-400"
+                                          : "bg-sky-500/10 text-sky-400"
+                                      )}>
+                                        {campo.origem === 'painel' ? 'salvo aqui' : 'vem do ambiente'}
+                                      </span>
+                                    )}
+                                  </label>
+                                  <div className="relative flex items-center">
+                                    <input
+                                      type={campo.segredo && !revelar ? 'password' : 'text'}
+                                      value={rascunhoCredenciais[campo.nome] ?? ''}
+                                      onChange={(e) => setRascunhoCredenciais(prev => ({ ...prev, [campo.nome]: e.target.value }))}
+                                      placeholder={campo.preenchido ? campo.amostra : 'Não preenchido'}
+                                      className={cn(
+                                        "w-full bg-white/[0.02] border rounded-xl px-4 py-2.5 focus:outline-none transition-all text-[11px] font-mono text-white placeholder:text-her-muted/30",
+                                        campo.preenchido ? "border-emerald-500/20 focus:border-emerald-500/40" : "border-white/[0.06] focus:border-white/20"
+                                      )}
+                                    />
+                                    {campo.segredo && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setMostrarSegredo(prev => ({ ...prev, [campo.nome]: !prev[campo.nome] }))}
+                                        className="absolute right-3 p-1 text-her-muted/50 hover:text-white transition-colors cursor-pointer"
+                                        title={revelar ? 'Ocultar' : 'Mostrar o que estou digitando'}
+                                      >
+                                        {revelar ? <EyeOff size={13} /> : <Eye size={13} />}
+                                      </button>
+                                    )}
+                                  </div>
+                                  <p className="text-[9px] text-her-muted/50 leading-relaxed mt-1 pl-1 font-sans">{campo.dica}</p>
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          <div className="flex items-center gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={salvarCredenciaisNoServidor}
+                              disabled={salvandoCredenciais || Object.keys(rascunhoCredenciais).length === 0}
+                              className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-[10px] uppercase tracking-wider transition-all disabled:opacity-25 disabled:cursor-not-allowed cursor-pointer"
+                            >
+                              {salvandoCredenciais ? 'Salvando...' : 'Salvar credenciais'}
+                            </button>
+                            <span className="text-[9px] text-her-muted/50 font-sans leading-tight">
+                              Campo deixado em branco e salvo apaga o valor guardado.
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-4 rounded-2xl bg-sky-500/[0.06] border border-sky-500/20 text-[10px] text-sky-200/80 leading-relaxed font-sans">
+                          Você está acessando o OSONE por uma hospedagem remota. Por segurança, credenciais só podem ser
+                          preenchidas a partir do próprio computador onde o OSONE roda. Nesta hospedagem, defina-as nas
+                          variáveis de ambiente do painel do provedor (ex: Vercel &gt; Project Settings &gt; Environment Variables).
+                        </div>
+                      )}
 
                       {tuyaStatus !== 'idle' && (
                         <div className={cn(
