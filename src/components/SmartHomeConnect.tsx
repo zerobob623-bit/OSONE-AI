@@ -1,273 +1,229 @@
-import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Zap, Cpu, Lightbulb, ToggleLeft, ToggleRight, Wifi, ShieldCheck, 
-  RefreshCw, CheckCircle2, AlertCircle, Plus, Trash2, Power, Sliders, 
-  Cloud, Lock, Sparkles, Smartphone, Layers, Play, Settings, Key, 
-  Globe, Folder, Terminal, Download, ArrowRight, Server, Copy, Check
+import React, { useCallback, useEffect, useState } from 'react';
+import { motion } from 'motion/react';
+import {
+  Zap, Cpu, Lightbulb, Wifi, ShieldCheck, RefreshCw, AlertCircle, Power, Lock,
+  Play, Folder, Copy, Check, Plus, Trash2, ExternalLink
 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { SmartDevice, SmartHomeConfig, SmartRoutine } from '../types';
+import { SmartRoutine } from '../types';
+import {
+  RecursosDoAparelho,
+  brilhoEmPorcento,
+  descreverComandos,
+  ehFechadura,
+  montarComandos,
+  recursosDosDps
+} from '../lib/tuyaDispositivos';
 
-const DEFAULT_CONFIG: SmartHomeConfig = {
-  tuya: {
-    enabled: true,
-    clientId: 'tuya_app_client_88329',
-    clientSecret: 'secret_tuya_live_771',
-    region: 'us',
-    userToken: 'tuya_user_token_active',
-    linkedAccountEmail: 'usuario@osone.app'
-  },
-  hue: {
-    enabled: true,
-    bridgeIp: '192.168.1.105',
-    username: 'hue_user_osone_key'
-  },
-  smartthings: {
-    enabled: false,
-    personalAccessToken: ''
-  }
-};
+/**
+ * PAINEL DA CASA INTELIGENTE — só aparelhos que existem de verdade.
+ *
+ * Este painel já foi um simulador com cara de painel real. Ele vinha com cinco aparelhos
+ * inventados (inclusive uma "Fechadura Biométrica"), credenciais falsas de aparência plausível
+ * gravadas no código (`secret_tuya_live_771`, um IP de bridge Hue, um token de usuário), botões de
+ * vincular conta que esperavam 1,8s e anunciavam "conta vinculada e autorizada via OAuth", e um
+ * rodapé escrito "Nuvem Sincronizada" piscando em verde sobre aparelhos que nunca chegaram perto
+ * de nuvem nenhuma. Mexer num interruptor só pintava a tela.
+ *
+ * Nada disso existe mais. O que este painel mostra é o que a conta Tuya do usuário devolve, com o
+ * estado lido do próprio aparelho; os controles mandam comandos de verdade; e quando a Tuya não
+ * está configurada o painel diz isso e explica o que fazer, em vez de encher a tela de lâmpadas
+ * que não existem.
+ *
+ * Philips Hue e SmartThings saíram junto: nunca houve backend para nenhum dos dois — os cartões
+ * apenas gravavam um booleano e diziam "conectado com sucesso".
+ */
 
-const DEFAULT_DEVICES: SmartDevice[] = [
-  {
-    id: 'dev-1',
-    name: 'Tomada Smart da Sala',
-    category: 'plug',
-    platform: 'tuya',
-    state: true,
-    room: 'Sala de Estar',
-    online: true,
-    lastUpdated: Date.now()
-  },
-  {
-    id: 'dev-2',
-    name: 'Lâmpada Inteligente RGB',
-    category: 'light',
-    platform: 'hue',
-    state: true,
-    value: 85,
-    color: '#06b6d4',
-    room: 'Quarto Principal',
-    online: true,
-    lastUpdated: Date.now()
-  },
-  {
-    id: 'dev-3',
-    name: 'Interruptor Duplo Cozinha',
-    category: 'switch',
-    platform: 'tuya',
-    state: false,
-    room: 'Cozinha',
-    online: true,
-    lastUpdated: Date.now()
-  },
-  {
-    id: 'dev-4',
-    name: 'Ar Condicionado Dual',
-    category: 'thermostat',
-    platform: 'smartthings',
-    state: true,
-    value: 22,
-    room: 'Escritório',
-    online: true,
-    lastUpdated: Date.now()
-  },
-  {
-    id: 'dev-5',
-    name: 'Fechadura Biométrica',
-    category: 'lock',
-    platform: 'tuya',
-    state: true,
-    room: 'Entrada Principal',
-    online: true,
-    lastUpdated: Date.now()
-  }
-];
+interface AparelhoReal {
+  id: string;
+  name: string;
+  category: string;
+  online: boolean;
+  recursos: RecursosDoAparelho;
+}
 
-const DEFAULT_ROUTINES: SmartRoutine[] = [
-  {
-    id: 'rot-1',
-    name: 'Modo Cinema Imersivo',
-    icon: '🎬',
-    actions: [
-      { deviceId: 'dev-2', targetState: true, targetValue: 30, targetColor: '#8b5cf6' },
-      { deviceId: 'dev-1', targetState: true }
-    ]
-  },
-  {
-    id: 'rot-2',
-    name: 'Boa Noite (Desligar Tudo)',
-    icon: '🌙',
-    actions: [
-      { deviceId: 'dev-1', targetState: false },
-      { deviceId: 'dev-2', targetState: false },
-      { deviceId: 'dev-3', targetState: false },
-      { deviceId: 'dev-5', targetState: true }
-    ]
-  },
-  {
-    id: 'rot-3',
-    name: 'Modo Foco & Trabalho',
-    icon: '⚡',
-    actions: [
-      { deviceId: 'dev-2', targetState: true, targetValue: 100, targetColor: '#ffffff' },
-      { deviceId: 'dev-4', targetState: true, targetValue: 21 }
-    ]
-  }
-];
+type EstadoDaConexao = 'carregando' | 'sem-credenciais' | 'erro' | 'pronto';
 
 export const SmartHomeConnect: React.FC<{
   onClose?: () => void;
   onNotification?: (msg: string, type: 'info' | 'success' | 'error') => void;
 }> = ({ onClose, onNotification }) => {
-  const [activeTab, setActiveTab] = useState<'devices' | 'clouds' | 'routines' | 'pc_organizer'>('devices');
-  const [selectedRoom, setSelectedRoom] = useState<string>('Todos');
-  const [isTuyaRealConfigured, setIsTuyaRealConfigured] = useState(false);
-
-  useEffect(() => {
-    fetch('/api/tuya/status')
-      .then(r => r.json())
-      .then(data => {
-        if (data && data.configured) {
-          setIsTuyaRealConfigured(true);
-        }
-      })
-      .catch(() => {});
-  }, []);
-
-  const [devices, setDevices] = useState<SmartDevice[]>(() => {
-    try {
-      const saved = localStorage.getItem('osone_smarthome_devices');
-      if (saved) return JSON.parse(saved);
-    } catch (e) {}
-    return DEFAULT_DEVICES;
-  });
-
-  const [config, setConfig] = useState<SmartHomeConfig>(() => {
-    try {
-      const saved = localStorage.getItem('osone_smarthome_config');
-      if (saved) return JSON.parse(saved);
-    } catch (e) {}
-    return DEFAULT_CONFIG;
-  });
+  const [activeTab, setActiveTab] = useState<'devices' | 'routines' | 'pc_organizer'>('devices');
+  const [estado, setEstado] = useState<EstadoDaConexao>('carregando');
+  const [erro, setErro] = useState<string>('');
+  const [comoResolver, setComoResolver] = useState<string>('');
+  const [devices, setDevices] = useState<AparelhoReal[]>([]);
+  const [ocupado, setOcupado] = useState<string | null>(null);
+  const [copiedScript, setCopiedScript] = useState<boolean>(false);
 
   const [routines, setRoutines] = useState<SmartRoutine[]>(() => {
     try {
       const saved = localStorage.getItem('osone_smarthome_routines');
-      if (saved) return JSON.parse(saved);
-    } catch (e) {}
-    return DEFAULT_ROUTINES;
+      // As rotinas de fábrica apontavam para os aparelhos inventados ('dev-1'...'dev-5'). Guardadas
+      // no navegador de quem já abriu o painel, elas sobreviveriam à remoção e continuariam
+      // aparecendo como cenas prontas que não comandam nada. Por isso são descartadas na leitura.
+      const lidas = saved ? JSON.parse(saved) : [];
+      return Array.isArray(lidas) ? lidas.filter((r: any) => !/^rot-[123]$/.test(r?.id)) : [];
+    } catch { return []; }
   });
+  const [novaRotina, setNovaRotina] = useState<string>('');
 
-  const [tuyaEmail, setTuyaEmail] = useState<string>(config.tuya.linkedAccountEmail || '');
-  const [isLinkingTuya, setIsLinkingTuya] = useState<boolean>(false);
-  const [copiedScript, setCopiedScript] = useState<boolean>(false);
-  const [newDeviceName, setNewDeviceName] = useState<string>('');
-  const [newDevicePlatform, setNewDevicePlatform] = useState<'tuya' | 'hue' | 'smartthings'>('tuya');
-  const [newDeviceRoom, setNewDeviceRoom] = useState<string>('Sala de Estar');
-
-  // Save changes and notify
   useEffect(() => {
     try {
-      localStorage.setItem('osone_smarthome_devices', JSON.stringify(devices));
-      localStorage.setItem('osone_smarthome_config', JSON.stringify(config));
       localStorage.setItem('osone_smarthome_routines', JSON.stringify(routines));
-      window.dispatchEvent(new Event('osone_smarthome_updated'));
-    } catch (e) {
-      console.error("Error saving smart home state:", e);
-    }
-  }, [devices, config, routines]);
+    } catch { /* sem espaço no navegador: as rotinas seguem valendo nesta sessão */ }
+  }, [routines]);
 
-  const handleToggleDevice = (id: string) => {
-    setDevices(prev => prev.map(d => {
-      if (d.id === id) {
-        const nextState = !d.state;
-        if (onNotification) {
-          onNotification(`${d.name} foi ${nextState ? 'LIGADO' : 'DESLIGADO'}`, 'info');
+  /**
+   * Carrega os aparelhos da conta e, de cada um, o estado real.
+   *
+   * O estado vem do aparelho, e não de uma cópia guardada aqui: um interruptor apertado na parede
+   * ou pelo app Smart Life precisa aparecer certo quando o painel abre.
+   */
+  const carregar = useCallback(async () => {
+    setEstado('carregando');
+    try {
+      const statusRes = await fetch('/api/tuya/status');
+      const statusData = await statusRes.json().catch(() => null);
+      if (!statusData?.configured) {
+        setEstado('sem-credenciais');
+        return;
+      }
+
+      const res = await fetch('/api/tuya/devices');
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setErro(data?.error || 'A Tuya recusou a conexão.');
+        // O diagnóstico já existe no servidor e diz, em português, o que fazer — é bem melhor
+        // do que repetir na tela o código de erro cru que a Tuya devolve.
+        const diag = await fetch('/api/tuya/diagnostico').then(r => r.json()).catch(() => null);
+        setComoResolver(diag?.comoResolver || '');
+        setEstado('erro');
+        return;
+      }
+
+      const lista: any[] = data?.devices || [];
+      const comEstado = await Promise.all(lista.map(async (d: any) => {
+        // A lista de aparelhos da Tuya já costuma trazer os pontos de dados; quando não traz,
+        // vale a consulta por aparelho. Assim o caso comum custa uma chamada só.
+        let dps: any[] = Array.isArray(d.status) ? d.status : [];
+        if (dps.length === 0) {
+          const st = await fetch(`/api/tuya/device/${encodeURIComponent(d.id)}/status`)
+            .then(r => r.ok ? r.json() : null).catch(() => null);
+          dps = Array.isArray(st?.status) ? st.status : [];
         }
-        return { ...d, state: nextState, lastUpdated: Date.now() };
-      }
-      return d;
-    }));
-  };
-
-  const handleUpdateValue = (id: string, value: number) => {
-    setDevices(prev => prev.map(d => d.id === id ? { ...d, value, lastUpdated: Date.now() } : d));
-  };
-
-  const handleUpdateColor = (id: string, color: string) => {
-    setDevices(prev => prev.map(d => d.id === id ? { ...d, color, lastUpdated: Date.now() } : d));
-  };
-
-  const handleRunRoutine = (routine: SmartRoutine) => {
-    setDevices(prev => prev.map(dev => {
-      const match = routine.actions.find(a => a.deviceId === dev.id);
-      if (match) {
         return {
-          ...dev,
-          state: match.targetState,
-          value: match.targetValue !== undefined ? match.targetValue : dev.value,
-          color: match.targetColor || dev.color,
-          lastUpdated: Date.now()
-        };
-      }
-      return dev;
-    }));
+          id: d.id,
+          name: d.name || d.id,
+          category: d.category || '',
+          online: d.online !== false,
+          recursos: recursosDosDps(dps)
+        } as AparelhoReal;
+      }));
 
-    if (onNotification) {
-      onNotification(`Rotina "${routine.name}" executada com sucesso!`, 'success');
+      setDevices(comEstado);
+      setEstado('pronto');
+    } catch (e: any) {
+      setErro(e?.message || String(e));
+      setEstado('erro');
     }
-  };
+  }, []);
 
-  const handleSimulateTuyaOAuth = () => {
-    if (!tuyaEmail.trim()) {
-      if (onNotification) onNotification('Informe o e-mail cadastrado no aplicativo Smart Life ou Tuya Smart!', 'error');
+  useEffect(() => { carregar(); }, [carregar]);
+
+  /**
+   * Manda um comando de verdade e só então atualiza a tela.
+   *
+   * A ordem importa: pintar o botão primeiro e mandar depois é o que fazia o painel antigo
+   * parecer que funcionava. Se o aparelho recusar, o botão não pode ter mudado.
+   */
+  const comandar = async (dev: AparelhoReal, action: string, value?: any, color?: any) => {
+    const montagem = montarComandos(dev.recursos, action, value, color);
+    if ('falha' in montagem) {
+      onNotification?.(`${dev.name}: ${montagem.falha}`, 'error');
       return;
     }
 
-    setIsLinkingTuya(true);
-    setTimeout(() => {
-      setConfig(prev => ({
-        ...prev,
-        tuya: {
-          ...prev.tuya,
-          enabled: true,
-          userToken: 'tuya_oauth_token_' + Math.random().toString(36).substring(2, 9),
-          linkedAccountEmail: tuyaEmail.trim()
-        }
-      }));
-      setIsLinkingTuya(false);
-      if (onNotification) onNotification(`Conta Tuya (${tuyaEmail}) vinculada e autorizada via OAuth Link App Account!`, 'success');
-    }, 1800);
+    // Fechadura não é acionada por um toque no painel: a confirmação explícita vive no fluxo do
+    // chat (TuyaConfirmModal), que é onde a ação passa por uma pergunta antes de acontecer.
+    if (ehFechadura(dev.category)) {
+      onNotification?.(
+        `${dev.name} é uma fechadura. Por segurança, peça a ação no chat do OSONE, onde ela passa por uma confirmação explícita.`,
+        'info'
+      );
+      return;
+    }
+
+    setOcupado(dev.id);
+    try {
+      const res = await fetch('/api/tuya/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId: dev.id, commands: montagem.comandos, confirmed: false })
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        onNotification?.(`${dev.name}: ${data?.error || res.statusText}`, 'error');
+        return;
+      }
+      onNotification?.(`${dev.name}: ${descreverComandos(montagem.comandos)}.`, 'success');
+      // Relê o estado do aparelho em vez de deduzi-lo: é o aparelho que tem a palavra final.
+      const st = await fetch(`/api/tuya/device/${encodeURIComponent(dev.id)}/status`)
+        .then(r => r.ok ? r.json() : null).catch(() => null);
+      if (Array.isArray(st?.status)) {
+        const recursos = recursosDosDps(st.status);
+        setDevices(prev => prev.map(d => d.id === dev.id ? { ...d, recursos } : d));
+      }
+    } catch (e: any) {
+      onNotification?.(`${dev.name}: falha de conexão (${e?.message || e}).`, 'error');
+    } finally {
+      setOcupado(null);
+    }
   };
 
-  const handleAddCustomDevice = () => {
-    if (!newDeviceName.trim()) return;
-    const newDev: SmartDevice = {
-      id: 'dev-' + Date.now(),
-      name: newDeviceName.trim(),
-      category: 'plug',
-      platform: newDevicePlatform,
-      state: true,
-      room: newDeviceRoom,
-      online: true,
-      lastUpdated: Date.now()
-    };
-    setDevices(prev => [...prev, newDev]);
-    setNewDeviceName('');
-    if (onNotification) onNotification(`Novo dispositivo "${newDev.name}" adicionado!`, 'success');
+  const criarRotina = () => {
+    const nome = novaRotina.trim();
+    if (!nome) return;
+    // A rotina guarda o estado ATUAL dos aparelhos reais — é uma foto do que está ligado agora.
+    const acoes = devices
+      .filter(d => d.recursos.liga)
+      .map(d => ({ deviceId: d.id, targetState: !!d.recursos.liga?.ligado }));
+    if (acoes.length === 0) {
+      onNotification?.('Nenhum aparelho com liga/desliga para guardar numa cena.', 'error');
+      return;
+    }
+    setRoutines(prev => [...prev, { id: 'rot-' + Date.now(), name: nome, icon: '✨', actions: acoes }]);
+    setNovaRotina('');
+    onNotification?.(`Cena "${nome}" guardada com o estado atual de ${acoes.length} aparelho(s).`, 'success');
   };
 
-  const handleDeleteDevice = (id: string) => {
-    setDevices(prev => prev.filter(d => d.id !== id));
+  const executarRotina = async (rot: SmartRoutine) => {
+    let feitos = 0;
+    const falhas: string[] = [];
+    for (const acao of rot.actions) {
+      const dev = devices.find(d => d.id === acao.deviceId);
+      if (!dev) { falhas.push('um aparelho da cena não está mais na conta'); continue; }
+      if (ehFechadura(dev.category)) { falhas.push(`${dev.name} é fechadura e não entra em cena automática`); continue; }
+      const montagem = montarComandos(dev.recursos, acao.targetState ? 'turn_on' : 'turn_off');
+      if ('falha' in montagem) { falhas.push(`${dev.name}: ${montagem.falha}`); continue; }
+      const res = await fetch('/api/tuya/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId: dev.id, commands: montagem.comandos, confirmed: false })
+      }).catch(() => null);
+      if (res && res.ok) feitos++;
+      else falhas.push(`${dev.name} não aceitou o comando`);
+    }
+    // O relatório conta o que aconteceu de fato. Antes, qualquer rotina respondia "executada com
+    // sucesso" sem nunca ter falado com aparelho nenhum.
+    onNotification?.(
+      falhas.length === 0
+        ? `Cena "${rot.name}": ${feitos} aparelho(s) ajustado(s).`
+        : `Cena "${rot.name}": ${feitos} ajustado(s), ${falhas.length} com problema — ${falhas.join('; ')}.`,
+      falhas.length === 0 ? 'success' : 'error'
+    );
+    carregar();
   };
-
-  const rooms = ['Todos', ...Array.from(new Set(devices.map(d => d.room || 'Outros')))];
-
-  const filteredDevices = selectedRoom === 'Todos' 
-    ? devices 
-    : devices.filter(d => (d.room || 'Outros') === selectedRoom);
 
   const pythonScriptText = `# Script de Organização Automática de Arquivos do PC
 # Gerado pelo OSONE Studio para organizar seu computador físico
@@ -317,496 +273,331 @@ if __name__ == "__main__":
     setTimeout(() => setCopiedScript(false), 2000);
   };
 
+  const iconeDaCategoria = (cat: string) => {
+    const c = (cat || '').toLowerCase();
+    if (ehFechadura(c)) return <Lock size={22} />;
+    if (c === 'dj' || c === 'dd' || c === 'dc' || c === 'xdd') return <Lightbulb size={22} />;
+    if (c === 'cz' || c === 'pc') return <Zap size={22} />;
+    if (c === 'wk' || c === 'ktkzq') return <Cpu size={22} />;
+    return <Power size={22} />;
+  };
+
+  const abas: Array<{ id: typeof activeTab; rotulo: string; icone: React.ReactNode }> = [
+    { id: 'devices', rotulo: 'Aparelhos', icone: <Wifi size={14} /> },
+    { id: 'routines', rotulo: 'Cenas', icone: <Play size={14} /> },
+    { id: 'pc_organizer', rotulo: 'Organizar PC', icone: <Folder size={14} /> }
+  ];
+
   return (
     <div className="w-full flex-1 flex flex-col bg-[#07090e] text-zinc-100 min-h-0 overflow-hidden font-sans relative">
-      
+
       {/* Top Bar Header */}
       <div className="h-16 border-b border-white/5 bg-[#0a0d14]/90 backdrop-blur-md px-6 flex items-center justify-between shrink-0 z-30">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-cyan-500/20 to-emerald-500/20 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shadow-lg shadow-cyan-950/40">
-            <Zap size={20} className="animate-pulse" />
+            <Zap size={20} />
           </div>
-
           <div>
             <h2 className="text-base font-bold text-white font-mono flex items-center gap-2">
-              OSONE IoT & Cloud Smart Home
-              <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 font-normal">
-                Tuya • Hue • SmartThings
+              Casa Inteligente
+              <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-orange-500/10 text-orange-300 border border-orange-500/30 font-normal">
+                Tuya / Smart Life
               </span>
             </h2>
             <p className="text-xs text-zinc-400">
-              Controle por voz no Gemini Live, automação em nuvem e organização do PC.
+              Aparelhos reais da sua conta Tuya. Controle pelo painel, pelo chat ou por voz.
             </p>
           </div>
         </div>
 
-        {/* Navigation Tabs */}
         <div className="flex items-center gap-1.5 bg-black/50 p-1.5 rounded-2xl border border-white/10">
-          <button 
-            onClick={() => setActiveTab('devices')}
-            className={cn(
-              "px-4 py-2 rounded-xl text-xs font-mono font-semibold flex items-center gap-2 transition-all",
-              activeTab === 'devices' 
-                ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-lg shadow-cyan-950/50" 
-                : "text-zinc-400 hover:text-white"
-            )}
-          >
-            <Lightbulb size={14} />
-            <span>Dispositivos ({devices.length})</span>
-          </button>
-
-          <button 
-            onClick={() => setActiveTab('clouds')}
-            className={cn(
-              "px-4 py-2 rounded-xl text-xs font-mono font-semibold flex items-center gap-2 transition-all",
-              activeTab === 'clouds' 
-                ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-lg shadow-cyan-950/50" 
-                : "text-zinc-400 hover:text-white"
-            )}
-          >
-            <Cloud size={14} />
-            <span>Conectar Nuvens</span>
-          </button>
-
-          <button 
-            onClick={() => setActiveTab('routines')}
-            className={cn(
-              "px-4 py-2 rounded-xl text-xs font-mono font-semibold flex items-center gap-2 transition-all",
-              activeTab === 'routines' 
-                ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-lg shadow-cyan-950/50" 
-                : "text-zinc-400 hover:text-white"
-            )}
-          >
-            <Sparkles size={14} />
-            <span>Rotinas ({routines.length})</span>
-          </button>
-
-          <button 
-            onClick={() => setActiveTab('pc_organizer')}
-            className={cn(
-              "px-4 py-2 rounded-xl text-xs font-mono font-semibold flex items-center gap-2 transition-all",
-              activeTab === 'pc_organizer' 
-                ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-lg shadow-emerald-950/50" 
-                : "text-zinc-400 hover:text-white"
-            )}
-          >
-            <Folder size={14} />
-            <span>Organizador de PC</span>
-          </button>
+          {abas.map(aba => (
+            <button
+              key={aba.id}
+              onClick={() => setActiveTab(aba.id)}
+              className={cn(
+                "px-4 py-2 rounded-xl text-xs font-mono font-semibold transition-all flex items-center gap-2 cursor-pointer",
+                activeTab === aba.id ? "bg-cyan-500 text-black" : "text-zinc-400 hover:text-white"
+              )}
+            >
+              {aba.icone}
+              <span>{aba.rotulo}</span>
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Notice Banner - Tuya Cloud Real vs Sandbox */}
-      <div className={cn(
-        "border-b px-6 py-2.5 flex items-center justify-between text-xs font-medium shrink-0 z-20 transition-colors",
-        isTuyaRealConfigured 
-          ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-300" 
-          : "bg-amber-500/10 border-amber-500/20 text-amber-300"
-      )}>
-        <div className="flex items-center gap-2">
-          {isTuyaRealConfigured ? (
-            <ShieldCheck size={15} className="text-emerald-400 shrink-0" />
-          ) : (
-            <AlertCircle size={15} className="text-amber-400 shrink-0" />
-          )}
-          <span>
-            {isTuyaRealConfigured ? (
-              <><strong>INTEGRAÇÃO TUYA CLOUD REAL ATIVA:</strong> O servidor backend está autenticado com a Tuya OpenAPI. Os comandos do Gemini e voz operam sobre hardware físico real. Para fechaduras, o sistema solicita confirmação no painel.</>
-            ) : (
-              <><strong>MODO DEMONSTRAÇÃO / SANDBOX:</strong> Dispositivos simulados no storage local. Para controlar hardware físico real, configure as variáveis da Tuya em Ajustes.</>
-            )}
-          </span>
-        </div>
-        <span className={cn(
-          "text-[10px] font-mono uppercase px-2 py-0.5 rounded border shrink-0 font-bold",
-          isTuyaRealConfigured 
-            ? "bg-emerald-500/20 border-emerald-500/30 text-emerald-300" 
-            : "bg-amber-500/20 border-amber-500/30 text-amber-300"
-        )}>
-          {isTuyaRealConfigured ? "Tuya Hardware Real" : "Modo Simulação"}
-        </span>
-      </div>
+      <div className="flex-1 overflow-y-auto p-6 min-h-0 custom-scrollbar">
 
-      {/* Main Body Content */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar max-w-7xl mx-auto w-full">
-        
-        {/* TAB 1: DEVICES CONTROL */}
+        {/* ABA 1: APARELHOS REAIS */}
         {activeTab === 'devices' && (
           <div className="space-y-6">
-            
-            {/* Filter by Room + Add Device bar */}
-            <div className="flex items-center justify-between gap-4 flex-wrap bg-[#0c0f18] p-4 rounded-3xl border border-white/5">
-              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
-                <span className="text-xs font-mono text-zinc-500 font-semibold mr-1">Cômodos:</span>
-                {rooms.map(rm => (
-                  <button 
-                    key={rm}
-                    onClick={() => setSelectedRoom(rm)}
-                    className={cn(
-                      "px-3.5 py-1.5 rounded-xl text-xs font-mono transition-all border shrink-0",
-                      selectedRoom === rm 
-                        ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40 font-bold" 
-                        : "bg-black/40 text-zinc-400 border-white/5 hover:text-white"
-                    )}
-                  >
-                    {rm}
-                  </button>
-                ))}
-              </div>
 
-              {/* Add Custom Device Trigger */}
-              <div className="flex items-center gap-2">
-                <input 
-                  type="text" 
-                  value={newDeviceName}
-                  onChange={(e) => setNewDeviceName(e.target.value)}
-                  placeholder="Nome (ex: Lâmpada Varanda)..."
-                  className="bg-black/60 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white placeholder-zinc-500 outline-none w-48 font-mono"
-                />
-                <select 
-                  value={newDevicePlatform}
-                  onChange={(e: any) => setNewDevicePlatform(e.target.value)}
-                  className="bg-black/60 border border-white/10 rounded-xl px-2 py-1.5 text-xs text-zinc-300 outline-none font-mono"
+            {estado === 'carregando' && (
+              <div className="p-10 rounded-3xl bg-[#0c0f18] border border-white/5 flex items-center justify-center gap-3 text-zinc-400 text-sm font-mono">
+                <RefreshCw size={16} className="animate-spin" />
+                <span>Consultando os aparelhos da sua conta Tuya...</span>
+              </div>
+            )}
+
+            {/*
+              Sem credenciais, a tela DIZ isso. Antes ela se enchia de aparelhos inventados, e o
+              usuário não tinha como saber que estava olhando uma demonstração.
+            */}
+            {estado === 'sem-credenciais' && (
+              <div className="p-8 rounded-3xl bg-[#0c0e17] border border-amber-500/30 space-y-4 max-w-3xl">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                    <AlertCircle size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white font-mono">Nenhuma conta Tuya conectada</h3>
+                    <p className="text-xs text-amber-200/70">O OSONE ainda não tem acesso a nenhum aparelho seu.</p>
+                  </div>
+                </div>
+                <p className="text-sm text-zinc-300 leading-relaxed">
+                  O controle da casa funciona com as credenciais da <strong>Tuya Cloud</strong>, guardadas no
+                  servidor — nunca no navegador. Enquanto elas não existirem, este painel fica vazio de
+                  propósito: aparelho que aparece aqui é aparelho que existe.
+                </p>
+                <div className="p-4 rounded-2xl bg-black/40 border border-white/5 text-xs text-zinc-400 font-mono space-y-1.5">
+                  <p className="text-zinc-300 font-bold">Para conectar:</p>
+                  <p>1. Crie um projeto em <span className="text-cyan-300">iot.tuya.com</span> (Cloud &gt; Development).</p>
+                  <p>2. Copie o <span className="text-cyan-300">Access ID</span> e o <span className="text-cyan-300">Access Secret</span> da aba Overview.</p>
+                  <p>3. Vincule o app Smart Life em <span className="text-cyan-300">Devices &gt; Link App Account</span> e copie o UID.</p>
+                  <p>4. Preencha <span className="text-cyan-300">TUYA_CLIENT_ID</span>, <span className="text-cyan-300">TUYA_CLIENT_SECRET</span>, <span className="text-cyan-300">TUYA_BASE_URL</span> e <span className="text-cyan-300">TUYA_USER_UID</span> no .env.local e reinicie.</p>
+                </div>
+                <a
+                  href="https://iot.tuya.com"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-orange-500/90 hover:bg-orange-400 text-black font-bold text-xs font-mono transition-all"
                 >
-                  <option value="tuya">Tuya</option>
-                  <option value="hue">Hue</option>
-                  <option value="smartthings">SmartThings</option>
-                </select>
-                <button 
-                  onClick={handleAddCustomDevice}
-                  className="px-3.5 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs font-mono transition-all flex items-center gap-1 shrink-0"
+                  <ExternalLink size={14} />
+                  <span>Abrir o painel da Tuya</span>
+                </a>
+              </div>
+            )}
+
+            {estado === 'erro' && (
+              <div className="p-8 rounded-3xl bg-[#0c0e17] border border-red-500/30 space-y-4 max-w-3xl">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-red-500/15 border border-red-500/30 flex items-center justify-center text-red-400">
+                    <AlertCircle size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white font-mono">A Tuya recusou a conexão</h3>
+                    <p className="text-xs text-red-200/70 font-mono">{erro}</p>
+                  </div>
+                </div>
+                {comoResolver && (
+                  <p className="text-sm text-zinc-300 leading-relaxed p-4 rounded-2xl bg-black/40 border border-white/5">{comoResolver}</p>
+                )}
+                <button
+                  onClick={carregar}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white font-bold text-xs font-mono transition-all cursor-pointer"
+                >
+                  <RefreshCw size={14} />
+                  <span>Tentar de novo</span>
+                </button>
+              </div>
+            )}
+
+            {estado === 'pronto' && devices.length === 0 && (
+              <div className="p-8 rounded-3xl bg-[#0c0f18] border border-white/5 max-w-3xl space-y-2">
+                <h3 className="text-base font-bold text-white font-mono">Conta conectada, nenhum aparelho</h3>
+                <p className="text-sm text-zinc-400 leading-relaxed">
+                  A conexão com a Tuya funciona, mas esta conta não tem aparelhos. Confirme no app Smart
+                  Life que os aparelhos estão na MESMA conta vinculada ao projeto na Tuya.
+                </p>
+              </div>
+            )}
+
+            {estado === 'pronto' && devices.length > 0 && (
+              <>
+                <div className="flex items-center justify-between gap-4 bg-[#0c0f18] p-4 rounded-3xl border border-white/5">
+                  <span className="text-xs font-mono text-zinc-400">
+                    <strong className="text-emerald-400">{devices.length}</strong> aparelho(s) reais na sua conta Tuya
+                  </span>
+                  <button
+                    onClick={carregar}
+                    className="px-3.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-zinc-300 text-xs font-mono transition-all flex items-center gap-2 cursor-pointer"
+                  >
+                    <RefreshCw size={13} />
+                    <span>Atualizar estado</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {devices.map(dev => {
+                    const ligado = !!dev.recursos.liga?.ligado;
+                    const brilho = brilhoEmPorcento(dev.recursos.brilho);
+                    const fechadura = ehFechadura(dev.category);
+                    return (
+                      <div
+                        key={dev.id}
+                        className={cn(
+                          "p-5 rounded-3xl border transition-all relative overflow-hidden flex flex-col justify-between space-y-4",
+                          ligado ? "bg-[#0d121f] border-cyan-500/30 shadow-xl shadow-cyan-950/20" : "bg-[#090b10] border-white/5"
+                        )}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className={cn(
+                              "w-11 h-11 rounded-2xl flex items-center justify-center border transition-all shrink-0",
+                              ligado ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40" : "bg-white/5 text-zinc-500 border-white/10"
+                            )}>
+                              {iconeDaCategoria(dev.category)}
+                            </div>
+                            <div className="min-w-0">
+                              <h4 className="text-sm font-bold text-white font-mono leading-tight truncate">{dev.name}</h4>
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className={cn(
+                                  "px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase border",
+                                  dev.online
+                                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                                    : "bg-zinc-800 text-zinc-500 border-white/10"
+                                )}>
+                                  {dev.online ? 'online' : 'offline'}
+                                </span>
+                                {fechadura && (
+                                  <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase border bg-amber-500/10 text-amber-400 border-amber-500/30">
+                                    fechadura
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {dev.recursos.liga && !fechadura && (
+                            <button
+                              onClick={() => comandar(dev, 'toggle')}
+                              disabled={ocupado === dev.id}
+                              title={ligado ? 'Desligar' : 'Ligar'}
+                              className={cn(
+                                "w-12 h-7 rounded-full p-1 transition-colors duration-300 relative flex items-center cursor-pointer shrink-0 disabled:opacity-40",
+                                ligado ? "bg-cyan-500" : "bg-zinc-800"
+                              )}
+                            >
+                              <motion.div
+                                layout
+                                transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                                className={cn("w-5 h-5 rounded-full bg-black shadow-md", ligado ? "ml-auto" : "ml-0")}
+                              />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* A barra só existe quando o aparelho TEM brilho, e parte do valor real dele. */}
+                        {dev.recursos.brilho && (
+                          <div className="space-y-1 pt-2 border-t border-white/5">
+                            <div className="flex justify-between text-[11px] font-mono text-zinc-400">
+                              <span>Brilho:</span>
+                              <span className="text-cyan-400 font-bold">{brilho}%</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max="100"
+                              defaultValue={brilho}
+                              disabled={ocupado === dev.id}
+                              onMouseUp={(e) => comandar(dev, 'set_value', Number((e.target as HTMLInputElement).value))}
+                              onTouchEnd={(e) => comandar(dev, 'set_value', Number((e.target as HTMLInputElement).value))}
+                              className="w-full accent-cyan-400 h-1.5 bg-black/60 rounded-lg cursor-pointer"
+                            />
+                          </div>
+                        )}
+
+                        {/* Idem para a cor: sem luz colorida, não há seletor prometendo o que não dá. */}
+                        {dev.recursos.cor && (
+                          <div className="flex items-center justify-between pt-1 border-t border-white/5 text-[11px] font-mono text-zinc-400">
+                            <span>Cor:</span>
+                            <input
+                              type="color"
+                              disabled={ocupado === dev.id}
+                              onChange={(e) => comandar(dev, 'set_color', undefined, e.target.value)}
+                              className="w-6 h-6 rounded-lg bg-transparent cursor-pointer border-0"
+                            />
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-between pt-2 border-t border-white/5 text-[10px] font-mono text-zinc-500">
+                          <span className="truncate">{dev.category ? `categoria ${dev.category}` : 'sem categoria'}</span>
+                          {ocupado === dev.id && <RefreshCw size={11} className="animate-spin text-cyan-400 shrink-0" />}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ABA 2: CENAS SOBRE APARELHOS REAIS */}
+        {activeTab === 'routines' && (
+          <div className="space-y-4">
+            <div className="p-4 bg-[#0c0f18] rounded-3xl border border-white/5 space-y-3">
+              <div>
+                <h3 className="text-sm font-bold text-white font-mono">Cenas</h3>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Uma cena guarda o estado atual dos seus aparelhos e o repõe depois, com comandos reais.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={novaRotina}
+                  onChange={(e) => setNovaRotina(e.target.value)}
+                  placeholder="Nome da cena (ex: Boa Noite)..."
+                  disabled={estado !== 'pronto'}
+                  className="flex-1 bg-black/60 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-500 outline-none font-mono disabled:opacity-40"
+                />
+                <button
+                  onClick={criarRotina}
+                  disabled={estado !== 'pronto'}
+                  className="px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs font-mono transition-all flex items-center gap-1 shrink-0 cursor-pointer disabled:opacity-30"
                 >
                   <Plus size={14} />
-                  <span>Adicionar</span>
+                  <span>Guardar estado atual</span>
                 </button>
               </div>
             </div>
 
-            {/* Device Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredDevices.map(dev => (
-                <div 
-                  key={dev.id}
-                  className={cn(
-                    "p-5 rounded-3xl border transition-all relative overflow-hidden flex flex-col justify-between space-y-4",
-                    dev.state 
-                      ? "bg-[#0d121f] border-cyan-500/30 shadow-xl shadow-cyan-950/20" 
-                      : "bg-[#090b10] border-white/5 opacity-80"
-                  )}
-                >
-                  {/* Top info */}
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className={cn(
-                        "w-11 h-11 rounded-2xl flex items-center justify-center border transition-all",
-                        dev.state 
-                          ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-inner" 
-                          : "bg-white/5 text-zinc-500 border-white/10"
-                      )}>
-                        {dev.category === 'light' ? <Lightbulb size={22} /> :
-                         dev.category === 'plug' ? <Zap size={22} /> :
-                         dev.category === 'thermostat' ? <Cpu size={22} /> :
-                         dev.category === 'lock' ? <Lock size={22} /> :
-                         <Power size={22} />}
-                      </div>
-
-                      <div>
-                        <h4 className="text-sm font-bold text-white font-mono leading-tight">{dev.name}</h4>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-[10px] font-mono text-zinc-400">{dev.room}</span>
-                          <span className={cn(
-                            "px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase border",
-                            dev.platform === 'tuya' ? "bg-orange-500/10 text-orange-400 border-orange-500/30" :
-                            dev.platform === 'hue' ? "bg-cyan-500/10 text-cyan-400 border-cyan-500/30" :
-                            "bg-purple-500/10 text-purple-400 border-purple-500/30"
-                          )}>
-                            {dev.platform}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <button 
-                      onClick={() => handleToggleDevice(dev.id)}
-                      className={cn(
-                        "w-12 h-7 rounded-full p-1 transition-colors duration-300 relative flex items-center cursor-pointer",
-                        dev.state ? "bg-cyan-500" : "bg-zinc-800"
-                      )}
-                    >
-                      <motion.div 
-                        layout 
-                        transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-                        className={cn(
-                          "w-5 h-5 rounded-full bg-black shadow-md",
-                          dev.state ? "ml-auto" : "ml-0"
-                        )}
-                      />
-                    </button>
-                  </div>
-
-                  {/* Brightness / Value Slider if applicable */}
-                  {dev.value !== undefined && dev.state && (
-                    <div className="space-y-1 pt-2 border-t border-white/5">
-                      <div className="flex justify-between text-[11px] font-mono text-zinc-400">
-                        <span>Intensidade / Nível:</span>
-                        <span className="text-cyan-400 font-bold">{dev.value}%</span>
-                      </div>
-                      <input 
-                        type="range" 
-                        min="0" 
-                        max="100" 
-                        value={dev.value}
-                        onChange={(e) => handleUpdateValue(dev.id, Number(e.target.value))}
-                        className="w-full accent-cyan-400 h-1.5 bg-black/60 rounded-lg cursor-pointer"
-                      />
-                    </div>
-                  )}
-
-                  {/* Color Picker if applicable */}
-                  {dev.color && dev.state && (
-                    <div className="flex items-center justify-between pt-1 border-t border-white/5 text-[11px] font-mono text-zinc-400">
-                      <span>Cor Atual:</span>
-                      <input 
-                        type="color" 
-                        value={dev.color}
-                        onChange={(e) => handleUpdateColor(dev.id, e.target.value)}
-                        className="w-6 h-6 rounded-lg bg-transparent cursor-pointer border-0"
-                      />
-                    </div>
-                  )}
-
-                  {/* Bottom Footer */}
-                  <div className="flex items-center justify-between pt-2 border-t border-white/5 text-[10px] font-mono text-zinc-500">
-                    <span className="flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                      Nuvem Sincronizada
-                    </span>
-                    <button 
-                      onClick={() => handleDeleteDevice(dev.id)}
-                      className="hover:text-red-400 transition-colors"
-                      title="Remover Dispositivo"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-          </div>
-        )}
-
-        {/* TAB 2: CONNECT CLOUDS (TUYA, HUE, SMARTTHINGS) */}
-        {activeTab === 'clouds' && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            
-            {/* CARD 1: TUYA / SMART LIFE (O MAIS IMPORTANTE) */}
-            <div className="p-6 rounded-3xl bg-[#0c0e17] border border-orange-500/30 space-y-5 relative overflow-hidden shadow-2xl">
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl bg-orange-500/20 border border-orange-500/40 flex items-center justify-center text-orange-400">
-                    <Smartphone size={24} />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-white font-mono">Tuya / Smart Life</h3>
-                    <p className="text-xs text-orange-200/70">Link App Account OAuth</p>
-                  </div>
-                </div>
-
-                <span className={cn(
-                  "px-2.5 py-1 rounded-full text-[10px] font-mono font-bold uppercase border",
-                  config.tuya.enabled 
-                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40" 
-                    : "bg-zinc-800 text-zinc-400 border-white/5"
-                )}>
-                  {config.tuya.enabled ? '✓ Conectado' : 'Desconectado'}
-                </span>
+            {routines.length === 0 && (
+              <div className="p-8 rounded-3xl bg-[#0a0c14] border border-white/5 text-sm text-zinc-400 leading-relaxed max-w-3xl">
+                Nenhuma cena guardada. Deixe os aparelhos como você quer e clique em
+                "Guardar estado atual" — a cena passa a repor exatamente essa configuração.
               </div>
-
-              <p className="text-xs text-zinc-400 leading-relaxed">
-                Cobre a maioria absoluta dos dispositivos "genéricos" (AliExpress, Shopee, NovaDigital, Positivo, Geonav).
-              </p>
-
-              <div className="space-y-3 font-mono text-xs">
-                <div>
-                  <label className="text-zinc-400 text-[11px] block mb-1">E-mail do App Smart Life / Tuya:</label>
-                  <input 
-                    type="email" 
-                    value={tuyaEmail}
-                    onChange={(e) => setTuyaEmail(e.target.value)}
-                    placeholder="seu_email@exemplo.com"
-                    className="w-full bg-black/60 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-orange-500/50"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-zinc-400 text-[11px] block mb-1">Região dos Servidores:</label>
-                  <select 
-                    value={config.tuya.region}
-                    onChange={(e: any) => setConfig(prev => ({ ...prev, tuya: { ...prev.tuya, region: e.target.value } }))}
-                    className="w-full bg-black/60 border border-white/10 rounded-xl px-3 py-2 text-white outline-none"
-                  >
-                    <option value="us">América (US)</option>
-                    <option value="eu">Europa (EU)</option>
-                    <option value="cn">China (CN)</option>
-                    <option value="in">Índia (IN)</option>
-                  </select>
-                </div>
-              </div>
-
-              <button 
-                onClick={handleSimulateTuyaOAuth}
-                disabled={isLinkingTuya}
-                className="w-full py-3 rounded-2xl bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-mono font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-orange-950/50 transition-all cursor-pointer active:scale-95"
-              >
-                {isLinkingTuya ? (
-                  <>
-                    <RefreshCw size={14} className="animate-spin" />
-                    <span>Vinculando Conta Tuya H5...</span>
-                  </>
-                ) : (
-                  <>
-                    <ShieldCheck size={16} />
-                    <span>Vincular Conta Tuya / Smart Life</span>
-                  </>
-                )}
-              </button>
-            </div>
-
-            {/* CARD 2: PHILIPS HUE */}
-            <div className="p-6 rounded-3xl bg-[#0c0e17] border border-cyan-500/30 space-y-5 relative overflow-hidden shadow-2xl">
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
-                    <Lightbulb size={24} />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-white font-mono">Philips Hue</h3>
-                    <p className="text-xs text-cyan-200/70">API Cloud & Local Bridge</p>
-                  </div>
-                </div>
-
-                <span className={cn(
-                  "px-2.5 py-1 rounded-full text-[10px] font-mono font-bold uppercase border",
-                  config.hue.enabled 
-                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40" 
-                    : "bg-zinc-800 text-zinc-400 border-white/5"
-                )}>
-                  {config.hue.enabled ? '✓ Ativo' : 'Pendente'}
-                </span>
-              </div>
-
-              <p className="text-xs text-zinc-400 leading-relaxed">
-                Integração premium para iluminação Philips Hue via Bridge IP ou Hue Cloud API.
-              </p>
-
-              <div className="space-y-3 font-mono text-xs">
-                <div>
-                  <label className="text-zinc-400 text-[11px] block mb-1">IP do Bridge Local (Opcional):</label>
-                  <input 
-                    type="text" 
-                    value={config.hue.bridgeIp || ''}
-                    onChange={(e) => setConfig(prev => ({ ...prev, hue: { ...prev.hue, bridgeIp: e.target.value } }))}
-                    placeholder="192.168.1.100"
-                    className="w-full bg-black/60 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-cyan-500/50"
-                  />
-                </div>
-              </div>
-
-              <button 
-                onClick={() => {
-                  setConfig(prev => ({ ...prev, hue: { ...prev.hue, enabled: true } }));
-                  if (onNotification) onNotification('Philips Hue Bridge conectado com sucesso!', 'success');
-                }}
-                className="w-full py-3 rounded-2xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-mono font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-cyan-950/50 transition-all cursor-pointer active:scale-95"
-              >
-                <CheckCircle2 size={16} />
-                <span>Testar Conexão Hue</span>
-              </button>
-            </div>
-
-            {/* CARD 3: SAMSUNG SMARTTHINGS */}
-            <div className="p-6 rounded-3xl bg-[#0c0e17] border border-purple-500/30 space-y-5 relative overflow-hidden shadow-2xl">
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-400">
-                    <Layers size={24} />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-white font-mono">SmartThings</h3>
-                    <p className="text-xs text-purple-200/70">Samsung PAT OAuth</p>
-                  </div>
-                </div>
-
-                <span className={cn(
-                  "px-2.5 py-1 rounded-full text-[10px] font-mono font-bold uppercase border",
-                  config.smartthings.enabled 
-                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40" 
-                    : "bg-zinc-800 text-zinc-400 border-white/5"
-                )}>
-                  {config.smartthings.enabled ? '✓ Ativo' : 'Desconectado'}
-                </span>
-              </div>
-
-              <p className="text-xs text-zinc-400 leading-relaxed">
-                Conecte eletrodomésticos, TVs e ar condicionados Samsung via Personal Access Token.
-              </p>
-
-              <div className="space-y-3 font-mono text-xs">
-                <div>
-                  <label className="text-zinc-400 text-[11px] block mb-1">Personal Access Token (PAT):</label>
-                  <input 
-                    type="password" 
-                    value={config.smartthings.personalAccessToken || ''}
-                    onChange={(e) => setConfig(prev => ({ ...prev, smartthings: { ...prev.smartthings, personalAccessToken: e.target.value } }))}
-                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                    className="w-full bg-black/60 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-purple-500/50"
-                  />
-                </div>
-              </div>
-
-              <button 
-                onClick={() => {
-                  setConfig(prev => ({ ...prev, smartthings: { ...prev.smartthings, enabled: true } }));
-                  if (onNotification) onNotification('Samsung SmartThings token salvo!', 'success');
-                }}
-                className="w-full py-3 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-mono font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-purple-950/50 transition-all cursor-pointer active:scale-95"
-              >
-                <Key size={16} />
-                <span>Salvar Token SmartThings</span>
-              </button>
-            </div>
-
-          </div>
-        )}
-
-        {/* TAB 3: ROUTINES */}
-        {activeTab === 'routines' && (
-          <div className="space-y-4">
-            <div className="p-4 bg-[#0c0f18] rounded-3xl border border-white/5 flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-white font-mono">Cenas & Rotinas em Lote</h3>
-                <p className="text-xs text-zinc-400 mt-0.5">Dispare múltiplos dispositivos com um clique ou falando para o Gemini Live por voz.</p>
-              </div>
-            </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {routines.map(rot => (
                 <div key={rot.id} className="p-5 rounded-3xl bg-[#0a0c14] border border-cyan-500/20 hover:border-cyan-500/40 transition-all space-y-4">
-                  <div className="flex items-center gap-3">
-                    <span className="text-2xl p-2 rounded-2xl bg-black/40 border border-white/5">{rot.icon}</span>
-                    <div>
-                      <h4 className="text-sm font-bold text-white font-mono">{rot.name}</h4>
-                      <span className="text-[10px] font-mono text-cyan-400">{rot.actions.length} ações mapeadas</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="text-2xl p-2 rounded-2xl bg-black/40 border border-white/5">{rot.icon}</span>
+                      <div className="min-w-0">
+                        <h4 className="text-sm font-bold text-white font-mono truncate">{rot.name}</h4>
+                        <span className="text-[10px] font-mono text-cyan-400">{rot.actions.length} aparelho(s)</span>
+                      </div>
                     </div>
+                    <button
+                      onClick={() => setRoutines(prev => prev.filter(r => r.id !== rot.id))}
+                      className="text-zinc-600 hover:text-red-400 transition-colors shrink-0"
+                      title="Apagar cena"
+                    >
+                      <Trash2 size={13} />
+                    </button>
                   </div>
 
-                  <button 
-                    onClick={() => handleRunRoutine(rot)}
-                    className="w-full py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs font-mono transition-all flex items-center justify-center gap-2 shadow-lg shadow-cyan-500/20 active:scale-95 cursor-pointer"
+                  <button
+                    onClick={() => executarRotina(rot)}
+                    disabled={estado !== 'pronto'}
+                    className="w-full py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs font-mono transition-all flex items-center justify-center gap-2 active:scale-95 cursor-pointer disabled:opacity-30"
                   >
                     <Play size={14} />
-                    <span>Executar Rotina</span>
+                    <span>Executar cena</span>
                   </button>
                 </div>
               ))}
