@@ -6207,9 +6207,41 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
 
+      /**
+       * O MODELO PRECISA SABER QUANDO FICOU CEGO.
+       *
+       * O envio de quadros é interrompido em duas situações legítimas logo abaixo — e nenhuma
+       * delas era comunicada. Do lado do modelo nada mudava: a instrução continuava mandando ler
+       * a tela, e ele seguia recebendo áudio e perguntas sobre "o que está aí". Sem imagem e sem
+       * aviso, o que sobra é completar com o que costuma haver numa tela daquele tipo — e foi
+       * assim que ele passou a descrever, com todas as letras, código React Native numa tela do
+       * OSONE CODE que não tinha nada disso.
+       *
+       * A pausa mais longa dura 20 segundos a cada ação no PC, então esta não é uma janela
+       * estreita: é o intervalo inteiro em que o usuário mais pergunta o que está acontecendo.
+       *
+       * O aviso é mandado UMA vez a cada mudança de estado, e não a cada segundo, para não virar
+       * ruído dentro da conversa.
+       */
+      let enxergandoAgora: boolean | null = null;
+      const avisarSeMudou = (enxergando: boolean, motivo: string) => {
+        if (enxergandoAgora === enxergando) return;
+        enxergandoAgora = enxergando;
+        if (!liveSessionRef.current || liveStateRef.current.status !== 'connected') return;
+        const aviso = enxergando
+          ? '[VISÃO] A imagem da tela voltou. A partir de agora você está vendo a tela de novo.'
+          : `[VISÃO] Você PAROU de receber a imagem da tela (${motivo}). Enquanto isso você está cego: `
+            + 'NÃO descreva, não leia e não suponha nada do que está na tela. Se perguntarem, diga que a '
+            + 'imagem está indisponível neste instante.';
+        liveSessionRef.current.sendRealtimeInput({ text: aviso });
+      };
+
       screenIntervalRef.current = setInterval(() => {
         // Enquanto uma captura injetada está sendo examinada, não mandar frames por cima dela.
-        if (Date.now() < pausarEnvioDeTelaAte.current) return;
+        if (Date.now() < pausarEnvioDeTelaAte.current) {
+          avisarSeMudou(false, 'uma captura está sendo examinada');
+          return;
+        }
         /**
          * E também durante toda a sequência de controle do PC.
          *
@@ -6220,7 +6252,10 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
          * leitura. Calando o vídeo, sobra uma fonte só: a captura, que é da tela inteira e está
          * alinhada com o clique.
          */
-        if (Date.now() - ultimaAcaoNoPcRef.current < 20000) return;
+        if (Date.now() - ultimaAcaoNoPcRef.current < 20000) {
+          avisarSeMudou(false, 'o OSONE está executando uma ação no computador');
+          return;
+        }
         // liveStateRef, e não liveState: este intervalo vive muito além da renderização que o
         // criou, e a variável de estado congela no valor que ela tinha naquele instante. Como o
         // compartilhamento quase sempre começa ANTES de a sessão de voz ficar 'connected' — pelo
@@ -6236,6 +6271,9 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
           liveSessionRef.current.sendRealtimeInput({
             video: { data: base64Data, mimeType: 'image/jpeg' }
           });
+          // O aviso de volta vai DEPOIS do primeiro quadro novo: dizer "voltei a ver" antes de a
+          // imagem chegar recria, por um instante, a mesma mentira que se está corrigindo.
+          avisarSeMudou(true, '');
         }
       }, 1000);
 
@@ -8698,7 +8736,8 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
         
         DIRETRIZ DE TRADUÇÃO SIMULTÂNEA:
         - Sua única missão absoluta é atuar como um intérprete/tradutor simultâneo profissional e instantâneo de alta performance do que for capturado no áudio do usuário ou transmitido pelo compartilhamento de tela técnica (quando o usuário navegar por abas da internet em inglês, espanhol, etc.).
-        - Sempre que houver frames de imagem (compartilhamento de tela ativo: ${isScreenSharing ? "SIM" : "NÃO"}), faça uma leitura rápida, precisa e traduza IMEDIATAMENTE os textos, notícias, blogs, ou vídeos visualizados para o Português do Brasil em voz alta de forma fluida.
+        - VISÃO DA TELA: você só enxerga a tela nos instantes em que RECEBE quadros de imagem. Esse envio começa, para e recomeça durante a sessão, e você é avisado por mensagens que começam com [VISÃO]. Depois de "[VISÃO] Você PAROU de receber a imagem", considere-se CEGO até o aviso de volta: não descreva, não leia e não suponha nada do que está na tela, mesmo que pareça óbvio o que estaria ali. Se perguntarem nesse intervalo, diga que a imagem está indisponível no momento. NUNCA descreva uma tela a partir do que costuma existir numa tela desse tipo — inventar conteúdo plausível é pior do que dizer que não está vendo.
+        - Quando ESTIVER recebendo quadros, faça uma leitura rápida e precisa e traduza IMEDIATAMENTE os textos, notícias, blogs ou vídeos visualizados para o Português do Brasil em voz alta, de forma fluida.
         - Não perca tempo com saudações longas, explicações gramaticais densas ou rodeios. Esforce-se para entregar a tradução do conteúdo visual ou falado da aba compartilhada de forma contínua e incrivelmente ágil.
         - Mantenha-se prestativo, preciso e dinâmico.
         
