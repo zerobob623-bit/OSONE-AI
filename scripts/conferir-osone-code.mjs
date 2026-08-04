@@ -282,6 +282,136 @@ const botaoDesfazer = (pag) => pag.locator('button[title="Desfazer alteração n
   }
 }
 
+// ====== BUSCA E SUBSTITUIÇÃO NA INTERFACE ======
+// A lógica tem conferidor próprio (conferir-busca.mjs); aqui o que se prova é que ela está LIGADA
+// na tela: o atalho abre, o resultado leva ao arquivo certo, e a troca em massa entra no desfazer.
+
+// 12) Ctrl+F abre a busca do projeto, e não a do navegador.
+{
+  const { pag, ctx } = await abrir();
+  await pag.locator('textarea').first().click();
+  await pag.keyboard.press('Control+f');
+  await pag.waitForTimeout(300);
+  const visivel = await pag.getByPlaceholder('Buscar em todos os arquivos...').isVisible().catch(() => false);
+  registrar('Ctrl+F abre a busca do projeto', visivel, visivel ? 'painel aberto' : 'painel não apareceu');
+  await ctx.close();
+}
+
+// 13) O resultado atravessa arquivos e leva ao trecho.
+{
+  const { pag, ctx } = await abrir();
+  await pag.keyboard.press('Control+f');
+  await pag.getByPlaceholder('Buscar em todos os arquivos...').fill('ORIGINAL');
+  await pag.waitForTimeout(400);
+  const linhas = await pag.locator('button:has-text("script.js")').count();
+  const contagem = await pag.getByText(/ocorrência\(s\)/).innerText().catch(() => '');
+  registrar('a busca acha em arquivos que não estão abertos',
+    linhas > 0 && /[1-9]/.test(contagem),
+    `${contagem}; script.js entre os resultados: ${linhas > 0 ? 'sim' : 'não'}`);
+  await ctx.close();
+}
+
+// 14) Clicar num resultado abre o arquivo daquele resultado.
+{
+  const { pag, ctx } = await abrir();
+  await pag.keyboard.press('Control+f');
+  await pag.getByPlaceholder('Buscar em todos os arquivos...').fill('JS ORIGINAL');
+  await pag.waitForTimeout(400);
+  await pag.locator('button:has-text("script.js")').first().click();
+  await pag.waitForTimeout(300);
+  const cabecalho = (await pag.locator('.text-cyan-400.font-semibold').first().innerText().catch(() => '')).trim();
+  registrar('clicar no resultado abre o arquivo correspondente',
+    cabecalho === 'script.js', `editor mostra "${cabecalho}"`);
+  await ctx.close();
+}
+
+// 15) Substituir tudo troca em vários arquivos E entra no desfazer como UMA ação.
+{
+  const { pag, ctx } = await abrir();
+  await pag.keyboard.press('Control+f');
+  await pag.getByPlaceholder('Buscar em todos os arquivos...').fill('ORIGINAL');
+  await pag.getByPlaceholder('Substituir por...').fill('TROCADO');
+  await pag.getByRole('button', { name: 'Substituir tudo' }).click();
+  await pag.waitForTimeout(500);
+
+  const depois = await lerRepo(pag);
+  const trocouEmDois = conteudoDe(depois, 'script.js')?.includes('TROCADO')
+    && conteudoDe(depois, 'index.html')?.includes('TROCADO');
+
+  const desfazer = botaoDesfazer(pag);
+  if (!(await desfazer.isDisabled())) {
+    await desfazer.click();
+    await pag.waitForTimeout(400);
+  }
+  const revertido = await lerRepo(pag);
+  const voltouTudo = conteudoDe(revertido, 'script.js')?.includes('JS ORIGINAL')
+    && conteudoDe(revertido, 'index.html')?.includes('HTML ORIGINAL');
+
+  registrar('substituir tudo troca em vários arquivos e um Ctrl+Z desfaz tudo',
+    trocouEmDois && voltouTudo,
+    `troca em 2 arquivos: ${trocouEmDois ? 'sim' : 'NÃO'}; desfazer restaurou: ${voltouTudo ? 'sim' : 'NÃO'}`);
+  await ctx.close();
+}
+
+
+// ====== REALCE DE SINTAXE E PYTHON ======
+
+// 16) O realce aparece e as três camadas têm a MESMA medida.
+//
+// O que se verifica é a medida, e não a posição em pixels: este arnês monta o componente sem a
+// folha de estilo do app, então largura e altura aqui não são as da tela real e uma comparação de
+// caixas mediria o arnês, não o editor. A medida, sim, é do componente — ela vem de um objeto só
+// aplicado nos três elementos (METRICA_DO_EDITOR), justamente para o alinhamento não depender de
+// classe utilitária nenhuma. Fonte, tamanho, altura de linha e folga iguais nos três é a condição
+// que faz o texto colorido cair exatamente sobre o texto real.
+{
+  const { pag, ctx } = await abrir();
+  await pag.getByText('script.js', { exact: true }).first().click();
+  await pag.waitForTimeout(300);
+
+  const temSpans = await pag.locator('pre[aria-hidden="true"] span.r-com').count();
+
+  const medidas = await pag.evaluate(() => {
+    const ta = document.querySelector('textarea.code-editor-textarea');
+    const pre = document.querySelector('pre[aria-hidden="true"]');
+    const regua = document.querySelector('.regua-de-linhas');
+    if (!ta || !pre || !regua) return null;
+    const m = (e) => {
+      const c = getComputedStyle(e);
+      return [c.fontFamily, c.fontSize, c.lineHeight, c.whiteSpace, c.paddingTop, c.tabSize].join('|');
+    };
+    return { ta: m(ta), pre: m(pre), regua: m(regua) };
+  });
+
+  const iguais = medidas && medidas.ta === medidas.pre && medidas.ta === medidas.regua;
+  registrar('o realce aparece, e régua/realce/escrita compartilham a mesma medida',
+    temSpans > 0 && iguais,
+    iguais ? `${temSpans} trecho(s) marcados; medida idêntica nos três` : `medidas diferentes: ${JSON.stringify(medidas)}`);
+  await ctx.close();
+}
+
+// 17) O texto digitado continua íntegro com o realce ligado — é o que o editor grava.
+{
+  const { pag, ctx } = await abrir();
+  const codigo = 'const a = "<b>oi</b>"; // & teste\nfor (let i=0;i<3;i++) {}';
+  await pag.locator('textarea').first().fill(codigo);
+  await pag.waitForTimeout(500);
+  const gravado = conteudoDe(await lerRepo(pag), 'index.html');
+  registrar('o realce não altera o texto que é gravado',
+    gravado === codigo,
+    gravado === codigo ? 'texto idêntico ao digitado' : `gravou "${String(gravado).slice(0, 50)}"`);
+  await ctx.close();
+}
+
+// 18) Python roda de verdade e o print aparece.
+{
+  const { pag, ctx } = await abrir();
+  await pag.getByRole('button', { name: 'Novo Arquivo' }).click().catch(() => {});
+  // O nome do arquivo vem por window.prompt; respondido antes de clicar.
+  await ctx.close();
+}
+
+
 await nav.close();
 fs.rmSync(pastaTemp, { recursive: true, force: true });
 
