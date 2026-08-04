@@ -56,7 +56,15 @@ export function applyCodeEdits(original: string, edits: CodeEdit[]): ApplyCodeEd
   return { content, appliedCount, failedEdits };
 }
 
-const SEARCH_REPLACE_BLOCK_RE = /<{5,}\s*SEARCH\s*\r?\n([\s\S]*?)\r?\n={5,}\s*\r?\n([\s\S]*?)\r?\n>{5,}\s*REPLACE/g;
+/**
+ * O trecho de busca pode vir VAZIO, e isso precisa ser reconhecido como bloco.
+ *
+ * Com a exigência de uma quebra de linha antes do '=====', um bloco de SEARCH vazio — que o modelo
+ * manda quando está criando um arquivo do zero — não era reconhecido como bloco nenhum. O texto
+ * inteiro caía no caminho de "isto é o arquivo completo", e os MARCADORES acabavam gravados dentro
+ * do arquivo como se fossem código.
+ */
+const SEARCH_REPLACE_BLOCK_RE = /<{5,}\s*SEARCH\s*\r?\n([\s\S]*?)\r?\n?={5,}\s*\r?\n([\s\S]*?)\r?\n>{5,}\s*REPLACE/g;
 
 /**
  * Extrai blocos no formato:
@@ -211,6 +219,33 @@ export function applyModelCodeResponse(rawText: string, currentContent: string):
 
   if (edits.length > 0) {
     const { content, appliedCount, failedEdits } = applyCodeEdits(currentContent, edits);
+
+    /**
+     * ARQUIVO VAZIO: O QUE VEIO NO 'REPLACE' É O ARQUIVO. Não jogue fora.
+     *
+     * Num arquivo em branco não existe trecho para procurar, então TODA edição falha — e o
+     * conteúdo voltava vazio, exatamente como entrou. O modelo tinha escrito o código inteiro
+     * dentro da parte de substituição, e ele era descartado: a pessoa pedia um app, o modelo
+     * escrevia o app, e o editor continuava com zero caractere. Gerar de novo dava no mesmo,
+     * porque o defeito não estava no modelo.
+     *
+     * A instrução pede para responder o arquivo completo quando não há código anterior, e isso
+     * continua valendo — mas o modelo manda blocos assim mesmo, com frequência, e perder o
+     * trabalho por causa do formato é o pior desfecho possível. Quando não havia nada para
+     * editar, o que ele escreveu no lugar É o arquivo.
+     */
+    const arquivoEstavaVazio = !currentContent || !currentContent.trim();
+    if (appliedCount === 0 && arquivoEstavaVazio) {
+      const criado = edits.map(e => e.new_string).join('\n').trim();
+      if (criado) {
+        return {
+          content: criado,
+          summary: `arquivo criado a partir do conteúdo proposto (${edits.length} bloco(s))`,
+          hadFailures: false
+        };
+      }
+    }
+
     const parts: string[] = [];
     if (appliedCount > 0) parts.push(`${appliedCount} edição(ões) aplicada(s) com precisão`);
     if (failedEdits.length > 0) {
