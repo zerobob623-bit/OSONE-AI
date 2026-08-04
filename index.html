@@ -15,9 +15,24 @@
     <meta name="apple-mobile-web-app-title" content="OSONE" />
     <meta name="mobile-web-app-capable" content="yes" />
     <script>
+      /**
+       * O service worker é conferido A CADA ABERTURA, e não quando o navegador resolver.
+       *
+       * Só chamar register() não basta: quando já existe um registro, o Chrome limita essa
+       * conferência a uma vez por dia. Foi isso que transformou um cache errado num problema que
+       * durava — enquanto a conferência não acontecia, o navegador seguia com o service worker
+       * antigo, entregando o index.html velho, que aponta para um pacote de código que já não
+       * existe no servidor. O resultado era tela branca em toda atualização de página.
+       *
+       * updateViaCache 'none' garante que o próprio /sw.js não venha do cache do navegador, e o
+       * update() explícito dispensa o agendamento. Juntos, um service worker desatualizado dura
+       * no máximo uma abertura de página, em vez de até um dia.
+       */
       if ('serviceWorker' in navigator && !window.location.hostname.includes('localhost') && !window.location.hostname.includes('127.0.0.1') && !window.location.hostname.includes('.run.app')) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js');
+          navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
+            .then((registro) => registro.update())
+            .catch(() => { /* sem service worker o app funciona igual, só não abre offline */ });
         });
       }
     </script>
