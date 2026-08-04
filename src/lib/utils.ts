@@ -25,10 +25,35 @@ export function extractJson(str: string): string {
   const closeChar = type === '{' ? '}' : ']';
   const openChar = type;
   let depth = 0;
-  
+
+  /**
+   * A contagem ignora o que está DENTRO de uma string.
+   *
+   * Contando chaves cruas, um texto do modelo com chave solta numa string — "use } para fechar",
+   * um trecho de código, uma regex — fechava a conta antes da hora e devolvia um pedaço cortado
+   * do JSON, que o JSON.parse recusava. Como esta função alimenta o safeJsonParse usado em todo
+   * o app, o efeito era a resposta inteira virar o valor de reserva sem ninguém entender por quê.
+   * Pular as strings (e o caractere escapado logo depois da barra) faz a conta valer só para a
+   * estrutura de verdade.
+   */
+  let dentroDeString = false;
+  let escapado = false;
+
   for (let i = start; i < str.length; i++) {
-    if (str[i] === openChar) depth++;
-    else if (str[i] === closeChar) {
+    const c = str[i];
+
+    if (dentroDeString) {
+      if (escapado) escapado = false;
+      else if (c === '\\') escapado = true;
+      else if (c === '"') dentroDeString = false;
+      continue;
+    }
+
+    if (c === '"') {
+      dentroDeString = true;
+    } else if (c === openChar) {
+      depth++;
+    } else if (c === closeChar) {
       depth--;
       if (depth === 0) {
         return str.substring(start, i + 1);

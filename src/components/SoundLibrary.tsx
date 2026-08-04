@@ -396,15 +396,28 @@ export const SoundLibrary = ({
   const currentPlayingSound = sounds.find(s => s.url === playingUrl) || 
     (activeQueue[currentQueueIndex] && activeQueue[currentQueueIndex].url === playingUrl ? activeQueue[currentQueueIndex] : null);
 
-  // Monitor playingUrl finish to auto play next in queue
+  /**
+   * Avança a fila quando a faixa termina SOZINHA.
+   *
+   * Antes o avanço era deduzido de playingUrl virar nulo, e nulo é o que acontece também quando
+   * quem está ouvindo manda PARAR — pelo botão do player, ou clicando de novo na música que está
+   * tocando. Nos dois casos a próxima faixa começava, e na prática não havia como parar uma
+   * playlist a não ser esperando chegar na última. O fim natural agora chega por um evento
+   * próprio, emitido só pelo fim (ou pela falha) do áudio, nunca por uma parada pedida.
+   */
   useEffect(() => {
-    if (playingUrl === null && activeQueue.length > 0 && currentQueueIndex >= 0 && currentQueueIndex < activeQueue.length - 1) {
+    const aoTerminarFaixa = (evento: Event) => {
+      const urlQueTerminou = (evento as CustomEvent).detail?.url;
+      if (currentQueueIndex < 0 || currentQueueIndex >= activeQueue.length - 1) return;
+      // Só a faixa da vez avança a fila: um som avulso tocado por fora não deve mexer na playlist.
+      if (activeQueue[currentQueueIndex]?.url !== urlQueTerminou) return;
       const nextIndex = currentQueueIndex + 1;
-      const nextSound = activeQueue[nextIndex];
       setCurrentQueueIndex(nextIndex);
-      onPlaySound(nextSound.url);
-    }
-  }, [playingUrl]);
+      onPlaySound(activeQueue[nextIndex].url);
+    };
+    window.addEventListener('osone_sound_ended', aoTerminarFaixa);
+    return () => window.removeEventListener('osone_sound_ended', aoTerminarFaixa);
+  }, [activeQueue, currentQueueIndex, onPlaySound]);
 
   const handleCreatePlaylist = () => {
     if (!newPlaylistName.trim()) return;
