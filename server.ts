@@ -4266,41 +4266,53 @@ ${processedChunk}`;
       }
 
       const trimApiKey = geminiApiKey.trim();
-      
-      // Realizar chamada HTTP direta à API do Gemini para evitar auto-detecção do Vertex AI em plataformas GCP/Cloud Run
-      const verifyRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${trimApiKey}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: "responder 'ok'" }] }]
-        })
-      });
+
+      /**
+       * A verificação LISTA os modelos em vez de gerar texto.
+       *
+       * Gerar texto para testar a chave gastava uma das requisições diárias — e no plano gratuito
+       * são 20 por dia neste modelo. Quem clicasse em "testar" algumas vezes esgotava a própria
+       * cota que veio testar, e a resposta então dizia "Falha no Handshake", como se a chave
+       * fosse ruim. Listar modelos prova que a chave existe, é aceita e tem acesso, sem gastar
+       * nada do que o usuário usa para trabalhar.
+       */
+      const verifyRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${trimApiKey}`);
 
       if (!verifyRes.ok) {
-        const errorData = await verifyRes.json().catch(() => ({}));
-        const errorMessage = errorData.error?.message || "Erro retornado pela API do Gemini. Verifique a validade e permissões da chave.";
-        return res.status(verifyRes.status).json({
-          success: false,
-          message: `Falha no Handshake: ${errorMessage}`
-        });
+        const errorData = await verifyRes.json().catch(() => ({}) as any);
+        const detalhe = errorData?.error?.message || "";
+        const status = errorData?.error?.status || "";
+
+        /**
+         * Cada motivo tem nome próprio. Chamar tudo de "Falha no Handshake" apontava para a chave
+         * em situações onde a chave está perfeita — cota esgotada é a mais comum delas, e foi
+         * exatamente o que apareceu em uso real.
+         */
+        let message: string;
+        if (verifyRes.status === 429 || status === "RESOURCE_EXHAUSTED") {
+          message = "A chave é VÁLIDA — o que acabou foi a cota. O plano gratuito do Gemini tem um " +
+            "limite diário por modelo, e ele foi atingido. Espere a virada do dia, troque de modelo " +
+            "nas Configurações, ou ative cobrança no Google AI Studio. Detalhe do Google: " + detalhe;
+        } else if (verifyRes.status === 400 && /API_KEY_INVALID|API key not valid/i.test(detalhe)) {
+          message = "Esta chave não é aceita pelo Google. Copie de novo em aistudio.google.com/apikey — " +
+            "as chaves atuais começam com \"AQ.\" e as antigas com \"AIza\".";
+        } else if (verifyRes.status === 403) {
+          message = "A chave existe, mas não tem permissão para a API do Gemini neste projeto. " +
+            "Confira em aistudio.google.com/apikey se ela está ligada ao projeto certo. Detalhe: " + detalhe;
+        } else {
+          message = `O Google recusou a verificação (HTTP ${verifyRes.status}). ${detalhe}`;
+        }
+        return res.status(verifyRes.status).json({ success: false, message });
       }
 
-      const testRes = await verifyRes.json();
-      const replyText = testRes.candidates?.[0]?.content?.parts?.[0]?.text;
-      
-      if (replyText) {
-        return res.json({
-          success: true,
-          message: "Conexão bem-sucedida! Handshake concluído com a API do Gemini."
-        });
-      } else {
-        return res.status(400).json({
-          success: false,
-          message: "O Gemini respondeu sem texto válido. Verifique o acesso e cota da chave."
-        });
-      }
+      const dados = await verifyRes.json().catch(() => ({}) as any);
+      const quantos = Array.isArray(dados?.models) ? dados.models.length : 0;
+      return res.json({
+        success: true,
+        message: quantos
+          ? `Chave válida e aceita pelo Google — ${quantos} modelos disponíveis para ela.`
+          : "Chave válida e aceita pelo Google."
+      });
     } catch (err: any) {
       console.error("Error inside /api/gemini/verify endpoint:", err);
       return res.status(400).json({

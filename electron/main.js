@@ -258,8 +258,20 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      webSecurity: false,
-      allowRunningInsecureContent: true
+      /**
+       * webSecurity LIGADO, como em qualquer navegador.
+       *
+       * Estava desligado, e é a última diferença de peso entre o app instalado e o navegador —
+       * onde este mesmo login sempre funcionou. O rastro já mostrou que o Google autentica e
+       * devolve, e que a ligação 'opener' existe; o que falha é a entrega da credencial, que o
+       * Firebase faz por mensagens entre a janela do login e um iframe do firebaseapp.com
+       * embutido AQUI. Essas mensagens são conferidas por origem, e desligar a segurança de
+       * origem é justamente o que embaralha essa conferência.
+       *
+       * O app é servido de 127.0.0.1, que o Chromium já trata como origem segura, então nada
+       * disso era necessário para as permissões de câmera, microfone ou captura de tela.
+       */
+      webSecurity: true
     }
   });
 
@@ -286,6 +298,15 @@ function createWindow() {
     });
   };
   abrirConsoleComAtalho(mainWindow.webContents);
+
+  // Do console do próprio OSONE, só o que fala de autenticação entra no rastro: o resto é ruído
+  // de uma interface inteira e afogaria a única linha que importa.
+  mainWindow.webContents.on('console-message', (...args) => {
+    const texto = typeof args[0] === 'object' && args[0] && 'message' in args[0] ? args[0].message : args[2];
+    if (!texto) return;
+    if (!/auth|firebase|popup|opener|origin/i.test(String(texto))) return;
+    registrarEventoDeLogin('console do OSONE: ' + String(texto).slice(0, 200), '');
+  });
 
   if (startupError) {
     // A janela precisa existir antes de conseguirmos mostrar qualquer coisa, então a tela de
@@ -418,6 +439,21 @@ function createWindow() {
         .then(temOpener => registrarEventoDeLogin(
           temOpener ? 'ligação com o app OK (window.opener presente)' : 'SEM ligação com o app (window.opener nulo)', ''))
         .catch(() => { /* a página pode ter fechado antes de responder */ });
+    });
+    /**
+     * O console da janela de login vai para o rastro.
+     *
+     * É ali que o Firebase escreve o motivo real quando a entrega da credencial falha (mensagens
+     * como "missing initial state" ou erro do canal de iframes). Sem isso, três hipóteses seguidas
+     * foram deduzidas do lado de fora — e duas estavam erradas.
+     */
+    conteudo.on('console-message', (...args) => {
+      // A assinatura mudou entre versões do Electron: nas novas vem um objeto, nas antigas vem
+      // (evento, nível, mensagem). Ler os dois formatos evita perder justamente o que interessa.
+      const texto = typeof args[0] === 'object' && args[0] && 'message' in args[0]
+        ? args[0].message
+        : args[2];
+      if (texto) registrarEventoDeLogin('console do login: ' + String(texto).slice(0, 200), '');
     });
     conteudo.on('did-navigate', (_e, url) => registrarEventoDeLogin('navegou para', url));
     conteudo.on('did-navigate-in-page', (_e, url) => registrarEventoDeLogin('mudou de tela em', url));
