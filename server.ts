@@ -3741,10 +3741,25 @@ ${processedChunk}`;
     // tentativas) em vez de cair para os candidatos mais fracos.
     const allowDowngrade = options?.allowDowngrade !== false;
 
-    // Tiered candidates using standard highly-available Gemini 3.x models
+    /**
+     * "NÃO REBAIXAR" NÃO PODE SIGNIFICAR "NÃO ENTREGAR NADA".
+     *
+     * A intenção original estava certa: a geração de código não pode cair em silêncio para um
+     * modelo "lite" mais fraco, porque a qualidade despenca sem o usuário saber o motivo. Só que
+     * a implementação transformava isso em lista de UM modelo — e quando esse modelo ficava
+     * indisponível (cota do dia esgotada, chave sem acesso a ele), o OSONE CODE parava de gerar
+     * QUALQUER COISA, enquanto o resto do app seguia funcionando por ter fallback. O usuário
+     * ficava sem nada e sem explicação, que é pior do que receber código de um modelo um degrau
+     * abaixo.
+     *
+     * Agora existe uma lista de reserva também aqui, só que composta de modelos que sabem
+     * programar — nenhum 'lite' entra. E quem responde é informado ao chamador, para o app poder
+     * dizer na tela qual modelo escreveu o código: a preocupação era com o rebaixamento
+     * SILENCIOSO, e essa parte continua valendo.
+     */
     const modelsToTry = allowDowngrade
       ? [primaryModel, "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash"]
-      : [primaryModel];
+      : [primaryModel, "gemini-3.6-flash", "gemini-3.5-flash"];
 
     // Remove duplicates keeping order
     const uniqueModels = Array.from(new Set(modelsToTry));
@@ -3760,6 +3775,8 @@ ${processedChunk}`;
             contents: params.contents,
             config: params.config
           });
+          // Quem respondeu vai junto: é o que permite avisar na tela quando não foi o preferido.
+          (response as any).__modeloUsado = modelName;
           return response;
         } catch (err: any) {
           lastError = err;
@@ -3981,7 +3998,15 @@ ${processedChunk}`;
         console.warn(`[/api/generate] Resposta cortada por limite de tokens (finishReason=MAX_TOKENS).`);
       }
 
-      return res.json({ text: response.text || "", finishReason, blocked, truncated });
+      const modeloUsado = (response as any)?.__modeloUsado || selectedModel;
+      return res.json({
+        text: response.text || "",
+        finishReason, blocked, truncated,
+        modeloUsado,
+        // O app avisa na tela quando não foi o modelo preferido — rebaixar em silêncio é que era
+        // o problema, e não rebaixar.
+        modeloPreferido: selectedModel
+      });
     } catch (err: any) {
       console.error("Error inside /api/generate endpoint:", err);
       return res.status(500).json({ error: formatGeminiError(err) });

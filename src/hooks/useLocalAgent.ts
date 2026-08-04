@@ -908,7 +908,7 @@ export function useLocalAgent() {
    * A trava de uma ação por vez continua valendo por dentro: cada passo passa por
    * executeLocalAgentCall, então o painel, o registro e a parada seguem funcionando igual.
    */
-  const executarPlanoDeAcoes = async (
+  const executarCowork = async (
     passosBrutos: any[],
     localAgentToken?: string,
     isVoiceSession: boolean = false,
@@ -966,7 +966,7 @@ export function useLocalAgent() {
     pararMotor,
     retomarMotor,
     limparAcoesDoMotor,
-    executarPlanoDeAcoes,
+    executarCowork,
     planoEmCurso
   };
 }

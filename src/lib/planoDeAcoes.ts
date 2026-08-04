@@ -10,8 +10,8 @@ import {
 } from './esperarTela';
 
 /**
- * O PLANO: o agente executa uma sequência inteira sozinho, medindo o tempo entre um passo e o
- * próximo.
+ * OSONE COWORK — o agente executa uma sequência inteira sozinho, medindo o tempo entre um passo e
+ * o próximo e conferindo, com uma foto nova, se cada ação pegou.
  *
  * O que existia antes: cada clique era uma ida e volta ao modelo. Ele pedia uma captura, esperava,
  * pedia para localizar, esperava, pedia o clique, esperava — e a cada volta a conversa parava para
@@ -22,6 +22,12 @@ import {
  * passo e o outro, o motor espera a tela parar de mudar (esperarTela.ts) em vez de chutar um tempo
  * fixo, e guarda quanto cada tipo de passo levou de verdade — a próxima ação do mesmo tipo já
  * começa a olhar no tempo certo.
+ *
+ * O CICLO DE CADA PASSO, que é o que o torna capaz de trabalhar sozinho:
+ *
+ *   executa → ESTIMA quanto aquele tipo de ação costuma demorar nesta máquina → ESPERA a tela
+ *   parar de mudar → TIRA UMA FOTO NOVA e confere se a ação pegou → se não pegou, TENTA DE NOVO
+ *   (e a estimativa já corrigida entra na tentativa seguinte) → só então vai para o próximo passo.
  *
  * ONDE ISSO PRECISA PARAR, que é a parte que importa mais do que a automação em si:
  *
@@ -69,6 +75,8 @@ export interface ResultadoDoPasso {
   telaEstabilizou: boolean;
   /** Quanto a tela mudou entre antes e depois do passo, de 0 a 1. */
   mudancaDaTela: number;
+  /** Quantas vezes o passo precisou ser tentado até dar certo (1 = de primeira). */
+  tentativas: number;
   erro?: string;
 }
 
@@ -77,6 +85,7 @@ export type MotivoDeParada =
   | 'erro-no-passo'
   | 'falhas-seguidas'
   | 'tela-inesperada'
+  | 'passo-nao-confirmado'
   | 'teto-de-passos'
   | 'teto-de-tempo'
   | 'parado-pelo-usuario';
@@ -100,12 +109,23 @@ export interface LimitesDoPlano {
   maxTotalMs: number;
   /** Quantas falhas seguidas antes de desistir. */
   maxFalhasSeguidas: number;
+  /**
+   * Quantas vezes o MESMO passo é tentado antes de o plano desistir dele.
+   *
+   * Existe porque a maior parte das falhas de um passo é temporária: a página ainda estava
+   * carregando quando o clique saiu, o campo ainda não tinha foco, a janela ainda estava
+   * ganhando o primeiro plano. Parar na primeira falha desperdiça um plano inteiro por causa de
+   * meio segundo de atraso — e obriga a pessoa a mandar recomeçar, que é justamente a pergunta
+   * que este motor existe para não fazer.
+   */
+  maxTentativasPorPasso: number;
 }
 
 export const LIMITES_PADRAO: LimitesDoPlano = {
   maxPassos: 25,
   maxTotalMs: 5 * 60 * 1000,
-  maxFalhasSeguidas: 2
+  maxFalhasSeguidas: 2,
+  maxTentativasPorPasso: 3
 };
 
 export interface DependenciasDoPlano extends DependenciasDaEspera {
@@ -231,83 +251,137 @@ export async function executarPlano(
     }
 
     const passo = passos[i];
-    const assinaturaAntes = assinaturaAtual;
-    const previstoMs = previsaoDeEspera(historico, passo.acao);
-
-    const comecouAcao = deps.agora();
-    let resposta: any;
-    try {
-      resposta = await deps.executar(passo.acao, passo.args || {});
-    } catch (err: any) {
-      resposta = { error: err?.message || String(err) };
-    }
-    const duracaoDaAcaoMs = deps.agora() - comecouAcao;
-
-    if (resposta?.error) {
-      falhasSeguidas++;
-      const r: ResultadoDoPasso = {
-        indice: i, descricao: passo.descricao, acao: passo.acao, ok: false,
-        duracaoDaAcaoMs, esperaMedidaMs: 0, esperaPrevistaMs: previstoMs,
-        telaEstabilizou: false, mudancaDaTela: 0, erro: String(resposta.error)
-      };
-      resultados.push(r);
-      deps.aoProgredir?.(r, passos.length);
-
-      if (falhasSeguidas >= limites.maxFalhasSeguidas) {
-        return encerrar('falhas-seguidas', `Parei no passo ${i + 1} ("${passo.descricao}") depois de ${falhasSeguidas} falhas seguidas: ${resposta.error}`);
-      }
-      return encerrar('erro-no-passo', `O passo ${i + 1} ("${passo.descricao}") falhou: ${resposta.error}`);
-    }
-
-    falhasSeguidas = 0;
-
-    // Passo que não mexe na tela não tem por que esperar tela nenhuma.
-    let esperaMedidaMs = 0;
-    let telaEstabilizou = true;
-    if (!NAO_MEXE_NA_TELA.has(passo.acao)) {
-      const espera = await esperarTelaParar(deps, { previsaoMs: previstoMs, assinaturaAnterior: assinaturaAntes });
-      esperaMedidaMs = espera.medidoMs;
-      telaEstabilizou = espera.estabilizou;
-      assinaturaAtual = espera.assinaturaFinal;
-      // Só medição de tela que realmente parou entra no histórico: um prazo estourado mede o
-      // prazo, e não a ação, e envenenaria a previsão de todas as próximas.
-      if (espera.estabilizou) historico = registrarMedicao(historico, passo.acao, espera.medidoMs);
-    } else {
-      assinaturaAtual = await deps.fotografar();
-    }
-
-    const mudancaDaTela = diferencaEntreTelas(assinaturaAntes, assinaturaAtual);
-    const r: ResultadoDoPasso = {
-      indice: i, descricao: passo.descricao, acao: passo.acao, ok: true,
-      duracaoDaAcaoMs, esperaMedidaMs, esperaPrevistaMs: previstoMs,
-      telaEstabilizou, mudancaDaTela
-    };
-    resultados.push(r);
-    deps.aoProgredir?.(r, passos.length);
+    const esperado = passo.esperaDaTela ?? (NAO_MEXE_NA_TELA.has(passo.acao) ? 'qualquer' : 'mudar');
 
     /**
-     * A TELA CONFIRMA O PASSO, e é aqui que o laço deixa de ser cego.
+     * CADA PASSO TENTA DE NOVO ANTES DE DESISTIR.
      *
-     * Um clique que não muda nada na tela é um clique que não pegou — caiu ao lado do botão, ou a
-     * janela nem estava em foco. Sem esta checagem, o passo seguinte seria executado sobre uma tela
-     * que não é a que o plano imaginava, e a partir dali cada passo erra em cima do erro anterior.
-     * Parar e devolver o que se viu é o que permite ao modelo replanejar com informação real.
+     * A maior parte das falhas de um passo é temporária: a página ainda estava carregando quando o
+     * clique saiu, o campo ainda não tinha ganhado foco, a janela ainda estava vindo para a frente.
+     * Parar na primeira falha joga fora o plano inteiro por causa de meio segundo de atraso — e
+     * obriga a pessoa a mandar recomeçar, que é justamente a pergunta que este motor existe para
+     * não fazer.
+     *
+     * O ciclo de cada tentativa é sempre o mesmo: EXECUTA, ESTIMA quanto essa ação costuma demorar,
+     * ESPERA a tela parar de mudar, e OLHA a tela de novo para conferir se a ação pegou. Se não
+     * pegou, tenta outra vez — e o que ele aprendeu sobre o tempo dessa ação já entra na tentativa
+     * seguinte, então a segunda tentativa não repete a espera curta demais que fez a primeira
+     * falhar.
      */
-    const esperado = passo.esperaDaTela ?? (NAO_MEXE_NA_TELA.has(passo.acao) ? 'qualquer' : 'mudar');
-    if (esperado === 'mudar' && mudancaDaTela < 0.01) {
-      return encerrar('tela-inesperada',
-        `O passo ${i + 1} ("${passo.descricao}") foi executado, mas a tela não mudou — provavelmente o clique não pegou no alvo. ` +
-        `Parei aqui para não continuar em cima de uma tela errada. Olhe a tela e refaça o plano a partir deste ponto.`);
+    let tentativa = 0;
+    let ultimoErro = '';
+    let confirmado = false;
+    let resultadoDoPasso: ResultadoDoPasso | null = null;
+
+    while (tentativa < limites.maxTentativasPorPasso && !confirmado) {
+      tentativa++;
+      if (deps.cancelado?.()) {
+        return encerrar('parado-pelo-usuario', `Parado por você no passo ${i + 1} de ${passos.length}.`);
+      }
+
+      // A foto do "antes" é tirada a cada tentativa: depois de uma tentativa falha a tela pode ter
+      // mudado, e comparar com uma foto velha diria que mudou quando não mudou.
+      const assinaturaAntes = assinaturaAtual;
+      const previstoMs = previsaoDeEspera(historico, passo.acao);
+
+      const comecouAcao = deps.agora();
+      let resposta: any;
+      try {
+        resposta = await deps.executar(passo.acao, passo.args || {});
+      } catch (err: any) {
+        resposta = { error: err?.message || String(err) };
+      }
+      const duracaoDaAcaoMs = deps.agora() - comecouAcao;
+
+      if (resposta?.error) {
+        ultimoErro = String(resposta.error);
+        resultadoDoPasso = {
+          indice: i, descricao: passo.descricao, acao: passo.acao, ok: false,
+          duracaoDaAcaoMs, esperaMedidaMs: 0, esperaPrevistaMs: previstoMs,
+          telaEstabilizou: false, mudancaDaTela: 0, tentativas: tentativa, erro: ultimoErro
+        };
+        deps.aoProgredir?.(resultadoDoPasso, passos.length);
+        // Antes de repetir, deixa a tela assentar: repetir na hora costuma repetir a mesma falha.
+        if (tentativa < limites.maxTentativasPorPasso) {
+          await deps.dormir(Math.min(2000, previstoMs));
+          assinaturaAtual = await deps.fotografar();
+        }
+        continue;
+      }
+
+      // Estima, espera, e OLHA A TELA DE NOVO — é a foto nova que confirma se a ação pegou.
+      let esperaMedidaMs = 0;
+      let telaEstabilizou = true;
+      if (!NAO_MEXE_NA_TELA.has(passo.acao)) {
+        const espera = await esperarTelaParar(deps, { previsaoMs: previstoMs, assinaturaAnterior: assinaturaAntes });
+        esperaMedidaMs = espera.medidoMs;
+        telaEstabilizou = espera.estabilizou;
+        assinaturaAtual = espera.assinaturaFinal;
+        // Só medição de tela que realmente parou entra no histórico: um prazo estourado mede o
+        // prazo, e não a ação, e envenenaria a previsão de todas as próximas.
+        if (espera.estabilizou) historico = registrarMedicao(historico, passo.acao, espera.medidoMs);
+      } else {
+        assinaturaAtual = await deps.fotografar();
+      }
+
+      const mudancaDaTela = diferencaEntreTelas(assinaturaAntes, assinaturaAtual);
+
+      /**
+       * A TELA CONFIRMA O PASSO, e é aqui que o laço deixa de ser cego.
+       *
+       * Um clique que não muda nada na tela é um clique que não pegou — caiu ao lado do botão, ou a
+       * janela nem estava em foco. Sem esta conferência, o passo seguinte seria executado sobre uma
+       * tela que não é a que o plano imaginava, e a partir dali cada passo erra em cima do anterior.
+       */
+      const mudouDemais = esperado === 'permanecer' && mudancaDaTela > 0.08;
+      const naoMudou = esperado === 'mudar' && mudancaDaTela < 0.01;
+      confirmado = !mudouDemais && !naoMudou;
+
+      resultadoDoPasso = {
+        indice: i, descricao: passo.descricao, acao: passo.acao, ok: confirmado,
+        duracaoDaAcaoMs, esperaMedidaMs, esperaPrevistaMs: previstoMs,
+        telaEstabilizou, mudancaDaTela, tentativas: tentativa,
+        erro: confirmado ? undefined : (naoMudou ? 'a tela não mudou depois da ação' : 'a tela mudou quando não devia')
+      };
+      deps.aoProgredir?.(resultadoDoPasso, passos.length);
+
+      if (!confirmado) {
+        ultimoErro = resultadoDoPasso.erro || '';
+        // 'permanecer' que mudou não se resolve repetindo: repetir agiria de novo sobre uma tela
+        // que já não é a esperada, e a segunda ação erra pior que a primeira.
+        if (mudouDemais) break;
+      }
     }
-    if (esperado === 'permanecer' && mudancaDaTela > 0.08) {
-      return encerrar('tela-inesperada',
-        `O passo ${i + 1} ("${passo.descricao}") não deveria mudar a tela, mas ela mudou bastante. ` +
-        `Parei aqui: alguma coisa aconteceu fora do previsto no plano.`);
+
+    if (resultadoDoPasso) resultados.push(resultadoDoPasso);
+    falhasSeguidas = confirmado ? 0 : falhasSeguidas + 1;
+
+    if (!confirmado) {
+      const tentou = `depois de ${tentativa} tentativa(s)`;
+      if (resultadoDoPasso?.erro === 'a tela mudou quando não devia') {
+        return encerrar('tela-inesperada',
+          `O passo ${i + 1} ("${passo.descricao}") não deveria mudar a tela, mas ela mudou bastante. ` +
+          `Parei aqui: alguma coisa aconteceu fora do previsto no plano.`);
+      }
+      if (ultimoErro === 'a tela não mudou depois da ação') {
+        return encerrar('passo-nao-confirmado',
+          `O passo ${i + 1} ("${passo.descricao}") foi executado ${tentou} e a tela não mudou nenhuma vez — ` +
+          `o clique não está pegando no alvo. Parei aqui para não continuar em cima de uma tela errada. ` +
+          `Olhe a tela, localize o alvo de novo e refaça o plano a partir deste ponto.`);
+      }
+      if (falhasSeguidas >= limites.maxFalhasSeguidas) {
+        return encerrar('falhas-seguidas', `Parei no passo ${i + 1} ("${passo.descricao}") ${tentou}, com falhas em passos seguidos: ${ultimoErro}`);
+      }
+      return encerrar('erro-no-passo', `O passo ${i + 1} ("${passo.descricao}") falhou ${tentou}: ${ultimoErro}`);
     }
   }
 
   const somaEspera = resultados.reduce((s, r) => s + r.esperaMedidaMs, 0);
+  const repetidos = resultados.filter(r => r.tentativas > 1).length;
   return encerrar('concluido',
     `Plano concluído: ${resultados.length} passo(s) em ${Math.round((deps.agora() - comecouTudo) / 1000)}s, ` +
-    `sendo ${Math.round(somaEspera / 1000)}s esperando as telas carregarem.`);
+    `sendo ${Math.round(somaEspera / 1000)}s esperando as telas carregarem` +
+    // Passo que precisou repetir é sinal de plano frágil naquele ponto, e vale ser dito mesmo
+    // quando tudo deu certo no fim.
+    `${repetidos > 0 ? `. ${repetidos} passo(s) precisaram de mais de uma tentativa.` : '.'}`);
 }
