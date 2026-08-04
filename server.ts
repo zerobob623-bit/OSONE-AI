@@ -3733,7 +3733,7 @@ ${processedChunk}`;
   });
 
   // Helper to run content generation with automated fallbacks
-  async function generateContentWithFallback(ai: GoogleGenAI, params: { model: string; contents: any; config?: any }, options?: { allowDowngrade?: boolean }) {
+  async function generateContentWithFallback(ai: GoogleGenAI, params: { model: string; contents: any; config?: any }, options?: { allowDowngrade?: boolean; modeloDeReserva?: string }) {
     const primaryModel = params.model || "gemini-3.6-flash";
     // Alguns fluxos (ex: geração de código no OSONE CODE) não podem aceitar em silêncio um
     // modelo "lite" mais fraco no lugar do pedido — a qualidade do código cairia sem o usuário
@@ -3759,7 +3759,9 @@ ${processedChunk}`;
      */
     const modelsToTry = allowDowngrade
       ? [primaryModel, "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash"]
-      : [primaryModel, "gemini-3.6-flash", "gemini-3.5-flash"];
+      // O modelo que o usuário configurou nos Ajustes entra por ÚLTIMO: é o único que se sabe que
+      // funciona com a chave dele, então serve de fundo de poço quando nenhum preferido responde.
+      : [primaryModel, "gemini-3.6-flash", "gemini-3.5-flash", options?.modeloDeReserva || ""].filter(Boolean);
 
     // Remove duplicates keeping order
     const uniqueModels = Array.from(new Set(modelsToTry));
@@ -3944,7 +3946,7 @@ ${processedChunk}`;
   // combate) sem necessidade nenhuma.
   app.post("/api/generate", async (req, res) => {
     try {
-      const { prompt, systemInstruction, clientApiKey, model, responseMimeType, maxEffort, unrestricted } = req.body;
+      const { prompt, systemInstruction, clientApiKey, model, responseMimeType, maxEffort, unrestricted, modeloDeReserva } = req.body;
       const apiKey = clientApiKey || getSecretGeminiKey();
 
       if (!apiKey) {
@@ -3987,7 +3989,7 @@ ${processedChunk}`;
         model: selectedModel,
         contents: prompt,
         config: config
-      }, { allowDowngrade: !unrestricted });
+      }, { allowDowngrade: !unrestricted, modeloDeReserva });
 
       const finishReason = (response as any)?.candidates?.[0]?.finishReason;
       const blocked = finishReason === "SAFETY" || finishReason === "PROHIBITED_CONTENT" || finishReason === "BLOCKLIST" || finishReason === "SPII";

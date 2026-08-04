@@ -6478,6 +6478,17 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
           // entre os modelos gratuitos), independente do modelo configurado nos Ajustes para o
           // chat geral — qualidade de código não pode ficar refém de um modelo lite mais fraco.
           model: "gemini-3.6-flash",
+          /**
+           * O modelo dos Ajustes entra como reserva — é o único que se SABE que funciona.
+           *
+           * A aba de escrita usa o modelo configurado pelo usuário e gera normalmente; o OSONE
+           * CODE ignorava os Ajustes e insistia num modelo fixo. Quando esse modelo fixo não está
+           * disponível para a chave da pessoa, o resultado é uma aba escrevendo e a outra não —
+           * com a diferença invisível, porque nada na tela dizia que eram modelos diferentes.
+           * A preferência pelo modelo forte continua; o dos Ajustes é a última reserva, e a tela
+           * avisa quando foi ele quem respondeu.
+           */
+          modeloDeReserva: apiKeys.geminiModel || '',
           prompt: promptPayload,
           systemInstruction,
           maxEffort: !!maxEffort,
