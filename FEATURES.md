@@ -35,6 +35,8 @@ Este documento registra todas as funcionalidades, rotas e módulos ativos no eco
 - **Workspace e Preview de Código (`CodeWorkspace.tsx`, `CodePreview.tsx`)**: Ambiente interativo para edição e execução de código.
   - **Sistema de 5 Projetos Isolados ("Em qual projeto você quer codar?")**: Gerenciamento de até 5 projetos independentes ("Projeto 1" a "Projeto 5") com renomeação individual, onde cada projeto mantém seus próprios arquivos e estado isolados no localStorage (`osone_code_projects_v2`).
   - **Botão "Desfazer" (Undo / Ctrl+Z)**: Histórico completo de snapshots de código que permite reverter edições, exclusões e adições de arquivos instantaneamente com botão no cabeçalho e atalho global Ctrl+Z.
+  - **Módulos entre arquivos no preview (`lib/montarPreview.ts`)**: um arquivo pode `import` outro do projeto e o preview roda de verdade, em qualquer profundidade de encadeamento. Import de biblioteca e de CDN fica intacto; ciclo de imports não trava a montagem.
+  - **Buscar e Substituir em todo o projeto (`lib/buscarNoProjeto.ts`, Ctrl+F)**: busca em todos os arquivos com opções de maiúsculas, palavra inteira e expressão regular; cada resultado mostra arquivo, linha e contexto, e clicar leva ao trecho. "Substituir tudo" entra no histórico como UMA ação, desfeita com um Ctrl+Z.
   - **Agentes Swarm & Hunter Agêntico**: Agentes especializados em loop autônomo e analisador de código com auto-implementação.
 - **Canvas Interativo (`InteractiveCanvas.tsx`)**: Renderizador visual dinâmico.
 - **Lousa do Tutor / Educador (`TeacherWhiteboard.tsx`)**: Lousa interativa para explicações acadêmicas e mentoria.

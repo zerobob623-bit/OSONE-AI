@@ -44,6 +44,73 @@ function protegerFechamento(conteudo: string, tag: 'script' | 'style'): string {
 const RE_LINK_CSS = /<link\b[^>]*>/gi;
 const RE_SCRIPT_SRC = /<script\b([^>]*)\bsrc\s*=\s*["']([^"']+)["']([^>]*)>\s*<\/script>/gi;
 
+/**
+ * UM ARQUIVO IMPORTANDO O OUTRO — sem isto não existe projeto JavaScript de verdade.
+ *
+ * Embutir o script da página resolvia a tag <script src>, e parava aí. Um `import { soma } from
+ * './util.js'` dentro desse script continuava escrito do mesmo jeito, e o preview roda a partir de
+ * um documento sem endereço próprio: o navegador não tem contra o que resolver './util.js', o
+ * módulo inteiro falha ao carregar e a página fica em branco. O erro aparece no console como um
+ * caminho que não existe, o que manda quem está programando procurar defeito no lugar errado —
+ * o arquivo está ali, ao lado, e o código está certo.
+ *
+ * Aqui cada import que aponta para um arquivo DO PROJETO é reescrito para um endereço `data:` com
+ * o conteúdo daquele arquivo, recursivamente. Isso vale para qualquer profundidade e não depende
+ * de servidor, empacotador nem de o navegador saber onde a página mora.
+ *
+ * O que NÃO é tocado: import de biblioteca ('react', 'three') e endereço externo. Esses continuam
+ * como estão, para o mapa de importações ou a CDN que a pessoa já configurou seguir funcionando.
+ */
+const RE_ESPECIFICADOR = /(\bfrom\s*|\bimport\s*|\bimport\s*\(\s*)(["'])([^"']+)\2/g;
+
+/** Um ciclo de imports não pode virar recursão infinita na hora de montar o preview. */
+const PROFUNDIDADE_MAXIMA = 12;
+
+function ehEspecificadorDeProjeto(spec: string): boolean {
+  // Só caminho relativo/absoluto de arquivo. 'react' é biblioteca; 'https://...' é externo.
+  if (ehEndereçoExterno(spec)) return false;
+  return spec.startsWith('./') || spec.startsWith('../') || spec.startsWith('/');
+}
+
+function paraDataUrl(codigo: string): string {
+  // encodeURIComponent em vez de base64: mantém o código legível no depurador do navegador, e
+  // não exige btoa (que quebra com acento e emoji, comuns em texto de interface).
+  //
+  // As ASPAS precisam ser escapadas à mão porque o encodeURIComponent não as toca. Sem isso, um
+  // import aninhado — um arquivo que importa outro que importa um terceiro — colocava um endereço
+  // contendo aspas DENTRO da string de outro import, fechando essa string antes da hora e
+  // transformando a cadeia inteira num erro de sintaxe. Só aparecia a partir do segundo nível.
+  return 'data:text/javascript;charset=utf-8,' + encodeURIComponent(codigo)
+    .replace(/'/g, '%27')
+    .replace(/"/g, '%22');
+}
+
+/**
+ * Reescreve os imports de `codigo` para endereços `data:` com o conteúdo dos arquivos do projeto.
+ * `achar` devolve o arquivo do projeto correspondente a um caminho, ou undefined.
+ */
+export function resolverImports(
+  codigo: string,
+  achar: (caminho: string) => CodeRepositoryFile | undefined,
+  visitados: string[] = [],
+  profundidade = 0
+): string {
+  if (profundidade > PROFUNDIDADE_MAXIMA) return codigo;
+
+  return (codigo || '').replace(RE_ESPECIFICADOR, (inteiro, prefixo, aspas, spec) => {
+    if (!ehEspecificadorDeProjeto(spec)) return inteiro;
+    const arquivo = achar(spec);
+    if (!arquivo) return inteiro;
+
+    // Ciclo: A importa B que importa A. Deixar o especificador cru faz o navegador falhar com uma
+    // mensagem clara, o que é melhor do que montar um preview que trava o computador.
+    if (visitados.includes(arquivo.id)) return inteiro;
+
+    const resolvido = resolverImports(arquivo.content || '', achar, [...visitados, arquivo.id], profundidade + 1);
+    return `${prefixo}${aspas}${paraDataUrl(resolvido)}${aspas}`;
+  });
+}
+
 /** A página do projeto: a marcada como principal, senão index.html, senão o primeiro HTML. */
 export function paginaPrincipal(arquivos: CodeRepositoryFile[]): CodeRepositoryFile | null {
   const html = (arquivos || []).filter(f =>
@@ -99,7 +166,12 @@ export function montarPreview(
     // 'type' é preservado (module, importmap): trocá-lo mudaria como o navegador executa o script.
     const tipo = `${antes || ''} ${depois || ''}`.match(/type\s*=\s*["']([^"']+)["']/i)?.[1];
     const atributoTipo = tipo ? ` type="${tipo}"` : '';
-    return `<script${atributoTipo} data-osone-origem="${arquivo.name}">\n${protegerFechamento(arquivo.content, 'script')}\n</script>`;
+    // Só módulo tem import; num script clássico o mesmo texto seria erro de sintaxe, e reescrever
+    // ali estragaria código que por acaso contivesse a palavra 'from' entre aspas.
+    const corpo = /module/i.test(tipo || '')
+      ? resolverImports(arquivo.content || '', conteudoDe, [arquivo.id])
+      : (arquivo.content || '');
+    return `<script${atributoTipo} data-osone-origem="${arquivo.name}">\n${protegerFechamento(corpo, 'script')}\n</script>`;
   });
 
   return html;
