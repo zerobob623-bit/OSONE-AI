@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
-export const CodePreview = ({ code }: { code: string }) => {
+export const CodePreview = ({ code, linguagem }: { code: string; linguagem?: string }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [activeTab, setActiveTab] = useState<'preview' | 'console'>('preview');
@@ -124,6 +124,106 @@ export const CodePreview = ({ code }: { code: string }) => {
             <div class="text-center p-6 bg-zinc-950/40 rounded-xl border border-white/5 max-w-xs">
               <p class="text-xs">Digite ou gere algum HTML/CSS ou JS na aba de escrita para ver o resultado ao vivo.</p>
             </div>
+          </body>
+        </html>
+      `;
+    }
+
+    /**
+     * PYTHON RODANDO DE VERDADE, pelo Pyodide.
+     *
+     * Dava para criar um arquivo .py e não dava para executá-lo: o preview só sabia web, e o
+     * arquivo ficava ali como texto. Pyodide é o CPython compilado para o navegador, então o
+     * código roda de fato — com biblioteca padrão, exceções reais e o traceback do Python.
+     *
+     * Ele vem de uma CDN e NÃO é embutido no pacote: são dezenas de megabytes, que dobrariam o
+     * tamanho do app para quem nunca vai escrever uma linha de Python. A contrapartida está dita
+     * na tela em vez de escondida: sem internet, a primeira execução falha, e a mensagem explica
+     * exatamente isso em vez de deixar a tela parada em "carregando" para sempre.
+     */
+    if (linguagem === 'python') {
+      const codigoEmJson = JSON.stringify(code);
+      return `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="UTF-8">
+            <style>
+              body { background:#09090b; color:#f4f4f5; font-family: ui-monospace, Menlo, Consolas, monospace; padding:1.25rem; margin:0; font-size:13px; line-height:1.6; }
+              .barra { color:#a1a1aa; font-size:0.7rem; text-transform:uppercase; letter-spacing:0.1em; border-bottom:1px solid #27272a; padding-bottom:0.5rem; margin-bottom:1rem; display:flex; gap:8px; align-items:center; }
+              .ponto { width:7px; height:7px; border-radius:50%; background:#fbbf24; }
+              .ponto.pronto { background:#34d399; }
+              .ponto.falhou { background:#f87171; }
+              pre { margin:0; white-space:pre-wrap; word-break:break-word; }
+              .err { color:#f87171; }
+              .aviso { color:#fbbf24; }
+              .dica { color:#71717a; font-size:12px; margin-top:10px; }
+            </style>
+          </head>
+          <body>
+            <div class="barra"><span class="ponto" id="ponto"></span><span id="estado">Carregando o Python...</span></div>
+            <pre id="saida"></pre>
+            <script>
+              const saida = document.getElementById('saida');
+              const estado = document.getElementById('estado');
+              const ponto = document.getElementById('ponto');
+
+              function escrever(texto, classe) {
+                const linha = document.createElement('div');
+                if (classe) linha.className = classe;
+                linha.textContent = texto;
+                saida.appendChild(linha);
+                window.parent.postMessage({ type: 'PREVIEW_LOG', log: { type: classe === 'err' ? 'error' : 'log', text: texto } }, '*');
+              }
+
+              async function carregarPyodide() {
+                // O <script> é criado à mão para dar para PERCEBER a falha de carregamento: um
+                // <script src> que não carrega falha em silêncio, e a tela ficaria em "carregando"
+                // para sempre — que é exatamente o que acontece sem internet.
+                await new Promise((resolve, reject) => {
+                  const tag = document.createElement('script');
+                  tag.src = 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js';
+                  tag.onload = resolve;
+                  tag.onerror = () => reject(new Error('rede'));
+                  document.head.appendChild(tag);
+                });
+                return await loadPyodide({ indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/' });
+              }
+
+              (async () => {
+                let py;
+                try {
+                  py = await carregarPyodide();
+                } catch (e) {
+                  ponto.className = 'ponto falhou';
+                  estado.textContent = 'Python indisponível';
+                  escrever('Não foi possível carregar o Python.', 'err');
+                  escrever('', '');
+                  const dica = document.createElement('div');
+                  dica.className = 'dica';
+                  dica.textContent = 'O interpretador Python é baixado da internet na primeira execução (ele não vem dentro do OSONE porque pesa dezenas de megabytes). Verifique a conexão e recarregue o preview. O resto do OSONE CODE — editor, HTML, CSS e JavaScript — funciona normalmente sem internet.';
+                  saida.appendChild(dica);
+                  window.parent.postMessage({ type: 'PREVIEW_ERROR', error: { message: 'Python indisponível: não foi possível baixar o interpretador (sem internet?).' } }, '*');
+                  return;
+                }
+
+                ponto.className = 'ponto pronto';
+                estado.textContent = 'Python ' + (py.version || '') + ' — pronto';
+
+                // print() e erros vão para a tela do preview e para o console do OSONE.
+                py.setStdout({ batched: (t) => escrever(t) });
+                py.setStderr({ batched: (t) => escrever(t, 'err') });
+
+                try {
+                  await py.runPythonAsync(${codigoEmJson});
+                } catch (e) {
+                  // O traceback do Python vai inteiro: cortá-lo tiraria a linha do erro, que é a
+                  // única informação que importa para consertar.
+                  escrever(String(e.message || e), 'err');
+                  window.parent.postMessage({ type: 'PREVIEW_ERROR', error: { message: String(e.message || e).split('\\n').pop() } }, '*');
+                }
+              })();
+            </script>
           </body>
         </html>
       `;
