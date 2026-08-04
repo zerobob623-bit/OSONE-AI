@@ -2,6 +2,8 @@ import { useState, useRef } from 'react';
 import { PendingLocalAgentConfirmation } from '../components/LocalAgentConfirmModal';
 import { mirarNaInterface } from '../lib/mirarNaInterface';
 import { mirarPorVisao } from '../lib/mirarPorVisao';
+import { assinaturaDaImagem, historicoVazio, HistoricoDeEsperas } from '../lib/esperarTela';
+import { PassoDoPlano, RelatorioDoPlano, ResultadoDoPasso, executarPlano, validarPlano } from '../lib/planoDeAcoes';
 
 /** Chave e modelo usados quando o motor precisa OLHAR a tela para achar um alvo. */
 export interface VisaoDoMotor {
@@ -885,6 +887,76 @@ export function useLocalAgent() {
     }
   };
 
+  /**
+   * O PLANO EM EXECUÇÃO — o que o painel mostra enquanto o agente trabalha sozinho.
+   *
+   * Um laço automático sem nada visível é a pior combinação possível: o computador se mexe sozinho
+   * e a pessoa não tem como saber em que passo está, quanto falta, nem onde parar. Cada passo
+   * concluído entra aqui, com o tempo que o motor PREVIA e o que ele MEDIU — é essa diferença que
+   * mostra a previsão se calibrando de um passo para o outro.
+   */
+  const [planoEmCurso, setPlanoEmCurso] = useState<{ passos: ResultadoDoPasso[]; total: number; rodando: boolean } | null>(null);
+  /**
+   * O aprendizado sobrevive entre planos: o segundo plano da sessão já começa sabendo quanto
+   * "abrir" costuma demorar nesta máquina, em vez de reaprender do zero.
+   */
+  const historicoDeEsperasRef = useRef<HistoricoDeEsperas>(historicoVazio());
+
+  /**
+   * Executa um plano inteiro sem consultar o usuário passo a passo.
+   *
+   * A trava de uma ação por vez continua valendo por dentro: cada passo passa por
+   * executeLocalAgentCall, então o painel, o registro e a parada seguem funcionando igual.
+   */
+  const executarPlanoDeAcoes = async (
+    passosBrutos: any[],
+    localAgentToken?: string,
+    isVoiceSession: boolean = false,
+    visao?: VisaoDoMotor
+  ): Promise<RelatorioDoPlano | { error: string }> => {
+    const passos: PassoDoPlano[] = (passosBrutos || []).map((p: any) => ({
+      acao: String(p?.acao || ''),
+      args: p?.args || {},
+      descricao: String(p?.descricao || ''),
+      esperaDaTela: p?.esperaDaTela
+    }));
+
+    const problema = validarPlano(passos);
+    if (problema) return { error: problema };
+
+    if (motorParadoRef.current) {
+      return { error: "O motor de ações está PARADO por pedido do usuário. Pergunte se ele quer retomar antes de executar qualquer plano." };
+    }
+
+    setPlanoEmCurso({ passos: [], total: passos.length, rodando: true });
+
+    /** Fotografa a tela pelo mesmo caminho das outras ações, e reduz à assinatura. */
+    const fotografar = async () => {
+      const r = await executarAcao('controlar_pc', { acao: 'capturar_tela' }, localAgentToken, isVoiceSession, visao);
+      if (!r || r.error || !r.image) return null;
+      return await assinaturaDaImagem(r.image);
+    };
+
+    const relatorio = await executarPlano(passos, {
+      agora: () => Date.now(),
+      dormir: (ms) => new Promise(r => setTimeout(r, ms)),
+      fotografar,
+      cancelado: () => motorParadoRef.current,
+      executar: async (acao, args) => {
+        // Passa por executeLocalAgentCall para herdar a trava de concorrência, o registro no
+        // painel de ações e a marca de "mexeu no PC" que cala o compartilhamento de tela.
+        return await executeLocalAgentCall('controlar_pc', { acao, ...args }, localAgentToken, isVoiceSession, visao);
+      },
+      aoProgredir: (passo, total) => {
+        setPlanoEmCurso(prev => ({ passos: [...(prev?.passos || []), passo], total, rodando: true }));
+      }
+    }, { historico: historicoDeEsperasRef.current });
+
+    historicoDeEsperasRef.current = relatorio.historico;
+    setPlanoEmCurso({ passos: relatorio.passos, total: relatorio.totalDePassos, rodando: false });
+    return relatorio;
+  };
+
   return {
     pendingLocalAgentConfirmation,
     executeLocalAgentCall,
@@ -893,6 +965,8 @@ export function useLocalAgent() {
     ultimaAcaoNoPcRef,
     pararMotor,
     retomarMotor,
-    limparAcoesDoMotor
+    limparAcoesDoMotor,
+    executarPlanoDeAcoes,
+    planoEmCurso
   };
 }
