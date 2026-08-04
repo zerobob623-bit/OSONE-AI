@@ -26,6 +26,7 @@ import {
   diagnosticarTuya
 } from "./src/tuyaService";
 import { agentRouter, OSONE_INSTALL_DIR } from "./src/localAgentService";
+import { NaoRepetir } from "./src/lib/naoRepetir";
 import {
   carregarCredenciaisSalvas,
   lerEstadoDasCredenciais,
@@ -1422,9 +1423,24 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   // Processa uma mensagem recebida via Baileys: extrai texto/mídia, gera a resposta com a IA
   // (respeitando o Modo Desenvolvedor para o número do criador) e envia de volta por texto e,
   // se habilitado, também por voz.
+  /**
+   * A trava contra responder duas vezes a mesma mensagem (ver lib/naoRepetir.ts).
+   *
+   * O Baileys pode entregar a MESMA mensagem mais de uma vez no 'messages.upsert', com o mesmo
+   * key.id — recibo de retentativa, reconexão com notificações pendentes, ou chegada por mais de
+   * um caminho. Sem isto, cada entrega repetida virava uma auto-resposta nova, e o cliente recebia
+   * o mesmo texto duas vezes no mesmo minuto.
+   */
+  const waMensagensAtendidas = new NaoRepetir(500);
+
   async function handleIncomingWhatsAppMessage(msg: any) {
     const remoteJid: string = msg?.key?.remoteJid || "";
     if (!remoteJid || msg.key?.fromMe) return;
+    // Antes de qualquer coisa: esta mensagem específica já foi atendida?
+    if (waMensagensAtendidas.jaAtendido(msg?.key?.id || "")) {
+      console.log(`[WhatsApp] Mensagem ${msg?.key?.id} chegou de novo e foi ignorada (já respondida).`);
+      return;
+    }
     if (remoteJid === "status@broadcast" || remoteJid.endsWith("@g.us") || remoteJid.endsWith("@broadcast")) return;
     if (!msg.message) return; // mensagem de protocolo (ex.: revogação/recibo), sem conteúdo real
 
@@ -1745,7 +1761,27 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   // Chromium/Puppeteer embutido. Elimina a fragilidade de crashes de navegador que o
   // whatsapp-web.js sofria (dependência de libs do sistema, downloads de Chromium bloqueados,
   // travas de lockfile, etc.).
+  /**
+   * Uma inicialização por vez.
+   *
+   * Sem esta trava, duas chamadas seguidas criavam DOIS sockets vivos — e cada mensagem recebida
+   * era entregue aos dois, gerando duas auto-respostas idênticas. O caminho é fácil de percorrer
+   * sem perceber: a rota /api/whatsapp/connect só recusa quando o status já é "conectado", então
+   * clicar em "Iniciar Conexão" de novo enquanto ela ainda está subindo (ou a reconexão automática
+   * disparando no mesmo instante) começa uma segunda. Como o waSocket só é preenchido DEPOIS de
+   * vários awaits — carregar o Baileys, ler as credenciais, buscar a versão —, a limpeza do socket
+   * anterior no topo daqui não enxerga a inicialização que está a meio caminho, e o primeiro
+   * socket fica para sempre, sem ninguém para fechá-lo.
+   */
+  let waInicializando = false;
+
   const initializeWhatsAppWebClient = async () => {
+    if (waInicializando) {
+      console.log("[WhatsApp] Já existe uma conexão sendo iniciada; o pedido novo foi ignorado.");
+      return;
+    }
+    waInicializando = true;
+
     if (waReconnectTimer) {
       clearTimeout(waReconnectTimer);
       waReconnectTimer = null;
@@ -1784,6 +1820,9 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
         markOnlineOnConnect: false
       });
       waSocket = socket;
+      // Liberada assim que o socket existe: daqui em diante a limpeza no topo desta função já
+      // enxerga o socket e sabe fechá-lo, que é o que a trava estava protegendo.
+      waInicializando = false;
 
       socket.ev.on("creds.update", saveCreds);
 
@@ -1913,6 +1952,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
         }
       });
     } catch (err: any) {
+      waInicializando = false;
       waStatus = "erro";
       waLastError = err?.message || String(err);
       console.error("[WhatsApp] Erro no setup do socket Baileys:", err);
