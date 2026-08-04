@@ -518,7 +518,7 @@ const getFriendlyModeName = (mode: WorkspaceMode): string => {
     case 'canvas': return 'Quadro Interativo / Desenho';
     case 'wellness': return 'Wellness & Style Lab';
     case 'local_control': return 'Automação IoT (Sandbox Local)';
-    case 'smarthome': return 'Automação IoT — Modo Demonstração (Tuya/Hue)';
+    case 'smarthome': return 'Casa Inteligente — aparelhos reais da conta Tuya';
     case 'sounds': return 'Biblioteca de Sons';
     case 'whatsapp': return 'Gerenciador WhatsApp';
     case 'map': return 'Mapa OS';
@@ -981,7 +981,7 @@ export default function App() {
   - É EXPRESSAMENTE PROIBIDO fazer pesquisas na internet ou usar 'openUrl' para links externos do Google Maps ou OpenStreetMap para estes casos. Você deve se concentrar INTEGRALMENTE no ambiente do Mapa OS integrado.
 
   DIRETRIZ CRÍTICA DE TRANSPARÊNCIA - AUTOMAÇÃO IOT & SMART HOME:
-  - O sistema de Smart Home (control_smart_device, get_connected_devices, run_smart_routine) pode operar em dois modos, dependendo se o usuário configurou credenciais reais da Tuya Cloud no servidor: MODO SIMULADO (ambiente de demonstração local, nenhum hardware físico é alterado) ou MODO REAL (comandos enviados de fato a dispositivos Tuya reais via nuvem). Você NÃO decide qual modo está ativo — a resposta de cada chamada de ferramenta informa isso explicitamente (mensagens com "[SIMULADO]" são simuladas; mensagens com "Dispositivo real" ou "Tuya Cloud" são reais). SEMPRE relate ao usuário exatamente o que a resposta da ferramenta disse, sem inventar nem inverter o modo.
+  - O sistema de Smart Home (control_smart_device, get_connected_devices, run_smart_routine) comanda APENAS aparelhos físicos reais da conta Tuya do usuário. Não existe modo simulado nem ambiente de demonstração: se as credenciais da Tuya não estiverem configuradas no servidor, as ferramentas respondem que não há casa conectada, e você deve dizer isso ao usuário — NUNCA finja que ligou, desligou ou ajustou qualquer coisa. Relate sempre exatamente o que a resposta da ferramenta disse, incluindo as recusas.
   - FECHADURAS/TRAVAS (categoria contém "lock", "fechadura", "door", "latch"): é EXPRESSAMENTE PROIBIDO acionar fechaduras por voz — se você estiver em uma sessão de voz e a ferramenta retornar bloqueio de segurança, informe ao usuário que ele precisa usar o chat de texto do OSONE para essa ação. Em texto, uma fechadura real só é acionada após o usuário confirmar explicitamente no painel de confirmação que aparece na tela; se ele não confirmar em 3 minutos ou cancelar, a ação não ocorre — nunca diga que a fechadura foi destravada/travada se a resposta da ferramenta indicar cancelamento, expiração ou erro.
 
   ${localAgentEnvironment ? `AMBIENTE REAL DESTE COMPUTADOR (já detectado — NÃO precisa chamar ferramenta para descobrir, e NÃO tente adivinhar):
@@ -2059,6 +2059,7 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
     pendingTuyaConfirmation,
     isTuyaLockCategoryClient,
     executeTuyaDeviceControl,
+    executeTuyaRoutine,
     getTuyaConnectedDevicesList
   } = useTuyaSmartHome();
 
@@ -7554,7 +7555,7 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
 
       functionDeclarations.push({
         name: "control_smart_device",
-        description: "Liga, desliga ou ajusta dispositivos inteligentes Tuya (Smart Life), Philips Hue ou Samsung SmartThings (lâmpada, tomada, ar condicionado, fechadura, etc.).",
+        description: "Liga, desliga ou ajusta aparelhos físicos REAIS da conta Tuya / Smart Life do usuário (lâmpada, tomada, interruptor, fechadura). Não existe modo simulado: sem casa conectada, a ferramenta recusa e nada é acionado.",
         parameters: {
           type: Type.OBJECT,
           properties: {
@@ -7569,7 +7570,7 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
 
       functionDeclarations.push({
         name: "get_connected_devices",
-        description: "Retorna a lista de todos os dispositivos inteligentes conectados (Tuya, Philips Hue, SmartThings) e seus estados atuais.",
+        description: "Retorna os aparelhos físicos REAIS da conta Tuya do usuário e o estado atual de cada um. Sem casa conectada, responde que não há nenhuma — nunca invente aparelhos.",
         parameters: {
           type: Type.OBJECT,
           properties: {}
@@ -7578,7 +7579,7 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
 
       functionDeclarations.push({
         name: "run_smart_routine",
-        description: "Dispara uma rotina/cena inteligente configurada no OSONE (ex: 'Modo Cinema', 'Boa Noite', 'Modo Foco').",
+        description: "Executa uma cena criada pelo usuário no painel da Casa Inteligente, mandando comandos reais aos aparelhos dela. As cenas não vêm prontas: só existem as que o usuário guardou.",
         parameters: {
           type: Type.OBJECT,
           properties: {
@@ -8404,55 +8405,13 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
             }]);
           } else if (call.name === 'control_smart_device') {
             const { deviceName, action, value, color } = call.args as any;
-            let resultMsg = "";
-            if (isTuyaConfigured) {
-              const result = await executeTuyaDeviceControl(deviceName, action, value, color, false);
-              resultMsg = result.message;
-              addNotification(resultMsg, result.ok ? 'success' : 'error');
-            } else {
-              try {
-                const saved = localStorage.getItem('osone_smarthome_devices');
-                let devices = saved ? JSON.parse(saved) : [];
-                const term = (deviceName || '').toLowerCase();
-                let updatedCount = 0;
-                let targetName = "";
-
-                devices = devices.map((d: any) => {
-                  if (d.name.toLowerCase().includes(term) || (d.room && d.room.toLowerCase().includes(term))) {
-                    updatedCount++;
-                    targetName = d.name;
-                    let nextState = d.state;
-                    if (action === 'turn_on') nextState = true;
-                    else if (action === 'turn_off') nextState = false;
-                    else if (action === 'toggle') nextState = !d.state;
-                    return {
-                      ...d,
-                      state: nextState,
-                      value: value !== undefined ? value : d.value,
-                      color: color || d.color,
-                      lastUpdated: Date.now()
-                    };
-                  }
-                  return d;
-                });
-
-                localStorage.setItem('osone_smarthome_devices', JSON.stringify(devices));
-                window.dispatchEvent(new Event('osone_smarthome_updated'));
-
-                if (updatedCount > 0) {
-                  const actionLabel = action === 'turn_off' ? 'DESLIGADO'
-                    : action === 'set_color' ? `cor ajustada para ${color || 'selecionada'}`
-                    : action === 'set_value' ? `nível ajustado para ${value}%`
-                    : 'LIGADO';
-                  resultMsg = `🧪 [SIMULADO] Dispositivo **${targetName}** ${actionLabel} no ambiente de demonstração local. Nenhum dispositivo físico foi alterado.`;
-                  addNotification(resultMsg, 'success');
-                } else {
-                  resultMsg = `⚠️ Nenhum dispositivo encontrado correspondente a "${deviceName}".`;
-                }
-              } catch (err: any) {
-                resultMsg = `Erro ao controlar dispositivo: ${err.message}`;
-              }
-            }
+            // Sem casa conectada, a ferramenta RECUSA. Ela já teve um modo simulado que mexia num
+            // JSON do navegador e respondia "[SIMULADO] dispositivo LIGADO" — e o usuário não
+            // tinha como saber, no meio da conversa, que nada tinha acontecido de verdade.
+            const resultMsg = isTuyaConfigured
+              ? (await executeTuyaDeviceControl(deviceName, action, value, color, false)).message
+              : `⚠️ Não há nenhuma casa inteligente conectada ao OSONE. Configure as credenciais da Tuya Cloud no servidor para controlar aparelhos reais. Nenhum comando foi enviado.`;
+            addNotification(resultMsg, resultMsg.startsWith('✅') ? 'success' : 'error');
 
             setChatHistory(prev => [...prev, {
               id: Math.random().toString(36).substr(2, 9),
@@ -8460,29 +8419,18 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
               content: resultMsg
             }]);
           } else if (call.name === 'get_connected_devices') {
-            let listText = "⚡ **Dispositivos Inteligentes Conectados no OSONE (Tuya/Hue/SmartThings):**\n\n";
-            if (isTuyaConfigured) {
-              const { raw: devices } = await getTuyaConnectedDevicesList();
-              if (devices.length > 0) {
-                devices.forEach((d: any) => {
-                  listText += `- **${d.name}** [Tuya real${isTuyaLockCategoryClient(d.category) ? ' • FECHADURA' : ''}] — Categoria: ${d.category || 'desconhecida'} — ${d.online ? 'Online' : 'Offline'}\n`;
-                });
-              } else {
-                listText += "_Nenhum dispositivo Tuya real encontrado na conta configurada._\n";
-              }
+            let listText = "";
+            if (!isTuyaConfigured) {
+              listText = "⚠️ Não há nenhuma casa inteligente conectada ao OSONE. Configure as credenciais da Tuya Cloud no servidor para ver e controlar aparelhos reais.";
             } else {
-              try {
-                const saved = localStorage.getItem('osone_smarthome_devices');
-                const devices = saved ? JSON.parse(saved) : [];
-                if (devices.length > 0) {
-                  devices.forEach((d: any) => {
-                    listText += `- **${d.name}** (${d.room || 'Sem cômodo'}) — [Plataforma: ${d.platform.toUpperCase()}] — Estado: **${d.state ? 'LIGADO' : 'DESLIGADO'}**${d.value ? ` (Nível: ${d.value}%)` : ''}\n`;
-                  });
-                } else {
-                  listText += "_Nenhum dispositivo conectado ainda._\n";
-                }
-              } catch (e) {
-                listText += "Erro ao carregar lista de dispositivos.";
+              const { raw: devices } = await getTuyaConnectedDevicesList();
+              if (devices.length === 0) {
+                listText = "_Nenhum aparelho encontrado na conta Tuya configurada._";
+              } else {
+                listText = "⚡ **Aparelhos reais na sua conta Tuya:**\n\n";
+                devices.forEach((d: any) => {
+                  listText += `- **${d.name}**${isTuyaLockCategoryClient(d.category) ? ' • FECHADURA' : ''} — Categoria: ${d.category || 'desconhecida'} — ${d.online ? 'Online' : 'Offline'}\n`;
+                });
               }
             }
 
@@ -8493,38 +8441,13 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
             }]);
           } else if (call.name === 'run_smart_routine') {
             const { routineName } = call.args as any;
-            let resultMsg = "";
-            try {
-              const savedR = localStorage.getItem('osone_smarthome_routines');
-              const routines = savedR ? JSON.parse(savedR) : [];
-              const match = routines.find((r: any) => r.name.toLowerCase().includes((routineName || '').toLowerCase()));
-
-              if (match) {
-                const savedD = localStorage.getItem('osone_smarthome_devices');
-                let devices = savedD ? JSON.parse(savedD) : [];
-                devices = devices.map((dev: any) => {
-                  const act = match.actions.find((a: any) => a.deviceId === dev.id);
-                  if (act) {
-                    return {
-                      ...dev,
-                      state: act.targetState,
-                      value: act.targetValue !== undefined ? act.targetValue : dev.value,
-                      color: act.targetColor || dev.color,
-                      lastUpdated: Date.now()
-                    };
-                  }
-                  return dev;
-                });
-                localStorage.setItem('osone_smarthome_devices', JSON.stringify(devices));
-                window.dispatchEvent(new Event('osone_smarthome_updated'));
-                resultMsg = `✨ Rotina **"${match.name}"** executada com sucesso! Todos os dispositivos da cena foram ajustados.`;
-                addNotification(resultMsg, 'success');
-              } else {
-                resultMsg = `⚠️ Rotina "${routineName}" não encontrada nas rotinas salvas.`;
-              }
-            } catch (err: any) {
-              resultMsg = `Erro ao executar rotina: ${err.message}`;
-            }
+            // A cena manda comandos de verdade. Antes ela só reescrevia um JSON no navegador e
+            // respondia "executada com sucesso" — mesmo com a Tuya configurada, nenhum aparelho
+            // era tocado em momento nenhum.
+            const resultMsg = isTuyaConfigured
+              ? (await executeTuyaRoutine(routineName, false)).message
+              : `⚠️ Não há nenhuma casa inteligente conectada ao OSONE, então não há cena para executar. Nenhum comando foi enviado.`;
+            addNotification(resultMsg, resultMsg.startsWith('✨') ? 'success' : 'error');
 
             setChatHistory(prev => [...prev, {
               id: Math.random().toString(36).substr(2, 9),
@@ -9246,7 +9169,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 },
                 {
                   name: "control_smart_device",
-                  description: "Liga, desliga ou ajusta dispositivos inteligentes Tuya (Smart Life), Philips Hue ou Samsung SmartThings (lâmpada, tomada, ar condicionado, fechadura, etc.). Se credenciais reais da Tuya estiverem configuradas, controla hardware físico de verdade — fechaduras exigem confirmação humana no painel de texto e são bloqueadas por voz.",
+                  description: "Liga, desliga ou ajusta aparelhos físicos REAIS da conta Tuya / Smart Life do usuário. Não existe modo simulado: sem casa conectada, a ferramenta recusa e nada é acionado. Fechaduras exigem confirmação humana no chat de texto e são bloqueadas por voz.",
                   parameters: {
                     type: Type.OBJECT,
                     properties: {
@@ -9260,7 +9183,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 },
                 {
                   name: "get_connected_devices",
-                  description: "Retorna a lista de todos os dispositivos inteligentes conectados (Tuya, Philips Hue, SmartThings) e seus estados atuais. Lista dispositivos Tuya reais quando credenciais estão configuradas no servidor, senão lista os dispositivos do ambiente simulado.",
+                  description: "Retorna os aparelhos físicos REAIS da conta Tuya do usuário e o estado atual de cada um. Sem casa conectada, responde que não há nenhuma — nunca invente aparelhos.",
                   parameters: {
                     type: Type.OBJECT,
                     properties: {}
@@ -9268,7 +9191,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 },
                 {
                   name: "run_smart_routine",
-                  description: "Dispara uma rotina/cena inteligente configurada no OSONE (ex: 'Modo Cinema', 'Boa Noite', 'Modo Foco').",
+                  description: "Executa uma cena criada pelo usuário no painel da Casa Inteligente, mandando comandos reais aos aparelhos dela. As cenas não vêm prontas: só existem as que o usuário guardou.",
                   parameters: {
                     type: Type.OBJECT,
                     properties: {
@@ -9933,55 +9856,12 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     });
                   } else if (call.name === "control_smart_device") {
                     const { deviceName, action, value, color } = call.args as any;
-                    let resultMsg = "";
-                    if (isTuyaConfigured) {
-                      const result = await executeTuyaDeviceControl(deviceName, action, value, color, true);
-                      resultMsg = result.message;
-                      addNotification(resultMsg, result.ok ? 'success' : 'error');
-                    } else {
-                      try {
-                        const saved = localStorage.getItem('osone_smarthome_devices');
-                        let devices = saved ? JSON.parse(saved) : [];
-                        const term = (deviceName || '').toLowerCase();
-                        let updatedCount = 0;
-                        let targetName = "";
-
-                        devices = devices.map((d: any) => {
-                          if (d.name.toLowerCase().includes(term) || (d.room && d.room.toLowerCase().includes(term))) {
-                            updatedCount++;
-                            targetName = d.name;
-                            let nextState = d.state;
-                            if (action === 'turn_on') nextState = true;
-                            else if (action === 'turn_off') nextState = false;
-                            else if (action === 'toggle') nextState = !d.state;
-                            return {
-                              ...d,
-                              state: nextState,
-                              value: value !== undefined ? value : d.value,
-                              color: color || d.color,
-                              lastUpdated: Date.now()
-                            };
-                          }
-                          return d;
-                        });
-
-                        localStorage.setItem('osone_smarthome_devices', JSON.stringify(devices));
-                        window.dispatchEvent(new Event('osone_smarthome_updated'));
-
-                        if (updatedCount > 0) {
-                          const actionLabel = action === 'turn_off' ? 'desligado'
-                            : action === 'set_color' ? `cor ajustada para ${color || 'selecionada'}`
-                            : action === 'set_value' ? `nível ajustado para ${value}%`
-                            : 'ligado';
-                          resultMsg = `[SIMULADO NO AMBIENTE LOCAL] Dispositivo ${targetName} teve o estado alterado (${actionLabel}) apenas no ambiente de demonstração local. Nenhum dispositivo físico foi alterado.`;
-                          addNotification(resultMsg, 'success');
-                        } else {
-                          resultMsg = `Nenhum dispositivo encontrado correspondente a "${deviceName}".`;
-                        }
-                      } catch (err: any) {
-                        resultMsg = `Erro ao controlar dispositivo: ${err.message}`;
-                      }
-                    }
+                    // Por voz, a recusa importa ainda mais: o modelo lê esta resposta em voz alta,
+                    // e um "[SIMULADO]" no meio de uma frase falada passava despercebido.
+                    const resultMsg = isTuyaConfigured
+                      ? (await executeTuyaDeviceControl(deviceName, action, value, color, true)).message
+                      : "Não há nenhuma casa inteligente conectada ao OSONE. Diga ao usuário que é preciso configurar as credenciais da Tuya Cloud no servidor. NÃO afirme que algum aparelho foi ligado, desligado ou ajustado.";
+                    addNotification(resultMsg, resultMsg.startsWith('✅') ? 'success' : 'error');
 
                     responses.push({
                       name: call.name,
@@ -9990,17 +9870,11 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     });
                   } else if (call.name === "get_connected_devices") {
                     let listResult = "";
-                    if (isTuyaConfigured) {
-                      const { text } = await getTuyaConnectedDevicesList();
-                      listResult = text || "Nenhum dispositivo Tuya real encontrado na conta configurada.";
+                    if (!isTuyaConfigured) {
+                      listResult = "Não há nenhuma casa inteligente conectada ao OSONE. Não invente aparelhos: diga que é preciso configurar as credenciais da Tuya Cloud no servidor.";
                     } else {
-                      try {
-                        const saved = localStorage.getItem('osone_smarthome_devices');
-                        const devices = saved ? JSON.parse(saved) : [];
-                        listResult = JSON.stringify(devices);
-                      } catch (e) {
-                        listResult = "Erro ao buscar dispositivos.";
-                      }
+                      const { text } = await getTuyaConnectedDevicesList();
+                      listResult = text || "Nenhum aparelho encontrado na conta Tuya configurada.";
                     }
 
                     responses.push({
@@ -10010,38 +9884,10 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     });
                   } else if (call.name === "run_smart_routine") {
                     const { routineName } = call.args as any;
-                    let resultMsg = "";
-                    try {
-                      const savedR = localStorage.getItem('osone_smarthome_routines');
-                      const routines = savedR ? JSON.parse(savedR) : [];
-                      const match = routines.find((r: any) => r.name.toLowerCase().includes((routineName || '').toLowerCase()));
-
-                      if (match) {
-                        const savedD = localStorage.getItem('osone_smarthome_devices');
-                        let devices = savedD ? JSON.parse(savedD) : [];
-                        devices = devices.map((dev: any) => {
-                          const act = match.actions.find((a: any) => a.deviceId === dev.id);
-                          if (act) {
-                            return {
-                              ...dev,
-                              state: act.targetState,
-                              value: act.targetValue !== undefined ? act.targetValue : dev.value,
-                              color: act.targetColor || dev.color,
-                              lastUpdated: Date.now()
-                            };
-                          }
-                          return dev;
-                        });
-                        localStorage.setItem('osone_smarthome_devices', JSON.stringify(devices));
-                        window.dispatchEvent(new Event('osone_smarthome_updated'));
-                        resultMsg = `Rotina "${match.name}" executada com sucesso! Todos os dispositivos da cena foram acionados.`;
-                        addNotification(resultMsg, 'success');
-                      } else {
-                        resultMsg = `Rotina "${routineName}" não encontrada.`;
-                      }
-                    } catch (err: any) {
-                      resultMsg = `Erro ao executar rotina: ${err.message}`;
-                    }
+                    const resultMsg = isTuyaConfigured
+                      ? (await executeTuyaRoutine(routineName, true)).message
+                      : "Não há nenhuma casa inteligente conectada ao OSONE, então não há cena para executar. NÃO afirme que a cena rodou.";
+                    addNotification(resultMsg, resultMsg.startsWith('✨') ? 'success' : 'error');
 
                     responses.push({
                       name: call.name,

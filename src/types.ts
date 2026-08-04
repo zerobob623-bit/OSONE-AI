@@ -43,41 +43,15 @@ export type AppTheme = 'her' | 'cyberpunk' | 'monochrome' | 'nature';
 
 export type WorkspaceMode = 'home' | 'writing' | 'code' | 'sounds' | 'canvas' | 'wellness' | 'local_control' | 'whatsapp' | 'map' | 'rag' | 'creator' | 'tiktok' | 'sensus_evolution' | 'memory_book' | 'smarthome' | 'vision_control';
 
-export interface SmartDevice {
-  id: string;
-  name: string;
-  category: 'light' | 'plug' | 'switch' | 'thermostat' | 'lock' | 'sensor' | 'tv' | 'fan';
-  platform: 'tuya' | 'hue' | 'smartthings' | 'custom';
-  state: boolean;
-  value?: number; // brightness, temp, level
-  color?: string;
-  room?: string;
-  online: boolean;
-  lastUpdated: number;
-}
-
-export interface SmartHomeConfig {
-  tuya: {
-    enabled: boolean;
-    clientId: string;
-    clientSecret: string;
-    region: 'us' | 'eu' | 'cn' | 'in';
-    userToken?: string;
-    linkedAccountEmail?: string;
-  };
-  hue: {
-    enabled: boolean;
-    bridgeIp?: string;
-    accessToken?: string;
-    username?: string;
-  };
-  smartthings: {
-    enabled: boolean;
-    personalAccessToken?: string;
-    locationId?: string;
-  };
-}
-
+/**
+ * Uma cena: o estado desejado de aparelhos REAIS da conta Tuya, guardado pelo usuário.
+ *
+ * SmartDevice e SmartHomeConfig foram removidos junto com o simulador. O SmartDevice descrevia
+ * um aparelho inventado guardado no navegador, e o SmartHomeConfig guardava credenciais de
+ * Tuya/Hue/SmartThings no lado do cliente — as credenciais reais da Tuya vivem só no servidor, e
+ * Hue/SmartThings nunca chegaram a ter integração nenhuma. O aparelho real é descrito pelo que a
+ * Tuya devolve, e não por um tipo nosso.
+ */
 export interface SmartRoutine {
   id: string;
   name: string;
