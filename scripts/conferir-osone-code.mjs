@@ -282,6 +282,78 @@ const botaoDesfazer = (pag) => pag.locator('button[title="Desfazer alteração n
   }
 }
 
+// ====== BUSCA E SUBSTITUIÇÃO NA INTERFACE ======
+// A lógica tem conferidor próprio (conferir-busca.mjs); aqui o que se prova é que ela está LIGADA
+// na tela: o atalho abre, o resultado leva ao arquivo certo, e a troca em massa entra no desfazer.
+
+// 12) Ctrl+F abre a busca do projeto, e não a do navegador.
+{
+  const { pag, ctx } = await abrir();
+  await pag.locator('textarea').first().click();
+  await pag.keyboard.press('Control+f');
+  await pag.waitForTimeout(300);
+  const visivel = await pag.getByPlaceholder('Buscar em todos os arquivos...').isVisible().catch(() => false);
+  registrar('Ctrl+F abre a busca do projeto', visivel, visivel ? 'painel aberto' : 'painel não apareceu');
+  await ctx.close();
+}
+
+// 13) O resultado atravessa arquivos e leva ao trecho.
+{
+  const { pag, ctx } = await abrir();
+  await pag.keyboard.press('Control+f');
+  await pag.getByPlaceholder('Buscar em todos os arquivos...').fill('ORIGINAL');
+  await pag.waitForTimeout(400);
+  const linhas = await pag.locator('button:has-text("script.js")').count();
+  const contagem = await pag.getByText(/ocorrência\(s\)/).innerText().catch(() => '');
+  registrar('a busca acha em arquivos que não estão abertos',
+    linhas > 0 && /[1-9]/.test(contagem),
+    `${contagem}; script.js entre os resultados: ${linhas > 0 ? 'sim' : 'não'}`);
+  await ctx.close();
+}
+
+// 14) Clicar num resultado abre o arquivo daquele resultado.
+{
+  const { pag, ctx } = await abrir();
+  await pag.keyboard.press('Control+f');
+  await pag.getByPlaceholder('Buscar em todos os arquivos...').fill('JS ORIGINAL');
+  await pag.waitForTimeout(400);
+  await pag.locator('button:has-text("script.js")').first().click();
+  await pag.waitForTimeout(300);
+  const cabecalho = (await pag.locator('.text-cyan-400.font-semibold').first().innerText().catch(() => '')).trim();
+  registrar('clicar no resultado abre o arquivo correspondente',
+    cabecalho === 'script.js', `editor mostra "${cabecalho}"`);
+  await ctx.close();
+}
+
+// 15) Substituir tudo troca em vários arquivos E entra no desfazer como UMA ação.
+{
+  const { pag, ctx } = await abrir();
+  await pag.keyboard.press('Control+f');
+  await pag.getByPlaceholder('Buscar em todos os arquivos...').fill('ORIGINAL');
+  await pag.getByPlaceholder('Substituir por...').fill('TROCADO');
+  await pag.getByRole('button', { name: 'Substituir tudo' }).click();
+  await pag.waitForTimeout(500);
+
+  const depois = await lerRepo(pag);
+  const trocouEmDois = conteudoDe(depois, 'script.js')?.includes('TROCADO')
+    && conteudoDe(depois, 'index.html')?.includes('TROCADO');
+
+  const desfazer = botaoDesfazer(pag);
+  if (!(await desfazer.isDisabled())) {
+    await desfazer.click();
+    await pag.waitForTimeout(400);
+  }
+  const revertido = await lerRepo(pag);
+  const voltouTudo = conteudoDe(revertido, 'script.js')?.includes('JS ORIGINAL')
+    && conteudoDe(revertido, 'index.html')?.includes('HTML ORIGINAL');
+
+  registrar('substituir tudo troca em vários arquivos e um Ctrl+Z desfaz tudo',
+    trocouEmDois && voltouTudo,
+    `troca em 2 arquivos: ${trocouEmDois ? 'sim' : 'NÃO'}; desfazer restaurou: ${voltouTudo ? 'sim' : 'NÃO'}`);
+  await ctx.close();
+}
+
+
 await nav.close();
 fs.rmSync(pastaTemp, { recursive: true, force: true });
 

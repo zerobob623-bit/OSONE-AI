@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { buscarNoProjeto, substituirNoProjeto, OcorrenciaNaBusca } from '../lib/buscarNoProjeto';
 import {
   Code2, Play, FileCode, Plus, Trash2, Edit3, Download, Copy, Check,
   FolderGit2, Sparkles, RefreshCw, Eye, Columns,
   Upload, X, Mic, Loader2, MessageSquare, AlertCircle,
   Bot, Layers, ShieldCheck, Terminal, Cpu, Zap, RotateCw, CheckCircle2,
   AlertTriangle, ChevronDown, ChevronUp, PlayCircle, Gamepad2,
-  Undo, Redo, RotateCcw, Paperclip, Flame
+  Undo, Redo, RotateCcw, Paperclip, Flame, Search, Replace
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { CodePreview } from './CodePreview';
@@ -514,6 +515,49 @@ export const CodeWorkspace: React.FC<{
     }
   }, [files, activeFileId, activeProjectId]);
 
+  // ====== BUSCA E SUBSTITUIÇÃO EM TODO O PROJETO ======
+  const [buscaAberta, setBuscaAberta] = useState(false);
+  const [termoDeBusca, setTermoDeBusca] = useState('');
+  const [substitutoDeBusca, setSubstitutoDeBusca] = useState('');
+  const [opcoesDeBusca, setOpcoesDeBusca] = useState({ caseSensitive: false, palavraInteira: false, regex: false });
+  const campoDeBuscaRef = useRef<HTMLInputElement | null>(null);
+
+  // O resultado é derivado do estado, e não guardado: guardá-lo deixaria a lista desatualizada em
+  // relação ao arquivo que está sendo digitado neste instante.
+  const resultadoDaBusca = termoDeBusca
+    ? buscarNoProjeto(files, termoDeBusca, opcoesDeBusca)
+    : { ocorrencias: [] as OcorrenciaNaBusca[], erro: undefined as string | undefined };
+
+  /** Abre o arquivo da ocorrência e deixa o trecho selecionado no editor. */
+  const irParaOcorrencia = (o: OcorrenciaNaBusca) => {
+    setActiveFileId(o.arquivoId);
+    // A seleção é aplicada depois que o editor renderiza o arquivo novo — o mesmo mecanismo já
+    // usado pela indentação com Tab.
+    selecaoPendenteRef.current = { inicio: o.inicio, fim: o.fim };
+    setTimeout(() => editorRef.current?.focus(), 0);
+  };
+
+  const aplicarSubstituicao = () => {
+    if (!termoDeBusca) return;
+    const r = substituirNoProjeto(files, termoDeBusca, substitutoDeBusca, opcoesDeBusca);
+    if (r.erro) {
+      setNotificationBanner({ message: r.erro, type: 'error' });
+      return;
+    }
+    if (r.trocas === 0) {
+      setNotificationBanner({ message: `Nenhuma ocorrência de "${termoDeBusca}" para substituir.`, type: 'info' });
+      return;
+    }
+    // A troca inteira entra no histórico como UMA ação: substituir em massa sem desfazer é a
+    // operação mais perigosa de um editor.
+    pushHistory(files);
+    setFiles(r.arquivos);
+    setNotificationBanner({
+      message: `${r.trocas} substituição(ões) em ${r.arquivosAfetados.length} arquivo(s). Ctrl+Z desfaz tudo de uma vez.`,
+      type: 'success'
+    });
+  };
+
   // UNDO/REDO HISTORY HELPERS
   const pushHistory = (currentFiles: CodeRepositoryFile[]) => {
     setHistoryStack(prev => {
@@ -621,6 +665,18 @@ export const CodeWorkspace: React.FC<{
     const handleGlobalUndoRedoKey = (e: KeyboardEvent) => {
       const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
       const modifierPressed = isMac ? e.metaKey : e.ctrlKey;
+      // Ctrl+F abre a busca do projeto em vez da busca do navegador, que só enxerga o que está
+      // desenhado na tela — e o editor mostra um arquivo por vez.
+      if (modifierPressed && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setBuscaAberta(true);
+        setTimeout(() => campoDeBuscaRef.current?.focus(), 0);
+        return;
+      }
+      if (e.key === 'Escape' && buscaAberta) {
+        setBuscaAberta(false);
+        return;
+      }
       const isUndo = modifierPressed && e.key.toLowerCase() === 'z' && !e.shiftKey;
       const isRedo = modifierPressed && ((e.key.toLowerCase() === 'z' && e.shiftKey) || e.key.toLowerCase() === 'y');
       if (isUndo || isRedo) {
@@ -638,7 +694,7 @@ export const CodeWorkspace: React.FC<{
     };
     window.addEventListener('keydown', handleGlobalUndoRedoKey);
     return () => window.removeEventListener('keydown', handleGlobalUndoRedoKey);
-  }, [historyStack, redoStack, files, activeProjectId]);
+  }, [historyStack, redoStack, files, activeProjectId, buscaAberta]);
 
   // SWITCH ACTIVE PROJECT (1 OF 5)
   const handleSwitchProject = (targetProjectId: string) => {
@@ -1540,6 +1596,21 @@ FORMATO OBRIGATÓRIO (JSON estrito):
             <span className="tracking-wider hidden sm:inline">HUNTER AGÊNTICO</span>
           </button>
 
+          {/* BUSCAR E SUBSTITUIR EM TODO O PROJETO */}
+          <button
+            onClick={() => { setBuscaAberta(v => !v); setTimeout(() => campoDeBuscaRef.current?.focus(), 0); }}
+            className={cn(
+              "px-3 py-2 rounded-xl text-xs font-mono font-bold flex items-center gap-1.5 transition-all border shrink-0 cursor-pointer active:scale-95",
+              buscaAberta
+                ? "bg-violet-500/20 text-violet-300 border-violet-500/40"
+                : "bg-violet-500/10 text-violet-400 border-violet-500/30 hover:bg-violet-500/20"
+            )}
+            title="Buscar e substituir em todos os arquivos (Ctrl+F)"
+          >
+            <Search size={15} />
+            <span className="hidden sm:inline">Buscar</span>
+          </button>
+
           {/* BOTÃO DESFAZER ALTERAÇÃO NO CÓDIGO */}
           <button 
             onClick={handleUndoChange}
@@ -1793,6 +1864,93 @@ FORMATO OBRIGATÓRIO (JSON estrito):
                   {activeFile.content.length} caracteres
                 </div>
               </div>
+
+              {/* PAINEL DE BUSCA — fica ACIMA do editor, e a lista de resultados leva ao trecho. */}
+              {buscaAberta && (
+                <div className="shrink-0 border-b border-violet-500/20 bg-[#0b0d16] px-3 py-2.5 space-y-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <div className="relative flex-1 min-w-[180px]">
+                      <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-violet-400/60" />
+                      <input
+                        ref={campoDeBuscaRef}
+                        value={termoDeBusca}
+                        onChange={(e) => setTermoDeBusca(e.target.value)}
+                        placeholder="Buscar em todos os arquivos..."
+                        className="w-full bg-black/50 border border-white/10 rounded-lg pl-8 pr-3 py-1.5 text-xs font-mono text-white placeholder:text-zinc-600 outline-none focus:border-violet-500/40"
+                      />
+                    </div>
+                    <div className="relative flex-1 min-w-[180px]">
+                      <Replace size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-400/60" />
+                      <input
+                        value={substitutoDeBusca}
+                        onChange={(e) => setSubstitutoDeBusca(e.target.value)}
+                        placeholder="Substituir por..."
+                        className="w-full bg-black/50 border border-white/10 rounded-lg pl-8 pr-3 py-1.5 text-xs font-mono text-white placeholder:text-zinc-600 outline-none focus:border-emerald-500/40"
+                      />
+                    </div>
+                    <button
+                      onClick={aplicarSubstituicao}
+                      disabled={!termoDeBusca}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black text-[10px] font-mono font-bold uppercase tracking-wider transition-all disabled:opacity-25 disabled:cursor-not-allowed cursor-pointer shrink-0"
+                      title="Substituir todas as ocorrências (entra no desfazer como uma ação só)"
+                    >
+                      Substituir tudo
+                    </button>
+                    <button
+                      onClick={() => setBuscaAberta(false)}
+                      className="p-1.5 rounded-lg text-zinc-500 hover:text-white hover:bg-white/5 transition-all cursor-pointer shrink-0"
+                      title="Fechar (Esc)"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-3 text-[10px] font-mono text-zinc-400">
+                    {([
+                      ['caseSensitive', 'Aa', 'Diferenciar maiúsculas'],
+                      ['palavraInteira', 'ab|', 'Só palavra inteira'],
+                      ['regex', '.*', 'Expressão regular']
+                    ] as const).map(([chave, rotulo, titulo]) => (
+                      <button
+                        key={chave}
+                        onClick={() => setOpcoesDeBusca(o => ({ ...o, [chave]: !o[chave] }))}
+                        title={titulo}
+                        className={cn(
+                          "px-2 py-0.5 rounded border transition-all cursor-pointer",
+                          opcoesDeBusca[chave]
+                            ? "bg-violet-500/20 text-violet-300 border-violet-500/40"
+                            : "bg-white/[0.02] text-zinc-500 border-white/5 hover:text-white"
+                        )}
+                      >
+                        {rotulo}
+                      </button>
+                    ))}
+                    <span className={cn("ml-auto", resultadoDaBusca.erro ? "text-amber-400" : "")}>
+                      {resultadoDaBusca.erro
+                        ? resultadoDaBusca.erro
+                        : termoDeBusca
+                          ? `${resultadoDaBusca.ocorrencias.length} ocorrência(s)`
+                          : ''}
+                    </span>
+                  </div>
+
+                  {resultadoDaBusca.ocorrencias.length > 0 && (
+                    <div className="max-h-40 overflow-y-auto space-y-0.5 pt-1 border-t border-white/5">
+                      {resultadoDaBusca.ocorrencias.map((o, i) => (
+                        <button
+                          key={`${o.arquivoId}-${o.inicio}-${i}`}
+                          onClick={() => irParaOcorrencia(o)}
+                          className="w-full text-left px-2 py-1 rounded hover:bg-white/[0.04] transition-all flex items-baseline gap-2 cursor-pointer group"
+                        >
+                          <span className="text-[10px] font-mono text-cyan-400 shrink-0">{o.arquivoNome}</span>
+                          <span className="text-[10px] font-mono text-zinc-600 shrink-0">:{o.linha}</span>
+                          <span className="text-[10px] font-mono text-zinc-400 truncate group-hover:text-white">{o.textoDaLinha}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Editor: régua de linhas + área de escrita.
                   As duas colunas usam exatamente as mesmas classes de fonte, tamanho e altura de

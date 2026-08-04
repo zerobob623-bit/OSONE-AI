@@ -120,6 +120,101 @@ const PROJETO = [PAGINA, CSS, JS];
     html === JS.content, 'sem página, o preview recebe o arquivo aberto');
 }
 
+// ====== MÓDULOS: UM ARQUIVO IMPORTANDO O OUTRO ======
+//
+// Sem isto não existe projeto JavaScript de verdade. O preview roda a partir de um documento sem
+// endereço próprio, então um `import './util.js'` cru não tem contra o que ser resolvido: o módulo
+// inteiro falha e a página fica em branco, com um erro no console apontando um caminho inexistente
+// — o que manda quem programa procurar defeito no arquivo errado.
+//
+// Estes casos rodam o resultado num Chromium DE VERDADE: montar o texto certo não prova nada se o
+// navegador recusar executá-lo.
+const modulo = (nome, conteudo) => ({ id: 'm-' + nome, name: nome, language: 'javascript', content: conteudo });
+const PAGINA_MODULO = {
+  id: 'p-mod', name: 'index.html', language: 'html', isMain: true,
+  content: '<div id="saida"></div><script type="module" src="app.js"></script>'
+};
+
+let chromium = null;
+try { ({ chromium } = await import('playwright')); } catch { /* sem navegador: os casos abaixo são pulados */ }
+
+const executarNoNavegador = async (html) => {
+  const executavel = process.env.CHROMIUM_PATH
+    || ['/opt/pw-browsers/chromium-1194/chrome-linux/chrome', '/opt/pw-browsers/chromium/chrome-linux/chrome'].find(p => fs.existsSync(p));
+  const nav = await chromium.launch(executavel ? { executablePath: executavel } : {});
+  const pag = await nav.newPage();
+  const erros = [];
+  pag.on('pageerror', e => erros.push(String(e)));
+  pag.on('console', m => { if (m.type() === 'error') erros.push(m.text()); });
+  await pag.setContent(html);
+  await pag.waitForTimeout(400);
+  const saida = await pag.locator('#saida').innerText().catch(() => '');
+  await nav.close();
+  return { saida, erros };
+};
+
+// 9) Import simples entre dois arquivos do projeto.
+if (chromium) {
+  const html = montarPreview([
+    PAGINA_MODULO,
+    modulo('app.js', "import { soma } from './util.js';\ndocument.getElementById('saida').textContent = soma(2, 3);"),
+    modulo('util.js', 'export function soma(a, b) { return a + b; }')
+  ], PAGINA_MODULO);
+  const { saida, erros } = await executarNoNavegador(html);
+  registrar('um arquivo importando o outro roda de verdade no navegador',
+    saida === '5' && erros.length === 0,
+    saida === '5' ? 'saída 5' : `saída "${saida}"; erros: ${erros.join(' | ').slice(0, 120)}`);
+}
+
+// 10) Cadeia de três níveis — o caso que quebrava por causa das aspas no endereço aninhado.
+if (chromium) {
+  const html = montarPreview([
+    PAGINA_MODULO,
+    modulo('app.js', "import { dobro } from './util.js';\ndocument.getElementById('saida').textContent = dobro(21);"),
+    modulo('util.js', "import { FATOR } from './const.js';\nexport const dobro = (n) => n * FATOR;"),
+    modulo('const.js', 'export const FATOR = 2;')
+  ], PAGINA_MODULO);
+  const { saida, erros } = await executarNoNavegador(html);
+  registrar('cadeia de três arquivos encadeados também roda',
+    saida === '42' && erros.length === 0,
+    saida === '42' ? 'saída 42' : `saída "${saida}"; erros: ${erros.join(' | ').slice(0, 160)}`);
+}
+
+// 11) Import de biblioteca externa não pode ser tocado — é a CDN que resolve, não nós.
+{
+  const html = montarPreview([
+    PAGINA_MODULO,
+    modulo('app.js', "import React from 'react';\nimport x from 'https://cdn.exemplo/x.js';\nimport { a } from './util.js';"),
+    modulo('util.js', 'export const a = 1;')
+  ], PAGINA_MODULO);
+  registrar('import de biblioteca e de CDN fica intacto',
+    html.includes("from 'react'") && html.includes("from 'https://cdn.exemplo/x.js'") && !/from\s*['"]\.\/util/.test(html),
+    'só o arquivo do projeto foi reescrito');
+}
+
+// 12) Script clássico (sem type=module) não pode ser reescrito: 'from' ali é texto comum.
+{
+  const classico = { id: 'c1', name: 'app.js', language: 'javascript', content: "var t = \"vem from './util.js'\";" };
+  const pagina = { id: 'p2', name: 'index.html', language: 'html', isMain: true, content: '<script src="app.js"></script>' };
+  const html = montarPreview([pagina, classico, modulo('util.js', 'export const a = 1;')], pagina);
+  registrar('script clássico não tem seus imports reescritos',
+    html.includes("vem from './util.js'"),
+    'texto preservado');
+}
+
+// 13) Ciclo entre arquivos não pode travar a montagem do preview.
+{
+  const html = montarPreview([
+    PAGINA_MODULO,
+    modulo('app.js', "import { b } from './outro.js';\nexport const a = 1;"),
+    modulo('outro.js', "import { a } from './app.js';\nexport const b = 2;")
+  ], PAGINA_MODULO);
+  registrar('ciclo de imports não trava nem estoura a montagem',
+    typeof html === 'string' && html.length > 0,
+    'preview montado sem travar');
+}
+
+
 fs.rmSync(pastaTemp, { recursive: true, force: true });
 
 const falhas = casos.filter(c => !c.passou).length;
