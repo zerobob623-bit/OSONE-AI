@@ -130,9 +130,20 @@ export async function connectToLiveBridge(options: {
   // Tenta conexão via WebSocket Proxy Local com Fallback Automático para Conexão Direta
   return new Promise<LiveBridgeSession>((resolve) => {
     let hasFallbackTriggered = false;
+    /**
+     * O fallback só existe enquanto o proxy AINDA NÃO entregou uma sessão.
+     *
+     * Sem esta trava, um erro no socket DEPOIS de a conexão ter aberto (queda de rede, servidor
+     * reiniciando) caía no fallback e abria uma segunda sessão direta no Gemini — que ninguém
+     * recebia, porque a Promise já tinha sido resolvida com a sessão do proxy. O resultado eram
+     * duas coisas ruins ao mesmo tempo: uma sessão fantasma consumindo cota e despejando áudio
+     * pelos callbacks sem que o app pudesse fechá-la, e o onclose nunca sendo avisado — a voz
+     * morria enquanto a interface continuava mostrando "conectado".
+     */
+    let proxyJaEntregouSessao = false;
 
     const triggerFallback = async () => {
-      if (hasFallbackTriggered) return;
+      if (hasFallbackTriggered || proxyJaEntregouSessao) return;
       hasFallbackTriggered = true;
       console.warn("OSONE G5 Client: Proxy local indisponível. Ativando fallback para conexão direta com Gemini Live...");
       try {
@@ -183,6 +194,7 @@ export async function connectToLiveBridge(options: {
         options.callbacks.onopen();
       }
 
+      proxyJaEntregouSessao = true;
       resolve({
         sendRealtimeInput: (input: any) => {
           if (ws && ws.readyState === WebSocket.OPEN) {

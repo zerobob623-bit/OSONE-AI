@@ -1354,10 +1354,29 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
       setPlayingSoundUrl(url);
       setIsSoundPaused(false);
 
+      /**
+       * Avisa que ESTA faixa chegou ao fim sozinha.
+       *
+       * Quem toca playlist precisa saber a diferença entre "a música acabou" e "mandaram parar",
+       * e o estado não conta essa diferença: os dois casos zeram playingSoundUrl. Deduzir o fim a
+       * partir do zero fazia o botão Parar pular para a próxima faixa em vez de parar a playlist.
+       * O evento é emitido só no fim natural (e na falha, que também é motivo legítimo de seguir
+       * adiante), nunca no pause/stop pedido por quem está ouvindo.
+       */
+      // Uma vez só: um arquivo quebrado dispara onerror E a rejeição do play(), e dois avisos
+      // pelo mesmo fim pulariam duas faixas de uma vez.
+      let jaAvisouQueTerminou = false;
+      const avisarQueTerminou = () => {
+        if (jaAvisouQueTerminou) return;
+        jaAvisouQueTerminou = true;
+        window.dispatchEvent(new CustomEvent('osone_sound_ended', { detail: { url } }));
+      };
+
       audio.onended = () => {
         setPlayingSoundUrl(null);
         soundEffectAudioRef.current = null;
         setIsSoundPaused(false);
+        avisarQueTerminou();
       };
 
       audio.onerror = (e) => {
@@ -1365,6 +1384,7 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
         setPlayingSoundUrl(null);
         soundEffectAudioRef.current = null;
         setIsSoundPaused(false);
+        avisarQueTerminou();
       };
 
       audio.play().catch(err => {
@@ -1372,6 +1392,7 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
         setPlayingSoundUrl(null);
         soundEffectAudioRef.current = null;
         setIsSoundPaused(false);
+        avisarQueTerminou();
       });
     } catch (err) {
       console.error("Erro ao reproduzir som:", err);
@@ -6199,7 +6220,14 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
          * alinhada com o clique.
          */
         if (Date.now() - ultimaAcaoNoPcRef.current < 20000) return;
-        if (ctx && liveSessionRef.current && liveState.status === 'connected') {
+        // liveStateRef, e não liveState: este intervalo vive muito além da renderização que o
+        // criou, e a variável de estado congela no valor que ela tinha naquele instante. Como o
+        // compartilhamento quase sempre começa ANTES de a sessão de voz ficar 'connected' — pelo
+        // botão da interface, ou pelo próprio modelo pedindo start_screen_share de dentro do
+        // callback da sessão —, o valor congelado era 'idle'/'connecting' para sempre e NENHUM
+        // quadro era enviado: o modelo dizia estar vendo a tela enquanto não recebia imagem
+        // nenhuma. O ref é atualizado a cada mudança de estado e diz a verdade a qualquer hora.
+        if (ctx && liveSessionRef.current && liveStateRef.current.status === 'connected') {
           canvas.width = 640;
           canvas.height = 480;
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -6214,7 +6242,7 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
         stopScreenSharing();
       };
 
-      if (liveSessionRef.current && liveState.status === 'connected') {
+      if (liveSessionRef.current && liveStateRef.current.status === 'connected') {
         liveSessionRef.current.sendRealtimeInput({ text: "O usuário ATIVOU o compartilhamento de tela agora." });
       }
     } catch (error) {
@@ -6236,7 +6264,7 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
     // próximo começar mentindo, antes de a superfície real ser lida.
     setSuperficieCompartilhada(null);
 
-    if (liveSessionRef.current && liveState.status === 'connected') {
+    if (liveSessionRef.current && liveStateRef.current.status === 'connected') {
       liveSessionRef.current.sendRealtimeInput({ text: "O usuário DESATIVOU o compartilhamento de tela agora." });
     }
   };
