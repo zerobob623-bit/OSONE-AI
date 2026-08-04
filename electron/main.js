@@ -355,17 +355,32 @@ function createWindow() {
   };
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    // Login: abre dentro do app, preservando a ligação com a janela que o chamou.
+    /**
+     * Login: abre dentro do app, HERDANDO as preferências da janela que o chamou.
+     *
+     * Não declarar webPreferences aqui é a correção, e não um descuido. A janela principal roda
+     * com webSecurity desligado; a janela de login era criada sem essa opção, ou seja, com ela
+     * ligada. Preferências de segurança diferentes fazem o Chromium colocar as duas janelas em
+     * instâncias separadas, e isso corta a ligação 'opener' entre elas — que é exatamente o
+     * caminho por onde a credencial volta do handler do Firebase para o app.
+     *
+     * O rastro do login mostrou isso sem margem para dúvida: a janela abriu no handler, foi ao
+     * Google, VOLTOU ao handler já com o parâmetro 'state' (ou seja, o Google autenticou e
+     * devolveu) e então fechou — sem nada chegar ao app. Não era recusa do Google, nem user
+     * agent, nem domínio não autorizado, nem rede: era a volta.
+     *
+     * Herdando, as duas janelas passam a compartilhar a mesma instância, como acontece num
+     * navegador comum, onde este mesmo login sempre funcionou. A contrapartida é que a página do
+     * Google roda com a mesma configuração da janela principal; ela some em segundos e nenhuma
+     * integração com Node é concedida a ninguém (a janela principal também não tem).
+     */
     if (ehJanelaDeLogin(url)) {
       return {
         action: 'allow',
         overrideBrowserWindowOptions: {
           width: 520,
           height: 680,
-          autoHideMenuBar: true,
-          // Sem integração com Node nesta janela: ela carrega uma página do Google, e é código
-          // de terceiros que não deve ter acesso ao sistema do usuário.
-          webPreferences: { nodeIntegration: false, contextIsolation: true }
+          autoHideMenuBar: true
         }
       };
     }
@@ -391,6 +406,19 @@ function createWindow() {
     // A janela do Google também abre console: quando ela recusa, o motivo costuma estar escrito
     // ali dentro, e não do lado do OSONE.
     abrirConsoleComAtalho(conteudo);
+    /**
+     * A prova do mecanismo, medida em vez de suposta: existe ligação com a janela que abriu esta?
+     *
+     * Sem 'opener', o handler do Firebase não tem para quem devolver a credencial, e a única coisa
+     * que o app vê é a janela fechando. Registrando isso, uma próxima falha diz na hora se o
+     * problema voltou a ser este ou se é outro.
+     */
+    conteudo.on('did-finish-load', () => {
+      conteudo.executeJavaScript('!!window.opener', true)
+        .then(temOpener => registrarEventoDeLogin(
+          temOpener ? 'ligação com o app OK (window.opener presente)' : 'SEM ligação com o app (window.opener nulo)', ''))
+        .catch(() => { /* a página pode ter fechado antes de responder */ });
+    });
     conteudo.on('did-navigate', (_e, url) => registrarEventoDeLogin('navegou para', url));
     conteudo.on('did-navigate-in-page', (_e, url) => registrarEventoDeLogin('mudou de tela em', url));
     conteudo.on('did-fail-load', (_e, codigo, descricao, url) => {
