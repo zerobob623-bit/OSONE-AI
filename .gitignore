@@ -26,3 +26,7 @@ trash/
 
 # Google Home OAuth account-linking tokens
 google-home-tokens.json
+
+# Credenciais da casa inteligente preenchidas pela tela de Configuracoes (Tuya/Google Home).
+# Contem o Access Secret que assina as requisicoes da Tuya — nunca commitar.
+credenciais-osone.json
