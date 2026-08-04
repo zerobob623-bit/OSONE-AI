@@ -981,6 +981,7 @@ export default function App() {
   - É EXPRESSAMENTE PROIBIDO fazer pesquisas na internet ou usar 'openUrl' para links externos do Google Maps ou OpenStreetMap para estes casos. Você deve se concentrar INTEGRALMENTE no ambiente do Mapa OS integrado.
 
   DIRETRIZ CRÍTICA DE TRANSPARÊNCIA - AUTOMAÇÃO IOT & SMART HOME:
+  - OSONE COWORK: quando a tarefa no computador tiver MAIS DE UM CLIQUE encadeado, chame a ferramenta 'osone_cowork' com o plano inteiro, em vez de ir clicando de um em um. E NÃO pergunte ao usuário no meio ("posso clicar?", "quer que eu continue?", "confirma?"): ele autorizou a tarefa quando pediu, e perguntar a cada etapa transforma uma tarefa de trinta segundos numa conversa de cinco minutos. O COWORK cuida sozinho de estimar o tempo de cada ação, esperar a tela carregar, tirar foto nova para conferir se pegou e tentar de novo quando não pegou. Só volte a falar com o usuário quando: o COWORK parar e devolver um motivo, a tarefa terminar, ou você precisar de uma informação que só ele tem (uma senha, qual das duas contas usar, o texto exato de uma mensagem). Dúvida sobre ONDE clicar não é pergunta para o usuário — é 'capturar_tela' e 'localizar'.
   - DINHEIRO: você NUNCA conclui pagamento, compra, transferência, PIX, boleto, assinatura, saque ou qualquer movimentação financeira — nem clicando, nem digitando dados de cartão, nem por plano automático. Isso vale mesmo que o usuário peça explicitamente e mesmo que ele insista. Você PODE ajudar até a porta: pesquisar preço, comparar, encher o carrinho, abrir a tela de pagamento e explicar o que fazer. Aí você PARA, diz que o passo final é dele e devolve o controle. O motivo é simples e não é burocrático: pagamento sai do computador e não volta com um desfazer, e um erro meu custaria dinheiro de verdade de alguém. Nunca digite número de cartão, CVV, senha de banco ou código de autenticação, ainda que estejam visíveis na tela ou o usuário os dite.
   - O sistema de Smart Home (control_smart_device, get_connected_devices, run_smart_routine) comanda APENAS aparelhos físicos reais da conta Tuya do usuário. Não existe modo simulado nem ambiente de demonstração: se as credenciais da Tuya não estiverem configuradas no servidor, as ferramentas respondem que não há casa conectada, e você deve dizer isso ao usuário — NUNCA finja que ligou, desligou ou ajustou qualquer coisa. Relate sempre exatamente o que a resposta da ferramenta disse, incluindo as recusas.
   - FECHADURAS/TRAVAS (categoria contém "lock", "fechadura", "door", "latch"): é EXPRESSAMENTE PROIBIDO acionar fechaduras por voz — se você estiver em uma sessão de voz e a ferramenta retornar bloqueio de segurança, informe ao usuário que ele precisa usar o chat de texto do OSONE para essa ação. Em texto, uma fechadura real só é acionada após o usuário confirmar explicitamente no painel de confirmação que aparece na tela; se ele não confirmar em 3 minutos ou cancelar, a ação não ocorre — nunca diga que a fechadura foi destravada/travada se a resposta da ferramenta indicar cancelamento, expiração ou erro.
@@ -1945,7 +1946,7 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   const [proposedPlan, setProposedPlan] = useState<SkeletonPlan | null>(null);
   const { pendingLocalAgentConfirmation, executeLocalAgentCall,
           acoesDoMotor, motorParado, pararMotor, retomarMotor, limparAcoesDoMotor,
-          ultimaAcaoNoPcRef, executarPlanoDeAcoes, planoEmCurso } = useLocalAgent();
+          ultimaAcaoNoPcRef, executarCowork, planoEmCurso } = useLocalAgent();
 
   /**
    * Envia uma mensagem de WhatsApp de verdade, a pedido do modelo.
@@ -7694,8 +7695,8 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
       });
 
       functionDeclarations.push({
-        name: "executar_plano_no_pc",
-        description: "EXECUTA UMA SEQUÊNCIA INTEIRA DE PASSOS NO COMPUTADOR SOZINHO, sem voltar a perguntar a cada passo. Use quando a tarefa tiver vários cliques encadeados (abrir um programa, navegar por menus, preencher um campo e confirmar). Entre um passo e o outro, o OSONE MEDE quanto a tela demora para carregar e só então executa o próximo — você não precisa estimar espera nenhuma nem inserir pausas. Prefira esta ferramenta a chamar 'controlar_pc' muitas vezes seguidas: é mais rápido e não interrompe o usuário a cada etapa. IMPORTANTE: antes de montar o plano, use 'controlar_pc' com 'capturar_tela' para ver a tela e com 'localizar' para obter as coordenadas reais de cada alvo — coordenadas estimadas erram. O plano PARA sozinho e devolve o motivo se um passo falhar, se a tela não mudar quando deveria (sinal de que o clique não pegou), ou se estourar o teto de passos/tempo; nesse caso, olhe a tela e monte um plano novo a partir dali, nunca repita o mesmo. Ações que mexem em arquivos ou rodam terminal NÃO entram em plano: use 'controlar_pc' para elas, uma a uma. E NADA de dinheiro: passos de pagamento, compra, PIX, transferência, cartão ou assinatura são recusados pelo motor — leve o usuário até a tela e devolva o controle a ele.",
+        name: "osone_cowork",
+        description: "OSONE COWORK — executa uma sequência INTEIRA de passos no computador sozinho, do começo ao fim, SEM perguntar nada ao usuário no meio. USE ESTA FERRAMENTA SEMPRE que a tarefa tiver mais de um clique encadeado: abrir um site e clicar em algo, navegar por menus, preencher um formulário, configurar um programa. NÃO fique chamando 'controlar_pc' de clique em clique e NÃO pergunte ao usuário 'posso clicar aqui?' ou 'quer que eu continue?' entre as etapas — o usuário já autorizou a tarefa quando pediu; ficar perguntando a cada passo é justamente o que esta ferramenta existe para acabar. A cada passo o COWORK faz sozinho: executa a ação, ESTIMA quanto aquele tipo de ação costuma demorar naquele computador (abrir uma aba é quase instantâneo, abrir um programa pesado leva segundos), ESPERA a tela parar de mudar, TIRA UMA FOTO NOVA e confere se a ação pegou. Se não pegou, TENTA DE NOVO (até 3 vezes) antes de desistir — e o tempo que ele aprendeu já entra na tentativa seguinte. Você não precisa estimar espera nenhuma nem inserir pausas. ANTES de montar o plano, use 'controlar_pc' com 'capturar_tela' para ver a tela e com 'localizar' para obter as coordenadas REAIS de cada alvo — coordenada estimada erra. O COWORK para sozinho e devolve o motivo se um passo não confirmar depois das tentativas, se estourar o teto de passos/tempo, ou se o usuário mandar parar; aí sim você olha a tela e monta um plano NOVO a partir dali, nunca repete o mesmo. Ações de arquivo e terminal não entram: use 'controlar_pc' para elas, uma a uma. E NADA de dinheiro: pagamento, compra, PIX, transferência, cartão ou assinatura são recusados pelo motor — leve o usuário até a tela e devolva o controle a ele.",
         parameters: {
           type: Type.OBJECT,
           properties: {
@@ -8549,16 +8550,16 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
               content: waRes.error ? `⚠️ [WHATSAPP] ${waRes.error}` : `✅ [WHATSAPP] ${waRes.message}`
             }]);
             addNotification(waRes.error || waRes.message, waRes.error ? 'error' : 'success');
-          } else if (call.name === 'executar_plano_no_pc') {
+          } else if (call.name === 'osone_cowork') {
             const { objetivo, passos } = call.args as any;
-            const rel: any = await executarPlanoDeAcoes(passos || [], apiKeys.localAgentToken, false, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.6-flash' });
+            const rel: any = await executarCowork(passos || [], apiKeys.localAgentToken, false, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.6-flash' });
 
             if (rel?.error) {
               addNotification(rel.error, 'error');
               setChatHistory(prev => [...prev, {
                 id: Math.random().toString(36).substr(2, 9),
                 role: 'assistant' as const,
-                content: `⚠️ [PLANO] ${rel.error}`
+                content: `⚠️ [OSONE COWORK] ${rel.error}`
               }]);
             } else {
               // O relatório mostra PREVISTO vs MEDIDO em cada passo: é o que deixa visível a
@@ -8567,7 +8568,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
               const linhas = (rel.passos || []).map((p: any, i: number) =>
                 `${p.ok ? '✅' : '❌'} ${i + 1}. ${p.descricao} — ${Math.round(p.esperaMedidaMs)}ms de espera (previa ${Math.round(p.esperaPrevistaMs)}ms)${p.erro ? ` — ${p.erro}` : ''}`
               ).join('\n');
-              const cabecalho = rel.motivo === 'concluido' ? '🤖 [PLANO CONCLUÍDO]' : '⏹️ [PLANO INTERROMPIDO]';
+              const cabecalho = rel.motivo === 'concluido' ? '🤖 [OSONE COWORK — CONCLUÍDO]' : '⏹️ [OSONE COWORK — INTERROMPIDO]';
               addNotification(rel.resumo, rel.motivo === 'concluido' ? 'success' : 'error');
               setChatHistory(prev => [...prev, {
                 id: Math.random().toString(36).substr(2, 9),
@@ -9316,8 +9317,8 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   }
                 },
                 {
-                  name: "executar_plano_no_pc",
-                  description: "EXECUTA UMA SEQUÊNCIA INTEIRA DE PASSOS NO COMPUTADOR SOZINHO, sem voltar a perguntar a cada passo. Use quando a tarefa tiver vários cliques encadeados. Entre um passo e o outro, o OSONE MEDE quanto a tela demora para carregar e só então executa o próximo — você não precisa estimar espera nenhuma. Antes de montar o plano, use 'controlar_pc' com 'capturar_tela' e 'localizar' para obter as coordenadas reais de cada alvo. O plano PARA sozinho e devolve o motivo se um passo falhar, se a tela não mudar quando deveria, ou se estourar o teto; nesse caso olhe a tela e monte um plano novo, nunca repita o mesmo. Ações de arquivo e terminal não entram em plano. E nada de dinheiro: pagamento, compra, PIX, transferência ou cartão são recusados pelo motor — leve o usuário até a tela e devolva o controle a ele.",
+                  name: "osone_cowork",
+                  description: "OSONE COWORK — executa uma sequência INTEIRA de passos no computador sozinho, SEM perguntar nada no meio. USE SEMPRE que a tarefa tiver mais de um clique encadeado, e NÃO pergunte ao usuário entre as etapas: ele já autorizou quando pediu a tarefa. A cada passo o COWORK executa, ESTIMA o tempo daquele tipo de ação, ESPERA a tela parar, TIRA UMA FOTO NOVA e confere se pegou; se não pegou, TENTA DE NOVO até 3 vezes. Antes de montar o plano, use 'controlar_pc' com 'capturar_tela' e 'localizar' para as coordenadas reais. Ele para sozinho e devolve o motivo quando um passo não confirma; aí olhe a tela e monte um plano NOVO. Ações de arquivo e terminal não entram. E nada de dinheiro: pagamento, compra, PIX, transferência ou cartão são recusados — leve o usuário até a tela e devolva o controle a ele.",
                   parameters: {
                     type: Type.OBJECT,
                     properties: {
@@ -10021,9 +10022,9 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       id: call.id,
                       response: { result: waRes.error ? `ERRO: ${waRes.error}` : waRes.message }
                     });
-                  } else if (call.name === "executar_plano_no_pc") {
+                  } else if (call.name === "osone_cowork") {
                     const { passos } = call.args as any;
-                    const rel: any = await executarPlanoDeAcoes(passos || [], apiKeys.localAgentToken, true, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.6-flash' });
+                    const rel: any = await executarCowork(passos || [], apiKeys.localAgentToken, true, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.6-flash' });
                     if (rel?.error) {
                       addNotification(rel.error, 'error');
                       responses.push({ name: call.name, id: call.id, response: { error: rel.error } });
