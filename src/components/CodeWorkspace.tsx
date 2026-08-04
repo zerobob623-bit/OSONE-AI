@@ -1065,7 +1065,26 @@ export const CodeWorkspace: React.FC<{
         message: `Código aplicado em "${alvo?.nome || 'arquivo'}"${resultado.resumo ? ` — ${resultado.resumo}` : ''}. Dá para desfazer com Ctrl+Z.`,
         type: 'success'
       });
+      return;
     }
+
+    /**
+     * A GERAÇÃO QUE NÃO DEU EM NADA TAMBÉM PRECISA APARECER AQUI.
+     *
+     * Este bloco não existia: quando não vinha código, a função simplesmente terminava. A pessoa
+     * escrevia o pedido, apertava gerar, a caixa esvaziava — e nada acontecia na tela do editor.
+     * Sem erro, sem aviso, sem código. O aviso lá do outro lado é um alerta passageiro no canto,
+     * fácil de perder; o editor precisa dizer, no próprio painel, que a tentativa terminou sem
+     * mudar nada. E o texto do pedido volta para a caixa, para não ser preciso digitar tudo de
+     * novo só para tentar outra vez.
+     */
+    setPromptInput(textToSend);
+    setNotificationBanner({
+      message: resultado?.conteudo && resultado.conteudo === alvo?.conteudo
+        ? 'O modelo respondeu, mas nada mudou no arquivo. Seu pedido continua na caixa — tente de novo dizendo qual parte deve mudar.'
+        : 'A geração não devolveu código. Seu pedido continua na caixa para você tentar de novo.',
+      type: 'error'
+    });
   };
 
   const handleAttachImages = (fileList: FileList | null) => {

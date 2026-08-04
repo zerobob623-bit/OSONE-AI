@@ -6499,15 +6499,51 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
         addNotification("⚠️ O Gemini bloqueou a resposta pelo filtro de segurança (finishReason: " + data.finishReason + "). Tente reformular o pedido.", "error");
         return null;
       }
-      if (!data.text) return null;
+      /**
+       * NENHUM CAMINHO PODE TERMINAR EM SILÊNCIO.
+       *
+       * Três saídas aqui devolviam null sem dizer nada, e do outro lado o editor também não
+       * mostrava nada: a pessoa escrevia o pedido, apertava gerar, a caixa esvaziava e ACABAVA.
+       * Sem erro, sem aviso, sem código. É exatamente a sensação de "não consigo gerar nada",
+       * mesmo quando a falha era pontual e tentar de novo resolveria.
+       */
+      if (!data.text) {
+        addNotification("O modelo respondeu vazio (nenhum texto). Tente de novo — se repetir, reformule o pedido com mais detalhes.", "error");
+        return null;
+      }
+
+      // Rebaixar em silêncio é que era o problema; rebaixar avisando, não.
+      if (data.modeloUsado && data.modeloPreferido && data.modeloUsado !== data.modeloPreferido) {
+        addNotification(`ℹ️ O modelo preferido (${data.modeloPreferido}) estava indisponível — o código foi gerado por ${data.modeloUsado}.`, "info");
+      }
 
       const { content: newContent, summary, hadFailures } = applyModelCodeResponse(data.text, currentCode);
-      if (!newContent || !newContent.trim()) return null;
+      if (!newContent || !newContent.trim()) {
+        addNotification("A resposta do modelo não continha código aproveitável. Tente pedir de novo, sendo mais específico.", "error");
+        return null;
+      }
+
+      /**
+       * O modelo respondeu, mas NADA MUDOU no arquivo.
+       *
+       * Acontece quando ele devolve blocos SEARCH/REPLACE digitados de memória em vez de copiados
+       * do arquivo: nenhum trecho casa, nenhuma edição entra, e o conteúdo volta idêntico ao que
+       * entrou. Isto era anunciado como "Código atualizado com ressalvas" enquanto o editor não
+       * mudava um caractere — a mensagem dizia o contrário do que tinha acontecido.
+       */
+      if (newContent === currentCode) {
+        addNotification(
+          `⚠️ Nada foi alterado: o modelo não conseguiu casar o trecho a editar com o código atual${summary ? ` (${summary})` : ''}. ` +
+          `Tente de novo, ou peça a alteração descrevendo melhor QUAL parte do arquivo deve mudar.`,
+          "error"
+        );
+        return null;
+      }
 
       if (data.truncated) {
         addNotification("⚠️ A resposta foi cortada por limite de tokens — o código pode estar incompleto. Tente pedir novamente ou dividir o pedido em partes menores.", "info");
       } else if (hadFailures) {
-        addNotification(`Código atualizado com ressalvas: ${summary}`, "info");
+        addNotification(`Código aplicado em parte: ${summary}`, "info");
       }
 
       return { conteudo: newContent, resumo: summary || '' };
