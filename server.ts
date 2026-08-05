@@ -157,6 +157,29 @@ async function startServer() {
     ) {
       return "O modelo da API do Gemini está temporariamente congestionado com alta demanda global (Erro 503 / UNAVAILABLE). Por favor, aguarde alguns segundos e clique em enviar novamente, ou selecione outro modelo (como gemini-3.6-flash ou gemini-3.5-flash-lite) nas Configurações (ícone de engrenagem no cabeçalho superior) para obter respostas mais estáveis.";
     }
+    /**
+     * MODELO QUE NÃO EXISTE PARA ESTA CHAVE.
+     *
+     * Este caso não tinha tradução e saía cru, em inglês, no meio da tela: "models/<nome> is not
+     * found for API version v1beta, or is not supported for generateContent". Quem lê isso não
+     * tem como saber que a solução está a dois cliques, na lista de modelos dos Ajustes — e a
+     * conclusão natural é que "o app não funciona", quando o resto dele funciona.
+     *
+     * Acontece de verdade: os modelos preferidos são fixos no código, e nem toda chave serve
+     * todos eles. Uma chave nova, um projeto sem acesso liberado, um modelo aposentado pelo
+     * Google — em qualquer um desses a geração para, e a causa fica ilegível.
+     */
+    if (
+      msg.includes("404") ||
+      msg.includes("NOT_FOUND") ||
+      msg.toLowerCase().includes("is not found for api version") ||
+      msg.toLowerCase().includes("is not supported for")
+    ) {
+      const nomeDoModelo = (msg.match(/models\/([A-Za-z0-9.\-]+)/) || [])[1];
+      return `O modelo ${nomeDoModelo ? `"${nomeDoModelo}"` : "pedido"} não existe ou não está liberado para a sua chave do Gemini. `
+        + `Abra os Ajustes (ícone de engrenagem) e escolha um modelo da lista — o OSONE passa a usar esse como reserva. `
+        + `Para ver quais modelos a sua chave atende, acesse: https://generativelanguage.googleapis.com/v1beta/models?key=SUA_CHAVE`;
+    }
     return sanitizeMessageOfKeys(msg);
   };
 

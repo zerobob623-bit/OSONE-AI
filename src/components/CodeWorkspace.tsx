@@ -1442,6 +1442,9 @@ ${currentCode}`;
         body: JSON.stringify({
           clientApiKey: effectiveApiKey,
           model: OSONE_CODE_BEST_MODEL,
+          // Mesma reserva do Enxame: sem ela, uma chave que não sirva os dois modelos preferidos
+          // faz o Hunter falhar sempre, mesmo com o chat funcionando.
+          modeloDeReserva: apiKeys?.geminiModel || '',
           prompt: userContentPayload,
           systemInstruction,
           unrestricted: true
@@ -1579,6 +1582,14 @@ ${currentCode}`;
 
     const effectiveApiKey = apiKeys?.gemini || '';
     const currentModel = OSONE_CODE_BEST_MODEL;
+    /**
+     * O modelo dos Ajustes é a ÚLTIMA reserva — é o único que se sabe que funciona com a chave
+     * desta pessoa. Sem ele, a lista de candidatos do Enxame se resume aos dois modelos preferidos,
+     * e uma chave que não os sirva faz o Enxame falhar SEMPRE, enquanto o chat segue funcionando
+     * normalmente com o modelo configurado. Esta reserva já existia na caixa de gerar código
+     * (App.tsx); o Enxame e o Hunter tinham ficado de fora.
+     */
+    const modeloDeReserva = apiKeys?.geminiModel || '';
 
     const controle = new AbortController();
     cancelamentoDoEnxameRef.current?.abort();
@@ -1610,6 +1621,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
         clientApiKey: effectiveApiKey,
         model: currentModel,
         prompt: `CONCEITO SOLICITADO PELO USUÁRIO:\n"${swarmPrompt}"`,
+        modeloDeReserva,
         systemInstruction: pmSystemInstruction,
         responseMimeType: "application/json"
       }, 2, controle.signal);
@@ -1649,6 +1661,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
         clientApiKey: effectiveApiKey,
         model: currentModel,
         prompt: `GDD DO PRODUCT MANAGER:\n${JSON.stringify(pmParsed, null, 2)}`,
+        modeloDeReserva,
         systemInstruction: architectSystemInstruction,
         responseMimeType: "application/json"
       }, 2, controle.signal);
@@ -1718,6 +1731,7 @@ O código DEVE conter:
           clientApiKey: effectiveApiKey,
           model: currentModel,
           prompt: coderPrompt,
+          modeloDeReserva,
           systemInstruction: coderSystemInstruction
         }, 2, controle.signal);
 
@@ -1841,6 +1855,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
           // chars) deixava o final do arquivo — telas de Game Over, efeitos sonoros, fechamento
           // de tags — fora da revisão do QA justamente nos projetos maiores/melhores.
           prompt: `CÓDIGO GERADO PELO ENGENHEIRO:\n\n${lastCode}`,
+          modeloDeReserva,
           systemInstruction: qaSystemInstruction,
           responseMimeType: "application/json"
         }, 2, controle.signal);
