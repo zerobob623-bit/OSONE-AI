@@ -18,6 +18,7 @@ import { montarPreview } from '../lib/montarPreview';
 import { ProblemaDoPreview, juntarProblemas, montarPedidoDeCorrecao } from '../lib/errosDoPreview';
 import { separarProjeto } from '../lib/separarArquivos';
 import { montarPacote } from '../lib/exportarProjeto';
+import { compararProjeto, apenasOsTrechosQueMudaram, ComparacaoDeArquivo } from '../lib/compararCodigo';
 
 // Geração/edição de código (Hunter e Enxame/Swarm) sempre usa o melhor modelo GRATUITO
 // disponível para código (gemini-3.6-flash: mais recente, líder em benchmarks de código como
@@ -1541,6 +1542,22 @@ Responda APENAS um array JSON de 4 strings. Exemplo do formato:
     }
   };
 
+  /**
+   * ====== VER O QUE MUDOU ANTES DE ACEITAR ======
+   *
+   * O desfazer já existia, mas era cego: dava para voltar atrás, não para saber do que se estava
+   * voltando. Depois de um pedido, o arquivo simplesmente tinha OUTRO conteúdo — e num jogo de 50
+   * mil caracteres não há como conferir de olho se o modelo mexeu só onde devia. Sobravam duas
+   * saídas ruins: aceitar no escuro, ou desfazer por precaução e perder junto o que estava certo.
+   *
+   * A comparação é sempre contra o topo do histórico, que é exatamente o estado de antes da
+   * última alteração — o mesmo ponto para onde o Ctrl+Z voltaria.
+   */
+  const [comparacaoAberta, setComparacaoAberta] = useState(false);
+  const comparacoes: ComparacaoDeArquivo[] = comparacaoAberta && historyStack.length > 0
+    ? compararProjeto(historyStack[historyStack.length - 1], files)
+    : [];
+
   const handleSendAIPrompt = async (promptText?: string) => {
     const textToSend = promptText || promptInput;
     if (!textToSend.trim() || !onGenerateCodeRequest) return;
@@ -2472,6 +2489,20 @@ FORMATO OBRIGATÓRIO (JSON estrito):
             {copied ? <Check size={16} className="text-emerald-400" /> : <Copy size={16} />}
           </button>
 
+          {/*
+            VER O QUE MUDOU — ao lado do desfazer, porque é a pergunta que vem antes dele.
+            Só aparece havendo histórico: sem alteração anterior não há com o que comparar.
+          */}
+          {historyStack.length > 0 && (
+            <button
+              onClick={() => setComparacaoAberta(true)}
+              className="p-2 rounded-xl bg-violet-500/10 hover:bg-violet-500/20 text-violet-300 border border-violet-500/25 transition-all cursor-pointer"
+              title="Ver o que mudou na última alteração"
+            >
+              <Columns size={16} />
+            </button>
+          )}
+
           <button
             onClick={handleDownloadFile}
             className="p-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] text-zinc-300 border border-white/5 transition-all"
@@ -2491,6 +2522,109 @@ FORMATO OBRIGATÓRIO (JSON estrito):
           </button>
         </div>
       </div>
+
+      {/*
+        O PAINEL DE COMPARAÇÃO.
+
+        Mostra só os trechos que mudaram, com algumas linhas de contexto: exibir o arquivo inteiro
+        para revelar três linhas diferentes não informa nada — faz caçar. O que ficou de fora é
+        marcado com '⋯', para não parecer que o arquivo acaba ali.
+      */}
+      <AnimatePresence>
+        {comparacaoAberta && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-lg">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.97 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.97 }}
+              className="w-full max-w-5xl max-h-[88vh] bg-[#0b0e17] border border-violet-500/40 rounded-3xl p-5 shadow-2xl flex flex-col gap-3 overflow-hidden"
+            >
+              <div className="flex items-center justify-between border-b border-white/10 pb-3 shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <Columns size={18} className="text-violet-300" />
+                  <div>
+                    <h3 className="text-sm font-bold text-white font-mono">O que mudou na última alteração</h3>
+                    <p className="text-[11px] text-violet-200/60 mt-0.5">
+                      Comparado com o estado de antes — o mesmo ponto para onde o Ctrl+Z voltaria.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => { setComparacaoAberta(false); handleUndoChange(); }}
+                    className="px-3 py-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-300 text-[11px] font-mono font-bold uppercase tracking-wider transition-colors cursor-pointer"
+                    title="Desfazer esta alteração"
+                  >
+                    Desfazer
+                  </button>
+                  <button
+                    onClick={() => setComparacaoAberta(false)}
+                    className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-colors cursor-pointer"
+                    title="Fechar (a alteração continua valendo)"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4 pr-1">
+                {comparacoes.length === 0 ? (
+                  <div className="text-center py-12 text-zinc-500 font-mono text-xs">
+                    Nenhuma diferença: a última alteração não mudou um caractere do código.
+                  </div>
+                ) : comparacoes.map((c, idx) => (
+                  <div key={idx} className="rounded-2xl border border-white/10 overflow-hidden">
+                    <div className="px-3 py-2 bg-white/[0.03] border-b border-white/5 flex items-center gap-2 text-xs font-mono">
+                      <FileCode size={13} className="text-cyan-400 shrink-0" />
+                      <span className="text-white font-semibold">{c.nome}</span>
+                      <span className={cn(
+                        "text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide",
+                        c.situacao === 'criado' ? "bg-emerald-500/15 text-emerald-300"
+                          : c.situacao === 'apagado' ? "bg-red-500/15 text-red-300"
+                          : "bg-white/5 text-zinc-400"
+                      )}>{c.situacao}</span>
+                      <span className="ml-auto flex items-center gap-2 shrink-0">
+                        {c.adicionadas > 0 && <span className="text-emerald-400">+{c.adicionadas}</span>}
+                        {c.removidas > 0 && <span className="text-red-400">−{c.removidas}</span>}
+                      </span>
+                    </div>
+
+                    {c.comparacaoGrosseira && (
+                      <div className="px-3 py-1.5 bg-amber-500/[0.07] border-b border-amber-500/20 text-[10px] font-mono text-amber-300/80">
+                        Arquivo grande e muito diferente: a comparação é mostrada em bloco, para a aba não travar.
+                      </div>
+                    )}
+
+                    <div className="max-h-[42vh] overflow-auto custom-scrollbar" style={{ ...METRICA_DO_EDITOR, paddingTop: 0, paddingBottom: 0 }}>
+                      {apenasOsTrechosQueMudaram(c.linhas, 3).map((l, i) => (
+                        <div key={i} className={cn(
+                          "flex",
+                          l.tipo === 'adicionada' ? "bg-emerald-500/[0.09]"
+                            : l.tipo === 'removida' ? "bg-red-500/[0.09]" : ""
+                        )}>
+                          {/* As duas colunas de número: a linha removida tem número no arquivo
+                              antigo, a adicionada no novo. Trocar isso mandaria a pessoa olhar
+                              para o lugar errado do editor. */}
+                          <span className="w-11 shrink-0 text-right pr-2 text-zinc-600 select-none">{l.numeroAntes ?? ''}</span>
+                          <span className="w-11 shrink-0 text-right pr-2 text-zinc-600 select-none">{l.numeroDepois ?? ''}</span>
+                          <span className={cn(
+                            "w-4 shrink-0 select-none",
+                            l.tipo === 'adicionada' ? "text-emerald-400" : l.tipo === 'removida' ? "text-red-400" : "text-zinc-700"
+                          )}>{l.tipo === 'adicionada' ? '+' : l.tipo === 'removida' ? '−' : ' '}</span>
+                          <span className={cn(
+                            "flex-1 pr-3",
+                            l.tipo === 'adicionada' ? "text-emerald-100" : l.tipo === 'removida' ? "text-red-200/80" : "text-zinc-500"
+                          )}>{l.texto || ' '}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Project Switcher Bar: "Em qual projeto você quer codar?" */}
       <div className="bg-[#0b0d14] border-b border-white/10 px-4 py-2.5 flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0 z-20">
