@@ -9911,20 +9911,32 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   }
                 }
               ).catch(err => {
-                const isPermissionDenied = err?.name === 'NotAllowedError' || 
-                                           err?.message?.includes('Permission denied') || 
-                                           err?.message?.includes('not-allowed');
-                if (isPermissionDenied) {
-                  console.warn("Aviso: Erro no AudioProcessor (Gravação de áudio indisponível por falta de permissão):", err.message || err);
+                /**
+                 * O MOTIVO REAL, EM VEZ DE "ACESSO RECUSADO" PARA TUDO.
+                 *
+                 * Qualquer falha de áudio caía na mesma frase: "Acesso ao microfone recusado.
+                 * Libere no cadeado do navegador". Num computador SEM microfone isso é conselho
+                 * inútil e informação errada — não há permissão a conceder, e quem seguisse a
+                 * instrução procuraria um cadeado que não resolve nada. Pior: a pessoa conclui que
+                 * o app está quebrado, quando só a voz é que não tem como funcionar.
+                 *
+                 * As três causas são bem diferentes e têm saídas diferentes, e o audio.ts já as
+                 * distingue e explica cada uma. Aqui basta não jogar essa explicação fora.
+                 */
+                const conhecido = ['NotAllowedError', 'NotFoundError', 'NotReadableError'].includes(err?.name);
+                const explicacao = conhecido && err?.message
+                  ? err.message
+                  : "Não foi possível iniciar o microfone. Verifique se ele está conectado e liberado para o navegador.";
+
+                if (conhecido) {
+                  // Falta de microfone ou de permissão não é defeito do OSONE: aviso, não erro.
+                  console.warn("Aviso: voz indisponível —", err?.name, err?.message || '');
                 } else {
                   console.error("Erro no AudioProcessor:", err);
                 }
                 setIsListening(false);
-                setLiveState({ 
-                  status: 'error', 
-                  error: "Acesso ao microfone recusado. Por favor, libere a gravação no cadeado (URL) do navegador, ou abra o aplicativo numa nova aba (link externo acima)." 
-                });
-                addNotification("Acesso ao microfone recusado pelo navegador. Tente abrir o OSONE em uma nova aba!", "error");
+                setLiveState({ status: 'error', error: explicacao });
+                addNotification(explicacao, "error");
                 stopLiveSession(true);
               });
               
