@@ -15,6 +15,7 @@ import { CodePreview } from './CodePreview';
 import { CodeRepositoryFile } from '../types';
 import { buildCodeEditSystemInstruction, applyModelCodeResponse, parseSections, pareceDocumentoIncompleto } from '../lib/codeEdits';
 import { montarPreview } from '../lib/montarPreview';
+import { ProblemaDoPreview, juntarProblemas, montarPedidoDeCorrecao } from '../lib/errosDoPreview';
 
 // Geração/edição de código (Hunter e Enxame/Swarm) sempre usa o melhor modelo GRATUITO
 // disponível para código (gemini-3.6-flash: mais recente, líder em benchmarks de código como
@@ -539,6 +540,15 @@ export const CodeWorkspace: React.FC<{
    * apontariam para outro lugar. O texto é o que confirma que o alvo continua sendo o mesmo.
    */
   const [selecaoDoEditor, setSelecaoDoEditor] = useState<{ inicio: number; fim: number; texto: string } | null>(null);
+
+  /**
+   * O que quebrou quando o código rodou de verdade.
+   *
+   * É a informação mais valiosa que existe para consertar um bug, e era a única que nunca chegava
+   * à IA: o navegador executava o jogo, registrava `TypeError` com linha e coluna, mostrava numa
+   * aba do preview — e ali parava. Pedir "corrigir bugs" mandava o modelo procurar às cegas.
+   */
+  const [problemasDoPreview, setProblemasDoPreview] = useState<ProblemaDoPreview[]>([]);
 
   const [sugestoesDoCodigo, setSugestoesDoCodigo] = useState<string[]>([]);
   const [lendoSugestoes, setLendoSugestoes] = useState(false);
@@ -1406,6 +1416,42 @@ Responda APENAS um array JSON de 4 strings. Exemplo do formato:
   }, [activeFileId, activeProjectId]);
 
   useEffect(() => () => cancelamentoDasSugestoesRef.current?.abort(), []);
+
+  /**
+   * O código exatamente como o preview o executa.
+   *
+   * Importa que seja este, e não o arquivo aberto: o preview roda o projeto MONTADO, com o
+   * styles.css e o script.js embutidos no HTML. Quando o navegador diz "erro na linha 312", é
+   * desta montagem que ele fala — e é só aqui que dá para descobrir o que essa linha contém.
+   */
+  const codigoQueRoda = linguagemDoArquivo(activeFile?.name || '', activeFile?.language) === 'python'
+    ? (activeFile?.content || '')
+    : montarPreview(files, activeFile);
+
+  /**
+   * Guarda um problema vindo do preview.
+   *
+   * O teto de 200 é proteção contra o caso normal, não contra o excepcional: um erro dentro do
+   * laço do jogo dispara sessenta vezes por segundo, e sem limite a lista cresceria sem fim
+   * enquanto a página estivesse aberta. As repetições são agrupadas na hora de montar o pedido.
+   */
+  const registrarProblemaDoPreview = React.useCallback((problema: ProblemaDoPreview) => {
+    setProblemasDoPreview(prev => (prev.length >= 200 ? prev : [...prev, problema]));
+  }, []);
+
+  /**
+   * Código novo é execução nova: os erros da versão anterior não valem mais para esta.
+   *
+   * Sem isto, o aviso vermelho continuaria na tela depois do conserto, apontando um defeito que
+   * já não existe — e o botão "Corrigir com a IA" mandaria o modelo caçar de novo um erro que ele
+   * acabou de resolver. A guarda do 'length' evita uma renderização extra a cada tecla digitada.
+   */
+  useEffect(() => {
+    setProblemasDoPreview(prev => (prev.length === 0 ? prev : []));
+  }, [codigoQueRoda, activeFileId, activeProjectId]);
+
+  const errosAgrupados = juntarProblemas(problemasDoPreview);
+  const quantosErros = errosAgrupados.filter(p => p.tipo === 'erro').length;
 
   const handleSendAIPrompt = async (promptText?: string) => {
     const textToSend = promptText || promptInput;
@@ -2754,10 +2800,9 @@ FORMATO OBRIGATÓRIO (JSON estrito):
                   styles.css e o script.js existirem de verdade, e o que evita desenhar CSS
                   cru como se fosse página quando o arquivo aberto não é uma. */}
               <CodePreview
-                code={linguagemDoArquivo(activeFile?.name || '', activeFile?.language) === 'python'
-                  ? (activeFile?.content || '')
-                  : montarPreview(files, activeFile)}
+                code={codigoQueRoda}
                 linguagem={linguagemDoArquivo(activeFile?.name || '', activeFile?.language)}
+                aoDetectarProblema={registrarProblemaDoPreview}
               />
             </div>
           )}
@@ -2779,6 +2824,44 @@ FORMATO OBRIGATÓRIO (JSON estrito):
             Sem este aviso, a pessoa selecionaria um trecho sem querer e veria o resultado mudar de
             comportamento sem entender por quê.
           */}
+          {/*
+            O QUE QUEBROU AO RODAR, COM UM BOTÃO PARA CONSERTAR.
+
+            Este aviso carrega a informação mais valiosa que existe para corrigir um bug — o erro
+            que a máquina REGISTROU ao executar — e que antes ficava presa numa aba do preview,
+            longe da IA. Com ela em mãos, "corrigir" deixa de ser palpite: o modelo recebe a
+            mensagem exata e o texto da linha que falhou.
+          */}
+          {quantosErros > 0 && (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-red-500/[0.08] border border-red-500/30 text-[11px] font-mono text-red-200">
+              <AlertTriangle size={12} className="shrink-0" />
+              <span className="shrink-0 font-semibold">
+                {quantosErros === 1 ? 'O código quebrou ao rodar' : `${quantosErros} erros ao rodar o código`}
+              </span>
+              <span className="text-red-300/60 truncate min-w-0" title={errosAgrupados.filter(p => p.tipo === 'erro').map(p => p.mensagem).join('\n')}>
+                {errosAgrupados.find(p => p.tipo === 'erro')?.mensagem}
+              </span>
+              <button
+                onClick={() => {
+                  const pedido = montarPedidoDeCorrecao(problemasDoPreview, codigoQueRoda, activeFile?.name || 'arquivo');
+                  if (pedido) handleSendAIPrompt(pedido);
+                }}
+                disabled={isGenerating}
+                className="ml-auto shrink-0 px-2.5 py-0.5 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-100 font-bold uppercase tracking-wider transition-colors disabled:opacity-40 cursor-pointer"
+                title="Mandar o erro exato para a IA consertar"
+              >
+                Corrigir com a IA
+              </button>
+              <button
+                onClick={() => setProblemasDoPreview([])}
+                className="shrink-0 p-1 rounded-lg text-red-300/60 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                title="Dispensar"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          )}
+
           {selecaoDoEditor && (
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/[0.08] border border-amber-500/25 text-[11px] font-mono text-amber-200">
               <Code2 size={12} className="shrink-0" />
