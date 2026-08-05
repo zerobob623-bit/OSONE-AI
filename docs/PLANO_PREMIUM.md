@@ -98,8 +98,9 @@ graça queima a reputação que você já construiu.
 
 - Tudo roda na máquina, com **chave própria** do usuário
 - OSONE CODE completo (5 projetos, Enxame, Hunter, preview, Python)
-- OSONE ZAP no PC dele (enquanto o computador estiver ligado)
-- Casa inteligente, TikTok Live, agente local, voz local (Piper)
+- Casa inteligente, TikTok Live, voz local (Piper), imagem, biblioteca, memória
+- Agente local passo a passo (abrir programa, criar pasta — uma ação por vez, com confirmação)
+- **Amostra** de OSONE COWORK e OSONE ZAP — ver seção 3-B
 - Sincronização básica de configurações
 
 **Papel no negócio:** é o seu marketing. Um usuário livre não te custa nada e é quem experimenta,
@@ -142,6 +143,129 @@ Para quem vende com o OSONE, não só usa.
 - Base de conhecimento compartilhada entre a equipe
 - Nota fiscal, contrato, SLA
 - Onboarding assistido
+
+---
+
+## 3-B. O mapa grátis × pago (decisão: COWORK e ZAP são pagos)
+
+### 3-B.1. Por que essas duas são a escolha certa
+
+A seção 2 diz que premium deveria ser o que você hospeda. COWORK e ZAP rodam na máquina do
+usuário — então a trava neles é frouxa (seção 3-B.4). Ainda assim **são as duas melhores escolhas
+do app**, por um motivo que pesa mais que a trava:
+
+**São as únicas duas funções que dão dinheiro ou tempo de volta para quem compra.**
+
+| Função | O que a pessoa ganha | Ela paga? |
+|---|---|---|
+| OSONE ZAP | Um vendedor que atende 24h e não dorme | **Sim** — se fechar um cliente a mais no mês, já se pagou |
+| OSONE COWORK | Uma sequência de trabalho repetitivo feita sozinha | **Sim** — é hora de trabalho devolvida toda semana |
+| OSONE CODE | Um editor com IA muito bom | Difícil — tem alternativa grátis conhecida em todo lugar |
+| Casa inteligente | Conveniência | Não — é bonito, não é dor |
+
+Ninguém assina por conveniência. Assina por **dor** e por **retorno**. ZAP e COWORK são as duas
+únicas do OSONE com dor clara e retorno mensurável. A escolha está certa.
+
+E tem um segundo motivo, que é de produto: são funções **avançadas**. Quem está conhecendo o app
+não sente falta delas. Cobrar por elas não estraga a primeira impressão de ninguém — enquanto
+cobrar pelo OSONE CODE ou pelo chat estragaria.
+
+### 3-B.2. ⚠️ O erro a não cometer: tirar o que já está solto
+
+**As duas já estão publicadas e funcionando de graça.** Quem instalou o OSONE hoje tem as duas.
+
+Transformar uma função existente em paga da noite para o dia é a forma mais rápida de queimar a
+confiança que você levou meses construindo. Quem já usava vai sentir que perdeu algo, e essa
+pessoa é justamente a que mais falaria bem do seu app.
+
+**Três saídas, e a terceira é a boa:**
+
+1. ❌ Bloquear para todo mundo — queima quem já está com você
+2. 🟡 Liberar para sempre quem já instalou (*grandfathering*) — justo, mas você não sabe quem é
+   "quem já instalou", e complica o código para sempre
+3. ✅ **Amostra generosa, sem data para acabar** — a função continua existindo para todos, com
+   limite mensal. Ninguém perde nada; quem usa de verdade bate no limite e assina.
+
+### 3-B.3. O mapa
+
+#### 🆓 Continua grátis para sempre
+
+| Função | Por quê |
+|---|---|
+| Chat, voz, memória, handoff PC↔celular | É o coração. Cobrar aqui mata o app. |
+| **OSONE CODE inteiro** (Enxame, Hunter, Python, preview, busca) | É o que atrai e o que te diferencia. É a vitrine. |
+| Casa inteligente (Tuya, Google Home) | Conveniência: ninguém paga, e o custo é zero |
+| TikTok Live | Nicho pequeno; não sustenta plano |
+| Geração de imagem | Já é grátis hoje e documentado assim |
+| Biblioteca, Wellness, Lousa, Dossiê | Complementos; sozinhos não vendem |
+| Agente local **passo a passo** | Abrir programa, criar pasta, uma ação por vez com confirmação |
+
+#### 💰 Vira pago — com amostra
+
+| Função | Amostra grátis (mensal) | No plano pago |
+|---|---|---|
+| **OSONE COWORK** | **5 sequências automáticas/mês** | Ilimitado |
+| **OSONE ZAP** | **1 número, 30 mensagens/dia** | Ilimitado, até 3 números, base de conhecimento maior, relatórios |
+| **Geração de vídeo (Veo)** | 3 vídeos curtos/mês | Cota mensal maior |
+
+**Por que a amostra precisa ser generosa nestas duas em especial:** COWORK e ZAP são funções que
+só se entendem **vendo funcionar**. Descrever "o agente executa uma sequência sozinho" não vende
+nada; ver o computador fazendo dez cliques certos sozinho vende na hora. Um muro seco na frente
+disso ("assine para usar") desperdiça o melhor argumento de venda que você tem.
+
+5 sequências e 30 mensagens/dia são o bastante para a pessoa **ver o valor** e não o bastante para
+ela **operar um negócio**. É exatamente essa a linha.
+
+> Sobre o vídeo: o `FEATURES.md` registra que a geração custa ~US$ 0,03/s de verdade. Essa é a
+> única função do app que já hoje gasta dinheiro real por uso — ela **precisa** de limite,
+> independente de plano.
+
+#### 📦 O plano que junta tudo
+
+**OSONE PRO — R$ 49/mês**: COWORK ilimitado + ZAP ilimitado + vídeo com cota.
+
+Este plano **não depende de CNPJ nem de servidor hospedado**. É o primeiro que dá para lançar, e
+convive com os planos VIP/PREMIUM da seção 3 quando eles chegarem (o VIP resolve chave de API; o
+PRO libera automação — quem quiser os dois, assina o PREMIUM).
+
+### 3-B.4. Sendo honesto sobre a trava
+
+COWORK e ZAP rodam no computador do usuário. Então:
+
+- Um `if` na interface, sozinho, qualquer um contorna
+- Mesmo a trava no `server.ts` roda na máquina dele, e o bundle pode ser editado
+
+**O que fazer com isso: aceitar, e encarecer o contorno o suficiente.**
+
+| Nível | Como | Esforço para burlar |
+|---|---|---|
+| Só na interface | `if (plano === 'pro')` no React | Trivial — console do navegador |
+| **+ no servidor local** | O contador de cota vive no `server.ts`, e as rotas recusam | Precisa editar `dist/server.cjs` |
+| **+ licença assinada** | Token JWT assinado com **sua chave privada**, conferido offline | Precisa editar o binário **e** entender o formato |
+
+O terceiro nível é o alvo, e não é caro de fazer: a chave privada nunca sai do seu servidor, então
+ninguém *fabrica* uma licença — só consegue arrancar a verificação editando o programa. **Quem
+sabe fazer isso não ia pagar de qualquer jeito.** O que importa é que a pessoa comum, que quer
+usar e não quer mexer em binário, tenha um caminho claro e barato para pagar.
+
+A única trava realmente inviolável seria hospedar o cérebro do ZAP no seu servidor (seção 2) — e
+isso continua valendo como próximo passo, para quando houver CNPJ e VPS.
+
+### 3-B.5. O que dá para construir agora, sem CNPJ
+
+Você não precisa de gateway, CNPJ nem servidor para deixar isto pronto. O que dá para fazer hoje:
+
+1. **Um catálogo de planos** (`src/lib/planos.ts`) — um arquivo só que declara o que é grátis, o
+   que é pago e qual a amostra de cada função. Fonte única da verdade.
+2. **Contagem de uso local** — quantas sequências COWORK e quantas mensagens ZAP este mês. Serve
+   de amostra depois, e **desde já te diz quanto as pessoas realmente usam** — que é a informação
+   que define se 5 sequências é pouco ou muito.
+3. **O portão desligado** — o componente que explica a função e mostra o botão de assinar, com uma
+   chave de configuração `COBRANCA_ATIVA = false`. Tudo continua liberado; no dia do lançamento
+   vira `true`.
+
+O item 2 é o mais valioso agora: **você está definindo preço e limite no escuro.** Um mês de
+contagem real e você decide com dado em vez de palpite.
 
 ---
 
@@ -422,9 +546,17 @@ a cada chamada, e não numa variável do app.
 
 ## 10. Resumo em cinco linhas
 
-1. **Não trave o que já é grátis.** Venda o que só existe se você hospedar.
-2. **A maior dor do seu usuário hoje é a chave da API.** Resolver isso é o plano VIP inteiro.
-3. **A função que mais vende é o ZAP 24/7**, porque tem retorno financeiro óbvio para quem compra.
+1. **Cobre por dor e retorno, não por conveniência.** COWORK e ZAP são as duas únicas funções do
+   OSONE que devolvem dinheiro ou tempo — por isso são as certas para o primeiro plano pago.
+2. **Não tire o que já está solto.** As duas já estão publicadas: use amostra generosa
+   (5 sequências/mês, 30 mensagens/dia) em vez de muro, porque elas só se vendem sendo vistas.
+3. **A maior dor do seu usuário hoje é a chave da API.** Resolver isso é o plano VIP, e ele exige
+   servidor seu — fica para depois do CNPJ.
 4. **Comece pelo Stripe com cartão**, adicione Pix anual no primeiro dia e Pix Automático depois.
 5. **Antes de qualquer código de cobrança, conserte o `firestore.rules`.** É a única falha aqui
    que custa dinheiro de verdade.
+
+### E o que fazer nesta semana, sem CNPJ
+
+Contar o uso real de COWORK e ZAP (seção 3-B.5). Você está prestes a definir preço e limite no
+escuro; um mês de contagem transforma palpite em dado.
