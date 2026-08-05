@@ -16,6 +16,7 @@ import { CodeRepositoryFile } from '../types';
 import { buildCodeEditSystemInstruction, applyModelCodeResponse, parseSections, pareceDocumentoIncompleto } from '../lib/codeEdits';
 import { montarPreview } from '../lib/montarPreview';
 import { ProblemaDoPreview, juntarProblemas, montarPedidoDeCorrecao } from '../lib/errosDoPreview';
+import { separarProjeto } from '../lib/separarArquivos';
 
 // Geração/edição de código (Hunter e Enxame/Swarm) sempre usa o melhor modelo GRATUITO
 // disponível para código (gemini-3.6-flash: mais recente, líder em benchmarks de código como
@@ -1453,6 +1454,50 @@ Responda APENAS um array JSON de 4 strings. Exemplo do formato:
   const errosAgrupados = juntarProblemas(problemasDoPreview);
   const quantosErros = errosAgrupados.filter(p => p.tipo === 'erro').length;
 
+  /**
+   * Separa o arquivo aberto em index.html + estilo + script.
+   *
+   * Toda a decisão difícil mora em separarProjeto (lib/separarArquivos.ts), inclusive a
+   * conferência que desfaz a separação e compara com o original antes de deixá-la valer. Aqui só
+   * resta gravar o resultado pelo caminho único — o mesmo que entra no histórico, então um Ctrl+Z
+   * desfaz a separação inteira de uma vez.
+   */
+  const separarArquivoAberto = () => {
+    if (!activeFile) return;
+    const atuais = filesRef.current;
+    const r = separarProjeto(activeFile.content, atuais.map(f => f.name));
+
+    if (!r.separou) {
+      setNotificationBanner({ message: `Nada foi separado: ${r.motivo}`, type: 'info' });
+      return;
+    }
+
+    pushHistory(atuais);
+    const agora = Date.now();
+    const criados: CodeRepositoryFile[] = r.novos.map((a, i) => ({
+      id: `file-${agora}-${i}`,
+      name: a.nome,
+      language: a.linguagem,
+      content: a.conteudo,
+      updatedAt: agora
+    }));
+    const atualizados = atuais
+      .map(f => (f.id === activeFile.id ? { ...f, content: r.html, updatedAt: agora } : f))
+      .concat(criados);
+
+    setFiles(atualizados);
+    try {
+      localStorage.setItem('osone_code_repository_files', JSON.stringify(atualizados));
+    } catch (e) { /* o auto-save cuida do resto */ }
+    window.dispatchEvent(new Event('osone_repository_updated'));
+
+    setNotificationBanner({
+      message: `Projeto separado em ${criados.length + 1} arquivos: ${activeFile.name} + ${criados.map(c => c.name).join(' + ')}. `
+        + `O preview continua idêntico. Ctrl+Z desfaz.`,
+      type: 'success'
+    });
+  };
+
   const handleSendAIPrompt = async (promptText?: string) => {
     const textToSend = promptText || promptInput;
     if (!textToSend.trim() || !onGenerateCodeRequest) return;
@@ -2310,6 +2355,24 @@ FORMATO OBRIGATÓRIO (JSON estrito):
             <BowAndArrowIcon size={15} className="text-emerald-100 animate-pulse" />
             <span className="tracking-wider hidden sm:inline">HUNTER AGÊNTICO</span>
           </button>
+
+          {/*
+            SEPARAR O ARQUIVO GRUDADO EM index.html + estilo + script.
+
+            Só aparece quando há o que separar — um arquivo já dividido, ou que não é página, não
+            ganha um botão que só serviria para dizer "não". A conferência de segurança mora dentro
+            de separarProjeto: ela desfaz a separação e compara com o original antes de gravar.
+          */}
+          {activeFile && /<html|<body|<!DOCTYPE/i.test(activeFile.content) && /<(style|script)\b[^>]*>[\s\S]*?\S[\s\S]*?<\/\1\s*>/i.test(activeFile.content) && (
+            <button
+              onClick={separarArquivoAberto}
+              className="px-3 py-2 rounded-xl text-xs font-mono font-bold flex items-center gap-1.5 transition-all border shrink-0 cursor-pointer active:scale-95 bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20"
+              title="Separar este arquivo em index.html + styles.css + game.js (o preview continua idêntico)"
+            >
+              <Layers size={15} />
+              <span className="hidden lg:inline">Separar</span>
+            </button>
+          )}
 
           {/* BUSCAR E SUBSTITUIR EM TODO O PROJETO */}
           <button
