@@ -13,7 +13,7 @@ import {
 import { cn } from '../lib/utils';
 import { CodePreview } from './CodePreview';
 import { CodeRepositoryFile } from '../types';
-import { buildCodeEditSystemInstruction, applyModelCodeResponse, parseSections } from '../lib/codeEdits';
+import { buildCodeEditSystemInstruction, applyModelCodeResponse, parseSections, pareceDocumentoIncompleto } from '../lib/codeEdits';
 import { montarPreview } from '../lib/montarPreview';
 
 // Geração/edição de código (Hunter e Enxame/Swarm) sempre usa o melhor modelo GRATUITO
@@ -1061,9 +1061,14 @@ export const CodeWorkspace: React.FC<{
       // Passa pelo caminho único de gravação, que guarda o estado anterior no histórico — é o
       // que torna uma reescrita feita pela IA reversível com Ctrl+Z.
       applyCodeToRepository(resultado.conteudo, idDoAlvo);
+      // O alerta do outro lado é passageiro e some no canto; o painel do editor é onde a pessoa
+      // está olhando. Um arquivo que não fecha não pode ser anunciado aqui em verde.
+      const chegouIncompleto = pareceDocumentoIncompleto(resultado.conteudo);
       setNotificationBanner({
-        message: `Código aplicado em "${alvo?.nome || 'arquivo'}"${resultado.resumo ? ` — ${resultado.resumo}` : ''}. Dá para desfazer com Ctrl+Z.`,
-        type: 'success'
+        message: chegouIncompleto
+          ? `⚠️ O código aplicado em "${alvo?.nome || 'arquivo'}" está INCOMPLETO: o arquivo termina no meio, sem fechar. Peça para terminar o arquivo, ou divida o pedido. Ctrl+Z desfaz.`
+          : `Código aplicado em "${alvo?.nome || 'arquivo'}"${resultado.resumo ? ` — ${resultado.resumo}` : ''}. Dá para desfazer com Ctrl+Z.`,
+        type: chegouIncompleto ? 'error' : 'success'
       });
       return;
     }
@@ -1194,7 +1199,26 @@ ${currentCode}`;
       const hasDoubt = /^true$/i.test((sections.HAS_DOUBT || '').trim());
       const doubtQuestion = (sections.DOUBT_QUESTION || '').trim();
       const summary = (sections.SUMMARY || '').trim();
-      const editsSection = sections.EDITS !== undefined ? sections.EDITS : rawText;
+
+      /**
+       * SEM A SEÇÃO '=== EDITS ===', NÃO HÁ NADA PARA GRAVAR.
+       *
+       * O texto cru servia de plano B aqui, e isso só funciona quando a resposta veio inteira.
+       * Numa resposta cortada pelo limite de tokens — que para antes de chegar em EDITS — o plano
+       * B gravava a resposta INTEIRA no arquivo: os cabeçalhos '=== HAS_DOUBT ===', o resumo em
+       * português e o que mais tivesse vindo, tudo por cima do código que funcionava. O usuário
+       * mandava auditar e recebia o arquivo destruído.
+       *
+       * O texto cru continua valendo quando o modelo respondeu só o código, ignorando o formato
+       * (resposta inteira, sem cabeçalho nenhum) — aí ele é mesmo o arquivo.
+       */
+      const respostaTemCabecalhos = Object.keys(sections).length > 0;
+      const editsSection = sections.EDITS !== undefined
+        ? sections.EDITS
+        : (respostaTemCabecalhos ? '' : rawText);
+      if (sections.EDITS === undefined && respostaTemCabecalhos) {
+        console.warn('[Hunter] Resposta sem a seção EDITS (provavelmente cortada). Nada será gravado no arquivo.');
+      }
 
       if (hasDoubt && doubtQuestion) {
         setHunterStatus('doubt');
@@ -1207,12 +1231,20 @@ ${currentCode}`;
         setHunterDoubt(null);
 
         let correctedCode: string | null = null;
-        const { content, summary: editSummaryNote } = applyModelCodeResponse(editsSection, currentCode);
+        const { content, summary: editSummaryNote, respostaCortada } = applyModelCodeResponse(editsSection, currentCode);
         if (content && content.trim() && content !== currentCode) {
           correctedCode = content;
         }
 
-        const truncationNote = data.truncated ? "⚠️ A resposta foi cortada por limite de tokens — revise o código, pode estar incompleto." : "";
+        // Só é "incompleto" o que chega incompleto ao arquivo: o servidor já mandou o modelo
+        // continuar de onde parou antes de responder, e quando isso resolveu não há o que avisar.
+        const ficouCortado = data.truncated || respostaCortada
+          || (!!correctedCode && pareceDocumentoIncompleto(correctedCode));
+        const truncationNote = ficouCortado
+          ? "⚠️ A resposta acabou antes do fim (limite de tamanho) — o código pode estar incompleto, confira o fechamento do arquivo."
+          : (sections.EDITS === undefined && respostaTemCabecalhos
+            ? "⚠️ A resposta veio incompleta (sem a seção de edições) e nada foi gravado, para não danificar o arquivo. Tente de novo."
+            : "");
         const finalSummary = [summary || "Código auditado.", editSummaryNote, truncationNote].filter(Boolean).join(' — ');
         setHunterReport(finalSummary || "Código auditado e 100% alinhado com as especificações solicitadas!");
 
@@ -1232,9 +1264,11 @@ ${currentCode}`;
           const ehRenderizavel = /\.(html?|htm)$/i.test(activeFile?.name || '') || activeFile?.language === 'html';
           if (ehRenderizavel) setViewLayout('preview');
           setNotificationBanner({
-            message: `🏹 Hunter auditou e aplicou o código corrigido em "${activeFile?.name || 'arquivo'}"!` +
-              (ehRenderizavel ? ' O Preview Vivo foi aberto automaticamente.' : ''),
-            type: "success"
+            message: ficouCortado
+              ? `⚠️ Hunter aplicou o que deu em "${activeFile?.name || 'arquivo'}", mas a resposta do modelo acabou antes do fim — revise, o código pode estar incompleto.`
+              : `🏹 Hunter auditou e aplicou o código corrigido em "${activeFile?.name || 'arquivo'}"!` +
+                (ehRenderizavel ? ' O Preview Vivo foi aberto automaticamente.' : ''),
+            type: ficouCortado ? "error" : "success"
           });
 
           // Auto-fechar modal após 1.8 segundos
@@ -1357,6 +1391,10 @@ FORMATO OBRIGATÓRIO (JSON estrito):
       let isApproved = false;
       let coderEverSucceeded = false;
       let previousQAFeedback = "";
+      // Ciclos seguidos em que o código saiu igual ao que entrou. Ver o corte do laço abaixo.
+      let ciclosSemProgresso = 0;
+      let ultimaEntregaCortada = false;
+      let exigirArquivoInteiro = false;
 
       while (currentIter <= maxHarnessIterations && !isApproved) {
         setSwarmIteration(currentIter);
@@ -1383,8 +1421,15 @@ O código DEVE conter:
 - Game loop completo com requestAnimationFrame, pontuação, recorde, tela de Início e tela de Game Over com botão de Reiniciar.`;
         const coderSystemInstruction = buildCodeEditSystemInstruction(coderRoleIntro);
 
+        // Depois de um ciclo em que nenhum bloco casou, a ordem de fechamento precisa ser a
+        // OPOSTA da de sempre: insistir em "edições cirúrgicas, sem reescrever o arquivo inteiro"
+        // era mandar o engenheiro repetir exatamente o que acabou de não funcionar.
+        const ordemFinal = exigirArquivoInteiro
+          ? `Responda com o código-fonte COMPLETO do arquivo inteiro, do <!DOCTYPE html> até o </html>, já com TODAS as correções acima aplicadas. NÃO use blocos SEARCH/REPLACE nesta resposta.`
+          : `Corrija TODOS os itens acima usando blocos SEARCH/REPLACE cirúrgicos, sem reescrever o arquivo inteiro.`;
+
         const coderPrompt = lastCode
-          ? `CÓDIGO FONTE ATUAL NO REPOSITÓRIO:\n\n${lastCode}\n\nESPECIFICAÇÕES ORIGINAIS:\n- Pedido do Usuário: "${swarmPrompt}"\n- GDD do Produto: ${JSON.stringify(pmParsed)}\n- Arquitetura: ${JSON.stringify(archParsed)}\n\n⚠️ CRÍTICO - CORREÇÕES EXIGIDAS PELO AGENTE DE QA NA ITERAÇÃO ANTERIOR:\n"${previousQAFeedback}"\nCorrija TODOS os itens acima usando blocos SEARCH/REPLACE cirúrgicos, sem reescrever o arquivo inteiro.`
+          ? `CÓDIGO FONTE ATUAL NO REPOSITÓRIO:\n\n${lastCode}\n\nESPECIFICAÇÕES ORIGINAIS:\n- Pedido do Usuário: "${swarmPrompt}"\n- GDD do Produto: ${JSON.stringify(pmParsed)}\n- Arquitetura: ${JSON.stringify(archParsed)}\n\n⚠️ CRÍTICO - CORREÇÕES EXIGIDAS NA ITERAÇÃO ANTERIOR:\n"${previousQAFeedback}"\n${ordemFinal}`
           : `Não há código existente ainda. Crie do zero.\n\nESPECIFICAÇÕES:\n- Pedido do Usuário: "${swarmPrompt}"\n- GDD do Produto: ${JSON.stringify(pmParsed)}\n- Arquitetura: ${JSON.stringify(archParsed)}`;
 
         const coderResult = await generateWithRetry({
@@ -1402,11 +1447,42 @@ O código DEVE conter:
           break;
         }
 
-        const { content: newCode, summary: editSummary, hadFailures: editHadFailures } = applyModelCodeResponse(coderResult.text, lastCode);
+        const { content: newCode, summary: editSummary, hadFailures: editHadFailures, respostaCortada } = applyModelCodeResponse(coderResult.text, lastCode);
         if (!newCode || !newCode.trim()) {
           addSwarmLog('💻 Agente de Engenharia', `⚠️ Resposta vazia do Agente de Engenharia na Iteração ${currentIter}. Mantendo código anterior.`, 'warn');
           break;
         }
+
+        /**
+         * CICLO QUE NÃO MUDA NADA NÃO PODE CONSUMIR O ENXAME EM SILÊNCIO.
+         *
+         * Quando os blocos SEARCH/REPLACE do engenheiro não casam com o arquivo (ele os digita de
+         * memória em vez de copiar), NENHUMA edição entra e o código volta idêntico. O laço
+         * seguia assim mesmo: o QA reprovava o mesmo arquivo de novo, o engenheiro errava o
+         * mesmo trecho de novo, e as iterações acabavam sem um caractere ter mudado — o Enxame
+         * "rodava" do começo ao fim sem finalizar coisa alguma.
+         *
+         * Agora o próprio impasse vira instrução: na primeira vez o engenheiro é avisado de que
+         * as edições não casaram e recebe ordem de reescrever o arquivo inteiro; se o ciclo
+         * seguinte também não mudar nada, o Enxame para em vez de gastar as iterações à toa.
+         */
+        if (coderEverSucceeded && newCode === lastCode) {
+          ciclosSemProgresso++;
+          addSwarmLog('💻 Agente de Engenharia',
+            `⚠️ Nenhuma edição casou com o código atual na Iteração ${currentIter} — o arquivo não mudou${editSummary ? ` (${editSummary})` : ''}.`,
+            'warn');
+          if (ciclosSemProgresso >= 2) {
+            addSwarmLog('💻 Agente de Engenharia', 'Dois ciclos seguidos sem alterar nada: encerrando o Enxame com a última versão válida em vez de gastar as iterações restantes.', 'error');
+            break;
+          }
+          previousQAFeedback = `${previousQAFeedback}\n\n⚠️ ATENÇÃO: na iteração anterior NENHUM dos seus blocos SEARCH/REPLACE casou com o arquivo — o trecho procurado não existe exatamente como você escreveu.`;
+          exigirArquivoInteiro = true;
+          currentIter++;
+          continue;
+        }
+        ciclosSemProgresso = 0;
+        exigirArquivoInteiro = false;
+
         lastCode = newCode;
         coderEverSucceeded = true;
 
@@ -1417,13 +1493,34 @@ O código DEVE conter:
         if (coderResult.blocked) {
           addSwarmLog('💻 Agente de Engenharia', `⚠️ O Gemini bloqueou a resposta pelo filtro de segurança nesta iteração. O QA vai avaliar o que sobrou e pode reprovar para uma nova tentativa com um pedido reformulado.`, 'warn');
         }
-        if (coderResult.truncated) {
-          addSwarmLog('💻 Agente de Engenharia', `⚠️ A resposta foi cortada por limite de tokens — o código desta iteração (${lastCode.length} chars) pode estar incompleto. O QA vai avaliar e pode reprovar para uma nova tentativa.`, 'warn');
+
+        /**
+         * O código chegou cortado ao arquivo. O QA sozinho não resolve isso: ele avalia o texto e
+         * pode até dar nota boa a meia página bem escrita. Aqui o corte é dito por escrito ao
+         * engenheiro na iteração seguinte, com a única ordem que o conserta — terminar o arquivo.
+         */
+        ultimaEntregaCortada = coderResult.truncated || respostaCortada || pareceDocumentoIncompleto(lastCode);
+        const aindaHaIteracao = currentIter < maxHarnessIterations;
+        if (ultimaEntregaCortada) {
+          addSwarmLog('💻 Agente de Engenharia',
+            `⚠️ O código desta iteração (${lastCode.length} chars) chegou INCOMPLETO — a resposta acabou antes de fechar o arquivo, mesmo após as continuações automáticas. ` +
+            (aindaHaIteracao
+              ? 'O engenheiro será mandado terminá-lo na próxima iteração.'
+              : 'Não restam iterações para terminá-lo — o Enxame vai encerrar avisando que o arquivo está incompleto.'),
+            'error');
         }
+
         addSwarmLog('💻 Agente de Engenharia', editSummary
           ? `${editSummary} (${lastCode.length} chars). Progresso salvo no repositório.`
           : `Código gerado (${lastCode.length} chars) na Iteração ${currentIter}. Progresso salvo no repositório.`,
           editHadFailures ? 'warn' : 'success');
+
+        // Arquivo incompleto não vai ao QA: a correção é conhecida e não depende de avaliação.
+        if (ultimaEntregaCortada && aindaHaIteracao) {
+          previousQAFeedback = `O arquivo entregue está INCOMPLETO: ele termina no meio, sem fechar as tags/funções abertas. Termine o arquivo. Use blocos SEARCH/REPLACE para completar a partir do trecho final existente, sem reescrever o que já está pronto e sem repetir nada.`;
+          currentIter++;
+          continue;
+        }
 
         // 3.2 AGENTE DE GARANTIA DE QUALIDADE (QA TESTER / HARNESS EVALUATOR)
         setSwarmCurrentStep('qa');
@@ -1510,30 +1607,50 @@ FORMATO OBRIGATÓRIO (JSON estrito):
       setSwarmProgressText('98% - Projeto salvo! Abrindo Preview Vivo...');
       addSwarmLog('🚀 Cérebro Integrador', 'Última versão do código já está salva no Repositório do OSONE CODE (persistida a cada iteração).', 'info');
 
-      setSwarmStatus('success');
+      /**
+       * "FINALIZADO" PRECISA QUERER DIZER FINALIZADO.
+       *
+       * O fecho era o mesmo qualquer que fosse o desfecho: aprovado pelo QA anunciava "✨ Jogo
+       * Finalizado & Testado", e o resto anunciava um aviso genérico. Um arquivo que acaba no meio
+       * do <script> passava por qualquer um dos dois — inclusive pelo primeiro, porque o QA lê o
+       * texto e pode achar bom o pedaço que existe. A palavra "finalizado" ficou reservada ao caso
+       * em que o arquivo realmente fecha; quando ele não fecha, isso é o que a tela diz.
+       */
+      const entregaIncompleta = ultimaEntregaCortada || pareceDocumentoIncompleto(lastCode);
+
+      setSwarmStatus(entregaIncompleta ? 'error' : 'success');
       setSwarmProgress(100);
-      const finalMsg = isApproved
-        ? '100% - ✨ Jogo Finalizado & Testado pelo Enxame com Sucesso!'
-        : '100% - ⚠️ Enxame encerrado com a melhor versão obtida (nem todas as etapas concluíram, mas o progresso foi salvo).';
+      const finalMsg = entregaIncompleta
+        ? '100% - ⚠️ O código salvo está INCOMPLETO: o arquivo não chegou ao fim.'
+        : isApproved
+          ? '100% - ✨ Jogo Finalizado & Testado pelo Enxame com Sucesso!'
+          : '100% - ⚠️ Enxame encerrado com a melhor versão obtida (nem todas as etapas concluíram, mas o progresso foi salvo).';
       setSwarmProgressText(finalMsg);
-      addSwarmLog('🚀 Cérebro Integrador', isApproved
-        ? '✨ Projeto finalizado e testado pelo Enxame de Agentes OSONE CODE!'
-        : '⚠️ Enxame encerrado antes da aprovação total do QA, mas a última versão gerada foi salva no repositório e está pronta para uso.',
-        isApproved ? 'success' : 'warn');
+      addSwarmLog('🚀 Cérebro Integrador', entregaIncompleta
+        ? '⚠️ O arquivo salvo termina no meio — o modelo não conseguiu fechá-lo nem com as continuações automáticas. Rode o Enxame de novo pedindo apenas para TERMINAR o arquivo, ou peça um jogo mais simples.'
+        : isApproved
+          ? '✨ Projeto finalizado e testado pelo Enxame de Agentes OSONE CODE!'
+          : '⚠️ Enxame encerrado antes da aprovação total do QA, mas a última versão gerada foi salva no repositório e está pronta para uso.',
+        entregaIncompleta ? 'error' : isApproved ? 'success' : 'warn');
 
       // Auto-abrir Preview Vivo e notificar
       setViewLayout('preview');
       setNotificationBanner({
-        message: isApproved
-          ? "🎉 Jogo criado e testado pelo Enxame com sucesso! O código foi aplicado no repositório e o Preview Vivo foi aberto automaticamente."
-          : "⚠️ O Enxame encerrou sem aprovação total do QA, mas salvou a última versão do código no repositório. Você pode revisar e pedir ajustes.",
-        type: isApproved ? "success" : "info"
+        message: entregaIncompleta
+          ? "⚠️ O Enxame salvou o que conseguiu, mas o arquivo está INCOMPLETO (termina no meio). Peça no Enxame para terminar o arquivo, ou simplifique o pedido."
+          : isApproved
+            ? "🎉 Jogo criado e testado pelo Enxame com sucesso! O código foi aplicado no repositório e o Preview Vivo foi aberto automaticamente."
+            : "⚠️ O Enxame encerrou sem aprovação total do QA, mas salvou a última versão do código no repositório. Você pode revisar e pedir ajustes.",
+        type: entregaIncompleta ? "error" : isApproved ? "success" : "info"
       });
 
-      // Auto-fechar modal após 1.8 segundos
-      setTimeout(() => {
-        setIsSwarmModalOpen(false);
-      }, 1800);
+      // Auto-fechar o modal só quando há boa notícia. Fechá-lo sozinho em cima de um aviso de
+      // arquivo incompleto esconderia justamente o que o usuário precisa ler.
+      if (!entregaIncompleta) {
+        setTimeout(() => {
+          setIsSwarmModalOpen(false);
+        }, 1800);
+      }
 
     } catch (err: any) {
       console.error("Erro na execução do Enxame Swarm:", err);
