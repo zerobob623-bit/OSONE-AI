@@ -6,7 +6,29 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
-export const CodePreview = ({ code, linguagem }: { code: string; linguagem?: string }) => {
+/** A linha de número 'n' (base 1) de um texto, sem os espaços das bordas. */
+function lerLinhaDoDocumento(documento: string, n?: number): string {
+  if (!n || n < 1) return '';
+  return ((documento || '').split('\n')[n - 1] || '').trim();
+}
+
+export const CodePreview = ({ code, linguagem, aoDetectarProblema }: {
+  code: string;
+  linguagem?: string;
+  /**
+   * Avisa quem está de fora que o código executado quebrou.
+   *
+   * O preview já capturava erro, arquivo, linha e coluna — e guardava tudo para si. A aba de
+   * console mostrava, e ali acabava: a IA nunca ficava sabendo, então "Corrigir BUGS" mandava o
+   * modelo procurar um defeito que ele não tinha como ver. Este aviso é o que liga uma ponta à
+   * outra.
+   */
+  aoDetectarProblema?: (problema: {
+    mensagem: string; linha?: number; coluna?: number; tipo: 'erro' | 'aviso';
+    /** O TEXTO da linha que falhou, lido do documento que este componente montou. */
+    textoDaLinha?: string;
+  }) => void;
+}) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [activeTab, setActiveTab] = useState<'preview' | 'console'>('preview');
@@ -21,6 +43,19 @@ export const CodePreview = ({ code, linguagem }: { code: string; linguagem?: str
     setLogs([]);
   }, [code]);
 
+  /**
+   * A função de aviso fica numa referência para o ouvinte poder ser inscrito UMA vez.
+   *
+   * Ela é recriada a cada renderização do componente de fora; com ela na lista de dependências, o
+   * ouvinte de 'message' seria removido e recolocado o tempo todo — e mensagens que chegassem
+   * nesse intervalo se perderiam, justamente as de um jogo que está falhando a cada quadro.
+   */
+  const avisarRef = useRef(aoDetectarProblema);
+  avisarRef.current = aoDetectarProblema;
+
+  /** O documento que o iframe está rodando, para poder localizar a linha que o erro apontou. */
+  const srcDocRef = useRef<string>('');
+
   // Handle incoming messages from the preview iframe
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -28,8 +63,25 @@ export const CodePreview = ({ code, linguagem }: { code: string; linguagem?: str
         const { type, error, log } = event.data;
         if (type === 'PREVIEW_ERROR') {
           setRuntimeError(error);
+          avisarRef.current?.({
+            mensagem: String(error?.message || 'erro sem mensagem'),
+            linha: error?.line, coluna: error?.col, tipo: 'erro',
+            // A linha é lida do documento que ESTE componente montou, e não do código recebido:
+            // o preview embrulha o código do usuário numa página maior (instrumentação do
+            // console, captura de erros, estilos), e o navegador conta as linhas do resultado
+            // final. Traduzir esse número por fora exigiria adivinhar o tamanho do embrulho e
+            // erraria a cada mudança nele; aqui o documento está à mão, e o texto sai exato.
+            textoDaLinha: lerLinhaDoDocumento(srcDocRef.current, error?.line)
+          });
         } else if (type === 'PREVIEW_LOG') {
           setLogs(prev => [...prev, { ...log, time: new Date().toLocaleTimeString() }].slice(-100));
+          // console.error dentro do código também é defeito: muita coisa falha sem lançar exceção.
+          if (log?.type === 'error' || log?.type === 'warn') {
+            avisarRef.current?.({
+              mensagem: String(log.text || ''),
+              tipo: log.type === 'error' ? 'erro' : 'aviso'
+            });
+          }
         }
       }
     };
@@ -425,6 +477,8 @@ export const CodePreview = ({ code, linguagem }: { code: string; linguagem?: str
       </html>
     `;
   }, [code]);
+
+  srcDocRef.current = srcDocContent;
 
   // Unique key triggers iframe reset
   const iframeKey = useMemo(() => {
