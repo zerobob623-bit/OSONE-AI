@@ -127,6 +127,23 @@
   50% { opacity: .7; transform: scale(1.05); }
 }
 
+/* Cursor do painel "a IA está escrevendo": marca onde o texto está crescendo.
+   Sem ele, um modelo que demora entre um pedaço e outro parece ter travado. */
+.cursor-escrevendo {
+  color: #22d3ee;
+  animation: piscar-cursor 1s steps(2, start) infinite;
+}
+
+@keyframes piscar-cursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* Quem pediu para reduzir animações não deve levar um cursor piscando na tela. */
+@media (prefers-reduced-motion: reduce) {
+  .cursor-escrevendo { animation: none; }
+}
+
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;

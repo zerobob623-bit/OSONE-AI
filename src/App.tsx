@@ -112,6 +112,7 @@ import { useHierarchicalMemory } from './hooks/useHierarchicalMemory';
 import { usePersonaSelfRevision } from './hooks/usePersonaSelfRevision';
 import { getCounterfactualReasoningDirective, getSalienceEmpathyDirective } from './lib/cognitiveDirectives';
 import { buildCodeEditSystemInstruction, applyModelCodeResponse, pareceDocumentoIncompleto } from './lib/codeEdits';
+import { gerarCodigoEmFluxo } from './lib/gerarCodigoEmFluxo';
 import { useLocalAgent } from './hooks/useLocalAgent';
 import { useTikTokLive } from './hooks/useTikTokLive';
 import { useSensusEvolution } from './hooks/useSensusEvolution';
@@ -6441,7 +6442,17 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
     promptText: string,
     referenceImages?: Array<{ mimeType: string; data: string }>,
     maxEffort?: boolean,
-    alvo?: { nome: string; conteudo: string }
+    alvo?: { nome: string; conteudo: string },
+    /**
+     * O editor acompanha o código sendo escrito por aqui.
+     *
+     * Sem isto a tela fica parada do "gerar" até o resultado inteiro chegar — dezenas de segundos
+     * em que não há como saber se está escrevendo ou se travou, e em que um pedido mal entendido
+     * só se revela no fim, com o tempo todo já gasto.
+     */
+    aoEscrever?: (textoAcumulado: string) => void,
+    /** Abandona a geração pela metade quando o usuário desiste, sem esperar o modelo terminar. */
+    sinal?: AbortSignal
   ): Promise<{ conteudo: string; resumo: string } | null> => {
     const effectiveApiKey = apiKeys.gemini || '';
     if (!promptText.trim()) return null;
@@ -6468,44 +6479,87 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
           }]
         : contentsText;
 
-      const response = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          clientApiKey: effectiveApiKey,
-          // Geração de código sempre usa o melhor modelo GRATUITO disponível para código
-          // (gemini-3.6-flash: mais recente, líder em benchmarks de código como SWE-Bench Pro
-          // entre os modelos gratuitos), independente do modelo configurado nos Ajustes para o
-          // chat geral — qualidade de código não pode ficar refém de um modelo lite mais fraco.
-          model: "gemini-3.6-flash",
-          /**
-           * O modelo dos Ajustes entra como reserva — é o único que se SABE que funciona.
-           *
-           * A aba de escrita usa o modelo configurado pelo usuário e gera normalmente; o OSONE
-           * CODE ignorava os Ajustes e insistia num modelo fixo. Quando esse modelo fixo não está
-           * disponível para a chave da pessoa, o resultado é uma aba escrevendo e a outra não —
-           * com a diferença invisível, porque nada na tela dizia que eram modelos diferentes.
-           * A preferência pelo modelo forte continua; o dos Ajustes é a última reserva, e a tela
-           * avisa quando foi ele quem respondeu.
-           */
-          modeloDeReserva: apiKeys.geminiModel || '',
-          prompt: promptPayload,
-          systemInstruction,
-          maxEffort: !!maxEffort,
-          // Tira as travas de qualidade especificamente para geração de código: nunca cai
-          // silenciosamente para um modelo mais fraco, sempre raciocínio máximo, e afrouxa os
-          // filtros de segurança ajustáveis que costumam bloquear conteúdo comum de jogo (tiro,
-          // dano, combate) sem necessidade — só nesta chamada, não no resto do app.
-          unrestricted: true
-        })
+      const corpoDoPedido = {
+        clientApiKey: effectiveApiKey,
+        // Geração de código sempre usa o melhor modelo GRATUITO disponível para código
+        // (gemini-3.6-flash: mais recente, líder em benchmarks de código como SWE-Bench Pro
+        // entre os modelos gratuitos), independente do modelo configurado nos Ajustes para o
+        // chat geral — qualidade de código não pode ficar refém de um modelo lite mais fraco.
+        model: "gemini-3.6-flash",
+        /**
+         * O modelo dos Ajustes entra como reserva — é o único que se SABE que funciona.
+         *
+         * A aba de escrita usa o modelo configurado pelo usuário e gera normalmente; o OSONE
+         * CODE ignorava os Ajustes e insistia num modelo fixo. Quando esse modelo fixo não está
+         * disponível para a chave da pessoa, o resultado é uma aba escrevendo e a outra não —
+         * com a diferença invisível, porque nada na tela dizia que eram modelos diferentes.
+         * A preferência pelo modelo forte continua; o dos Ajustes é a última reserva, e a tela
+         * avisa quando foi ele quem respondeu.
+         */
+        modeloDeReserva: apiKeys.geminiModel || '',
+        prompt: promptPayload,
+        systemInstruction,
+        maxEffort: !!maxEffort,
+        // Tira as travas de qualidade especificamente para geração de código: nunca cai
+        // silenciosamente para um modelo mais fraco, sempre raciocínio máximo, e afrouxa os
+        // filtros de segurança ajustáveis que costumam bloquear conteúdo comum de jogo (tiro,
+        // dano, combate) sem necessidade — só nesta chamada, não no resto do app.
+        unrestricted: true
+      };
+
+      /**
+       * O CÓDIGO APARECE ENQUANTO É ESCRITO.
+       *
+       * O caminho de uma vez só (/api/generate) continua existindo logo abaixo, como reserva: uma
+       * hospedagem que não deixa transmitir não pode virar "não gerou nada" — perder a escrita ao
+       * vivo é um degrau abaixo, ficar sem código é o desfecho ruim de sempre.
+       */
+      let data: any = null;
+      let ultimoTextoAoVivo = '';
+      const emFluxo = await gerarCodigoEmFluxo(corpoDoPedido, {
+        aoEscrever: (textoAcumulado) => { ultimoTextoAoVivo = textoAcumulado; aoEscrever?.(textoAcumulado); },
+        // A emenda das continuações é invisível no texto final, mas quem está assistindo merece
+        // saber por que a escrita parou e recomeçou: sem isso, parece que travou.
+        aoContinuar: (n) => aoEscrever?.(`${ultimoTextoAoVivo}\n\n⏳ O modelo chegou ao limite de tamanho — mandando continuar (parte ${n + 1})…\n`),
+        sinal
       });
 
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({} as any));
-        throw new Error(errData?.error || "Falha na comunicação com a API");
+      if (sinal?.aborted || emFluxo.erro === 'cancelado') return null;
+
+      if (emFluxo.texto) {
+        // Chegou código pelo fluxo — inclusive quando a conexão caiu no meio, caso em que o que
+        // já veio vale e segue marcado como cortado. Refazer tudo do zero desperdiçaria minutos
+        // de geração para reescrever o mesmo arquivo.
+        data = {
+          text: emFluxo.texto,
+          truncated: emFluxo.truncated || (!!emFluxo.erro && !emFluxo.finishReason),
+          blocked: emFluxo.blocked,
+          finishReason: emFluxo.finishReason,
+          continuacoes: emFluxo.continuacoes,
+          modeloUsado: emFluxo.modeloUsado,
+          modeloPreferido: emFluxo.modeloPreferido
+        };
+      } else {
+        // Nada saiu pelo fluxo. Hospedagem que não transmite, rota ausente ou falha logo no
+        // começo: refaz pelo caminho de uma vez só. Perder a escrita ao vivo é um degrau abaixo;
+        // ficar sem código é o desfecho ruim que já foi consertado antes.
+        if (!emFluxo.fluxoDisponivel) {
+          console.warn('[OSONE CODE] Transmissão ao vivo indisponível, gerando pelo caminho comum:', emFluxo.erro);
+        }
+        const response = await fetch("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(corpoDoPedido),
+          signal: sinal
+        });
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({} as any));
+          throw new Error(errData?.error || emFluxo.erro || "Falha na comunicação com a API");
+        }
+        data = await response.json();
       }
 
-      const data = await response.json();
       if (data.blocked) {
         addNotification("⚠️ O Gemini bloqueou a resposta pelo filtro de segurança (finishReason: " + data.finishReason + "). Tente reformular o pedido.", "error");
         return null;
@@ -6583,6 +6637,9 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
 
       return { conteudo: newContent, resumo: summary || '' };
     } catch (error: any) {
+      // Cancelar não é falhar: quem apertou "Cancelar" não precisa de um alerta vermelho dizendo
+      // que a geração deu erro.
+      if (error?.name === 'AbortError' || sinal?.aborted) return null;
       console.error("Erro na geração do Repositório de Código:", error);
       addNotification(`Erro ao gerar código: ${error.message || "Verifique sua chave de API."}`, "error");
       return null;

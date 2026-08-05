@@ -321,7 +321,11 @@ export const CodeWorkspace: React.FC<{
     prompt: string,
     referenceImages?: Array<{ mimeType: string; data: string }>,
     maxEffort?: boolean,
-    alvo?: AlvoDaGeracao
+    alvo?: AlvoDaGeracao,
+    /** Recebe o texto acumulado a cada pedaço, para o editor mostrar a escrita acontecendo. */
+    aoEscrever?: (textoAcumulado: string) => void,
+    /** Permite abandonar a geração pela metade, sem esperar o modelo terminar. */
+    sinal?: AbortSignal
   ) => Promise<{ conteudo: string; resumo: string } | null>;
   onStartLiveVoice?: () => void;
   apiKeys?: any;
@@ -415,6 +419,35 @@ export const CodeWorkspace: React.FC<{
   const realceRef = useRef<HTMLPreElement>(null);
   /** Onde deixar o cursor depois que a próxima renderização trouxer o texto novo. */
   const selecaoPendenteRef = useRef<{ inicio: number; fim: number } | null>(null);
+
+  /**
+   * ====== O CÓDIGO SENDO ESCRITO, AO VIVO ======
+   *
+   * Enquanto vale null, o editor é o editor de sempre. Quando a IA começa a escrever, este texto
+   * cresce a cada pedaço que chega do modelo e o painel mostra o arquivo nascendo linha a linha,
+   * em vez de a tela ficar parada até o resultado inteiro aparecer de uma vez.
+   *
+   * Não é enfeite: uma geração grande leva dezenas de segundos, e com a tela parada não há como
+   * distinguir "está escrevendo" de "travou". Vendo o texto sair, dá para perceber logo que o
+   * modelo entendeu errado e cancelar, em vez de esperar até o fim para descobrir.
+   *
+   * O que aparece aqui é o texto CRU do modelo, marcadores de edição incluídos. Ele não é gravado
+   * em lugar nenhum: a gravação continua acontecendo só no fim, pelo caminho único de sempre.
+   */
+  const [escritaAoVivo, setEscritaAoVivo] = useState<string | null>(null);
+  const painelAoVivoRef = useRef<HTMLPreElement>(null);
+  const cancelamentoRef = useRef<AbortController | null>(null);
+
+  // O painel acompanha a escrita: sem isto o texto cresceria fora da vista e a pessoa veria
+  // sempre o começo do arquivo, que é a parte que não está mudando.
+  useEffect(() => {
+    if (escritaAoVivo === null) return;
+    const painel = painelAoVivoRef.current;
+    if (painel) painel.scrollTop = painel.scrollHeight;
+  }, [escritaAoVivo]);
+
+  // Sair da aba no meio de uma geração não pode deixar a conexão aberta consumindo cota.
+  useEffect(() => () => cancelamentoRef.current?.abort(), []);
 
   // MODO DE ESFORÇO MÁXIMO: pede ao modelo o maior nível de raciocínio/capricho possível
   const [maxEffort, setMaxEffort] = useState<boolean>(false);
@@ -1050,12 +1083,34 @@ export const CodeWorkspace: React.FC<{
     attachedImages.forEach(img => URL.revokeObjectURL(img.previewUrl));
     setAttachedImages([]);
 
-    const resultado = await onGenerateCodeRequest(
-      textToSend,
-      imagesToSend.length > 0 ? imagesToSend : undefined,
-      maxEffort,
-      alvo
-    );
+    // A escrita ao vivo começa vazia (e não em null): é isso que troca o editor pelo painel de
+    // acompanhamento já no primeiro instante, em vez de só quando o primeiro pedaço chegar.
+    const controle = new AbortController();
+    cancelamentoRef.current = controle;
+    setEscritaAoVivo('');
+
+    let resultado: { conteudo: string; resumo: string } | null = null;
+    try {
+      resultado = await onGenerateCodeRequest(
+        textToSend,
+        imagesToSend.length > 0 ? imagesToSend : undefined,
+        maxEffort,
+        alvo,
+        (textoAcumulado) => setEscritaAoVivo(textoAcumulado),
+        controle.signal
+      );
+    } finally {
+      // O editor volta em qualquer desfecho — inclusive erro e cancelamento. Deixar o painel de
+      // acompanhamento na tela depois que a geração morreu esconderia o arquivo do usuário.
+      setEscritaAoVivo(null);
+      cancelamentoRef.current = null;
+    }
+
+    if (controle.signal.aborted) {
+      setNotificationBanner({ message: 'Geração cancelada. O arquivo não foi alterado.', type: 'info' });
+      setPromptInput(textToSend);
+      return;
+    }
 
     if (resultado?.conteudo && resultado.conteudo.trim() && resultado.conteudo !== alvo?.conteudo) {
       // Passa pelo caminho único de gravação, que guarda o estado anterior no histórico — é o
@@ -2044,7 +2099,9 @@ FORMATO OBRIGATÓRIO (JSON estrito):
                 </div>
 
                 <div className="text-[10px] text-zinc-500">
-                  {activeFile.content.length} caracteres
+                  {escritaAoVivo !== null
+                    ? `${escritaAoVivo.length} caracteres escritos`
+                    : `${activeFile.content.length} caracteres`}
                 </div>
               </div>
 
@@ -2135,10 +2192,50 @@ FORMATO OBRIGATÓRIO (JSON estrito):
                 </div>
               )}
 
-              {/* Editor: régua de linhas + área de escrita.
+              {/*
+                O CÓDIGO SENDO ESCRITO, AO VIVO.
+
+                Enquanto a IA escreve, este painel toma o lugar do editor e mostra o texto
+                crescendo pedaço a pedaço, rolando sozinho para acompanhar a última linha. O
+                arquivo em si não é tocado até o fim: o que se vê aqui é a resposta do modelo
+                chegando, não o conteúdo gravado.
+
+                É read-only de propósito. Deixar editável um texto que muda sozinho a cada pedaço
+                jogaria fora o que a pessoa digitasse no instante seguinte.
+              */}
+              {escritaAoVivo !== null ? (
+                <div className="flex-1 w-full h-full bg-[#07080d] flex flex-col overflow-hidden">
+                  <div className="shrink-0 h-8 px-3 flex items-center gap-2 bg-cyan-500/[0.07] border-b border-cyan-500/20 font-mono text-[11px] text-cyan-300">
+                    <Sparkles size={12} className="animate-pulse shrink-0" />
+                    <span className="font-semibold">A IA está escrevendo…</span>
+                    <span className="text-cyan-500/50 hidden sm:inline truncate">
+                      {escritaAoVivo.length === 0
+                        ? 'aguardando o modelo começar'
+                        : `${escritaAoVivo.split('\n').length} linha(s) até agora`}
+                    </span>
+                    <button
+                      onClick={() => cancelamentoRef.current?.abort()}
+                      className="ml-auto shrink-0 px-2 py-0.5 rounded border border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20 text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer"
+                      title="Parar a geração agora — o arquivo não é alterado"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                  <pre
+                    ref={painelAoVivoRef}
+                    style={{ ...METRICA_DO_EDITOR, paddingLeft: '12px', paddingRight: '16px' }}
+                    className="flex-1 overflow-auto custom-scrollbar text-cyan-100/90 selection:bg-cyan-500/30"
+                    dangerouslySetInnerHTML={{
+                      __html: realcar(escritaAoVivo, linguagemDoArquivo(activeFile.name, activeFile.language))
+                        + '<span class="cursor-escrevendo">▌</span>'
+                    }}
+                  />
+                </div>
+              ) : (
+              /* Editor: régua de linhas + área de escrita.
                   As duas colunas usam exatamente as mesmas classes de fonte, tamanho e altura de
                   linha, e a mesma folga no topo — qualquer diferença aí faria os números
-                  descolarem do código conforme o arquivo cresce. */}
+                  descolarem do código conforme o arquivo cresce. */
               <div style={{ position: 'relative' }} className="flex-1 w-full h-full bg-[#07080d] flex overflow-hidden">
                 <div
                   ref={reguaRef}
@@ -2207,6 +2304,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
                   placeholder="Escreva ou cole seu código aqui..."
                 />
               </div>
+              )}
             </div>
           )}
 
