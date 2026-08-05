@@ -3732,6 +3732,17 @@ ${processedChunk}`;
     }
   });
 
+  /**
+   * Modelos que recusaram um teto de saída explícito. Cada rejeição custa uma ida e volta à API,
+   * e sem memória disso ela se repetiria em toda geração de código pela mesma chave.
+   */
+  const modelosQueRecusamTetoDeSaida = new Set<string>();
+
+  /** Teto de tokens de saída pedido nas gerações de código. */
+  const TETO_DE_SAIDA_PARA_CODIGO = Number(process.env.OSONE_TETO_SAIDA_CODIGO || 32768);
+  /** Quantas vezes o modelo pode ser mandado continuar de onde parou antes de desistir. */
+  const MAXIMO_DE_CONTINUACOES = Number(process.env.OSONE_MAXIMO_CONTINUACOES || 4);
+
   // Helper to run content generation with automated fallbacks
   async function generateContentWithFallback(ai: GoogleGenAI, params: { model: string; contents: any; config?: any }, options?: { allowDowngrade?: boolean; modeloDeReserva?: string }) {
     const primaryModel = params.model || "gemini-3.6-flash";
@@ -3770,12 +3781,19 @@ ${processedChunk}`;
     let lastError: any = null;
     for (const modelName of uniqueModels) {
       for (let attempt = 1; attempt <= attemptsPerModel; attempt++) {
+        // Um teto de saída que o modelo não aceita não pode custar a geração inteira: ele é
+        // retirado da configuração e a tentativa seguinte vai sem ele, no mesmo modelo.
+        let configDaVez = params.config;
+        if (configDaVez?.maxOutputTokens && modelosQueRecusamTetoDeSaida.has(modelName)) {
+          const { maxOutputTokens, ...semTeto } = configDaVez;
+          configDaVez = semTeto;
+        }
         try {
           console.log(`Trying Gemini content generation (Model: ${modelName}, Attempt: ${attempt})`);
           const response = await ai.models.generateContent({
             model: modelName,
             contents: params.contents,
-            config: params.config
+            config: configDaVez
           });
           // Quem respondeu vai junto: é o que permite avisar na tela quando não foi o preferido.
           (response as any).__modeloUsado = modelName;
@@ -3785,6 +3803,18 @@ ${processedChunk}`;
           const errMsg = err?.message || String(err);
           const isQuota = errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.toLowerCase().includes("quota") || errMsg.toLowerCase().includes("limit");
           const isTransient = (errMsg.includes("503") || errMsg.includes("UNAVAILABLE") || errMsg.toLowerCase().includes("high demand")) && !isQuota;
+
+          // Teto de saída acima do que o modelo aceita: o pedido é inválido, não é falha de rede.
+          // Anota o modelo e repete sem o teto, em vez de trocar de modelo por causa disso.
+          const tetoRecusado = !!configDaVez?.maxOutputTokens
+            && !modelosQueRecusamTetoDeSaida.has(modelName)
+            && (/maxOutputTokens|max_output_tokens/i.test(errMsg)
+              || (/INVALID_ARGUMENT|400/.test(errMsg) && /token/i.test(errMsg)));
+          if (tetoRecusado) {
+            console.warn(`[Fallback Log] Model ${modelName} rejected maxOutputTokens=${configDaVez.maxOutputTokens}. Retrying without it.`);
+            modelosQueRecusamTetoDeSaida.add(modelName);
+            continue;
+          }
 
           if (isQuota) {
             // Cota esgotada: repetir no mesmo modelo não resolve nada, passa direto pro próximo.
@@ -3807,6 +3837,131 @@ ${processedChunk}`;
       }
     }
     throw lastError;
+  }
+
+  /**
+   * ====== O CÓDIGO PRECISA CHEGAR AO FIM ======
+   *
+   * Um pedido de "faça um jogo completo em HTML" não cabe numa resposta só. O modelo escreve até
+   * o limite de tokens de saída e para no meio — finishReason 'MAX_TOKENS'. Isso não é erro,
+   * então nada aqui falhava: o servidor devolvia o pedaço, o app gravava o pedaço, e o usuário
+   * ficava com um arquivo que abre e não fecha. Era literalmente o código não sendo finalizado, e
+   * a única reação do sistema era uma frase na tela dizendo que talvez estivesse incompleto.
+   *
+   * A saída é a óbvia: mandar o modelo CONTINUAR de onde parou, quantas vezes forem necessárias,
+   * e emendar os pedaços. É assim que se gera um arquivo maior que uma resposta.
+   */
+
+  /** Deixa o 'contents' no formato de turnos, seja ele texto solto, um turno só ou vários. */
+  function normalizarTurnos(contents: any): any[] {
+    if (contents == null) return [];
+    if (typeof contents === 'string') return [{ role: 'user', parts: [{ text: contents }] }];
+    if (Array.isArray(contents)) {
+      return contents.map(c => (typeof c === 'string' ? { role: 'user', parts: [{ text: c }] } : c));
+    }
+    return [contents];
+  }
+
+  /**
+   * Emenda a continuação no que já existe, descontando o que o modelo repetiu.
+   *
+   * Mandado continuar, o modelo quase sempre reescreve as últimas linhas antes de seguir — é o
+   * jeito dele "retomar o fio". Emendar sem olhar duplicaria essas linhas dentro do código, o que
+   * costuma ser pior do que o corte: uma função declarada duas vezes quebra o arquivo inteiro.
+   * Procura-se então o maior fim-de-A que também é começo-de-B e joga-se fora essa sobreposição.
+   */
+  function emendarContinuacao(inicio: string, continuacao: string): string {
+    if (!inicio) return continuacao;
+    if (!continuacao) return inicio;
+    const maximo = Math.min(600, inicio.length, continuacao.length);
+    for (let n = maximo; n >= 20; n--) {
+      if (inicio.endsWith(continuacao.slice(0, n))) return inicio + continuacao.slice(n);
+    }
+    return inicio + continuacao;
+  }
+
+  /** Cerca de markdown que o modelo às vezes reabre ao continuar. Ela não é parte do código. */
+  function tirarCercaDeAbertura(texto: string): string {
+    return texto.replace(/^\s*```[a-zA-Z0-9]*[ \t]*\r?\n/, '');
+  }
+
+  const INSTRUCAO_PARA_CONTINUAR = `Sua resposta anterior foi CORTADA por limite de tokens, no meio.
+
+CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupção:
+- Comece pelo caractere seguinte ao último que você escreveu. Se você parou no meio de uma palavra, de uma tag ou de uma linha, retome o meio dela.
+- NÃO repita nada do que já foi escrito, NÃO recomece o arquivo, NÃO resuma o que veio antes.
+- NÃO escreva saudação, explicação, comentário sobre a interrupção nem cercas de markdown.
+- Mantenha exatamente o mesmo formato de resposta que já estava usando.
+- Vá até o fim de verdade desta vez: feche todas as tags, funções e blocos abertos.`;
+
+  /**
+   * Gera conteúdo e, se a resposta vier cortada, manda continuar até o texto terminar de verdade.
+   * Devolve o texto inteiro já emendado. 'truncated' só continua verdadeiro se, mesmo depois de
+   * todas as continuações permitidas, o modelo ainda não tiver chegado ao fim.
+   */
+  async function gerarConteudoAteOFim(
+    ai: GoogleGenAI,
+    params: { model: string; contents: any; config?: any },
+    options?: { allowDowngrade?: boolean; modeloDeReserva?: string; maximoDeContinuacoes?: number }
+  ): Promise<{ texto: string; finishReason: any; continuacoes: number; modeloUsado: string; bloqueado: boolean }> {
+    const primeira = await generateContentWithFallback(ai, params, options);
+    let texto = primeira.text || "";
+    let finishReason = (primeira as any)?.candidates?.[0]?.finishReason;
+    const modeloUsado = (primeira as any).__modeloUsado || params.model;
+    const bloqueado = finishReason === "SAFETY" || finishReason === "PROHIBITED_CONTENT" || finishReason === "BLOCKLIST" || finishReason === "SPII";
+
+    const limite = Math.max(0, options?.maximoDeContinuacoes ?? 0);
+    if (bloqueado || limite === 0) return { texto, finishReason, continuacoes: 0, modeloUsado, bloqueado };
+
+    const turnosOriginais = normalizarTurnos(params.contents);
+    // Na continuação o formato já foi decidido no primeiro turno. Exigir de novo um JSON completo
+    // faria o modelo RECOMEÇAR o documento do zero em vez de completar o que ficou pela metade —
+    // e aí sim não haveria como juntar as duas metades.
+    const configDaContinuacao = { ...(params.config || {}) };
+    delete (configDaContinuacao as any).responseMimeType;
+    delete (configDaContinuacao as any).responseSchema;
+
+    let continuacoes = 0;
+    while (finishReason === "MAX_TOKENS" && continuacoes < limite && texto.trim()) {
+      continuacoes++;
+      console.warn(`[Continuação] Resposta cortada por MAX_TOKENS. Pedindo continuação ${continuacoes}/${limite}...`);
+      let seguinte: any;
+      try {
+        seguinte = await generateContentWithFallback(ai, {
+          model: modeloUsado,
+          contents: [
+            ...turnosOriginais,
+            { role: "model", parts: [{ text: texto }] },
+            { role: "user", parts: [{ text: INSTRUCAO_PARA_CONTINUAR }] }
+          ],
+          config: configDaContinuacao
+        }, options);
+      } catch (err: any) {
+        // Falhar a continuação não pode apagar o que já foi escrito: entrega o que existe,
+        // ainda marcado como cortado, que é bem melhor do que devolver erro e perder tudo.
+        console.error(`[Continuação] Falha ao continuar a geração:`, err?.message || err);
+        break;
+      }
+
+      const pedaco = tirarCercaDeAbertura(seguinte.text || "");
+      if (!pedaco.trim()) {
+        console.warn(`[Continuação] O modelo respondeu vazio ao ser mandado continuar. Parando aqui.`);
+        break;
+      }
+      const antes = texto.length;
+      texto = emendarContinuacao(texto, pedaco);
+      finishReason = (seguinte as any)?.candidates?.[0]?.finishReason;
+      // Continuação que não acrescenta nada só queimaria as tentativas restantes.
+      if (texto.length <= antes) {
+        console.warn(`[Continuação] A continuação não acrescentou texto novo. Parando aqui.`);
+        break;
+      }
+    }
+
+    if (continuacoes > 0) {
+      console.log(`[Continuação] Texto final montado com ${continuacoes} continuação(ões): ${texto.length} caracteres.`);
+    }
+    return { texto, finishReason, continuacoes, modeloUsado, bloqueado };
   }
 
   // Helper to run content stream generation with automated fallbacks
@@ -3971,6 +4126,16 @@ ${processedChunk}`;
       // "Esforço máximo": eleva o orçamento de raciocínio do modelo ao nível mais alto
       // suportado pela API, em vez de deixá-lo no padrão rápido/econômico.
       if (maxEffort || unrestricted) config.thinkingConfig = { thinkingLevel: "HIGH" };
+      /**
+       * Orçamento de saída explícito para a geração de código.
+       *
+       * O raciocínio máximo ligado acima não é de graça: os tokens de pensamento saem do MESMO
+       * orçamento de saída do texto. Sem pedir teto nenhum, o padrão da API é o que for, e o
+       * pensamento come a maior parte dele — o modelo pensa muito, escreve pouco e o arquivo
+       * acaba no meio. Pedir o teto alto explicitamente é o que dá espaço para o código caber.
+       * Modelo que não aceitar este valor é anotado e repetido sem ele, sem custar a geração.
+       */
+      if (unrestricted && !config.maxOutputTokens) config.maxOutputTokens = TETO_DE_SAIDA_PARA_CODIGO;
       if (unrestricted) {
         // Afrouxa só as categorias ajustáveis pela API (violência/assédio/discurso de ódio/
         // conteúdo sexual) — isso NÃO desliga as proteções centrais do modelo contra conteúdo
@@ -3985,26 +4150,33 @@ ${processedChunk}`;
         ];
       }
 
-      const response = await generateContentWithFallback(ai, {
+      // Só a geração de código emenda continuações: são as respostas longas o bastante para
+      // acabar no meio, e as únicas em que meio arquivo é pior do que nenhum.
+      const { texto, finishReason, continuacoes, modeloUsado, bloqueado: blocked } = await gerarConteudoAteOFim(ai, {
         model: selectedModel,
         contents: prompt,
         config: config
-      }, { allowDowngrade: !unrestricted, modeloDeReserva });
+      }, {
+        allowDowngrade: !unrestricted,
+        modeloDeReserva,
+        maximoDeContinuacoes: unrestricted ? MAXIMO_DE_CONTINUACOES : 0
+      });
 
-      const finishReason = (response as any)?.candidates?.[0]?.finishReason;
-      const blocked = finishReason === "SAFETY" || finishReason === "PROHIBITED_CONTENT" || finishReason === "BLOCKLIST" || finishReason === "SPII";
+      // Depois das continuações, 'truncated' significa o que promete: nem assim deu para terminar.
       const truncated = finishReason === "MAX_TOKENS";
       if (blocked) {
         console.warn(`[/api/generate] Resposta bloqueada pelo filtro de segurança (finishReason=${finishReason}).`);
       } else if (truncated) {
-        console.warn(`[/api/generate] Resposta cortada por limite de tokens (finishReason=MAX_TOKENS).`);
+        console.warn(`[/api/generate] Resposta ainda cortada após ${continuacoes} continuação(ões) (finishReason=MAX_TOKENS).`);
       }
 
-      const modeloUsado = (response as any)?.__modeloUsado || selectedModel;
       return res.json({
-        text: response.text || "",
+        text: texto || "",
         finishReason, blocked, truncated,
-        modeloUsado,
+        // Quantas vezes o modelo precisou ser mandado continuar até fechar o arquivo. Serve para
+        // a tela poder dizer que a entrega é inteira, e não um pedaço.
+        continuacoes,
+        modeloUsado: modeloUsado || selectedModel,
         // O app avisa na tela quando não foi o modelo preferido — rebaixar em silêncio é que era
         // o problema, e não rebaixar.
         modeloPreferido: selectedModel

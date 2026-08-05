@@ -66,6 +66,54 @@ export function applyCodeEdits(original: string, edits: CodeEdit[]): ApplyCodeEd
  */
 const SEARCH_REPLACE_BLOCK_RE = /<{5,}\s*SEARCH\s*\r?\n([\s\S]*?)\r?\n?={5,}\s*\r?\n([\s\S]*?)\r?\n>{5,}\s*REPLACE/g;
 
+/** Abertura de um bloco, usada para descobrir se sobrou algum sem fechamento. */
+const ABERTURA_DE_BLOCO_RE = /<{5,}[ \t]*SEARCH[ \t]*\r?\n/;
+/** A linha de '=======' que separa o trecho procurado do texto que entra no lugar. */
+const SEPARADOR_DE_BLOCO_RE = /\r?\n={5,}[ \t]*\r?\n/;
+
+export interface LeituraDeBlocos {
+  /** Blocos completos, do começo ao '>>>>>>> REPLACE'. */
+  edits: CodeEdit[];
+  /** true quando o texto termina no meio de um bloco que nunca fechou. */
+  cortada: boolean;
+  /** O que já havia sido escrito na parte de substituição do bloco cortado (pode ser vazio). */
+  fragmento: string;
+}
+
+/**
+ * Lê os blocos SEARCH/REPLACE E DIZ SE A RESPOSTA ACABOU NO MEIO DE UM.
+ *
+ * Esta segunda informação é o que faltava, e a falta dela corrompia arquivos. Quando o modelo
+ * estoura o limite de tokens, a resposta simplesmente para — muitas vezes no meio de um bloco,
+ * antes do '>>>>>>> REPLACE'. Para uma leitura que só procura blocos INTEIROS, esse pedaço não
+ * existe: ela devolve zero blocos, quem chamava concluía "então isto não é uma edição, é o
+ * arquivo inteiro" e gravava o texto cru — marcadores '<<<<<<< SEARCH' e tudo — por cima de um
+ * arquivo que funcionava. O trabalho do usuário sumia e nada na tela dizia que algo deu errado.
+ */
+export function lerBlocosSearchReplace(text: string): LeituraDeBlocos {
+  const edits: CodeEdit[] = [];
+  const re = new RegExp(SEARCH_REPLACE_BLOCK_RE.source, 'g');
+  let match: RegExpExecArray | null;
+  let fimDoUltimoBlocoCompleto = 0;
+  while ((match = re.exec(text)) !== null) {
+    edits.push({ old_string: match[1], new_string: match[2] });
+    fimDoUltimoBlocoCompleto = match.index + match[0].length;
+  }
+
+  const resto = text.slice(fimDoUltimoBlocoCompleto);
+  const abertura = ABERTURA_DE_BLOCO_RE.exec(resto);
+  if (!abertura) return { edits, cortada: false, fragmento: '' };
+
+  // Sobrou um bloco aberto depois do último completo: a resposta foi cortada dentro dele.
+  const depoisDaAbertura = resto.slice(abertura.index + abertura[0].length);
+  const separador = SEPARADOR_DE_BLOCO_RE.exec(depoisDaAbertura);
+  // Se o corte veio antes do '=======', nem o texto de substituição começou: não há nada a salvar.
+  const fragmento = separador
+    ? depoisDaAbertura.slice(separador.index + separador[0].length).replace(/\s+$/, '')
+    : '';
+  return { edits, cortada: true, fragmento };
+}
+
 /**
  * Extrai blocos no formato:
  * <<<<<<< SEARCH
@@ -76,13 +124,23 @@ const SEARCH_REPLACE_BLOCK_RE = /<{5,}\s*SEARCH\s*\r?\n([\s\S]*?)\r?\n?={5,}\s*\
  * Pode haver múltiplos blocos em sequência. Texto puro, sem necessidade de escapar nada.
  */
 export function parseSearchReplaceEdits(text: string): CodeEdit[] {
-  const edits: CodeEdit[] = [];
-  const re = new RegExp(SEARCH_REPLACE_BLOCK_RE.source, 'g');
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(text)) !== null) {
-    edits.push({ old_string: match[1], new_string: match[2] });
-  }
-  return edits;
+  return lerBlocosSearchReplace(text).edits;
+}
+
+/**
+ * Um documento HTML que começou e não terminou.
+ *
+ * Serve para reconhecer o sintoma central de "o código não está sendo finalizado": o arquivo
+ * abre como página e acaba no meio, sem o fechamento. É proposital que a checagem seja estreita
+ * — só olha o fechamento do documento — porque um palpite errado aqui viraria alarme falso em
+ * código perfeitamente válido, e alarme falso ensina o usuário a ignorar o aviso.
+ */
+export function pareceDocumentoIncompleto(conteudo: string): boolean {
+  const c = (conteudo || '').trim();
+  if (!c) return false;
+  const abreDocumento = /<!DOCTYPE\s+html/i.test(c) || /<html[\s>]/i.test(c);
+  if (!abreDocumento) return false;
+  return !/<\/html\s*>/i.test(c);
 }
 
 /**
@@ -213,9 +271,52 @@ export function applyModelCodeResponse(rawText: string, currentContent: string):
   content: string;
   summary: string;
   hadFailures: boolean;
+  /** A resposta acabou no meio de um bloco de edição: o que veio está incompleto por definição. */
+  respostaCortada: boolean;
 } {
   const text = unescapeIfRawJsonString((rawText || '').trim()).trim();
-  const edits = parseSearchReplaceEdits(text);
+  const { edits, cortada, fragmento } = lerBlocosSearchReplace(text);
+  const arquivoEstavaVazio = !currentContent || !currentContent.trim();
+
+  /**
+   * RESPOSTA CORTADA NO MEIO DE UM BLOCO: O TEXTO CRU NÃO É O ARQUIVO.
+   *
+   * Este é o caminho que destruía código. O modelo estourava o limite de tokens no meio de uma
+   * edição, o bloco ficava sem o '>>>>>>> REPLACE', a leitura antiga não enxergava bloco nenhum
+   * e o texto cru — com os marcadores dentro — era gravado como se fosse o arquivo inteiro. Um
+   * arquivo que funcionava era substituído por meia edição, e o app anunciava sucesso.
+   *
+   * Agora o que sobrou do bloco cortado nunca vira arquivo: num arquivo que já tinha código,
+   * nada é gravado (não aplicar uma edição é sempre melhor do que perder o que existia); num
+   * arquivo vazio, aproveita-se o pedaço já escrito, porque ali não há o que perder e ele serve
+   * de ponto de partida. Nos dois casos quem chamou recebe 'respostaCortada' e pode avisar na
+   * tela, em vez de tratar meio arquivo como entrega pronta.
+   */
+  if (cortada) {
+    if (edits.length > 0) {
+      const { content, appliedCount, failedEdits } = applyCodeEdits(currentContent, edits);
+      const partes = [`a resposta do modelo foi cortada no meio da última edição (ela não foi aplicada)`];
+      if (appliedCount > 0) partes.push(`${appliedCount} edição(ões) anterior(es) aplicada(s)`);
+      if (failedEdits.length > 0) partes.push(`${failedEdits.length} não casaram com o código atual`);
+      return { content, summary: partes.join('. '), hadFailures: true, respostaCortada: true };
+    }
+
+    if (arquivoEstavaVazio && fragmento.trim()) {
+      return {
+        content: fragmento,
+        summary: 'a resposta do modelo foi cortada antes do fim — o código gravado está incompleto',
+        hadFailures: true,
+        respostaCortada: true
+      };
+    }
+
+    return {
+      content: currentContent,
+      summary: 'a resposta do modelo foi cortada no meio de um bloco de edição — nada foi aplicado para não gravar meia edição por cima do arquivo',
+      hadFailures: true,
+      respostaCortada: true
+    };
+  }
 
   if (edits.length > 0) {
     const { content, appliedCount, failedEdits } = applyCodeEdits(currentContent, edits);
@@ -234,14 +335,14 @@ export function applyModelCodeResponse(rawText: string, currentContent: string):
      * trabalho por causa do formato é o pior desfecho possível. Quando não havia nada para
      * editar, o que ele escreveu no lugar É o arquivo.
      */
-    const arquivoEstavaVazio = !currentContent || !currentContent.trim();
     if (appliedCount === 0 && arquivoEstavaVazio) {
       const criado = edits.map(e => e.new_string).join('\n').trim();
       if (criado) {
         return {
           content: criado,
           summary: `arquivo criado a partir do conteúdo proposto (${edits.length} bloco(s))`,
-          hadFailures: false
+          hadFailures: false,
+          respostaCortada: false
         };
       }
     }
@@ -251,8 +352,8 @@ export function applyModelCodeResponse(rawText: string, currentContent: string):
     if (failedEdits.length > 0) {
       parts.push(`${failedEdits.length} edição(ões) não puderam ser aplicadas: ${failedEdits.map(f => f.reason).join('; ')}`);
     }
-    return { content, summary: parts.join('. '), hadFailures: failedEdits.length > 0 };
+    return { content, summary: parts.join('. '), hadFailures: failedEdits.length > 0, respostaCortada: false };
   }
 
-  return { content: stripOuterMarkdownFence(text), summary: '', hadFailures: false };
+  return { content: stripOuterMarkdownFence(text), summary: '', hadFailures: false, respostaCortada: false };
 }
