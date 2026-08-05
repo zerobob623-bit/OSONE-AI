@@ -96,16 +96,49 @@ export class AudioProcessor {
       const isPermissionDenied = error?.name === 'NotAllowedError' ||
                                  error?.message?.includes('Permission denied') ||
                                  error?.message?.includes('not-allowed');
-      if (isPermissionDenied) {
-        console.warn("Aviso: Gravação de áudio indisponível por falta de permissão:", error.message || error);
+      /**
+       * NÃO EXISTE MICROFONE — que é diferente de não ter permissão.
+       *
+       * O navegador responde `NotFoundError: Requested device not found`, e essa mensagem saía
+       * crua, em inglês, num console.error vermelho. Quem lê isso não tem como saber que o OSONE
+       * está inteiro e funcionando: parece defeito do app, quando é o computador que não tem (ou
+       * desconectou) o microfone. E o caminho para resolver é outro — mexer em permissão não
+       * adianta quando não há aparelho para permitir.
+       */
+      const semAparelho = error?.name === 'NotFoundError' ||
+                          error?.name === 'DevicesNotFoundError' ||
+                          error?.message?.includes('Requested device not found');
+      const emUso = error?.name === 'NotReadableError' || error?.name === 'TrackStartError';
+
+      if (isPermissionDenied || semAparelho || emUso) {
+        // Nenhum dos três é defeito do OSONE: aviso, e não erro vermelho.
+        console.warn("Aviso: gravação de áudio indisponível —", error?.name || error);
       } else {
         console.error("Erro ao iniciar gravação de áudio:", error);
       }
       this.stopRecording();
+
       if (isPermissionDenied) {
         const enhancedError = new Error("Permissão de microfone negada. Clique no cadeado (URL) para habilitar, ou abra o OSONE em uma nova aba para contornar restrições de iframe.");
         (enhancedError as any).name = 'NotAllowedError';
         throw enhancedError;
+      }
+      if (semAparelho) {
+        const explicado = new Error(
+          "Nenhum microfone foi encontrado neste computador. O OSONE está funcionando normalmente — "
+          + "só a voz precisa de um microfone. Conecte um (ou ligue o que já existe nas configurações "
+          + "de som do sistema) e tente de novo. Todo o resto continua disponível sem ele."
+        );
+        (explicado as any).name = 'NotFoundError';
+        throw explicado;
+      }
+      if (emUso) {
+        const explicado = new Error(
+          "O microfone existe, mas outro programa está usando ele agora (uma chamada aberta, outra aba "
+          + "gravando). Feche o outro programa e tente de novo."
+        );
+        (explicado as any).name = 'NotReadableError';
+        throw explicado;
       }
       throw error;
     }
