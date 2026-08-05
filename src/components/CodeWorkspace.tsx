@@ -17,6 +17,7 @@ import { buildCodeEditSystemInstruction, applyModelCodeResponse, parseSections, 
 import { montarPreview } from '../lib/montarPreview';
 import { ProblemaDoPreview, juntarProblemas, montarPedidoDeCorrecao } from '../lib/errosDoPreview';
 import { separarProjeto } from '../lib/separarArquivos';
+import { montarPacote } from '../lib/exportarProjeto';
 
 // Geração/edição de código (Hunter e Enxame/Swarm) sempre usa o melhor modelo GRATUITO
 // disponível para código (gemini-3.6-flash: mais recente, líder em benchmarks de código como
@@ -1498,6 +1499,48 @@ Responda APENAS um array JSON de 4 strings. Exemplo do formato:
     });
   };
 
+  /**
+   * Baixa o projeto inteiro num .zip.
+   *
+   * O download que existia leva um arquivo por vez, e o trabalho fica preso no app: sem o projeto
+   * na mão não dá para publicar, mandar para alguém nem simplesmente guardar. Um jogo que levou
+   * uma tarde para nascer não pode existir só no localStorage de um navegador.
+   */
+  const [empacotando, setEmpacotando] = useState(false);
+  const exportarProjetoEmZip = async () => {
+    if (empacotando) return;
+    setEmpacotando(true);
+    try {
+      const projeto = projects.find(p => p.id === activeProjectId);
+      const pacote = await montarPacote(projeto?.name || 'projeto', filesRef.current);
+      if (!pacote) {
+        setNotificationBanner({ message: 'Não há nada para exportar: os arquivos deste projeto estão vazios.', type: 'info' });
+        return;
+      }
+
+      const url = URL.createObjectURL(pacote.blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = pacote.nome;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      // O endereço temporário é solto depois do clique: sem isto, o blob inteiro fica na memória
+      // da aba até ela ser fechada, e num projeto grande isso é megabytes parados à toa.
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+
+      setNotificationBanner({
+        message: `${pacote.nome} baixado com ${pacote.entradas.length} arquivo(s). Descompacte e abra o index.html no navegador.`,
+        type: 'success'
+      });
+    } catch (e: any) {
+      console.error('Erro ao empacotar o projeto:', e);
+      setNotificationBanner({ message: `Não foi possível gerar o .zip: ${e?.message || e}`, type: 'error' });
+    } finally {
+      setEmpacotando(false);
+    }
+  };
+
   const handleSendAIPrompt = async (promptText?: string) => {
     const textToSend = promptText || promptInput;
     if (!textToSend.trim() || !onGenerateCodeRequest) return;
@@ -2429,12 +2472,22 @@ FORMATO OBRIGATÓRIO (JSON estrito):
             {copied ? <Check size={16} className="text-emerald-400" /> : <Copy size={16} />}
           </button>
 
-          <button 
+          <button
             onClick={handleDownloadFile}
             className="p-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] text-zinc-300 border border-white/5 transition-all"
-            title="Baixar Arquivo para o PC"
+            title="Baixar apenas o arquivo aberto"
           >
             <Download size={16} />
+          </button>
+
+          {/* O projeto INTEIRO, num .zip — é o que tira o trabalho de dentro do app. */}
+          <button
+            onClick={exportarProjetoEmZip}
+            disabled={empacotando}
+            className="p-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/25 transition-all disabled:opacity-40 cursor-pointer"
+            title={`Baixar o projeto inteiro (${files.length} arquivo(s)) em .zip`}
+          >
+            {empacotando ? <Loader2 size={16} className="animate-spin" /> : <FolderGit2 size={16} />}
           </button>
         </div>
       </div>
