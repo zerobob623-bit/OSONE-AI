@@ -343,6 +343,12 @@ const DEFAULT_PROJECTS: OSONEProject[] = [
 export interface AlvoDaGeracao {
   nome: string;
   conteudo: string;
+  /**
+   * Quando existe, o pedido vale SÓ para este pedaço do arquivo — o resto fica fora de alcance.
+   * Guarda o texto além das posições: entre enviar e a resposta chegar o arquivo pode mudar, e é
+   * o texto que confirma que o alvo continua sendo o mesmo (ver substituirTrecho).
+   */
+  trechoSelecionado?: { inicio: number; fim: number; texto: string };
 }
 
 export const CodeWorkspace: React.FC<{
@@ -525,6 +531,15 @@ export const CodeWorkspace: React.FC<{
    * As frases fixas continuam existindo, mas no lugar certo: arquivo em branco, onde não há o que
    * ler e o que serve mesmo é uma partida rápida.
    */
+  /**
+   * O trecho marcado no editor. Enquanto existe, o pedido da IA vale só para ele.
+   *
+   * É guardado com o TEXTO junto das posições, e não só com os números: entre apertar "gerar" e a
+   * resposta chegar passam dezenas de segundos em que o arquivo pode mudar, e aí as posições
+   * apontariam para outro lugar. O texto é o que confirma que o alvo continua sendo o mesmo.
+   */
+  const [selecaoDoEditor, setSelecaoDoEditor] = useState<{ inicio: number; fim: number; texto: string } | null>(null);
+
   const [sugestoesDoCodigo, setSugestoesDoCodigo] = useState<string[]>([]);
   const [lendoSugestoes, setLendoSugestoes] = useState(false);
   /** Conteúdo já analisado, para não gastar chamada relendo o mesmo arquivo. */
@@ -1085,6 +1100,29 @@ export const CodeWorkspace: React.FC<{
     };
   }, [totalDeLinhas, activeFileId, viewLayout, showRepoSidebar]);
 
+  /**
+   * Lê o que está marcado no editor. Chamado pelos eventos que podem mudar a seleção.
+   *
+   * Seleção de um caractere ou de espaço em branco não conta: seria fácil ativar sem querer com
+   * um clique arrastado, e o modo "editar só o trecho" precisa ser uma escolha, não um acidente.
+   */
+  const lerSelecaoDoEditor = () => {
+    const area = editorRef.current;
+    if (!area) return;
+    const inicio = area.selectionStart;
+    const fim = area.selectionEnd;
+    const texto = area.value.slice(inicio, fim);
+    if (fim - inicio < 2 || !texto.trim()) {
+      setSelecaoDoEditor(prev => (prev === null ? prev : null));
+      return;
+    }
+    setSelecaoDoEditor(prev =>
+      (prev && prev.inicio === inicio && prev.fim === fim) ? prev : { inicio, fim, texto });
+  };
+
+  // Trocar de arquivo ou de projeto invalida qualquer seleção: ela apontava para outro texto.
+  useEffect(() => { setSelecaoDoEditor(null); }, [activeFileId, activeProjectId]);
+
   /** A régua acompanha a rolagem do texto — senão os números ficam parados enquanto o código anda. */
   const sincronizarRegua = (e: React.UIEvent<HTMLTextAreaElement>) => {
     if (reguaRef.current) reguaRef.current.scrollTop = e.currentTarget.scrollTop;
@@ -1381,7 +1419,14 @@ Responda APENAS um array JSON de 4 strings. Exemplo do formato:
      * para ele — e quando o primeiro da lista não era o index.html, o conteúdo de um arquivo
      * acabava gravado por cima de outro, apagando o segundo por inteiro.
      */
-    const alvo = activeFile ? { nome: activeFile.name, conteudo: activeFile.content } : undefined;
+    // A seleção é lida AQUI, no instante do envio: é o que a pessoa via marcado ao apertar gerar.
+    const trechoDoPedido = selecaoDoEditor && activeFile
+      && activeFile.content.slice(selecaoDoEditor.inicio, selecaoDoEditor.fim) === selecaoDoEditor.texto
+      ? selecaoDoEditor : undefined;
+
+    const alvo = activeFile
+      ? { nome: activeFile.name, conteudo: activeFile.content, trechoSelecionado: trechoDoPedido }
+      : undefined;
     const idDoAlvo = activeFile?.id;
 
     const imagesToSend = attachedImages.map(img => ({ mimeType: img.mimeType, data: img.data }));
@@ -2662,9 +2707,14 @@ FORMATO OBRIGATÓRIO (JSON estrito):
                 <textarea
                   ref={editorRef}
                   value={activeFile.content}
-                  onChange={(e) => handleUpdateActiveContent(e.target.value)}
+                  onChange={(e) => { handleUpdateActiveContent(e.target.value); lerSelecaoDoEditor(); }}
                   onScroll={sincronizarRegua}
                   onKeyDown={aoTeclarNoEditor}
+                  // 'select' cobre mouse e teclado; os outros dois pegam os casos em que o
+                  // navegador não dispara 'select' (clique simples que desfaz a marcação).
+                  onSelect={lerSelecaoDoEditor}
+                  onMouseUp={lerSelecaoDoEditor}
+                  onKeyUp={lerSelecaoDoEditor}
                   spellCheck={false}
                   // 'off' desliga a quebra automática de linha: com ela, uma linha longa ocupava
                   // várias alturas na tela e a régua passava a contar outra coisa. Em troca vem a
@@ -2721,6 +2771,33 @@ FORMATO OBRIGATÓRIO (JSON estrito):
         <div className="max-w-5xl mx-auto space-y-2">
           
           {/* AI Quick Prompts */}
+          {/*
+            O PEDIDO MUDOU DE ALVO — E ISSO PRECISA ESTAR NA TELA.
+
+            Um pedido que atinge o arquivo inteiro e um que atinge doze linhas são coisas muito
+            diferentes, e a única pista seria a marcação no editor, que fica acima e sai da vista.
+            Sem este aviso, a pessoa selecionaria um trecho sem querer e veria o resultado mudar de
+            comportamento sem entender por quê.
+          */}
+          {selecaoDoEditor && (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/[0.08] border border-amber-500/25 text-[11px] font-mono text-amber-200">
+              <Code2 size={12} className="shrink-0" />
+              <span className="shrink-0 font-semibold">
+                Editando só o trecho marcado
+              </span>
+              <span className="text-amber-300/60 shrink-0">
+                {selecaoDoEditor.texto.split('\n').length} linha(s), {selecaoDoEditor.fim - selecaoDoEditor.inicio} caracteres — o resto do arquivo não será tocado
+              </span>
+              <button
+                onClick={() => { setSelecaoDoEditor(null); editorRef.current?.setSelectionRange(selecaoDoEditor.inicio, selecaoDoEditor.inicio); }}
+                className="ml-auto shrink-0 px-2 py-0.5 rounded-lg bg-white/5 hover:bg-white/10 text-amber-200/80 hover:text-white transition-colors cursor-pointer"
+                title="Voltar a pedir para o arquivo inteiro"
+              >
+                usar o arquivo inteiro
+              </button>
+            </div>
+          )}
+
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
             <span className="text-[10px] font-mono text-cyan-400/80 uppercase tracking-wider flex items-center gap-1 shrink-0">
               <Sparkles size={11} /> OSONE CODE IA:
@@ -2855,7 +2932,9 @@ FORMATO OBRIGATÓRIO (JSON estrito):
               value={promptInput}
               onChange={(e) => setPromptInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSendAIPrompt()}
-              placeholder="Descreva a alteração ou o app que você quer criar neste arquivo de código..."
+              placeholder={selecaoDoEditor
+                ? `Descreva o que fazer com as ${selecaoDoEditor.texto.split('\n').length} linha(s) marcadas...`
+                : "Descreva a alteração ou o app que você quer criar neste arquivo de código..."}
               disabled={isGenerating}
               className="flex-1 bg-transparent px-3 py-1.5 text-xs text-white placeholder-zinc-500 outline-none font-mono"
             />
