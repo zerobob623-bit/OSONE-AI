@@ -3756,10 +3756,71 @@ ${processedChunk}`;
   });
 
   /**
-   * Modelos que recusaram um teto de saída explícito. Cada rejeição custa uma ida e volta à API,
-   * e sem memória disso ela se repetiria em toda geração de código pela mesma chave.
+   * ====== OS "EXTRAS" DA GERAÇÃO DE CÓDIGO, E COMO ABRIR MÃO DELES ======
+   *
+   * Este é o conserto do defeito mais confuso que o OSONE CODE teve: a MESMA chave, no MESMO
+   * instante, com a aba de escrita entregando texto e o OSONE CODE não entregando nada.
+   *
+   * A explicação é simples quando se põem as duas chamadas lado a lado. A aba de escrita manda
+   * quatro campos, e o config que chega na API é só { systemInstruction }. A geração de código
+   * manda 'unrestricted: true', e isso acrescenta TRÊS BLOCOS que a aba de escrita nunca envia:
+   *
+   *   thinkingConfig    → raciocínio no nível máximo
+   *   maxOutputTokens   → orçamento de saída alto, para o arquivo caber
+   *   safetySettings    → filtros ajustáveis afrouxados
+   *
+   * Cada um existe por um bom motivo. Só que basta a API recusar UM deles — porque o modelo não
+   * suporta aquele campo, porque o nome mudou, porque aquela chave não tem o recurso — para a
+   * chamada inteira falhar com um erro de pedido inválido. E aí a geração de código morre em
+   * TODOS os modelos da fila, enquanto a aba de escrita, que não manda nenhum deles, segue
+   * funcionando. Da tela, isso se lê como "o OSONE CODE está quebrado".
+   *
+   * A regra agora é: extra recusado é extra sacrificado. Um por vez, na ordem abaixo, repetindo
+   * no MESMO modelo. Sacrificados os três, o pedido fica idêntico ao da aba de escrita — que é o
+   * pedido que comprovadamente funciona. Perder o raciocínio máximo é um degrau abaixo; não
+   * entregar código nenhum é o desfecho que não pode acontecer.
+   *
+   * A ordem sacrifica primeiro o que menos afeta o resultado final entregue ao usuário.
    */
-  const modelosQueRecusamTetoDeSaida = new Set<string>();
+  const EXTRAS_DA_GERACAO = ['thinkingConfig', 'maxOutputTokens', 'safetySettings'] as const;
+
+  /** Por modelo, quais extras ele já recusou. Não se pergunta duas vezes. */
+  const extrasRecusadosPorModelo = new Map<string, Set<string>>();
+
+  /** O config sem os extras que este modelo já recusou antes. */
+  function configAceitavelPara(modelo: string, config: any): any {
+    const recusados = extrasRecusadosPorModelo.get(modelo);
+    if (!recusados || recusados.size === 0 || !config) return config;
+    const copia = { ...config };
+    for (const extra of recusados) delete copia[extra];
+    return copia;
+  }
+
+  /** O próximo extra a sacrificar neste modelo, ou null quando não há mais o que tirar. */
+  function proximoExtraASacrificar(modelo: string, config: any): string | null {
+    const recusados = extrasRecusadosPorModelo.get(modelo) || new Set<string>();
+    for (const extra of EXTRAS_DA_GERACAO) {
+      if (config?.[extra] !== undefined && !recusados.has(extra)) return extra;
+    }
+    return null;
+  }
+
+  function anotarExtraRecusado(modelo: string, extra: string) {
+    const atuais = extrasRecusadosPorModelo.get(modelo) || new Set<string>();
+    atuais.add(extra);
+    extrasRecusadosPorModelo.set(modelo, atuais);
+    console.warn(`[Modelos] "${modelo}" recusou "${extra}". Repetindo sem esse ajuste.`);
+  }
+
+  /**
+   * Erro de PEDIDO INVÁLIDO — o que indica que algum campo do config não serve.
+   * Cota e instabilidade passageira são outra coisa e têm tratamento próprio.
+   */
+  function ehPedidoInvalido(errMsg: string): boolean {
+    return /INVALID_ARGUMENT/i.test(errMsg)
+      || /\b400\b/.test(errMsg)
+      || /unknown name|unsupported|not supported|invalid value|invalid json payload/i.test(errMsg);
+  }
 
   /** Teto de tokens de saída pedido nas gerações de código. */
   const TETO_DE_SAIDA_PARA_CODIGO = Number(process.env.OSONE_TETO_SAIDA_CODIGO || 32768);
@@ -3857,13 +3918,8 @@ ${processedChunk}`;
     let lastError: any = null;
     for (const modelName of uniqueModels) {
       for (let attempt = 1; attempt <= attemptsPerModel; attempt++) {
-        // Um teto de saída que o modelo não aceita não pode custar a geração inteira: ele é
-        // retirado da configuração e a tentativa seguinte vai sem ele, no mesmo modelo.
-        let configDaVez = params.config;
-        if (configDaVez?.maxOutputTokens && modelosQueRecusamTetoDeSaida.has(modelName)) {
-          const { maxOutputTokens, ...semTeto } = configDaVez;
-          configDaVez = semTeto;
-        }
+        // O pedido já sai sem os ajustes que ESTE modelo recusou antes.
+        const configDaVez = configAceitavelPara(modelName, params.config);
         try {
           console.log(`Trying Gemini content generation (Model: ${modelName}, Attempt: ${attempt})`);
           const response = await ai.models.generateContent({
@@ -3880,16 +3936,21 @@ ${processedChunk}`;
           const isQuota = errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.toLowerCase().includes("quota") || errMsg.toLowerCase().includes("limit");
           const isTransient = (errMsg.includes("503") || errMsg.includes("UNAVAILABLE") || errMsg.toLowerCase().includes("high demand")) && !isQuota;
 
-          // Teto de saída acima do que o modelo aceita: o pedido é inválido, não é falha de rede.
-          // Anota o modelo e repete sem o teto, em vez de trocar de modelo por causa disso.
-          const tetoRecusado = !!configDaVez?.maxOutputTokens
-            && !modelosQueRecusamTetoDeSaida.has(modelName)
-            && (/maxOutputTokens|max_output_tokens/i.test(errMsg)
-              || (/INVALID_ARGUMENT|400/.test(errMsg) && /token/i.test(errMsg)));
-          if (tetoRecusado) {
-            console.warn(`[Fallback Log] Model ${modelName} rejected maxOutputTokens=${configDaVez.maxOutputTokens}. Retrying without it.`);
-            modelosQueRecusamTetoDeSaida.add(modelName);
-            continue;
+          /**
+           * Pedido inválido: sacrifica um extra e repete NO MESMO MODELO.
+           *
+           * Trocar de modelo aqui não adiantaria nada — o campo recusado iria junto e seria
+           * recusado de novo, em todos eles, até a fila acabar sem entregar nada. Sacrificar não
+           * consome uma tentativa: o que muda é o pedido, não a sorte. E o laço não corre solto
+           * porque cada extra só pode ser sacrificado uma vez por modelo (são três no total).
+           */
+          if (!isQuota && ehPedidoInvalido(errMsg)) {
+            const extra = proximoExtraASacrificar(modelName, params.config);
+            if (extra) {
+              anotarExtraRecusado(modelName, extra);
+              attempt--;
+              continue;
+            }
           }
 
           if (isQuota) {
@@ -4065,11 +4126,7 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
     let ultimoErro: any = null;
     for (const modelName of candidatos) {
       for (let tentativa = 1; tentativa <= tentativasPorModelo; tentativa++) {
-        let configDaVez = params.config;
-        if (configDaVez?.maxOutputTokens && modelosQueRecusamTetoDeSaida.has(modelName)) {
-          const { maxOutputTokens, ...semTeto } = configDaVez;
-          configDaVez = semTeto;
-        }
+        const configDaVez = configAceitavelPara(modelName, params.config);
         try {
           console.log(`Trying Gemini code stream (Model: ${modelName}, Attempt: ${tentativa})`);
           const fluxo = await ai.models.generateContentStream({
@@ -4084,14 +4141,15 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
           const isQuota = errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.toLowerCase().includes("quota") || errMsg.toLowerCase().includes("limit");
           const isTransient = (errMsg.includes("503") || errMsg.includes("UNAVAILABLE") || errMsg.toLowerCase().includes("high demand")) && !isQuota;
 
-          const tetoRecusado = !!configDaVez?.maxOutputTokens
-            && !modelosQueRecusamTetoDeSaida.has(modelName)
-            && (/maxOutputTokens|max_output_tokens/i.test(errMsg)
-              || (/INVALID_ARGUMENT|400/.test(errMsg) && /token/i.test(errMsg)));
-          if (tetoRecusado) {
-            console.warn(`[Fluxo] Model ${modelName} rejected maxOutputTokens. Retrying without it.`);
-            modelosQueRecusamTetoDeSaida.add(modelName);
-            continue;
+          // Mesma regra do caminho de uma vez: extra recusado é sacrificado, e repete no mesmo
+          // modelo, até o pedido ficar igual ao da aba de escrita — que funciona.
+          if (!isQuota && ehPedidoInvalido(errMsg)) {
+            const extra = proximoExtraASacrificar(modelName, params.config);
+            if (extra) {
+              anotarExtraRecusado(modelName, extra);
+              tentativa--;
+              continue;
+            }
           }
           if (isQuota) {
             console.warn(`[Fluxo] Model ${modelName} sem cota. Passando para o próximo candidato...`);
