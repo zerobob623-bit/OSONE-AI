@@ -3743,6 +3743,21 @@ ${processedChunk}`;
   /** Quantas vezes o modelo pode ser mandado continuar de onde parou antes de desistir. */
   const MAXIMO_DE_CONTINUACOES = Number(process.env.OSONE_MAXIMO_CONTINUACOES || 4);
 
+  /**
+   * A escada de modelos a tentar, em ordem. Usada tanto pela geração de uma vez quanto pela
+   * geração em fluxo — as duas precisam cair para os mesmos candidatos, ou o OSONE CODE se
+   * comportaria de um jeito ao vivo e de outro no modo comum.
+   */
+  function listarModelosCandidatos(primaryModel: string, options?: { allowDowngrade?: boolean; modeloDeReserva?: string }): string[] {
+    const allowDowngrade = options?.allowDowngrade !== false;
+    const modelsToTry = allowDowngrade
+      ? [primaryModel, "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash"]
+      // O modelo que o usuário configurou nos Ajustes entra por ÚLTIMO: é o único que se sabe que
+      // funciona com a chave dele, então serve de fundo de poço quando nenhum preferido responde.
+      : [primaryModel, "gemini-3.6-flash", "gemini-3.5-flash", options?.modeloDeReserva || ""].filter(Boolean);
+    return Array.from(new Set(modelsToTry));
+  }
+
   // Helper to run content generation with automated fallbacks
   async function generateContentWithFallback(ai: GoogleGenAI, params: { model: string; contents: any; config?: any }, options?: { allowDowngrade?: boolean; modeloDeReserva?: string }) {
     const primaryModel = params.model || "gemini-3.6-flash";
@@ -3768,14 +3783,7 @@ ${processedChunk}`;
      * dizer na tela qual modelo escreveu o código: a preocupação era com o rebaixamento
      * SILENCIOSO, e essa parte continua valendo.
      */
-    const modelsToTry = allowDowngrade
-      ? [primaryModel, "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash"]
-      // O modelo que o usuário configurou nos Ajustes entra por ÚLTIMO: é o único que se sabe que
-      // funciona com a chave dele, então serve de fundo de poço quando nenhum preferido responde.
-      : [primaryModel, "gemini-3.6-flash", "gemini-3.5-flash", options?.modeloDeReserva || ""].filter(Boolean);
-
-    // Remove duplicates keeping order
-    const uniqueModels = Array.from(new Set(modelsToTry));
+    const uniqueModels = listarModelosCandidatos(primaryModel, options);
     const attemptsPerModel = allowDowngrade ? 2 : 4;
 
     let lastError: any = null;
@@ -3962,6 +3970,67 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
       console.log(`[Continuação] Texto final montado com ${continuacoes} continuação(ões): ${texto.length} caracteres.`);
     }
     return { texto, finishReason, continuacoes, modeloUsado, bloqueado };
+  }
+
+  /**
+   * Abre um fluxo de geração com a mesma escada de modelos da geração de uma vez, e diz QUEM
+   * respondeu — o fluxo em si não carrega essa informação, e sem ela a tela não teria como avisar
+   * que o código foi escrito por um modelo de reserva.
+   */
+  async function abrirFluxoComReserva(
+    ai: GoogleGenAI,
+    params: { model: string; contents: any; config?: any },
+    options?: { allowDowngrade?: boolean; modeloDeReserva?: string }
+  ): Promise<{ fluxo: any; modeloUsado: string }> {
+    const primaryModel = params.model || "gemini-3.6-flash";
+    const candidatos = listarModelosCandidatos(primaryModel, options);
+    const tentativasPorModelo = options?.allowDowngrade === false ? 4 : 2;
+
+    let ultimoErro: any = null;
+    for (const modelName of candidatos) {
+      for (let tentativa = 1; tentativa <= tentativasPorModelo; tentativa++) {
+        let configDaVez = params.config;
+        if (configDaVez?.maxOutputTokens && modelosQueRecusamTetoDeSaida.has(modelName)) {
+          const { maxOutputTokens, ...semTeto } = configDaVez;
+          configDaVez = semTeto;
+        }
+        try {
+          console.log(`Trying Gemini code stream (Model: ${modelName}, Attempt: ${tentativa})`);
+          const fluxo = await ai.models.generateContentStream({
+            model: modelName,
+            contents: params.contents,
+            config: configDaVez
+          });
+          return { fluxo, modeloUsado: modelName };
+        } catch (err: any) {
+          ultimoErro = err;
+          const errMsg = err?.message || String(err);
+          const isQuota = errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.toLowerCase().includes("quota") || errMsg.toLowerCase().includes("limit");
+          const isTransient = (errMsg.includes("503") || errMsg.includes("UNAVAILABLE") || errMsg.toLowerCase().includes("high demand")) && !isQuota;
+
+          const tetoRecusado = !!configDaVez?.maxOutputTokens
+            && !modelosQueRecusamTetoDeSaida.has(modelName)
+            && (/maxOutputTokens|max_output_tokens/i.test(errMsg)
+              || (/INVALID_ARGUMENT|400/.test(errMsg) && /token/i.test(errMsg)));
+          if (tetoRecusado) {
+            console.warn(`[Fluxo] Model ${modelName} rejected maxOutputTokens. Retrying without it.`);
+            modelosQueRecusamTetoDeSaida.add(modelName);
+            continue;
+          }
+          if (isQuota) {
+            console.warn(`[Fluxo] Model ${modelName} sem cota. Passando para o próximo candidato...`);
+            break;
+          }
+          if (isTransient && tentativa < tentativasPorModelo) {
+            await new Promise(resolve => setTimeout(resolve, 700 * tentativa));
+            continue;
+          }
+          console.log(`[Fluxo] Model ${modelName} tentativa ${tentativa} falhou:`, errMsg);
+          break;
+        }
+      }
+    }
+    throw ultimoErro;
   }
 
   // Helper to run content stream generation with automated fallbacks
@@ -4184,6 +4253,187 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
     } catch (err: any) {
       console.error("Error inside /api/generate endpoint:", err);
       return res.status(500).json({ error: formatGeminiError(err) });
+    }
+  });
+
+  /**
+   * ====== O CÓDIGO APARECENDO ENQUANTO É ESCRITO ======
+   *
+   * Mesmo motor do /api/generate, com uma diferença que muda tudo para quem está olhando: o texto
+   * sai em pedaços, à medida que o modelo escreve, em vez de aparecer inteiro no fim.
+   *
+   * A diferença não é enfeite. Uma geração grande leva um minuto ou mais, e com a tela parada não
+   * há como distinguir "está escrevendo" de "travou" — a única coisa a fazer era esperar sem saber
+   * se valia a pena. Vendo o arquivo crescer, dá para acompanhar, perceber logo que o modelo
+   * entendeu errado e cancelar em vez de esperar até o fim para descobrir.
+   *
+   * As continuações também saem por aqui: quando a resposta é cortada por limite de tokens, o
+   * modelo é mandado continuar e os pedaços novos seguem saindo no mesmo fluxo, já descontada a
+   * sobreposição que ele repete ao retomar. Do lado de quem assiste, é um texto só, sem emenda
+   * visível.
+   */
+  app.post("/api/generate-stream", async (req, res) => {
+    const { prompt, systemInstruction, clientApiKey, model, responseMimeType, maxEffort, unrestricted, modeloDeReserva } = req.body;
+    const apiKey = clientApiKey || getSecretGeminiKey();
+
+    if (!apiKey) {
+      return res.status(400).json({ error: "Chave API do Gemini não definida no servidor." });
+    }
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    // Sem isto um proxy (nginx, e o da Vercel) segura os pedaços e entrega tudo junto no fim —
+    // o fluxo funcionaria no servidor e mesmo assim a tela ficaria parada até o final.
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
+
+    const enviar = (dado: any) => {
+      res.write(`data: ${JSON.stringify(dado)}\n\n`);
+      // Express não descarrega sozinho quando há compressão no caminho.
+      (res as any).flush?.();
+    };
+
+    // Quem fechou a aba ou apertou cancelar não deve continuar consumindo cota do modelo.
+    let clienteFoiEmbora = false;
+    req.on("close", () => { clienteFoiEmbora = true; });
+
+    try {
+      const ai = new GoogleGenAI({
+        apiKey: apiKey,
+        vertexai: false,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+      });
+
+      const selectedModel = model || "gemini-3.6-flash";
+      const config: any = {};
+      if (systemInstruction) config.systemInstruction = systemInstruction;
+      if (responseMimeType) config.responseMimeType = responseMimeType;
+      if (maxEffort || unrestricted) config.thinkingConfig = { thinkingLevel: "HIGH" };
+      if (unrestricted && !config.maxOutputTokens) config.maxOutputTokens = TETO_DE_SAIDA_PARA_CODIGO;
+      if (unrestricted) {
+        config.safetySettings = [
+          { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+          { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+          { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+          { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+        ];
+      }
+
+      const opcoes = { allowDowngrade: !unrestricted, modeloDeReserva };
+      const turnosOriginais = normalizarTurnos(prompt);
+      const limiteDeContinuacoes = unrestricted ? MAXIMO_DE_CONTINUACOES : 0;
+
+      let textoCompleto = "";
+      let finishReason: any = undefined;
+      let modeloUsado = selectedModel;
+      let continuacoes = 0;
+
+      /**
+       * Consome um fluxo emitindo os pedaços para o cliente.
+       *
+       * Numa continuação, o começo precisa ser SEGURADO antes de sair: é ali que o modelo repete as
+       * últimas linhas para retomar o fio, e deixar isso passar duplicaria uma função dentro do
+       * arquivo — pior do que o corte que a continuação veio consertar. Então os primeiros ~600
+       * caracteres ficam num porão até dar para medir a sobreposição; só o que sobra é emitido.
+       */
+      const consumirFluxo = async (fluxo: any, ehContinuacao: boolean) => {
+        let porao = "";
+        let poraoAberto = ehContinuacao;
+        let recebeuAlgo = false;
+
+        for await (const pedaco of fluxo) {
+          if (clienteFoiEmbora) break;
+          const parcial = pedaco.text || "";
+          const razao = pedaco?.candidates?.[0]?.finishReason;
+          if (razao) finishReason = razao;
+          if (!parcial) continue;
+          recebeuAlgo = true;
+
+          if (poraoAberto) {
+            porao += parcial;
+            if (porao.length < 600) continue;
+            const limpo = emendarContinuacao(textoCompleto, tirarCercaDeAbertura(porao));
+            const novo = limpo.slice(textoCompleto.length);
+            textoCompleto = limpo;
+            porao = "";
+            poraoAberto = false;
+            if (novo) enviar({ text: novo });
+            continue;
+          }
+
+          textoCompleto += parcial;
+          enviar({ text: parcial });
+        }
+
+        // Fluxo curto demais para encher o porão: mede a sobreposição com o que houver.
+        if (poraoAberto && porao) {
+          const limpo = emendarContinuacao(textoCompleto, tirarCercaDeAbertura(porao));
+          const novo = limpo.slice(textoCompleto.length);
+          textoCompleto = limpo;
+          if (novo) enviar({ text: novo });
+        }
+        return recebeuAlgo;
+      };
+
+      const primeiro = await abrirFluxoComReserva(ai, { model: selectedModel, contents: prompt, config }, opcoes);
+      modeloUsado = primeiro.modeloUsado;
+      enviar({ modeloUsado, modeloPreferido: selectedModel });
+      await consumirFluxo(primeiro.fluxo, false);
+
+      // O formato obrigatório do primeiro turno não se repete na continuação: exigir de novo um
+      // JSON completo faria o modelo RECOMEÇAR em vez de completar a metade que ficou.
+      const configDaContinuacao = { ...config };
+      delete configDaContinuacao.responseMimeType;
+      delete configDaContinuacao.responseSchema;
+
+      while (finishReason === "MAX_TOKENS" && continuacoes < limiteDeContinuacoes && textoCompleto.trim() && !clienteFoiEmbora) {
+        continuacoes++;
+        console.warn(`[Fluxo] Resposta cortada por MAX_TOKENS. Continuação ${continuacoes}/${limiteDeContinuacoes}...`);
+        enviar({ continuando: continuacoes });
+        const tamanhoAntes = textoCompleto.length;
+        finishReason = undefined;
+        try {
+          const seguinte = await abrirFluxoComReserva(ai, {
+            model: modeloUsado,
+            contents: [
+              ...turnosOriginais,
+              { role: "model", parts: [{ text: textoCompleto }] },
+              { role: "user", parts: [{ text: INSTRUCAO_PARA_CONTINUAR }] }
+            ],
+            config: configDaContinuacao
+          }, opcoes);
+          const recebeu = await consumirFluxo(seguinte.fluxo, true);
+          if (!recebeu || textoCompleto.length <= tamanhoAntes) {
+            console.warn(`[Fluxo] A continuação não acrescentou texto novo. Parando aqui.`);
+            finishReason = "MAX_TOKENS";
+            break;
+          }
+        } catch (err: any) {
+          // O que já foi escrito não se perde por causa de uma continuação que falhou.
+          console.error(`[Fluxo] Falha ao continuar:`, err?.message || err);
+          finishReason = "MAX_TOKENS";
+          break;
+        }
+      }
+
+      const blocked = finishReason === "SAFETY" || finishReason === "PROHIBITED_CONTENT" || finishReason === "BLOCKLIST" || finishReason === "SPII";
+      const truncated = finishReason === "MAX_TOKENS";
+      // O texto inteiro vai junto no fim: é ele que o app aplica no arquivo. Os pedaços servem
+      // para acompanhar; a gravação nunca depende de o cliente ter juntado tudo direito.
+      enviar({
+        done: true,
+        text: textoCompleto,
+        finishReason, blocked, truncated, continuacoes,
+        modeloUsado, modeloPreferido: selectedModel
+      });
+      res.write("data: [DONE]\n\n");
+      res.end();
+    } catch (err: any) {
+      console.error("Error inside /api/generate-stream endpoint:", err);
+      enviar({ error: formatGeminiError(err) });
+      res.write("data: [DONE]\n\n");
+      res.end();
     }
   });
 
