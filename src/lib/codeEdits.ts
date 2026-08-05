@@ -127,6 +127,110 @@ export function parseSearchReplaceEdits(text: string): CodeEdit[] {
   return lerBlocosSearchReplace(text).edits;
 }
 
+export interface TrechoSelecionado {
+  /** Onde o trecho começa e termina no arquivo, no momento em que o pedido foi enviado. */
+  inicio: number;
+  fim: number;
+  /** O texto exato que estava selecionado. É ele que confirma que o alvo não se moveu. */
+  texto: string;
+}
+
+export interface ResultadoDaSubstituicao {
+  conteudo: string;
+  /** false quando o trecho não estava mais lá: nada é gravado, e o motivo vem em 'erro'. */
+  aplicou: boolean;
+  erro?: string;
+}
+
+/**
+ * Troca APENAS o trecho selecionado, e confere que ele não se moveu antes de trocar.
+ *
+ * A conferência não é zelo excessivo — é o que separa a edição cirúrgica de uma corrupção. Entre
+ * apertar "gerar" e a resposta chegar passam dezenas de segundos, e nesse meio-tempo a pessoa
+ * pode ter digitado, desfeito, trocado de arquivo ou deixado o Enxame mexer no repositório. As
+ * posições guardadas então apontam para outro lugar, e gravar por elas colocaria o texto novo no
+ * meio de uma função qualquer — um estrago silencioso, do tipo que só aparece muito depois.
+ *
+ * Por isso o que vale é o TEXTO, não o número: se o que está entre as posições não for mais
+ * exatamente o que foi selecionado, procura-se o texto no arquivo; achado uma única vez, ele é o
+ * alvo. Ambíguo ou ausente, não se grava nada e o chamador explica por quê.
+ */
+export function substituirTrecho(
+  conteudoAtual: string,
+  trecho: TrechoSelecionado,
+  textoNovo: string
+): ResultadoDaSubstituicao {
+  /**
+   * O RECUO DO TRECHO NÃO PODE SER COMIDO NA LIMPEZA.
+   *
+   * stripOuterMarkdownFence apara os dois lados, e isso está certo para um arquivo inteiro — mas
+   * aqui o texto vai ser colado DENTRO de outro código, e os espaços da frente são a indentação
+   * dele. Removê-los cola a linha nova rente à margem, quebrando o alinhamento em qualquer
+   * linguagem e, em Python, quebrando o programa: lá o recuo é a sintaxe do bloco.
+   *
+   * Então a cerca de markdown é removida (ela nunca é código), e só o que sobra depois dela é que
+   * tem o recuo preservado.
+   */
+  let novo = (textoNovo || '').replace(/^\r?\n+/, '').replace(/\s+$/, '');
+  if (novo.trimStart().startsWith('```')) {
+    const semEspacoAntes = novo.trimStart();
+    novo = semEspacoAntes
+      .replace(/^```[a-zA-Z0-9]*\r?\n?/, '')
+      .replace(/\r?\n?```\s*$/, '')
+      .replace(/\s+$/, '');
+  }
+  if (!novo.trim()) {
+    return { conteudo: conteudoAtual, aplicou: false, erro: 'o modelo devolveu um trecho vazio' };
+  }
+
+  // Caminho normal: o trecho continua exatamente onde estava.
+  if (conteudoAtual.slice(trecho.inicio, trecho.fim) === trecho.texto) {
+    return {
+      conteudo: conteudoAtual.slice(0, trecho.inicio) + novo + conteudoAtual.slice(trecho.fim),
+      aplicou: true
+    };
+  }
+
+  // O arquivo mudou: vale o texto, não a posição.
+  const primeira = conteudoAtual.indexOf(trecho.texto);
+  if (primeira === -1) {
+    return {
+      conteudo: conteudoAtual,
+      aplicou: false,
+      erro: 'o trecho selecionado não está mais no arquivo (ele foi editado durante a geração)'
+    };
+  }
+  if (conteudoAtual.indexOf(trecho.texto, primeira + 1) !== -1) {
+    return {
+      conteudo: conteudoAtual,
+      aplicou: false,
+      erro: 'o trecho selecionado agora aparece mais de uma vez no arquivo, e não dá para saber qual você quis mudar'
+    };
+  }
+  return {
+    conteudo: conteudoAtual.slice(0, primeira) + novo + conteudoAtual.slice(primeira + trecho.texto.length),
+    aplicou: true
+  };
+}
+
+/**
+ * O pedaço do arquivo ao redor do trecho, para o modelo entender o que está editando.
+ *
+ * Mandar dez linhas soltas produz código que não conversa com o resto: o modelo inventa nomes de
+ * variáveis que já existem, ignora o estilo do arquivo e chama funções que não estão lá. Mandar o
+ * arquivo inteiro resolve o contexto, mas num arquivo de 50 mil caracteres isso é desperdício em
+ * toda edição de três linhas.
+ *
+ * A janela ao redor resolve os dois: contexto suficiente para escrever código coerente, sem
+ * carregar o arquivo todo. Arquivo pequeno vai inteiro, porque aí não há o que economizar.
+ */
+export function contextoAoRedor(conteudo: string, inicio: number, fim: number, folga = 4000): string {
+  if (conteudo.length <= folga * 2) return conteudo;
+  const de = Math.max(0, inicio - folga);
+  const ate = Math.min(conteudo.length, fim + folga);
+  return (de > 0 ? '…\n' : '') + conteudo.slice(de, ate) + (ate < conteudo.length ? '\n…' : '');
+}
+
 /**
  * Um documento HTML que começou e não terminou.
  *
