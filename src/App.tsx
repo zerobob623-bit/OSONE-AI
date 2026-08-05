@@ -111,7 +111,7 @@ import { useTuyaSmartHome } from './hooks/useTuyaSmartHome';
 import { useHierarchicalMemory } from './hooks/useHierarchicalMemory';
 import { usePersonaSelfRevision } from './hooks/usePersonaSelfRevision';
 import { getCounterfactualReasoningDirective, getSalienceEmpathyDirective } from './lib/cognitiveDirectives';
-import { buildCodeEditSystemInstruction, applyModelCodeResponse, pareceDocumentoIncompleto } from './lib/codeEdits';
+import { buildCodeEditSystemInstruction, applyModelCodeResponse, pareceDocumentoIncompleto, substituirTrecho, contextoAoRedor } from './lib/codeEdits';
 import { gerarCodigoEmFluxo } from './lib/gerarCodigoEmFluxo';
 import { useLocalAgent } from './hooks/useLocalAgent';
 import { useTikTokLive } from './hooks/useTikTokLive';
@@ -6438,11 +6438,115 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
    * O arquivo agora vem em 'alvo', escolhido por quem está com ele aberto, e a gravação acontece
    * num lugar só, do lado do editor.
    */
+  /**
+   * Gera a substituição de UM TRECHO e devolve o arquivo inteiro já costurado.
+   *
+   * Quem chamou continua recebendo `{ conteudo, resumo }` com o arquivo completo — a gravação
+   * segue passando pelo caminho único de sempre, que entra no histórico e desfaz com Ctrl+Z. O
+   * que muda é só o tamanho do que o modelo precisou escrever.
+   */
+  const gerarSomenteOTrecho = async (
+    promptText: string,
+    arquivoInteiro: string,
+    trecho: { inicio: number; fim: number; texto: string },
+    nomeDoArquivo: string,
+    referenceImages?: Array<{ mimeType: string; data: string }>,
+    maxEffort?: boolean,
+    aoEscrever?: (textoAcumulado: string) => void,
+    sinal?: AbortSignal
+  ): Promise<{ conteudo: string; resumo: string } | null> => {
+    const contexto = contextoAoRedor(arquivoInteiro, trecho.inicio, trecho.fim);
+
+    const systemInstruction = `Você é o arquiteto de software de elite do OSONE Studio, editando um TRECHO de um arquivo maior.
+
+REGRAS ABSOLUTAS:
+- Responda APENAS com o código que deve SUBSTITUIR o trecho marcado. Nada mais.
+- NÃO repita o arquivo inteiro. NÃO devolva o contexto ao redor. NÃO use blocos SEARCH/REPLACE.
+- NÃO escreva explicação, comentário sobre a mudança, saudação nem cercas de markdown.
+- Mantenha a indentação do trecho original, para o código continuar alinhado onde ele será colado.
+- O que você escrever entra EXATAMENTE no lugar do trecho, então ele precisa se encaixar sozinho: mesmas variáveis do arquivo, mesmo estilo, chaves e tags abrindo e fechando na conta certa.
+- Se o pedido não fizer sentido para este trecho, devolva o trecho original inalterado.`;
+
+    const conteudoDoPedido = `ARQUIVO: ${nomeDoArquivo}
+
+CONTEXTO AO REDOR (apenas para você entender o código — NÃO devolva nada disto):
+${contexto}
+
+=== TRECHO A SUBSTITUIR (é só isto que você deve reescrever) ===
+${trecho.texto}
+=== FIM DO TRECHO ===
+
+O QUE O USUÁRIO PEDIU PARA FAZER NESTE TRECHO:
+${promptText}${maxEffort ? '\n\nESFORÇO MÁXIMO: capriche nos detalhes e nos casos extremos deste trecho.' : ''}`;
+
+    const promptPayload = (referenceImages && referenceImages.length > 0)
+      ? [{ role: 'user', parts: [{ text: conteudoDoPedido }, ...referenceImages.map(img => ({ inlineData: { mimeType: img.mimeType, data: img.data } }))] }]
+      : conteudoDoPedido;
+
+    const corpoDoPedido = {
+      clientApiKey: apiKeys.gemini || '',
+      model: "gemini-3.6-flash",
+      modeloDeReserva: apiKeys.geminiModel || '',
+      prompt: promptPayload,
+      systemInstruction,
+      maxEffort: !!maxEffort,
+      unrestricted: true
+    };
+
+    const emFluxo = await gerarCodigoEmFluxo(corpoDoPedido, {
+      aoEscrever: (texto) => aoEscrever?.(texto),
+      sinal
+    });
+    if (sinal?.aborted || emFluxo.erro === 'cancelado') return null;
+
+    let textoDoModelo = emFluxo.texto;
+    if (!textoDoModelo) {
+      // Fluxo indisponível nesta hospedagem: refaz pelo caminho de uma vez só.
+      const resposta = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(corpoDoPedido),
+        signal: sinal
+      });
+      if (!resposta.ok) {
+        const err = await resposta.json().catch(() => ({} as any));
+        throw new Error(err?.error || emFluxo.erro || "Falha na comunicação com a API");
+      }
+      const dados = await resposta.json();
+      if (dados.blocked) {
+        addNotification("⚠️ O Gemini bloqueou a resposta pelo filtro de segurança. Tente reformular o pedido.", "error");
+        return null;
+      }
+      textoDoModelo = dados.text || '';
+    }
+
+    if (!textoDoModelo.trim()) {
+      addNotification("O modelo respondeu vazio para o trecho selecionado. Tente de novo ou descreva melhor a mudança.", "error");
+      return null;
+    }
+
+    const { conteudo, aplicou, erro } = substituirTrecho(arquivoInteiro, trecho, textoDoModelo);
+    if (!aplicou) {
+      addNotification(`⚠️ Nada foi alterado: ${erro}. Selecione o trecho de novo e repita o pedido.`, "error");
+      return null;
+    }
+    if (conteudo === arquivoInteiro) {
+      addNotification("O modelo devolveu o trecho igual ao que já estava lá — nada mudou.", "info");
+      return null;
+    }
+
+    const linhas = trecho.texto.split('\n').length;
+    return {
+      conteudo,
+      resumo: `${linhas} linha(s) selecionada(s) substituída(s); o resto do arquivo não foi tocado`
+    };
+  };
+
   const handleCodeWorkspacePrompt = async (
     promptText: string,
     referenceImages?: Array<{ mimeType: string; data: string }>,
     maxEffort?: boolean,
-    alvo?: { nome: string; conteudo: string },
+    alvo?: { nome: string; conteudo: string; trechoSelecionado?: { inicio: number; fim: number; texto: string } },
     /**
      * O editor acompanha o código sendo escrito por aqui.
      *
@@ -6460,6 +6564,24 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
     setIsGenerating(true);
     try {
       const currentCode = alvo?.conteudo || '';
+
+      /**
+       * ====== EDIÇÃO DE UM TRECHO SELECIONADO ======
+       *
+       * Sem isto, todo pedido reescreve o arquivo inteiro. Num jogo de 50 mil caracteres, "muda a
+       * cor do botão" faz o modelo gerar 50 mil caracteres de novo: leva minutos, gasta cota à
+       * toa, e — o pior — dá a ele a chance de mexer em mil linhas que estavam certas. A correção
+       * mais cara que existe é a que estraga o que já funcionava.
+       *
+       * Com um trecho selecionado, o modelo recebe o CONTEXTO ao redor (para escrever código que
+       * conversa com o resto) mas devolve SÓ o trecho. A saída fica do tamanho da mudança, que é
+       * o que manda no tempo e no custo, e o resto do arquivo fica fora de alcance por construção.
+       */
+      const trecho = alvo?.trechoSelecionado;
+      if (trecho && trecho.texto.trim()) {
+        return await gerarSomenteOTrecho(promptText, currentCode, trecho, alvo?.nome || 'arquivo',
+          referenceImages, maxEffort, aoEscrever, sinal);
+      }
 
       const systemInstruction = buildCodeEditSystemInstruction(
         "Você é o arquiteto de software de elite do OSONE Studio. Sua missão é gerar ou editar código (HTML5, CSS, JS, React, Tailwind, Python ou similar)."

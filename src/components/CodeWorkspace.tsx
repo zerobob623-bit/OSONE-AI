@@ -343,6 +343,12 @@ const DEFAULT_PROJECTS: OSONEProject[] = [
 export interface AlvoDaGeracao {
   nome: string;
   conteudo: string;
+  /**
+   * Quando existe, o pedido vale SÓ para este pedaço do arquivo — o resto fica fora de alcance.
+   * Guarda o texto além das posições: entre enviar e a resposta chegar o arquivo pode mudar, e é
+   * o texto que confirma que o alvo continua sendo o mesmo (ver substituirTrecho).
+   */
+  trechoSelecionado?: { inicio: number; fim: number; texto: string };
 }
 
 export const CodeWorkspace: React.FC<{
@@ -509,6 +515,36 @@ export const CodeWorkspace: React.FC<{
    */
   const cancelamentoDoHunterRef = useRef<AbortController | null>(null);
   const cancelamentoDoEnxameRef = useRef<AbortController | null>(null);
+
+  /**
+   * ====== SUGESTÕES LIDAS DO CÓDIGO QUE EXISTE ======
+   *
+   * A fileira de atalhos era um cardápio fixo: "Refatorar & Otimizar", "Corrigir BUGS",
+   * "Adicionar Animações". As mesmas cinco frases num arquivo em branco e num jogo de 50 mil
+   * caracteres — quer dizer, elas nunca sabiam do que estavam falando.
+   *
+   * O problema não é serem genéricas, é serem CEGAS: "corrigir bugs" sem ter lido o código é um
+   * pedido para o modelo adivinhar o que procurar, e o que volta costuma ser mexida aleatória.
+   * Uma sugestão que cita a função pelo nome ("o loop de colisão roda em O(n²) e trava acima de
+   * 50 karts") vale mais do que as cinco juntas, porque já traz o diagnóstico dentro dela.
+   *
+   * As frases fixas continuam existindo, mas no lugar certo: arquivo em branco, onde não há o que
+   * ler e o que serve mesmo é uma partida rápida.
+   */
+  /**
+   * O trecho marcado no editor. Enquanto existe, o pedido da IA vale só para ele.
+   *
+   * É guardado com o TEXTO junto das posições, e não só com os números: entre apertar "gerar" e a
+   * resposta chegar passam dezenas de segundos em que o arquivo pode mudar, e aí as posições
+   * apontariam para outro lugar. O texto é o que confirma que o alvo continua sendo o mesmo.
+   */
+  const [selecaoDoEditor, setSelecaoDoEditor] = useState<{ inicio: number; fim: number; texto: string } | null>(null);
+
+  const [sugestoesDoCodigo, setSugestoesDoCodigo] = useState<string[]>([]);
+  const [lendoSugestoes, setLendoSugestoes] = useState(false);
+  /** Conteúdo já analisado, para não gastar chamada relendo o mesmo arquivo. */
+  const codigoJaAnalisadoRef = useRef<string>('');
+  const cancelamentoDasSugestoesRef = useRef<AbortController | null>(null);
 
   /** Aborta o que estiver correndo e fecha o painel. Usado pelo X e pelo botão de parar. */
   const pararEFechar = (
@@ -1064,6 +1100,29 @@ export const CodeWorkspace: React.FC<{
     };
   }, [totalDeLinhas, activeFileId, viewLayout, showRepoSidebar]);
 
+  /**
+   * Lê o que está marcado no editor. Chamado pelos eventos que podem mudar a seleção.
+   *
+   * Seleção de um caractere ou de espaço em branco não conta: seria fácil ativar sem querer com
+   * um clique arrastado, e o modo "editar só o trecho" precisa ser uma escolha, não um acidente.
+   */
+  const lerSelecaoDoEditor = () => {
+    const area = editorRef.current;
+    if (!area) return;
+    const inicio = area.selectionStart;
+    const fim = area.selectionEnd;
+    const texto = area.value.slice(inicio, fim);
+    if (fim - inicio < 2 || !texto.trim()) {
+      setSelecaoDoEditor(prev => (prev === null ? prev : null));
+      return;
+    }
+    setSelecaoDoEditor(prev =>
+      (prev && prev.inicio === inicio && prev.fim === fim) ? prev : { inicio, fim, texto });
+  };
+
+  // Trocar de arquivo ou de projeto invalida qualquer seleção: ela apontava para outro texto.
+  useEffect(() => { setSelecaoDoEditor(null); }, [activeFileId, activeProjectId]);
+
   /** A régua acompanha a rolagem do texto — senão os números ficam parados enquanto o código anda. */
   const sincronizarRegua = (e: React.UIEvent<HTMLTextAreaElement>) => {
     if (reguaRef.current) reguaRef.current.scrollTop = e.currentTarget.scrollTop;
@@ -1266,6 +1325,88 @@ export const CodeWorkspace: React.FC<{
     reader.readAsText(uploaded);
   };
 
+  /**
+   * Lê o arquivo aberto e devolve melhorias concretas PARA AQUELE código.
+   *
+   * Não é chamada a cada tecla de propósito: analisar a cada caractere digitado gastaria cota do
+   * usuário sem parar, para responder sobre um arquivo que ainda está sendo escrito. Roda quando
+   * o resultado interessa — depois que a IA aplica código, ao abrir um arquivo que ainda não foi
+   * lido, e quando a pessoa pede.
+   */
+  const lerSugestoesDoCodigo = async (codigo: string, nomeDoArquivo: string) => {
+    const conteudo = (codigo || '').trim();
+    // Arquivo curto demais não tem o que sugerir; as frases fixas servem melhor aqui.
+    if (conteudo.length < 200) {
+      setSugestoesDoCodigo([]);
+      codigoJaAnalisadoRef.current = '';
+      return;
+    }
+    if (codigoJaAnalisadoRef.current === conteudo) return;
+
+    cancelamentoDasSugestoesRef.current?.abort();
+    const controle = new AbortController();
+    cancelamentoDasSugestoesRef.current = controle;
+    setLendoSugestoes(true);
+
+    try {
+      const resultado = await generateWithRetry({
+        clientApiKey: apiKeys?.gemini || '',
+        model: OSONE_CODE_BEST_MODEL,
+        modeloDeReserva: apiKeys?.geminiModel || '',
+        // Sugestão é resposta curta: os ajustes pesados da geração de código só encareceriam e
+        // atrasariam algo que precisa ser barato para poder acontecer com frequência.
+        unrestricted: false,
+        responseMimeType: 'application/json',
+        systemInstruction: `Você lê código e aponta as MELHORIAS MAIS VALIOSAS daquele arquivo específico.
+
+REGRAS:
+- Cada sugestão precisa citar algo que existe NO CÓDIGO (nome de função, variável, trecho, comportamento observável). Uma sugestão que caberia em qualquer arquivo é uma sugestão inútil.
+- Escreva como uma ORDEM curta e direta para outro programador executar, em português. Máximo 90 caracteres.
+- Priorize nesta ordem: bug real > risco de travamento/performance > acessibilidade > organização > estética.
+- Nada de "adicione comentários" ou "melhore a legibilidade" sem dizer onde e por quê.
+
+Responda APENAS um array JSON de 4 strings. Exemplo do formato:
+["Corrija a colisão que ignora o eixo Z na função checarBatida", "Troque o setInterval do loop por requestAnimationFrame"]`,
+        prompt: `ARQUIVO: ${nomeDoArquivo}\n\nCÓDIGO:\n${conteudo}`
+      }, 1, controle.signal);
+
+      if (controle.signal.aborted) return;
+
+      if (resultado.ok && resultado.text) {
+        let texto = resultado.text.trim();
+        if (texto.startsWith('```')) texto = texto.replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '').trim();
+        try {
+          const lista = JSON.parse(texto);
+          if (Array.isArray(lista)) {
+            const limpas = lista
+              .filter((s: any) => typeof s === 'string' && s.trim().length > 0)
+              .map((s: string) => s.trim())
+              .slice(0, 4);
+            setSugestoesDoCodigo(limpas);
+            codigoJaAnalisadoRef.current = conteudo;
+          }
+        } catch {
+          // Resposta fora do formato: as frases fixas continuam na tela, e nada é anunciado —
+          // sugestão é um extra, e um extra que falha não pode virar erro na cara do usuário.
+        }
+      }
+    } catch (_) {
+      /* idem: falha ao sugerir nunca interrompe o trabalho de quem está programando */
+    } finally {
+      if (cancelamentoDasSugestoesRef.current === controle) cancelamentoDasSugestoesRef.current = null;
+      setLendoSugestoes(false);
+    }
+  };
+
+  // Ao abrir um arquivo, as sugestões do anterior não valem mais para ele.
+  useEffect(() => {
+    setSugestoesDoCodigo([]);
+    codigoJaAnalisadoRef.current = '';
+    cancelamentoDasSugestoesRef.current?.abort();
+  }, [activeFileId, activeProjectId]);
+
+  useEffect(() => () => cancelamentoDasSugestoesRef.current?.abort(), []);
+
   const handleSendAIPrompt = async (promptText?: string) => {
     const textToSend = promptText || promptInput;
     if (!textToSend.trim() || !onGenerateCodeRequest) return;
@@ -1278,7 +1419,14 @@ export const CodeWorkspace: React.FC<{
      * para ele — e quando o primeiro da lista não era o index.html, o conteúdo de um arquivo
      * acabava gravado por cima de outro, apagando o segundo por inteiro.
      */
-    const alvo = activeFile ? { nome: activeFile.name, conteudo: activeFile.content } : undefined;
+    // A seleção é lida AQUI, no instante do envio: é o que a pessoa via marcado ao apertar gerar.
+    const trechoDoPedido = selecaoDoEditor && activeFile
+      && activeFile.content.slice(selecaoDoEditor.inicio, selecaoDoEditor.fim) === selecaoDoEditor.texto
+      ? selecaoDoEditor : undefined;
+
+    const alvo = activeFile
+      ? { nome: activeFile.name, conteudo: activeFile.content, trechoSelecionado: trechoDoPedido }
+      : undefined;
     const idDoAlvo = activeFile?.id;
 
     const imagesToSend = attachedImages.map(img => ({ mimeType: img.mimeType, data: img.data }));
@@ -1328,6 +1476,9 @@ export const CodeWorkspace: React.FC<{
           : `Código aplicado em "${alvo?.nome || 'arquivo'}"${resultado.resumo ? ` — ${resultado.resumo}` : ''}. Dá para desfazer com Ctrl+Z.`,
         type: chegouIncompleto ? 'error' : 'success'
       });
+      // Código novo na tela é exatamente o momento do "e agora?". As sugestões passam a falar
+      // deste código, e não do que estava aqui antes.
+      lerSugestoesDoCodigo(resultado.conteudo, alvo?.nome || 'arquivo');
       return;
     }
 
@@ -2556,9 +2707,14 @@ FORMATO OBRIGATÓRIO (JSON estrito):
                 <textarea
                   ref={editorRef}
                   value={activeFile.content}
-                  onChange={(e) => handleUpdateActiveContent(e.target.value)}
+                  onChange={(e) => { handleUpdateActiveContent(e.target.value); lerSelecaoDoEditor(); }}
                   onScroll={sincronizarRegua}
                   onKeyDown={aoTeclarNoEditor}
+                  // 'select' cobre mouse e teclado; os outros dois pegam os casos em que o
+                  // navegador não dispara 'select' (clique simples que desfaz a marcação).
+                  onSelect={lerSelecaoDoEditor}
+                  onMouseUp={lerSelecaoDoEditor}
+                  onKeyUp={lerSelecaoDoEditor}
                   spellCheck={false}
                   // 'off' desliga a quebra automática de linha: com ela, uma linha longa ocupava
                   // várias alturas na tela e a régua passava a contar outra coisa. Em troca vem a
@@ -2615,27 +2771,101 @@ FORMATO OBRIGATÓRIO (JSON estrito):
         <div className="max-w-5xl mx-auto space-y-2">
           
           {/* AI Quick Prompts */}
+          {/*
+            O PEDIDO MUDOU DE ALVO — E ISSO PRECISA ESTAR NA TELA.
+
+            Um pedido que atinge o arquivo inteiro e um que atinge doze linhas são coisas muito
+            diferentes, e a única pista seria a marcação no editor, que fica acima e sai da vista.
+            Sem este aviso, a pessoa selecionaria um trecho sem querer e veria o resultado mudar de
+            comportamento sem entender por quê.
+          */}
+          {selecaoDoEditor && (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/[0.08] border border-amber-500/25 text-[11px] font-mono text-amber-200">
+              <Code2 size={12} className="shrink-0" />
+              <span className="shrink-0 font-semibold">
+                Editando só o trecho marcado
+              </span>
+              <span className="text-amber-300/60 shrink-0">
+                {selecaoDoEditor.texto.split('\n').length} linha(s), {selecaoDoEditor.fim - selecaoDoEditor.inicio} caracteres — o resto do arquivo não será tocado
+              </span>
+              <button
+                onClick={() => { setSelecaoDoEditor(null); editorRef.current?.setSelectionRange(selecaoDoEditor.inicio, selecaoDoEditor.inicio); }}
+                className="ml-auto shrink-0 px-2 py-0.5 rounded-lg bg-white/5 hover:bg-white/10 text-amber-200/80 hover:text-white transition-colors cursor-pointer"
+                title="Voltar a pedir para o arquivo inteiro"
+              >
+                usar o arquivo inteiro
+              </button>
+            </div>
+          )}
+
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
             <span className="text-[10px] font-mono text-cyan-400/80 uppercase tracking-wider flex items-center gap-1 shrink-0">
               <Sparkles size={11} /> OSONE CODE IA:
             </span>
 
-            {[
-              { label: '🐝 Criar Jogo com Enxame Swarm', action: () => setIsSwarmModalOpen(true) },
-              { label: '⚡ Gerar App HTML5 + Tailwind', prompt: 'Crie uma aplicação web completa, interativa e linda em um único arquivo HTML usando Tailwind CSS, Lucide Icons e JavaScript.' },
-              { label: '🛠️ Refatorar & Otimizar', prompt: 'Refatore o código do arquivo atual limpando a estrutura, otimizando performance e melhorando o design visual.' },
-              { label: '🔍 Corrigir BUGS', prompt: 'Examine o código atual, encontre possíveis falhas, erros de lógica ou falta de parâmetros e corrija tudo.' },
-              { label: '🎨 Adicionar Animações UI', prompt: 'Adicione transições suaves, animações de entrada e efeitos visuais modernos no código.' }
-            ].map((item, idx) => (
-              <button 
-                key={idx}
-                onClick={() => item.action ? item.action() : handleSendAIPrompt(item.prompt)}
-                disabled={isGenerating}
-                className="px-2.5 py-1 rounded-lg bg-white/[0.03] hover:bg-cyan-500/10 border border-white/5 hover:border-cyan-500/20 text-[11px] font-mono text-zinc-300 hover:text-cyan-300 shrink-0 transition-all disabled:opacity-50"
-              >
-                {item.label}
-              </button>
-            ))}
+            {/*
+              QUANDO HÁ CÓDIGO, AS SUGESTÕES FALAM DELE.
+
+              As frases fixas ficam para o arquivo em branco — ali elas são o que serve, porque
+              não há o que ler e o que a pessoa quer é começar. A partir do momento em que existe
+              código, quem manda são as sugestões lidas dele: elas citam a função pelo nome e já
+              trazem o diagnóstico junto, em vez de mandar "corrigir bugs" e torcer.
+            */}
+            {sugestoesDoCodigo.length > 0 ? (
+              <>
+                {sugestoesDoCodigo.map((sugestao, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => handleSendAIPrompt(sugestao)}
+                    disabled={isGenerating}
+                    title={`Pedir ao OSONE CODE: ${sugestao}`}
+                    className="px-2.5 py-1 rounded-lg bg-cyan-500/[0.07] hover:bg-cyan-500/15 border border-cyan-500/20 hover:border-cyan-500/40 text-[11px] font-mono text-cyan-200 hover:text-cyan-100 shrink-0 transition-all disabled:opacity-50 max-w-[340px] truncate cursor-pointer"
+                  >
+                    {sugestao}
+                  </button>
+                ))}
+                <button
+                  onClick={() => { codigoJaAnalisadoRef.current = ''; lerSugestoesDoCodigo(activeFile?.content || '', activeFile?.name || 'arquivo'); }}
+                  disabled={lendoSugestoes || isGenerating}
+                  title="Reler o arquivo e sugerir de novo"
+                  className="p-1.5 rounded-lg bg-white/[0.03] hover:bg-white/[0.07] border border-white/5 text-zinc-400 hover:text-cyan-300 shrink-0 transition-all disabled:opacity-40 cursor-pointer"
+                >
+                  <RefreshCw size={11} className={lendoSugestoes ? 'animate-spin' : ''} />
+                </button>
+              </>
+            ) : (
+              <>
+                {[
+                  { label: '🐝 Criar Jogo com Enxame Swarm', action: () => setIsSwarmModalOpen(true) },
+                  { label: '⚡ Gerar App HTML5 + Tailwind', prompt: 'Crie uma aplicação web completa, interativa e linda em um único arquivo HTML usando Tailwind CSS, Lucide Icons e JavaScript.' },
+                  { label: '🛠️ Refatorar & Otimizar', prompt: 'Refatore o código do arquivo atual limpando a estrutura, otimizando performance e melhorando o design visual.' },
+                  { label: '🔍 Corrigir BUGS', prompt: 'Examine o código atual, encontre possíveis falhas, erros de lógica ou falta de parâmetros e corrija tudo.' },
+                  { label: '🎨 Adicionar Animações UI', prompt: 'Adicione transições suaves, animações de entrada e efeitos visuais modernos no código.' }
+                ].map((item, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => item.action ? item.action() : handleSendAIPrompt(item.prompt)}
+                    disabled={isGenerating}
+                    className="px-2.5 py-1 rounded-lg bg-white/[0.03] hover:bg-cyan-500/10 border border-white/5 hover:border-cyan-500/20 text-[11px] font-mono text-zinc-300 hover:text-cyan-300 shrink-0 transition-all disabled:opacity-50"
+                  >
+                    {item.label}
+                  </button>
+                ))}
+                {/* Com código no arquivo, dá para trocar as frases fixas por sugestões de verdade. */}
+                {(activeFile?.content || '').trim().length >= 200 && (
+                  <button
+                    onClick={() => lerSugestoesDoCodigo(activeFile?.content || '', activeFile?.name || 'arquivo')}
+                    disabled={lendoSugestoes || isGenerating}
+                    className="px-2.5 py-1 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/25 text-[11px] font-mono text-cyan-300 shrink-0 transition-all disabled:opacity-40 flex items-center gap-1.5 cursor-pointer"
+                    title="Ler este arquivo e sugerir melhorias específicas dele"
+                  >
+                    {lendoSugestoes
+                      ? <><Loader2 size={11} className="animate-spin" /> Lendo o código…</>
+                      : <><Sparkles size={11} /> Sugerir a partir deste código</>}
+                  </button>
+                )}
+              </>
+            )}
           </div>
 
           {/* Miniaturas das imagens de referência anexadas */}
@@ -2702,7 +2932,9 @@ FORMATO OBRIGATÓRIO (JSON estrito):
               value={promptInput}
               onChange={(e) => setPromptInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSendAIPrompt()}
-              placeholder="Descreva a alteração ou o app que você quer criar neste arquivo de código..."
+              placeholder={selecaoDoEditor
+                ? `Descreva o que fazer com as ${selecaoDoEditor.texto.split('\n').length} linha(s) marcadas...`
+                : "Descreva a alteração ou o app que você quer criar neste arquivo de código..."}
               disabled={isGenerating}
               className="flex-1 bg-transparent px-3 py-1.5 text-xs text-white placeholder-zinc-500 outline-none font-mono"
             />
