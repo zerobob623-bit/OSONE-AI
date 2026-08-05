@@ -32,15 +32,19 @@ const OSONE_CODE_BEST_MODEL = "gemini-3.6-flash";
  */
 async function generateWithRetry(
   body: Record<string, unknown>,
-  retries: number = 2
-): Promise<{ ok: boolean; text: string; error?: string; truncated?: boolean; blocked?: boolean }> {
+  retries: number = 2,
+  /** Cancela a chamada pela metade quando o usuário desiste. Ver 'cancelado' no retorno. */
+  sinal?: AbortSignal
+): Promise<{ ok: boolean; text: string; error?: string; truncated?: boolean; blocked?: boolean; cancelado?: boolean }> {
   let lastError = '';
   for (let attempt = 0; attempt <= retries; attempt++) {
+    if (sinal?.aborted) return { ok: false, text: '', cancelado: true };
     try {
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ unrestricted: true, ...body })
+        body: JSON.stringify({ unrestricted: true, ...body }),
+        signal: sinal
       });
       const data = await response.json().catch(() => ({} as any));
       if (response.ok) {
@@ -48,6 +52,9 @@ async function generateWithRetry(
       }
       lastError = data?.error || `HTTP ${response.status}`;
     } catch (e: any) {
+      // Desistir não é falhar: sem esta saída, o cancelamento viraria mais duas tentativas e um
+      // erro vermelho na tela de quem só apertou "parar".
+      if (e?.name === 'AbortError' || sinal?.aborted) return { ok: false, text: '', cancelado: true };
       lastError = e?.message || String(e);
     }
     if (attempt < retries) {
@@ -488,6 +495,36 @@ export const CodeWorkspace: React.FC<{
   const [escritaAoVivo, setEscritaAoVivo] = useState<string | null>(null);
   const painelAoVivoRef = useRef<HTMLPreElement>(null);
   const cancelamentoRef = useRef<AbortController | null>(null);
+
+  /**
+   * ====== PARAR O HUNTER E O ENXAME NO MEIO ======
+   *
+   * Os dois só sabiam ir até o fim. Fechar o modal escondia a tela, e a execução continuava
+   * correndo por baixo — o Enxame seguia consumindo cota por quatro iterações e GRAVAVA no
+   * repositório depois, com o painel já fora da vista. A pessoa via o arquivo mudar sozinho
+   * minutos depois de ter desistido, sem relação visível com nada que ela tivesse feito.
+   *
+   * Agora fechar é parar: o controlador aborta as chamadas em curso e o laço confere o sinal
+   * entre as etapas, antes de gravar qualquer coisa.
+   */
+  const cancelamentoDoHunterRef = useRef<AbortController | null>(null);
+  const cancelamentoDoEnxameRef = useRef<AbortController | null>(null);
+
+  /** Aborta o que estiver correndo e fecha o painel. Usado pelo X e pelo botão de parar. */
+  const pararEFechar = (
+    referencia: React.MutableRefObject<AbortController | null>,
+    fechar: (v: boolean) => void
+  ) => {
+    referencia.current?.abort();
+    referencia.current = null;
+    fechar(false);
+  };
+
+  // Sair da aba com um agente rodando também para o agente.
+  useEffect(() => () => {
+    cancelamentoDoHunterRef.current?.abort();
+    cancelamentoDoEnxameRef.current?.abort();
+  }, []);
 
   // O painel acompanha a escrita: sem isto o texto cresceria fora da vista e a pessoa veria
   // sempre o começo do arquivo, que é a parte que não está mudando.
@@ -1354,6 +1391,10 @@ export const CodeWorkspace: React.FC<{
     setHunterReport("O Hunter está caçando falhas, lacunas e itens ausentes no código...");
     setHunterDoubt(null);
 
+    const controle = new AbortController();
+    cancelamentoDoHunterRef.current?.abort();
+    cancelamentoDoHunterRef.current = controle;
+
     try {
       setHunterProgress(50);
       const effectiveApiKey = apiKeys?.gemini || '';
@@ -1404,10 +1445,13 @@ ${currentCode}`;
           prompt: userContentPayload,
           systemInstruction,
           unrestricted: true
-        })
+        }),
+        signal: controle.signal
       });
 
       const data = await response.json().catch(() => ({} as any));
+      // Desistiu enquanto a resposta vinha: nada é gravado no arquivo.
+      if (controle.signal.aborted) return;
       if (!response.ok) {
         throw new Error(data?.error || "Erro na comunicação com a API do Hunter.");
       }
@@ -1499,10 +1543,19 @@ ${currentCode}`;
         }
       }
     } catch (err: any) {
+      // Parar não é erro: quem apertou "parar" não precisa de um relatório vermelho de falha.
+      if (err?.name === 'AbortError' || controle.signal.aborted) {
+        setHunterStatus('idle');
+        setHunterProgress(0);
+        setHunterReport(null);
+        return;
+      }
       console.error("Erro no agente Hunter:", err);
       setHunterStatus('error');
       setHunterProgress(100);
       setHunterReport(`Erro na caçada: ${err.message || String(err)}`);
+    } finally {
+      if (cancelamentoDoHunterRef.current === controle) cancelamentoDoHunterRef.current = null;
     }
   };
 
@@ -1526,6 +1579,12 @@ ${currentCode}`;
 
     const effectiveApiKey = apiKeys?.gemini || '';
     const currentModel = OSONE_CODE_BEST_MODEL;
+
+    const controle = new AbortController();
+    cancelamentoDoEnxameRef.current?.abort();
+    cancelamentoDoEnxameRef.current = controle;
+    /** Conferido antes de cada etapa e antes de QUALQUER gravação no repositório. */
+    const desistiu = () => controle.signal.aborted;
 
     try {
       // ==========================================
@@ -1553,7 +1612,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
         prompt: `CONCEITO SOLICITADO PELO USUÁRIO:\n"${swarmPrompt}"`,
         systemInstruction: pmSystemInstruction,
         responseMimeType: "application/json"
-      });
+      }, 2, controle.signal);
 
       let pmParsed: any = pmFallback;
       if (pmResult.ok) {
@@ -1561,6 +1620,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
       } else {
         addSwarmLog('📋 Agente de Produto', `⚠️ Falha ao contatar o Agente de Produto (${pmResult.error}). Usando GDD simplificado para não travar o Enxame.`, 'warn');
       }
+      if (desistiu()) return;
       setSwarmPMArtifact(pmParsed);
       setSwarmProgress(30);
       setSwarmProgressText('30% - GDD concluído! Iniciando Arquitetura do Sistema...');
@@ -1591,7 +1651,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
         prompt: `GDD DO PRODUCT MANAGER:\n${JSON.stringify(pmParsed, null, 2)}`,
         systemInstruction: architectSystemInstruction,
         responseMimeType: "application/json"
-      });
+      }, 2, controle.signal);
 
       let archParsed: any = archFallback;
       if (archResult.ok) {
@@ -1599,6 +1659,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
       } else {
         addSwarmLog('🏗️ Agente de Arquitetura', `⚠️ Falha ao contatar o Agente de Arquitetura (${archResult.error}). Usando arquitetura padrão para não travar o Enxame.`, 'warn');
       }
+      if (desistiu()) return;
       setSwarmArchitectArtifact(archParsed);
       setSwarmProgress(45);
       setSwarmProgressText('45% - Arquitetura validada! Iniciando Engenharia...');
@@ -1658,9 +1719,12 @@ O código DEVE conter:
           model: currentModel,
           prompt: coderPrompt,
           systemInstruction: coderSystemInstruction
-        });
+        }, 2, controle.signal);
+
+        if (desistiu()) break;
 
         if (!coderResult.ok) {
+          if (coderResult.cancelado) break;
           addSwarmLog('💻 Agente de Engenharia', `⚠️ Falha ao contatar o Agente de Engenharia (${coderResult.error}) na Iteração ${currentIter}.`, 'error');
           if (coderEverSucceeded) {
             addSwarmLog('💻 Agente de Engenharia', 'Mantendo a última versão do código já salva no repositório e encerrando o Enxame com o que foi produzido até aqui.', 'warn');
@@ -1779,9 +1843,12 @@ FORMATO OBRIGATÓRIO (JSON estrito):
           prompt: `CÓDIGO GERADO PELO ENGENHEIRO:\n\n${lastCode}`,
           systemInstruction: qaSystemInstruction,
           responseMimeType: "application/json"
-        });
+        }, 2, controle.signal);
+
+        if (desistiu()) break;
 
         if (!qaResult.ok) {
+          if (qaResult.cancelado) break;
           addSwarmLog('🧪 Agente de QA (Harness Evaluator)', `⚠️ Falha ao contatar o Agente de QA (${qaResult.error}). Aceitando a última versão do código já salva no repositório.`, 'warn');
           isApproved = true;
           break;
@@ -1817,6 +1884,20 @@ FORMATO OBRIGATÓRIO (JSON estrito):
       // STAGE 5: ASSEMBLY & REPOSITORY SYNCHRONIZATION
       // ==========================================
       setSwarmCurrentStep('assembly');
+
+      /**
+       * Desistiu: o Enxame não anuncia nada e não abre o Preview.
+       *
+       * O progresso já gravado nas iterações anteriores CONTINUA no repositório de propósito —
+       * é a persistência incremental, e apagá-la seria destruir trabalho que já existia. O que
+       * não pode acontecer é a tela comemorar um projeto que a pessoa mandou parar.
+       */
+      if (desistiu()) {
+        setSwarmStatus('idle');
+        setSwarmProgress(0);
+        setSwarmProgressText('');
+        return;
+      }
 
       if (!coderEverSucceeded || !lastCode.trim()) {
         // Nenhuma versão de código foi produzida com sucesso em nenhuma iteração: reporta com honestidade.
@@ -1877,10 +1958,18 @@ FORMATO OBRIGATÓRIO (JSON estrito):
       }
 
     } catch (err: any) {
+      if (err?.name === 'AbortError' || controle.signal.aborted) {
+        setSwarmStatus('idle');
+        setSwarmProgress(0);
+        setSwarmProgressText('');
+        return;
+      }
       console.error("Erro na execução do Enxame Swarm:", err);
       setSwarmStatus('error');
       setSwarmProgressText('Erro na execução do Enxame');
       addSwarmLog('⚠️ Sistema Swarm', `Erro na execução do Enxame: ${err.message || String(err)}`, 'error');
+    } finally {
+      if (cancelamentoDoEnxameRef.current === controle) cancelamentoDoEnxameRef.current = null;
     }
   };
 
@@ -2655,12 +2744,26 @@ FORMATO OBRIGATÓRIO (JSON estrito):
                   </div>
                 </div>
 
-                <button 
-                  onClick={() => setIsSwarmModalOpen(false)}
-                  className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-colors"
-                >
-                  <X size={18} />
-                </button>
+                {/* Fechar com o Enxame rodando PARA o Enxame. Antes ele seguia por baixo,
+                    consumindo cota e gravando no repositório com o painel fora da vista. */}
+                <div className="flex items-center gap-2 shrink-0">
+                  {swarmStatus === 'running' && (
+                    <button
+                      onClick={() => cancelamentoDoEnxameRef.current?.abort()}
+                      className="px-3 py-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-300 text-xs font-mono font-bold uppercase tracking-wider transition-colors cursor-pointer"
+                      title="Parar o Enxame agora — o que já foi salvo permanece"
+                    >
+                      Parar
+                    </button>
+                  )}
+                  <button
+                    onClick={() => pararEFechar(cancelamentoDoEnxameRef, setIsSwarmModalOpen)}
+                    className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-colors"
+                    title={swarmStatus === 'running' ? 'Parar o Enxame e fechar' : 'Fechar'}
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
               </div>
 
               {/* Main Content Body */}
@@ -2927,12 +3030,24 @@ FORMATO OBRIGATÓRIO (JSON estrito):
                   </div>
                 </div>
 
-                <button 
-                  onClick={() => setIsHunterModalOpen(false)}
-                  className="p-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-colors"
-                >
-                  <X size={16} />
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  {hunterStatus === 'analyzing' && (
+                    <button
+                      onClick={() => cancelamentoDoHunterRef.current?.abort()}
+                      className="px-3 py-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-300 text-xs font-mono font-bold uppercase tracking-wider transition-colors cursor-pointer"
+                      title="Parar a auditoria agora — o arquivo não é alterado"
+                    >
+                      Parar
+                    </button>
+                  )}
+                  <button
+                    onClick={() => pararEFechar(cancelamentoDoHunterRef, setIsHunterModalOpen)}
+                    className="p-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-colors"
+                    title={hunterStatus === 'analyzing' ? 'Parar a auditoria e fechar' : 'Fechar'}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
               </div>
 
               {/* Textbox Input */}
