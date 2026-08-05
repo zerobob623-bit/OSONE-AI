@@ -81,6 +81,36 @@ export interface OSONEProject {
   updatedAt: number;
 }
 
+/**
+ * A linguagem que vem do nome do arquivo.
+ *
+ * Estava escrito solto dentro da criação de arquivo, então quem renomeava um script.js para
+ * styles.css ficava com um arquivo .css marcado como javascript: o realce pintava com as regras
+ * erradas e o preview tratava folha de estilo como script. Num lugar só, renomear e criar passam
+ * pela mesma regra.
+ */
+export function linguagemPelaExtensao(nomeDoArquivo: string): string {
+  const ext = (nomeDoArquivo.split('.').pop() || '').toLowerCase();
+  if (ext === 'html' || ext === 'htm') return 'html';
+  if (ext === 'css') return 'css';
+  if (ext === 'py') return 'python';
+  if (ext === 'json') return 'json';
+  if (ext === 'md') return 'markdown';
+  if (ext === 'sql') return 'sql';
+  return 'javascript';
+}
+
+/**
+ * Uma cópia nova dos arquivos padrão, a cada chamada.
+ *
+ * DEFAULT_FILES era entregue por REFERÊNCIA aos projetos criados no preenchimento da lista: cinco
+ * projetos "diferentes" apontando para o mesmo array e para os mesmos objetos de arquivo. Bastava
+ * uma alteração que mutasse em vez de copiar para o conteúdo aparecer nos outros projetos.
+ */
+function arquivosPadraoNovos(): CodeRepositoryFile[] {
+  return JSON.parse(JSON.stringify(DEFAULT_FILES));
+}
+
 const DEFAULT_FILES: CodeRepositoryFile[] = [
   {
     id: 'main-app',
@@ -340,13 +370,17 @@ export const CodeWorkspace: React.FC<{
         if (Array.isArray(parsed) && parsed.length > 0) {
           const merged = [...parsed];
           for (let i = merged.length; i < 5; i++) {
-            merged.push(DEFAULT_PROJECTS[i] || {
-              id: `proj-${i+1}`,
-              name: `Projeto ${i+1}`,
-              files: DEFAULT_FILES,
-              activeFileId: 'main-app',
-              updatedAt: Date.now()
-            });
+            // Cópia nova por projeto: entregar o mesmo array a todos faria a edição de um
+            // aparecer nos outros (ver arquivosPadraoNovos).
+            merged.push(DEFAULT_PROJECTS[i]
+              ? { ...DEFAULT_PROJECTS[i], files: JSON.parse(JSON.stringify(DEFAULT_PROJECTS[i].files)) }
+              : {
+                  id: `proj-${i+1}`,
+                  name: `Projeto ${i+1}`,
+                  files: arquivosPadraoNovos(),
+                  activeFileId: 'main-app',
+                  updatedAt: Date.now()
+                });
           }
           return merged.slice(0, 5);
         }
@@ -386,20 +420,37 @@ export const CodeWorkspace: React.FC<{
   const [editingProjectNameId, setEditingProjectNameId] = useState<string | null>(null);
   const [editingProjectNameText, setEditingProjectNameText] = useState<string>('');
 
-  // REPOSITORY FILES STATE
+  /**
+   * OS ARQUIVOS SAEM DO PROJETO ATIVO — E DE MAIS NENHUM LUGAR.
+   *
+   * Aqui morava um defeito capaz de destruir o trabalho de um projeto inteiro, em silêncio. Esta
+   * lista era carregada da chave ANTIGA ('osone_code_repository_files'), enquanto o projeto ativo
+   * vinha de outra chave ('osone_code_active_project_id'). São duas fontes independentes para uma
+   * informação só, e nada garantia que concordassem: bastava outra janela do OSONE gravar por
+   * cima, ou uma gravação parcial, para o editor abrir os arquivos do Projeto 1 com a barra
+   * marcando o Projeto 3.
+   *
+   * E aí vinha a parte cara. O auto-save (logo abaixo) grava 'files' DENTRO do projeto ativo, a
+   * cada mudança. Com as duas fontes discordando, o primeiro caractere digitado gravava os
+   * arquivos do Projeto 1 por cima do Projeto 3 — e o conteúdo do 3 deixava de existir, sem erro,
+   * sem aviso, e sem passar pelo histórico que o Ctrl+Z alcança.
+   *
+   * Agora existe UMA fonte: o projeto ativo. A chave antiga só é lida na migração de quem vem de
+   * uma versão sem projetos (ver o carregamento de 'projects' acima, que já a incorpora no
+   * Projeto 1), nunca como origem paralela da lista.
+   */
   const [files, setFiles] = useState<CodeRepositoryFile[]>(() => {
-    try {
-      const saved = localStorage.getItem('osone_code_repository_files');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch (e) {}
-    const activeProj = DEFAULT_PROJECTS.find(p => p.id === activeProjectId) || DEFAULT_PROJECTS[0];
-    return activeProj.files;
+    const projetoAtivo = projects.find(p => p.id === activeProjectId) || projects[0];
+    const doProjeto = projetoAtivo?.files;
+    if (Array.isArray(doProjeto) && doProjeto.length > 0) return doProjeto;
+    return arquivosPadraoNovos();
   });
 
   const [activeFileId, setActiveFileId] = useState<string>(() => {
+    const projetoAtivo = projects.find(p => p.id === activeProjectId) || projects[0];
+    // O arquivo que estava aberto naquele projeto volta a abrir — desde que ainda exista.
+    const salvo = projetoAtivo?.activeFileId;
+    if (salvo && files.some(f => f.id === salvo)) return salvo;
     return files[0]?.id || 'main-app';
   });
 
@@ -529,6 +580,9 @@ export const CodeWorkspace: React.FC<{
     return () => window.removeEventListener('osone_repository_updated', handleRepoUpdated);
   }, []);
 
+  // Trocar de arquivo fecha a janela de agrupamento da digitação (ver handleUpdateActiveContent).
+  useEffect(() => { setLastTypedHistoryTime(0); }, [activeFileId]);
+
   // Auto-save active project repository files to localStorage
   useEffect(() => {
     try {
@@ -594,18 +648,34 @@ export const CodeWorkspace: React.FC<{
   };
 
   // UNDO/REDO HISTORY HELPERS
+  /**
+   * O topo do histórico, fora do estado do React.
+   *
+   * A decisão de descartar o refazer precisa ser tomada AQUI, de forma síncrona. Tomá-la a partir
+   * do que o atualizador do setState devolve não serve: ele pode ser executado mais de uma vez
+   * pelo React, e o que for anotado lá dentro não é confiável.
+   */
+  const topoDoHistoricoRef = useRef<string>('');
+
   const pushHistory = (currentFiles: CodeRepositoryFile[]) => {
+    const textoDoSnapshot = JSON.stringify(currentFiles);
+    // Nada mudou desde o último ponto guardado: não há o que empilhar.
+    if (topoDoHistoricoRef.current === textoDoSnapshot) return;
+    topoDoHistoricoRef.current = textoDoSnapshot;
+
+    const snapshot = JSON.parse(textoDoSnapshot);
     setHistoryStack(prev => {
-      const snapshot = JSON.parse(JSON.stringify(currentFiles));
-      const last = prev[prev.length - 1];
-      if (last && JSON.stringify(last) === JSON.stringify(snapshot)) {
-        return prev;
-      }
       const next = [...prev, snapshot];
       if (next.length > 30) return next.slice(next.length - 30);
       return next;
     });
-    // Uma mudança nova invalida qualquer "futuro" que só existia porque o usuário desfez algo.
+
+    /**
+     * Uma mudança nova invalida qualquer "futuro" que só existia porque o usuário desfez algo —
+     * mas só quando ela é MESMO uma mudança. O descarte era incondicional, então uma passada do
+     * Enxame ou do Hunter que não alterasse um caractere ainda assim apagava o refazer: a pessoa
+     * desfazia, mandava auditar, o Hunter não mudava nada, e o Ctrl+Y deixava de existir.
+     */
     setRedoStack([]);
   };
 
@@ -617,6 +687,10 @@ export const CodeWorkspace: React.FC<{
 
     const previousFiles = historyStack[historyStack.length - 1];
     setHistoryStack(prev => prev.slice(0, -1));
+    // O topo mudou por fora do pushHistory: zerar a marca faz a próxima alteração ser sempre
+    // empilhada. Mantê-la faria o ponto restaurado ser confundido com "nada mudou", e a edição
+    // seguinte deixaria de ter para onde voltar.
+    topoDoHistoricoRef.current = '';
 
     // Guarda o estado atual para que essa desfeita possa ser refeita depois.
     setRedoStack(prev => {
@@ -660,6 +734,7 @@ export const CodeWorkspace: React.FC<{
 
     const nextFiles = redoStack[redoStack.length - 1];
     setRedoStack(prev => prev.slice(0, -1));
+    topoDoHistoricoRef.current = '';
 
     // Guarda o estado atual de volta no histórico de desfazer, para poder desfazer o refazer.
     setHistoryStack(prev => {
@@ -695,6 +770,21 @@ export const CodeWorkspace: React.FC<{
     }
   };
 
+  /**
+   * O atalho global chama SEMPRE a versão mais recente de desfazer/refazer.
+   *
+   * O ouvinte era reinscrito por uma lista de dependências que incluía 'files'. Como 'files' muda
+   * a cada caractere digitado, o ouvinte de teclado da janela era removido e recolocado a cada
+   * tecla — trabalho à toa no caminho mais quente do editor. Pior: 'activeFileId' NÃO estava na
+   * lista, então o desfazer decidia com um arquivo aberto vencido e podia pular para o arquivo
+   * errado depois de restaurar.
+   *
+   * Guardar as funções numa referência resolve os dois de uma vez: o ouvinte é inscrito uma única
+   * vez, e mesmo assim sempre executa a versão da renderização atual, com o estado atual.
+   */
+  const acoesDeHistoricoRef = useRef({ desfazer: () => {}, refazer: () => {} });
+  acoesDeHistoricoRef.current = { desfazer: handleUndoChange, refazer: handleRedoChange };
+
   // GLOBAL CTRL+Z / CMD+Z (DESFAZER) E CTRL+SHIFT+Z / CMD+SHIFT+Z / CTRL+Y (REFAZER)
   useEffect(() => {
     const handleGlobalUndoRedoKey = (e: KeyboardEvent) => {
@@ -721,15 +811,17 @@ export const CodeWorkspace: React.FC<{
         }
         e.preventDefault();
         if (isRedo) {
-          handleRedoChange();
+          acoesDeHistoricoRef.current.refazer();
         } else {
-          handleUndoChange();
+          acoesDeHistoricoRef.current.desfazer();
         }
       }
     };
     window.addEventListener('keydown', handleGlobalUndoRedoKey);
     return () => window.removeEventListener('keydown', handleGlobalUndoRedoKey);
-  }, [historyStack, redoStack, files, activeProjectId, buscaAberta]);
+    // Só 'buscaAberta' entra: é a única coisa lida direto aqui dentro. Desfazer e refazer chegam
+    // pela referência acima, sempre atualizados, sem reinscrever o ouvinte a cada tecla.
+  }, [buscaAberta]);
 
   // SWITCH ACTIVE PROJECT (1 OF 5)
   const handleSwitchProject = (targetProjectId: string) => {
@@ -763,6 +855,10 @@ export const CodeWorkspace: React.FC<{
      */
     setHistoryStack([]);
     setRedoStack([]);
+    topoDoHistoricoRef.current = '';
+    // O relógio da digitação também zera: sem isto, a primeira tecla no projeto novo, se vier
+    // dentro dos 2 segundos da última tecla do projeto anterior, não guardava ponto de retorno.
+    setLastTypedHistoryTime(0);
 
     try {
       localStorage.setItem('osone_code_active_project_id', targetProject.id);
@@ -807,6 +903,21 @@ export const CodeWorkspace: React.FC<{
    * conteúdo caía no primeiro arquivo da lista, fosse ele qual fosse. Agora um nome que não existe
    * vira arquivo novo, e nada é sobrescrito sem ter sido escolhido.
    */
+  /**
+   * Qual arquivo o Enxame considera "a página do projeto".
+   *
+   * Ordem: o marcado como principal, depois um index.html, depois o primeiro HTML que existir, e
+   * só então o nome 'index.html' — que nesse ponto vira arquivo novo, porque o projeto realmente
+   * não tem página nenhuma.
+   */
+  const arquivoPrincipalId = (): string => {
+    const atuais = filesRef.current;
+    const principal = atuais.find(f => f.isMain)
+      || atuais.find(f => f.name.toLowerCase() === 'index.html')
+      || atuais.find(f => /\.html?$/i.test(f.name));
+    return principal?.id || 'index.html';
+  };
+
   const applyCodeToRepository = (newContent: string, targetFileIdOrName?: string) => {
     const atuais = filesRef.current;
     pushHistory(atuais);
@@ -894,7 +1005,26 @@ export const CodeWorkspace: React.FC<{
     const medir = () => setLarguraDaRegua(reguaRef.current?.offsetWidth || 0);
     medir();
     window.addEventListener('resize', medir);
-    return () => window.removeEventListener('resize', medir);
+
+    /**
+     * Medir só na troca de arquivo e no 'resize' da janela deixava frestas visíveis.
+     *
+     * A régua muda de largura sem que a janela mude de tamanho: quando o arquivo passa de 99 para
+     * 100 linhas, quando a barra de arquivos ANIMA de fechada para aberta (a largura varia durante
+     * toda a animação, e o 'resize' não dispara em nenhum quadro dela), e quando o navegador muda
+     * de zoom ou de fonte. Em todos esses momentos o realce ficava deslocado do texto por alguns
+     * quadros — bem no lugar onde o desalinhamento é mais visível.
+     *
+     * O observador acompanha o elemento em si, então pega qualquer um desses casos, inclusive os
+     * quadros intermediários da animação.
+     */
+    const observador = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(medir) : null;
+    if (observador && reguaRef.current) observador.observe(reguaRef.current);
+
+    return () => {
+      window.removeEventListener('resize', medir);
+      observador?.disconnect();
+    };
   }, [totalDeLinhas, activeFileId, viewLayout, showRepoSidebar]);
 
   /** A régua acompanha a rolagem do texto — senão os números ficam parados enquanto o código anda. */
@@ -960,6 +1090,17 @@ export const CodeWorkspace: React.FC<{
 
   const handleUpdateActiveContent = (newContent: string) => {
     const now = Date.now();
+    /**
+     * Um ponto de retorno a cada 2 segundos de digitação, e não a cada tecla.
+     *
+     * É de propósito: um ponto por caractere encheria os 30 guardados com meia frase, e o Ctrl+Z
+     * andaria letra por letra. A janela agrupa a digitação corrida num passo só, como fazem os
+     * editores.
+     *
+     * O relógio zera ao trocar de ARQUIVO (efeito abaixo) e de projeto: sem isso, a primeira
+     * edição no arquivo recém-aberto caía dentro da janela do arquivo anterior e entrava no mesmo
+     * passo — um Ctrl+Z desfazia mudanças em dois arquivos de uma vez.
+     */
     if (now - lastTypedHistoryTime > 2000) {
       pushHistory(files);
       setLastTypedHistoryTime(now);
@@ -1009,25 +1150,45 @@ export const CodeWorkspace: React.FC<{
     }
     if (window.confirm(`Deseja mesmo apagar o arquivo "${name}" do repositório?`)) {
       pushHistory(files);
-      setFiles(prev => prev.filter(f => f.id !== id));
-      if (activeFileId === id) {
-        const remaining = files.filter(f => f.id !== id);
-        setActiveFileId(remaining[0].id);
-      }
+      // O próximo arquivo a abrir sai da lista JÁ FILTRADA, dentro do próprio setState. Escolher
+      // pela lista do closure ('files') dava o vizinho segundo uma lista possivelmente vencida —
+      // e o editor abria um arquivo que já não existia mais.
+      setFiles(prev => {
+        const restantes = prev.filter(f => f.id !== id);
+        if (activeFileId === id && restantes.length > 0) {
+          setActiveFileId(restantes[0].id);
+        }
+        return restantes;
+      });
     }
   };
 
   const handleRenameFileSubmit = (id: string) => {
-    if (!editingFileNameText.trim()) return;
-    setFiles(prev => prev.map(f => f.id === id ? { ...f, name: editingFileNameText.trim(), updatedAt: Date.now() } : f));
+    const novoNome = editingFileNameText.trim();
+    if (!novoNome) return;
+    // Renomear é uma alteração como outra qualquer: entra no histórico, e o Ctrl+Z desfaz.
+    pushHistory(files);
+    setFiles(prev => prev.map(f => f.id === id
+      // A linguagem acompanha o nome: sem isto, um script.js renomeado para styles.css continuava
+      // marcado como javascript, e o realce pintava CSS com as regras de JS.
+      ? { ...f, name: novoNome, language: linguagemPelaExtensao(novoNome), updatedAt: Date.now() }
+      : f));
     setEditingFileNameId(null);
   };
 
   const handleCopyCode = () => {
     if (!activeFile) return;
-    navigator.clipboard.writeText(activeFile.content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    // A área de transferência falha em contexto não seguro e quando a permissão é negada. Sem
+    // tratar, o botão simplesmente não reagia e a pessoa ficava clicando achando que copiou.
+    navigator.clipboard.writeText(activeFile.content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {
+      setNotificationBanner({
+        message: 'Não foi possível copiar para a área de transferência. Selecione o texto no editor e use Ctrl+C.',
+        type: 'error'
+      });
+    });
   };
 
   const handleDownloadFile = () => {
@@ -1049,10 +1210,15 @@ export const CodeWorkspace: React.FC<{
     reader.onload = (evt) => {
       const text = evt.target?.result as string;
       if (text !== undefined) {
+        // Importar entra no histórico como qualquer outra alteração — sem isto, o Ctrl+Z logo
+        // depois de importar desfazia a edição ANTERIOR à importação, deixando o arquivo
+        // importado na lista e revertendo algo que a pessoa não pediu para reverter.
+        pushHistory(filesRef.current);
         const newFile: CodeRepositoryFile = {
           id: 'file-' + Date.now(),
           name: uploaded.name,
-          language: uploaded.name.endsWith('.html') ? 'html' : uploaded.name.endsWith('.css') ? 'css' : 'javascript',
+          // Mesma regra da criação e da renomeação: .py, .json e .md deixavam de ser reconhecidos.
+          language: linguagemPelaExtensao(uploaded.name),
           content: text,
           updatedAt: Date.now()
         };
@@ -1543,7 +1709,10 @@ O código DEVE conter:
 
         // Persistência incremental: salva o progresso no repositório a cada iteração,
         // para que o usuário NUNCA fique sem resultado mesmo se uma etapa seguinte falhar.
-        applyCodeToRepository(lastCode, 'index.html');
+        // O destino é o arquivo PRINCIPAL do projeto, não o nome literal 'index.html': num projeto
+        // cuja página principal se chama outra coisa, o nome fixo criava um arquivo à parte e o
+        // Enxame "terminava" sem ter tocado no arquivo que a pessoa abre.
+        applyCodeToRepository(lastCode, arquivoPrincipalId());
 
         if (coderResult.blocked) {
           addSwarmLog('💻 Agente de Engenharia', `⚠️ O Gemini bloqueou a resposta pelo filtro de segurança nesta iteração. O QA vai avaliar o que sobrou e pode reprovar para uma nova tentativa com um pedido reformulado.`, 'warn');
@@ -1731,7 +1900,14 @@ FORMATO OBRIGATÓRIO (JSON estrito):
               "bg-cyan-950/90 border-cyan-500/50 text-cyan-200 shadow-cyan-950/50"
             )}
           >
-            <CheckCircle2 size={18} className="text-emerald-400 shrink-0 animate-bounce" />
+            {/* O ícone segue o TIPO do aviso. Era sempre o de sucesso — um check verde pulando
+                em cima de "o arquivo está incompleto" ou "nada foi alterado" faz o usuário ler
+                erro como confirmação, que é o pior desfecho possível para um aviso. */}
+            {notificationBanner.type === 'error'
+              ? <AlertTriangle size={18} className="text-red-400 shrink-0" />
+              : notificationBanner.type === 'info'
+                ? <AlertCircle size={18} className="text-cyan-400 shrink-0" />
+                : <CheckCircle2 size={18} className="text-emerald-400 shrink-0 animate-bounce" />}
             <span className="flex-1 font-medium leading-relaxed">{notificationBanner.message}</span>
             <button 
               onClick={() => setNotificationBanner(null)}
