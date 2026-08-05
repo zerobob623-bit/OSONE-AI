@@ -3767,18 +3767,63 @@ ${processedChunk}`;
   const MAXIMO_DE_CONTINUACOES = Number(process.env.OSONE_MAXIMO_CONTINUACOES || 4);
 
   /**
+   * Modelos que acabaram de recusar atendimento a esta chave, e até quando ignorá-los.
+   *
+   * Sem esta memória, TODA geração paga de novo a mesma fila de falhas antes de chegar ao modelo
+   * que funciona. Numa chave de nível gratuito, em que os modelos de ponta respondem 429, isso são
+   * dezenas de segundos de espera por pedido, repetidos indefinidamente — o app parece travado, e
+   * a causa (uma cota que não é do modelo que acabou respondendo) não aparece em lugar nenhum.
+   */
+  const modelosIndisponiveis = new Map<string, number>();
+  const MINUTO = 60_000;
+
+  function anotarIndisponivel(modelo: string, motivo: 'cota' | 'inexistente') {
+    // Cota volta sozinha com o tempo; modelo que não existe para esta chave não volta tão cedo.
+    const castigo = motivo === 'cota' ? 10 * MINUTO : 60 * MINUTO;
+    modelosIndisponiveis.set(modelo, Date.now() + castigo);
+    console.warn(`[Modelos] "${modelo}" fora da fila por ${castigo / MINUTO} min (${motivo}).`);
+  }
+
+  /**
    * A escada de modelos a tentar, em ordem. Usada tanto pela geração de uma vez quanto pela
    * geração em fluxo — as duas precisam cair para os mesmos candidatos, ou o OSONE CODE se
    * comportaria de um jeito ao vivo e de outro no modo comum.
    */
   function listarModelosCandidatos(primaryModel: string, options?: { allowDowngrade?: boolean; modeloDeReserva?: string }): string[] {
     const allowDowngrade = options?.allowDowngrade !== false;
+
+    /**
+     * "NÃO REBAIXAR" NÃO PODE VIRAR "NÃO ENTREGAR NADA" — DE VERDADE DESTA VEZ.
+     *
+     * A regra de não cair para modelos 'lite' na geração de código existe por um bom motivo: a
+     * qualidade do código despenca e o usuário não saberia por quê. Só que ela estava aplicada
+     * como proibição ABSOLUTA, e isso transformava um cuidado com qualidade numa pane total.
+     *
+     * O caso real que revelou isso: numa chave de nível gratuito, os modelos de ponta
+     * (gemini-3.6-flash, gemini-3.5-flash) respondem com falta de cota. A aba de escrita, que
+     * permite rebaixar, caía para o gemini-3.5-flash-lite e ENTREGAVA o texto. O OSONE CODE, que
+     * proibia, não entregava NADA — no mesmo app, na mesma chave, no mesmo instante. Da tela, a
+     * leitura é "o OSONE CODE está quebrado", e não "os modelos preferidos estão sem cota".
+     *
+     * Os 'lite' entram agora, mas no FIM DA FILA: depois dos preferidos e depois do modelo que o
+     * usuário configurou. Só se tudo o mais falhar. E quem respondeu é informado ao chamador, que
+     * avisa na tela — a preocupação sempre foi com o rebaixamento SILENCIOSO, e essa parte
+     * continua valendo.
+     */
     const modelsToTry = allowDowngrade
       ? [primaryModel, "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash"]
-      // O modelo que o usuário configurou nos Ajustes entra por ÚLTIMO: é o único que se sabe que
-      // funciona com a chave dele, então serve de fundo de poço quando nenhum preferido responde.
-      : [primaryModel, "gemini-3.6-flash", "gemini-3.5-flash", options?.modeloDeReserva || ""].filter(Boolean);
-    return Array.from(new Set(modelsToTry));
+      // O modelo que o usuário configurou nos Ajustes entra depois dos preferidos: é o único que
+      // se sabe que funciona com a chave dele. Os 'lite' vêm por último, como fundo de poço.
+      : [primaryModel, "gemini-3.6-flash", "gemini-3.5-flash", options?.modeloDeReserva || "",
+         "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"].filter(Boolean);
+
+    const unicos = Array.from(new Set(modelsToTry));
+
+    // Quem acabou de recusar atendimento sai da frente da fila — mas nunca some por completo:
+    // se TODOS estiverem de castigo, é melhor tentar todos do que não tentar nenhum.
+    const agora = Date.now();
+    const disponiveis = unicos.filter(m => (modelosIndisponiveis.get(m) || 0) <= agora);
+    return disponiveis.length > 0 ? disponiveis : unicos;
   }
 
   // Helper to run content generation with automated fallbacks
@@ -3848,8 +3893,16 @@ ${processedChunk}`;
           }
 
           if (isQuota) {
-            // Cota esgotada: repetir no mesmo modelo não resolve nada, passa direto pro próximo.
+            // Cota esgotada: repetir no mesmo modelo não resolve nada, passa direto pro próximo —
+            // e fica fora da fila por um tempo, para o próximo pedido não pagar a mesma espera.
             console.warn(`[Fallback Log] Model ${modelName} encountered a quota issue. Switching to next candidate model...`);
+            anotarIndisponivel(modelName, 'cota');
+            break;
+          }
+
+          // Modelo que não existe para esta chave não volta a existir na próxima tentativa.
+          if (/404|NOT_FOUND/i.test(errMsg) || /is not found for api version/i.test(errMsg)) {
+            anotarIndisponivel(modelName, 'inexistente');
             break;
           }
 
@@ -4042,6 +4095,11 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
           }
           if (isQuota) {
             console.warn(`[Fluxo] Model ${modelName} sem cota. Passando para o próximo candidato...`);
+            anotarIndisponivel(modelName, 'cota');
+            break;
+          }
+          if (/404|NOT_FOUND/i.test(errMsg) || /is not found for api version/i.test(errMsg)) {
+            anotarIndisponivel(modelName, 'inexistente');
             break;
           }
           if (isTransient && tentativa < tentativasPorModelo) {
