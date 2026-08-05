@@ -29,7 +29,7 @@ const fonte = fs.readFileSync(path.join(RAIZ, 'server.ts'), 'utf-8');
 
 // O bloco é recortado do server.ts e rodado como está: o que se confere é o código que vai para
 // produção, não uma cópia que pode envelhecer sem ninguém notar.
-const INICIO = "  const modelosIndisponiveis = new Map<string, number>();";
+const INICIO = "  const EXTRAS_DA_GERACAO = ";
 const FIM = "    return disponiveis.length > 0 ? disponiveis : unicos;\n  }";
 const i = fonte.indexOf(INICIO);
 const f = fonte.indexOf(FIM);
@@ -40,12 +40,16 @@ if (i === -1 || f === -1) {
 
 const moduloTs = `
 ${fonte.slice(i, f + FIM.length)}
-export { listarModelosCandidatos, anotarIndisponivel, modelosIndisponiveis };
+export { listarModelosCandidatos, anotarIndisponivel, modelosIndisponiveis,
+         configAceitavelPara, proximoExtraASacrificar, anotarExtraRecusado, ehPedidoInvalido,
+         extrasRecusadosPorModelo, EXTRAS_DA_GERACAO };
 `;
 
 const { code } = await transform(moduloTs, { loader: 'ts', format: 'esm' });
 const mod = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
-const { listarModelosCandidatos, anotarIndisponivel, modelosIndisponiveis } = mod;
+const { listarModelosCandidatos, anotarIndisponivel, modelosIndisponiveis,
+        configAceitavelPara, proximoExtraASacrificar, anotarExtraRecusado, ehPedidoInvalido,
+        extrasRecusadosPorModelo } = mod;
 
 const casos = [];
 const registrar = (nome, passou, detalhe) => {
@@ -138,6 +142,71 @@ const paraCodigo = (reserva = '') =>
   const lista = paraCodigo('');
   registrar('castigo vencido devolve o modelo preferido para a frente da fila',
     lista[0] === 'gemini-3.6-flash', lista[0]);
+}
+
+// ====== 7) O RELATO CENTRAL: a aba de escrita entrega e o OSONE CODE não ======
+// As duas chamadas vão para a MESMA rota, com a MESMA chave. A diferença é que 'unrestricted'
+// acrescenta três blocos ao config. Basta a API recusar UM deles para a geração de código morrer
+// em todos os modelos, enquanto a aba de escrita — que não manda nenhum — segue funcionando.
+{
+  extrasRecusadosPorModelo.clear();
+
+  // O pedido da geração de código, como o servidor monta hoje.
+  const configDoCodigo = {
+    systemInstruction: 'seja um programador',
+    thinkingConfig: { thinkingLevel: 'HIGH' },
+    maxOutputTokens: 32768,
+    safetySettings: [{ category: 'X', threshold: 'BLOCK_NONE' }]
+  };
+  // O pedido da aba de escrita, que funciona: só a instrução.
+  const configDaEscrita = { systemInstruction: 'seja um escritor' };
+
+  const erroDeCampoInvalido = 'Invalid JSON payload received. Unknown name "thinkingLevel"';
+  registrar('erro de campo inválido é reconhecido como pedido inválido (e não como cota)',
+    ehPedidoInvalido(erroDeCampoInvalido) === true && ehPedidoInvalido('429 RESOURCE_EXHAUSTED quota') === false,
+    'distingue pedido inválido de falta de cota');
+
+  // Sacrifica um extra por vez, como o servidor faz ao receber o erro.
+  const sacrificados = [];
+  let atual = configDoCodigo;
+  for (let i = 0; i < 5; i++) {
+    const extra = proximoExtraASacrificar('gemini-3.6-flash', configDoCodigo);
+    if (!extra) break;
+    anotarExtraRecusado('gemini-3.6-flash', extra);
+    sacrificados.push(extra);
+    atual = configAceitavelPara('gemini-3.6-flash', configDoCodigo);
+  }
+
+  registrar('sacrificados todos os extras, o pedido do código vira IGUAL ao da aba de escrita',
+    JSON.stringify(Object.keys(atual).sort()) === JSON.stringify(Object.keys(configDaEscrita).sort()),
+    `sobrou { ${Object.keys(atual).join(', ')} } — a aba de escrita manda { ${Object.keys(configDaEscrita).join(', ')} }`);
+
+  registrar('o sacrifício tem fim: três extras, e depois não há mais o que tirar',
+    sacrificados.length === 3 && proximoExtraASacrificar('gemini-3.6-flash', configDoCodigo) === null,
+    sacrificados.join(' → '));
+}
+
+{
+  // O caminho não pode ser destrutivo: um modelo que recusa não estraga os outros.
+  extrasRecusadosPorModelo.clear();
+  const config = { systemInstruction: 'x', thinkingConfig: { thinkingLevel: 'HIGH' }, maxOutputTokens: 32768 };
+  anotarExtraRecusado('gemini-3.6-flash', 'thinkingConfig');
+  const doQueRecusou = configAceitavelPara('gemini-3.6-flash', config);
+  const doOutro = configAceitavelPara('gemini-3.5-flash', config);
+  registrar('o que um modelo recusa não é tirado dos outros',
+    doQueRecusou.thinkingConfig === undefined && doOutro.thinkingConfig !== undefined,
+    'o ajuste continua valendo nos modelos que o aceitam');
+}
+
+{
+  // E a memória evita repetir a pergunta: o segundo pedido já sai enxuto.
+  extrasRecusadosPorModelo.clear();
+  const config = { systemInstruction: 'x', thinkingConfig: { thinkingLevel: 'HIGH' } };
+  anotarExtraRecusado('gemini-3.6-flash', 'thinkingConfig');
+  const segundoPedido = configAceitavelPara('gemini-3.6-flash', config);
+  registrar('o pedido seguinte já sai sem o ajuste recusado, sem pagar o erro de novo',
+    segundoPedido.thinkingConfig === undefined && segundoPedido.systemInstruction === 'x',
+    'a instrução do sistema é preservada');
 }
 
 const passaram = casos.filter(c => c.passou).length;
