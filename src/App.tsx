@@ -111,7 +111,7 @@ import { useTuyaSmartHome } from './hooks/useTuyaSmartHome';
 import { useHierarchicalMemory } from './hooks/useHierarchicalMemory';
 import { usePersonaSelfRevision } from './hooks/usePersonaSelfRevision';
 import { getCounterfactualReasoningDirective, getSalienceEmpathyDirective } from './lib/cognitiveDirectives';
-import { buildCodeEditSystemInstruction, applyModelCodeResponse } from './lib/codeEdits';
+import { buildCodeEditSystemInstruction, applyModelCodeResponse, pareceDocumentoIncompleto } from './lib/codeEdits';
 import { useLocalAgent } from './hooks/useLocalAgent';
 import { useTikTokLive } from './hooks/useTikTokLive';
 import { useSensusEvolution } from './hooks/useSensusEvolution';
@@ -6528,9 +6528,25 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
         addNotification(`ℹ️ O modelo preferido (${data.modeloPreferido}) estava indisponível — o código foi gerado por ${data.modeloUsado}.`, "info");
       }
 
-      const { content: newContent, summary, hadFailures } = applyModelCodeResponse(data.text, currentCode);
+      const { content: newContent, summary, hadFailures, respostaCortada } = applyModelCodeResponse(data.text, currentCode);
       if (!newContent || !newContent.trim()) {
         addNotification("A resposta do modelo não continha código aproveitável. Tente pedir de novo, sendo mais específico.", "error");
+        return null;
+      }
+
+      /**
+       * A RESPOSTA ACABOU NO MEIO, E ISSO NÃO PODE PASSAR POR ENTREGA PRONTA.
+       *
+       * O servidor já manda o modelo continuar de onde parou algumas vezes antes de chegar aqui;
+       * quando nem assim o arquivo fecha, o que existe é meio código. Gravar isso anunciando
+       * sucesso era o que fazia o usuário achar que o OSONE CODE "não termina o que escreve" —
+       * ele terminava mesmo, e a metade seguia direto para o editor sem uma palavra.
+       */
+      if (respostaCortada && newContent === currentCode) {
+        addNotification(
+          `⚠️ A resposta do modelo foi cortada no meio da edição e nada foi aplicado, para não gravar meia alteração por cima do seu arquivo. Peça de novo, de preferência dividindo em partes menores.`,
+          "error"
+        );
         return null;
       }
 
@@ -6551,10 +6567,18 @@ IMPORTANTE: Você deve realizar a geração de conteúdo do zero ou modificar o 
         return null;
       }
 
-      if (data.truncated) {
-        addNotification("⚠️ A resposta foi cortada por limite de tokens — o código pode estar incompleto. Tente pedir novamente ou dividir o pedido em partes menores.", "info");
+      if (data.truncated || respostaCortada || pareceDocumentoIncompleto(newContent)) {
+        addNotification(
+          "⚠️ O código gravado está INCOMPLETO: o modelo chegou ao limite de tamanho e não conseguiu fechar o arquivo, mesmo depois de ser mandado continuar. " +
+          "Peça a continuação ou divida o pedido em partes menores.",
+          "error"
+        );
       } else if (hadFailures) {
         addNotification(`Código aplicado em parte: ${summary}`, "info");
+      } else if (data.continuacoes > 0) {
+        // Emendar continuações é justamente o que faz o arquivo grande chegar ao fim; dizer isso
+        // evita que uma geração demorada pareça travamento.
+        addNotification(`✅ Código completo gerado em ${data.continuacoes + 1} partes emendadas (o modelo foi mandado continuar até fechar o arquivo).`, "success");
       }
 
       return { conteudo: newContent, resumo: summary || '' };
