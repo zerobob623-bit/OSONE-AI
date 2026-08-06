@@ -46,10 +46,13 @@ export const SettingsModal = ({
   onPersonaChange,
   onOpenIdentityDossier,
   intimateAnswersCount,
-  onOpenAiDossier
+  onOpenAiDossier,
+  abaInicial
 }: {
   isOpen: boolean;
   onClose: () => void;
+  /** Aba em que abrir. Quem manda daqui é quem sabe qual campo o usuário está indo preencher. */
+  abaInicial?: string;
   keys: ApiKeys;
   setKeys: (keys: ApiKeys) => void;
   selectedVoice: string;
@@ -80,6 +83,13 @@ export const SettingsModal = ({
   onOpenAiDossier: () => void;
 }) => {
   const [activeTab, setActiveTab] = useState<TabId>('general');
+
+  // Só na ABERTURA. Reagir à aba em qualquer render prenderia o usuário nela: cada clique numa
+  // outra aba seria desfeito no render seguinte.
+  useEffect(() => {
+    if (isOpen && abaInicial) setActiveTab(abaInicial as TabId);
+  }, [isOpen, abaInicial]);
+
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('idle');
   const [connectionMessage, setConnectionMessage] = useState('');
   const [elVerificationStatus, setElVerificationStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
@@ -298,14 +308,22 @@ export const SettingsModal = ({
     if (isOpen && activeTab === 'automation') carregarCredenciais();
   }, [isOpen, activeTab]);
 
-  const salvarCredenciaisNoServidor = async () => {
-    if (Object.keys(rascunhoCredenciais).length === 0) return;
+  /**
+   * Salva o que foi digitado. O `prefixo` existe porque os campos passaram a viver cada um no
+   * SEU cartão — o botão do cartão da Tuya não pode levar junto um Client ID do Google digitado
+   * pela metade logo abaixo, e vice-versa.
+   */
+  const salvarCredenciaisNoServidor = async (prefixo?: string) => {
+    const paraSalvar = prefixo
+      ? Object.fromEntries(Object.entries(rascunhoCredenciais).filter(([nome]) => nome.startsWith(prefixo)))
+      : rascunhoCredenciais;
+    if (Object.keys(paraSalvar).length === 0) return;
     setSalvandoCredenciais(true);
     try {
       const res = await fetch('/api/credenciais', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(rascunhoCredenciais)
+        body: JSON.stringify(paraSalvar)
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
@@ -313,7 +331,11 @@ export const SettingsModal = ({
         return;
       }
       setCredenciais(data.campos || []);
-      setRascunhoCredenciais({});
+      setRascunhoCredenciais(prev => {
+        const resto = { ...prev };
+        for (const nome of Object.keys(paraSalvar)) delete resto[nome];
+        return resto;
+      });
       // Vale na hora: a instrução antiga terminava em "e reinicie o OSONE", e no app instalado
       // isso significava fechar tudo só para descobrir se o valor colado estava certo.
       onAddNotification?.(
@@ -327,23 +349,32 @@ export const SettingsModal = ({
     }
   };
 
+  /**
+   * O teste percorre a corrente inteira, e não só o par de credenciais.
+   *
+   * A versão anterior dizia "Configurado no Servidor" em verde assim que os dois campos
+   * existiam — e essa é a metade fácil. Quem preenchia os dois e nunca concluía o "Vincular
+   * conta" no app Google Home via o verde e ficava sem entender por que o Assistente respondia
+   * que não achava nenhum aparelho. Agora o resultado vem do diagnóstico de ponta a ponta, que
+   * para no primeiro elo que falta e diz o que fazer nele.
+   */
   const handleTestConnection = async () => {
     setConnectionStatus('testing');
-    setConnectionMessage('Verificando configuração do Google Home no servidor...');
+    setConnectionMessage('Conferindo credenciais, conta Tuya e vínculo do Google...');
 
     try {
-      const res = await fetch('/api/google-home/status');
+      const res = await fetch('/api/google-home/diagnostico');
       const data = await res.json().catch(() => null);
-      if (res.ok && data?.configured) {
-        setConnectionStatus('connected');
-        setConnectionMessage('GOOGLE_HOME_CLIENT_ID e GOOGLE_HOME_CLIENT_SECRET configurados no servidor. Se você já vinculou a conta pelo app Google Home, os comandos por voz já devem funcionar.');
-      } else {
+      if (!data) {
         setConnectionStatus('error');
-        setConnectionMessage('GOOGLE_HOME_CLIENT_ID e/ou GOOGLE_HOME_CLIENT_SECRET ainda não estão definidos nas variáveis de ambiente do servidor. Siga o guia de configuração abaixo.');
+        setConnectionMessage('O servidor respondeu algo que não dá para ler em /api/google-home/diagnostico.');
+        return;
       }
+      setConnectionStatus(data.ok ? 'connected' : 'error');
+      setConnectionMessage([data.resumo, data.comoResolver].filter(Boolean).join(' '));
     } catch (error) {
       setConnectionStatus('error');
-      setConnectionMessage('Falha de rede ao consultar /api/google-home/status.');
+      setConnectionMessage('Falha de rede ao consultar /api/google-home/diagnostico.');
     }
   };
 
@@ -351,6 +382,97 @@ export const SettingsModal = ({
     authorize: `${typeof window !== 'undefined' ? window.location.origin : ''}/api/google-home/authorize`,
     token: `${typeof window !== 'undefined' ? window.location.origin : ''}/api/google-home/token`,
     fulfillment: `${typeof window !== 'undefined' ? window.location.origin : ''}/api/google-home/fulfillment`
+  };
+
+  /**
+   * O formulário de um grupo de credenciais, desenhado dentro do cartão do serviço a que ele
+   * pertence.
+   *
+   * Os seis campos ficavam empilhados num bloco só, dentro do cartão da Tuya e sob o título
+   * "Credenciais da Casa Inteligente". Quem vinha do guia do Google procurando onde colar o
+   * Client ID tinha de achá-lo abaixo de um cartão que falava de outra coisa — e o guia, no
+   * mesmo instante, mandava definir variável de ambiente e reiniciar, uma instrução que já não
+   * valia e era impossível de cumprir no app instalado.
+   */
+  const blocoDeCredenciais = (prefixo: string, descricao: React.ReactNode) => {
+    if (!credenciaisDisponivel) {
+      return (
+        <div className="p-4 rounded-2xl bg-sky-500/[0.06] border border-sky-500/20 text-[10px] text-sky-200/80 leading-relaxed font-sans">
+          Hospedagem remota: credenciais só podem ser digitadas do próprio computador onde o OSONE roda.
+          Defina estes valores nas variáveis de ambiente do provedor (ex: Vercel &gt; Project Settings &gt; Environment Variables).
+        </div>
+      );
+    }
+
+    const doGrupo = credenciais.filter((c: any) => String(c.nome).startsWith(prefixo));
+    const pendentes = Object.keys(rascunhoCredenciais).filter(nome => nome.startsWith(prefixo)).length;
+
+    return (
+      <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/[0.06] space-y-3">
+        <p className="text-[10px] text-her-muted/70 leading-relaxed">{descricao}</p>
+
+        <div className="space-y-2.5">
+          {doGrupo.map((campo: any) => {
+            const emEdicao = campo.nome in rascunhoCredenciais;
+            const revelar = !!mostrarSegredo[campo.nome];
+            return (
+              <div key={campo.nome}>
+                <label className="flex items-center justify-between text-[9px] uppercase tracking-[0.15em] text-her-muted font-bold mb-1 pl-1">
+                  <span>{campo.rotulo}</span>
+                  {campo.preenchido && !emEdicao && (
+                    <span className={cn(
+                      "normal-case tracking-normal font-mono text-[9px] px-1.5 py-0.5 rounded",
+                      campo.origem === 'painel'
+                        ? "bg-emerald-500/10 text-emerald-400"
+                        : "bg-sky-500/10 text-sky-400"
+                    )}>
+                      {campo.origem === 'painel' ? 'salvo aqui' : 'vem do ambiente'}
+                    </span>
+                  )}
+                </label>
+                <div className="relative flex items-center">
+                  <input
+                    type={campo.segredo && !revelar ? 'password' : 'text'}
+                    value={rascunhoCredenciais[campo.nome] ?? ''}
+                    onChange={(e) => setRascunhoCredenciais(prev => ({ ...prev, [campo.nome]: e.target.value }))}
+                    placeholder={campo.preenchido ? campo.amostra : 'Não preenchido'}
+                    className={cn(
+                      "w-full bg-white/[0.02] border rounded-xl px-4 py-2.5 focus:outline-none transition-all text-[11px] font-mono text-white placeholder:text-her-muted/30",
+                      campo.preenchido ? "border-emerald-500/20 focus:border-emerald-500/40" : "border-white/[0.06] focus:border-white/20"
+                    )}
+                  />
+                  {campo.segredo && (
+                    <button
+                      type="button"
+                      onClick={() => setMostrarSegredo(prev => ({ ...prev, [campo.nome]: !prev[campo.nome] }))}
+                      className="absolute right-3 p-1 text-her-muted/50 hover:text-white transition-colors cursor-pointer"
+                      title={revelar ? 'Ocultar' : 'Mostrar o que estou digitando'}
+                    >
+                      {revelar ? <EyeOff size={13} /> : <Eye size={13} />}
+                    </button>
+                  )}
+                </div>
+                <p className="text-[9px] text-her-muted/50 leading-relaxed mt-1 pl-1 font-sans">{campo.dica}</p>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="flex items-center gap-2 pt-1">
+          <button
+            type="button"
+            onClick={() => salvarCredenciaisNoServidor(prefixo)}
+            disabled={salvandoCredenciais || pendentes === 0}
+            className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-[10px] uppercase tracking-wider transition-all disabled:opacity-25 disabled:cursor-not-allowed cursor-pointer"
+          >
+            {salvandoCredenciais ? 'Salvando...' : 'Salvar'}
+          </button>
+          <span className="text-[9px] text-her-muted/50 font-sans leading-tight">
+            Vale na hora, sem reiniciar. Campo deixado em branco e salvo apaga o valor guardado.
+          </span>
+        </div>
+      </div>
+    );
   };
 
   const handleVerifyGemini = async () => {
@@ -1582,125 +1704,6 @@ export const SettingsModal = ({
                       </div>
                     </div>
 
-                    <div className="p-6 bg-white/[0.03] border border-white/[0.05] rounded-[2rem] space-y-4">
-                      <div className="flex items-center gap-4">
-                        <div className="p-3 bg-her-accent/10 rounded-2xl">
-                          <Home className="text-her-accent" size={24} />
-                        </div>
-                        <div>
-                          <h3 className="text-sm font-bold text-her-ink">Google Home</h3>
-                          <p className="text-[10px] text-her-muted uppercase tracking-widest">Smart Home Action Real (Google Assistant)</p>
-                        </div>
-                      </div>
-                      <p className="text-xs text-her-muted leading-relaxed font-light">
-                        Controla os MESMOS dispositivos Tuya já conectados no OSONE através do Google Assistant/Google Home — nenhuma simulação. Exige que você crie o seu próprio projeto no Actions on Google Console (isso só pode ser feito por você, é uma etapa fora do OSONE). Siga o guia abaixo.
-                      </p>
-                    </div>
-
-                    <div className="space-y-4">
-                      <button
-                        onClick={handleTestConnection}
-                        disabled={connectionStatus === 'testing'}
-                        className={cn(
-                          "w-full py-3 rounded-2xl text-[10px] uppercase tracking-[0.2em] font-bold transition-all flex items-center justify-center gap-2",
-                          connectionStatus === 'testing' ? "bg-white/5 text-her-muted" :
-                          connectionStatus === 'connected' ? "bg-green-500/10 text-green-400 border border-green-500/20" :
-                          connectionStatus === 'error' ? "bg-red-500/10 text-red-400 border border-red-500/20" :
-                          "bg-her-accent/10 text-her-accent border border-her-accent/20 hover:bg-her-accent/20"
-                        )}
-                      >
-                        {connectionStatus === 'testing' ? (
-                          <>
-                            <Loader2 size={14} className="animate-spin" />
-                            Verificando...
-                          </>
-                        ) : connectionStatus === 'connected' ? (
-                          <>
-                            <CheckCircle2 size={14} />
-                            Configurado no Servidor
-                          </>
-                        ) : (
-                          <>
-                            <Activity size={14} />
-                            Verificar Configuração do Servidor
-                          </>
-                        )}
-                      </button>
-
-                      {connectionStatus !== 'idle' && (
-                        <div className={cn(
-                          "px-4 py-3 rounded-xl text-[10px] flex flex-col gap-2 animate-in fade-in slide-in-from-top-1",
-                          connectionStatus === 'connected' ? "bg-green-500/5 text-green-400" :
-                          connectionStatus === 'error' ? "bg-red-500/5 text-red-400" :
-                          "bg-white/5 text-her-muted"
-                        )}>
-                          <div className="flex items-start gap-2">
-                            {connectionStatus === 'error' ? <AlertCircle size={12} className="shrink-0 mt-0.5" /> : <CheckCircle2 size={12} className="shrink-0 mt-0.5" />}
-                            <span className="leading-relaxed font-medium normal-case tracking-normal">{connectionMessage}</span>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="bg-white/5 p-5 rounded-2xl space-y-3 border border-white/5">
-                      <div className="flex items-center gap-2">
-                        <Info size={14} className="text-her-accent" />
-                        <span className="text-[9px] font-bold uppercase tracking-widest text-her-ink">URLs para colar no Actions on Google Console</span>
-                      </div>
-                      {([
-                        { label: 'Authorization URL', value: googleHomeUrls.authorize },
-                        { label: 'Token URL', value: googleHomeUrls.token },
-                        { label: 'Fulfillment URL', value: googleHomeUrls.fulfillment }
-                      ]).map((item) => (
-                        <div key={item.label} className="space-y-1">
-                          <span className="text-[9px] uppercase tracking-wider text-her-muted/60 font-bold">{item.label}</span>
-                          <div className="flex items-center gap-2">
-                            <code className="flex-1 text-[10px] font-mono text-her-ink/80 bg-black/30 px-3 py-2 rounded-xl truncate">{item.value}</code>
-                            <button
-                              type="button"
-                              onClick={() => navigator.clipboard?.writeText(item.value)}
-                              className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-her-muted hover:text-white transition-all shrink-0"
-                              title="Copiar"
-                            >
-                              <Copy size={12} />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                      <p className="text-[10px] text-amber-400/80 leading-relaxed pt-1">
-                        ⚠️ O Google exige HTTPS público (não aceita localhost) — essas URLs só funcionam depois que o OSONE estiver publicado num domínio real (ex: Vercel).
-                      </p>
-                    </div>
-
-                    <div className="bg-white/5 p-5 rounded-2xl space-y-3 border border-white/5">
-                      <div className="flex items-center gap-2">
-                        <Info size={14} className="text-her-accent" />
-                        <span className="text-[9px] font-bold uppercase tracking-widest text-her-ink">Guia de Configuração</span>
-                      </div>
-                      <ul className="space-y-2 text-[10px] text-her-muted/60 leading-relaxed list-none pl-1">
-                        <li className="flex gap-2 border-l border-white/10 pl-3">
-                          <span className="text-her-accent font-bold">01</span>
-                          Crie um projeto em console.actions.google.com e escolha "Smart Home".
-                        </li>
-                        <li className="flex gap-2 border-l border-white/10 pl-3">
-                          <span className="text-her-accent font-bold">02</span>
-                          Em "Account Linking", cole as 3 URLs acima e gere um Client ID/Secret.
-                        </li>
-                        <li className="flex gap-2 border-l border-white/10 pl-3">
-                          <span className="text-her-accent font-bold">03</span>
-                          Defina GOOGLE_HOME_CLIENT_ID e GOOGLE_HOME_CLIENT_SECRET (o mesmo par gerado no passo 02) nas variáveis de ambiente do servidor OSONE e reinicie-o.
-                        </li>
-                        <li className="flex gap-2 border-l border-white/10 pl-3">
-                          <span className="text-her-accent font-bold">04</span>
-                          Habilite a "Home Graph API" no projeto do Google Cloud vinculado.
-                        </li>
-                        <li className="flex gap-2 border-l border-white/10 pl-3">
-                          <span className="text-her-accent font-bold">05</span>
-                          No app Google Home do celular: + → Configurar dispositivo → "Funciona com o Google" → procure seu projeto de teste e autorize na tela que o OSONE abrir.
-                        </li>
-                      </ul>
-                    </div>
-
                     {/* TUYA CLOUD OPENAPI INTEGRATION CARD */}
                     <div className="p-6 bg-amber-500/5 border border-amber-500/20 rounded-[2rem] space-y-4">
                       <div className="flex items-center justify-between">
@@ -1756,85 +1759,9 @@ export const SettingsModal = ({
                         OS CAMPOS. Ficam ACIMA do checklist de propósito: o checklist diz o que
                         falta, e o que falta precisa ter onde ser preenchido logo em seguida.
                       */}
-                      {credenciaisDisponivel ? (
-                        <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/[0.06] space-y-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <div>
-                              <p className="text-[11px] font-bold text-white uppercase tracking-wider">Credenciais da Casa Inteligente</p>
-                              <p className="text-[10px] text-her-muted/70 leading-relaxed mt-0.5">
-                                Preencha aqui. Os valores ficam guardados no servidor desta máquina e passam a valer
-                                na hora — sem abrir arquivo e sem reiniciar o OSONE.
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="space-y-2.5">
-                            {credenciais.map((campo: any) => {
-                              const emEdicao = campo.nome in rascunhoCredenciais;
-                              const revelar = !!mostrarSegredo[campo.nome];
-                              return (
-                                <div key={campo.nome}>
-                                  <label className="flex items-center justify-between text-[9px] uppercase tracking-[0.15em] text-her-muted font-bold mb-1 pl-1">
-                                    <span>{campo.rotulo}</span>
-                                    {campo.preenchido && !emEdicao && (
-                                      <span className={cn(
-                                        "normal-case tracking-normal font-mono text-[9px] px-1.5 py-0.5 rounded",
-                                        campo.origem === 'painel'
-                                          ? "bg-emerald-500/10 text-emerald-400"
-                                          : "bg-sky-500/10 text-sky-400"
-                                      )}>
-                                        {campo.origem === 'painel' ? 'salvo aqui' : 'vem do ambiente'}
-                                      </span>
-                                    )}
-                                  </label>
-                                  <div className="relative flex items-center">
-                                    <input
-                                      type={campo.segredo && !revelar ? 'password' : 'text'}
-                                      value={rascunhoCredenciais[campo.nome] ?? ''}
-                                      onChange={(e) => setRascunhoCredenciais(prev => ({ ...prev, [campo.nome]: e.target.value }))}
-                                      placeholder={campo.preenchido ? campo.amostra : 'Não preenchido'}
-                                      className={cn(
-                                        "w-full bg-white/[0.02] border rounded-xl px-4 py-2.5 focus:outline-none transition-all text-[11px] font-mono text-white placeholder:text-her-muted/30",
-                                        campo.preenchido ? "border-emerald-500/20 focus:border-emerald-500/40" : "border-white/[0.06] focus:border-white/20"
-                                      )}
-                                    />
-                                    {campo.segredo && (
-                                      <button
-                                        type="button"
-                                        onClick={() => setMostrarSegredo(prev => ({ ...prev, [campo.nome]: !prev[campo.nome] }))}
-                                        className="absolute right-3 p-1 text-her-muted/50 hover:text-white transition-colors cursor-pointer"
-                                        title={revelar ? 'Ocultar' : 'Mostrar o que estou digitando'}
-                                      >
-                                        {revelar ? <EyeOff size={13} /> : <Eye size={13} />}
-                                      </button>
-                                    )}
-                                  </div>
-                                  <p className="text-[9px] text-her-muted/50 leading-relaxed mt-1 pl-1 font-sans">{campo.dica}</p>
-                                </div>
-                              );
-                            })}
-                          </div>
-
-                          <div className="flex items-center gap-2 pt-1">
-                            <button
-                              type="button"
-                              onClick={salvarCredenciaisNoServidor}
-                              disabled={salvandoCredenciais || Object.keys(rascunhoCredenciais).length === 0}
-                              className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-[10px] uppercase tracking-wider transition-all disabled:opacity-25 disabled:cursor-not-allowed cursor-pointer"
-                            >
-                              {salvandoCredenciais ? 'Salvando...' : 'Salvar credenciais'}
-                            </button>
-                            <span className="text-[9px] text-her-muted/50 font-sans leading-tight">
-                              Campo deixado em branco e salvo apaga o valor guardado.
-                            </span>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="p-4 rounded-2xl bg-sky-500/[0.06] border border-sky-500/20 text-[10px] text-sky-200/80 leading-relaxed font-sans">
-                          Você está acessando o OSONE por uma hospedagem remota. Por segurança, credenciais só podem ser
-                          preenchidas a partir do próprio computador onde o OSONE roda. Nesta hospedagem, defina-as nas
-                          variáveis de ambiente do painel do provedor (ex: Vercel &gt; Project Settings &gt; Environment Variables).
-                        </div>
+                      {blocoDeCredenciais(
+                        'TUYA_',
+                        <>Os quatro valores saem do seu projeto em <strong className="text-amber-300">iot.tuya.com</strong>. Ficam guardados no servidor desta máquina — o Access Secret assina cada requisição e nunca volta para o navegador.</>
                       )}
 
                       {tuyaStatus !== 'idle' && (
@@ -1866,6 +1793,148 @@ export const SettingsModal = ({
                           )}
                         </div>
                       )}
+                    </div>
+
+                    {/*
+                      GOOGLE HOME — depois da Tuya de propósito: o Assistente comanda os aparelhos
+                      DA TUYA, então sem aquela conta este cartão não teria o que oferecer. A ordem
+                      na tela é a ordem em que as coisas precisam ser feitas.
+                    */}
+                    <div className="p-6 bg-sky-500/5 border border-sky-500/20 rounded-[2rem] space-y-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className="p-3 bg-sky-500/10 rounded-2xl text-sky-400">
+                            <Home size={22} />
+                          </div>
+                          <div>
+                            <h3 className="text-sm font-bold text-white">Google Home</h3>
+                            <p className="text-[10px] text-sky-400/80 uppercase tracking-widest font-mono">Comandar a mesma casa por voz</p>
+                          </div>
+                        </div>
+                        <span className={cn(
+                          "px-2.5 py-1 rounded-full text-[9px] uppercase tracking-wider font-bold border shrink-0",
+                          connectionStatus === 'connected' ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" :
+                          connectionStatus === 'error' ? "bg-amber-500/10 text-amber-300 border-amber-500/20" :
+                          "bg-sky-500/10 text-sky-300 border-sky-500/20"
+                        )}>
+                          {connectionStatus === 'connected' ? "Vinculado" : connectionStatus === 'error' ? "Pendente" : "Opcional"}
+                        </span>
+                      </div>
+
+                      <p className="text-xs text-her-muted leading-relaxed font-light">
+                        Entrega ao Assistente os MESMOS aparelhos da sua conta Tuya, com liga/desliga, brilho e
+                        cor — cada um leva só o que realmente aceita. Fechaduras nunca entram: comando de voz não
+                        abre trava no OSONE. O painel completo, com a lista do que o Assistente enxerga, está na
+                        aba <strong className="text-sky-300">OSONE HOME &gt; Google Home</strong>.
+                      </p>
+
+                      {blocoDeCredenciais(
+                        'GOOGLE_HOME_',
+                        <>Este par é <strong className="text-sky-300">inventado por você</strong> — não é emitido pelo Google. Preencha aqui e cole exatamente os mesmos valores em Account Linking, no seu projeto do Actions on Google.</>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={handleTestConnection}
+                        disabled={connectionStatus === 'testing'}
+                        className={cn(
+                          "w-full py-3 rounded-2xl text-[10px] uppercase tracking-[0.2em] font-bold transition-all flex items-center justify-center gap-2 cursor-pointer",
+                          connectionStatus === 'testing' ? "bg-white/5 text-her-muted" :
+                          connectionStatus === 'connected' ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30" :
+                          connectionStatus === 'error' ? "bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25" :
+                          "bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/30"
+                        )}
+                      >
+                        {connectionStatus === 'testing' ? (
+                          <>
+                            <Loader2 size={14} className="animate-spin" />
+                            Conferindo a ponte...
+                          </>
+                        ) : (
+                          <>
+                            <Activity size={14} />
+                            Conferir credenciais, Tuya e vínculo
+                          </>
+                        )}
+                      </button>
+
+                      {connectionStatus !== 'idle' && connectionMessage && (
+                        <div className={cn(
+                          "p-4 rounded-2xl text-[11px] flex items-start gap-2 border leading-relaxed",
+                          connectionStatus === 'connected' ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20" :
+                          connectionStatus === 'error' ? "bg-amber-500/10 text-amber-200 border-amber-500/20" :
+                          "bg-white/5 text-her-muted border-white/10"
+                        )}>
+                          {connectionStatus === 'connected'
+                            ? <CheckCircle2 size={14} className="text-emerald-400 shrink-0 mt-0.5" />
+                            : <AlertCircle size={14} className="text-amber-400 shrink-0 mt-0.5" />}
+                          <span className="font-medium">{connectionMessage}</span>
+                        </div>
+                      )}
+
+                      <div className="bg-black/20 p-4 rounded-2xl space-y-2.5 border border-white/5">
+                        <div className="flex items-center gap-2">
+                          <Info size={13} className="text-sky-400" />
+                          <span className="text-[9px] font-bold uppercase tracking-widest text-her-ink">URLs para o Account Linking</span>
+                        </div>
+                        {([
+                          { label: 'Authorization URL', value: googleHomeUrls.authorize },
+                          { label: 'Token URL', value: googleHomeUrls.token },
+                          { label: 'Fulfillment URL', value: googleHomeUrls.fulfillment }
+                        ]).map((item) => (
+                          <div key={item.label} className="space-y-1">
+                            <span className="text-[9px] uppercase tracking-wider text-her-muted/60 font-bold">{item.label}</span>
+                            <div className="flex items-center gap-2">
+                              <code className="flex-1 text-[10px] font-mono text-her-ink/80 bg-black/40 px-3 py-2 rounded-xl truncate">{item.value}</code>
+                              <button
+                                type="button"
+                                onClick={() => navigator.clipboard?.writeText(item.value)}
+                                className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-her-muted hover:text-white transition-all shrink-0 cursor-pointer"
+                                title="Copiar"
+                              >
+                                <Copy size={12} />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                        <p className="text-[10px] text-amber-400/80 leading-relaxed pt-1">
+                          ⚠️ O Google só alcança endereço público em HTTPS — não entra em localhost. Estas URLs
+                          valem depois que o OSONE estiver publicado num domínio (ex: Vercel) ou exposto por um
+                          túnel. O painel, o chat e a voz do OSONE funcionam aqui de qualquer jeito.
+                        </p>
+                      </div>
+
+                      <div className="bg-black/20 p-4 rounded-2xl space-y-2 border border-white/5">
+                        <div className="flex items-center gap-2">
+                          <Info size={13} className="text-sky-400" />
+                          <span className="text-[9px] font-bold uppercase tracking-widest text-her-ink">Guia de Configuração</span>
+                        </div>
+                        <ul className="space-y-2 text-[10px] text-her-muted/60 leading-relaxed list-none pl-1">
+                          <li className="flex gap-2 border-l border-white/10 pl-3">
+                            <span className="text-sky-400 font-bold">01</span>
+                            Crie um projeto em console.actions.google.com e escolha "Smart Home".
+                          </li>
+                          <li className="flex gap-2 border-l border-white/10 pl-3">
+                            <span className="text-sky-400 font-bold">02</span>
+                            Em "Account Linking", cole as 3 URLs acima e um Client ID/Secret inventados por você.
+                          </li>
+                          <li className="flex gap-2 border-l border-white/10 pl-3">
+                            {/* Este passo mandava definir variável de ambiente e reiniciar o OSONE —
+                                instrução que já não valia e que, no app instalado, era impossível de
+                                cumprir: não existe .env para abrir. Os campos estão logo acima. */}
+                            <span className="text-sky-400 font-bold">03</span>
+                            Cole esse MESMO par nos dois campos deste cartão e clique em Salvar. Passa a valer na hora, sem reiniciar.
+                          </li>
+                          <li className="flex gap-2 border-l border-white/10 pl-3">
+                            <span className="text-sky-400 font-bold">04</span>
+                            Habilite a "HomeGraph API" no projeto do Google Cloud vinculado.
+                          </li>
+                          <li className="flex gap-2 border-l border-white/10 pl-3">
+                            <span className="text-sky-400 font-bold">05</span>
+                            No app Google Home do celular: + → Configurar dispositivo → "Funciona com o Google" → procure seu projeto de teste e autorize na tela que o OSONE abrir.
+                          </li>
+                        </ul>
+                      </div>
                     </div>
                   </motion.div>
                 )}

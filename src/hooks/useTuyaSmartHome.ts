@@ -194,7 +194,7 @@ export function useTuyaSmartHome() {
     const cena = rotinas.find((r: any) => semAcento(r?.name) === alvo)
       || rotinas.find((r: any) => semAcento(r?.name).includes(alvo));
     if (!cena) {
-      return { ok: false, message: `⚠️ Nenhuma cena chamada "${routineName}" foi encontrada. As cenas são criadas no painel da Casa Inteligente.` };
+      return { ok: false, message: `⚠️ Nenhuma cena chamada "${routineName}" foi encontrada. As cenas são criadas no painel do OSONE HOME.` };
     }
 
     const feitos: string[] = [];

@@ -1,7 +1,16 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { getTuyaDevices, getDeviceStatus, sendDeviceCommand } from './tuyaService';
+import { getTuyaDevices, getDeviceStatus, sendDeviceCommand, explicarErroTuya } from './tuyaService';
+import {
+  RecursosDoAparelho,
+  brilhoEmPorcento,
+  corDoAparelhoParaGoogle,
+  corDoGoogleParaHex,
+  ehFechadura,
+  montarComandos,
+  recursosDosDps
+} from './lib/tuyaDispositivos';
 
 /**
  * Ponte real entre o Google Assistant/Google Home e os dispositivos Tuya já conectados no
@@ -12,9 +21,16 @@ import { getTuyaDevices, getDeviceStatus, sendDeviceCommand } from './tuyaServic
  * O PRÓPRIO USUÁRIO cadastre um projeto no Actions on Google Console e aponte para as rotas
  * deste servidor (authorize/token/fulfillment) — essa parte de configuração externa no Google
  * Cloud não pode ser feita por código, só pelo usuário no painel do Google.
+ *
+ * O QUE O ASSISTENTE ALCANÇA É O MESMO QUE O PAINEL ALCANÇA. Esta ponte não tem tradução
+ * própria de aparelho: ela lê os recursos com `recursosDosDps` e monta os comandos com
+ * `montarComandos` — exatamente as funções que o painel do OSONE HOME e o chat usam. Enquanto
+ * havia uma segunda lógica aqui dentro, ela expunha todo aparelho como um interruptor simples:
+ * a lâmpada que o painel regulava em brilho e cor chegava ao Google só com liga/desliga, e
+ * "Ok Google, deixa a sala em 30%" respondia que o aparelho não sabia fazer aquilo.
  */
 
-const TOKENS_PATH = path.join(process.cwd(), 'google-home-tokens.json');
+const ARQUIVO_DE_TOKENS = () => path.join(process.cwd(), 'google-home-tokens.json');
 
 interface TokenStore {
   authCodes: Record<string, { createdAt: number; used: boolean }>;
@@ -24,8 +40,15 @@ interface TokenStore {
 
 function loadTokenStore(): TokenStore {
   try {
-    if (fs.existsSync(TOKENS_PATH)) {
-      return JSON.parse(fs.readFileSync(TOKENS_PATH, 'utf-8'));
+    if (fs.existsSync(ARQUIVO_DE_TOKENS())) {
+      const bruto = JSON.parse(fs.readFileSync(ARQUIVO_DE_TOKENS(), 'utf-8'));
+      // Um arquivo truncado (queda de energia no meio da escrita) deixava campos ausentes, e o
+      // primeiro Object.entries em cima de undefined derrubava toda requisição do Google.
+      return {
+        authCodes: bruto?.authCodes || {},
+        accessTokens: bruto?.accessTokens || {},
+        refreshTokens: bruto?.refreshTokens || {}
+      };
     }
   } catch (e) {
     console.error('Erro ao ler google-home-tokens.json:', e);
@@ -59,7 +82,14 @@ function pruneTokenStore(store: TokenStore): TokenStore {
 
 function saveTokenStore(store: TokenStore): void {
   try {
-    fs.writeFileSync(TOKENS_PATH, JSON.stringify(pruneTokenStore(store), null, 2), 'utf-8');
+    // 0600 pelo mesmo motivo do arquivo de credenciais: quem tiver um destes access_tokens
+    // comanda a casa inteira pelo webhook de fulfillment, sem passar por senha nenhuma.
+    fs.writeFileSync(ARQUIVO_DE_TOKENS(), JSON.stringify(pruneTokenStore(store), null, 2), { encoding: 'utf-8', mode: 0o600 });
+    try {
+      fs.chmodSync(ARQUIVO_DE_TOKENS(), 0o600);
+    } catch {
+      // Windows não tem esse conceito de permissão; o arquivo fica na pasta de dados do usuário.
+    }
   } catch (e) {
     console.error('Erro ao salvar google-home-tokens.json:', e);
   }
@@ -157,66 +187,198 @@ export function revokeAllTokens(): void {
   saveTokenStore({ authCodes: {}, accessTokens: {}, refreshTokens: {} });
 }
 
+/**
+ * Se existe ou não uma conta do Google vinculada a este OSONE.
+ *
+ * Sem isto, a única coisa que a tela sabia dizer era se o par client_id/secret estava
+ * preenchido — que é a metade fácil. Quem preenchia os dois e nunca concluía o "Vincular conta"
+ * no app Google Home via "Configurado no Servidor" em verde e ficava sem entender por que o
+ * Assistente respondia que não encontrava nenhum aparelho. São dois estados diferentes, e agora
+ * a tela mostra os dois.
+ *
+ * O refresh_token é o que marca o vínculo: ele nasce na conclusão do fluxo e vale até o usuário
+ * desvincular. O access_token vence em uma hora e some sozinho — contá-lo diria "desvinculado"
+ * para quem está apenas há mais de uma hora sem falar com o Assistente.
+ */
+export function lerEstadoDoVinculo(): { vinculado: boolean; vinculos: number; vinculadoEm: number | null; sessoesAtivas: number } {
+  const store = pruneTokenStore(loadTokenStore());
+  const refresh = Object.values(store.refreshTokens);
+  return {
+    vinculado: refresh.length > 0,
+    vinculos: refresh.length,
+    vinculadoEm: refresh.length > 0 ? Math.min(...refresh.map(r => r.issuedAt || 0)) : null,
+    sessoesAtivas: Object.keys(store.accessTokens).length
+  };
+}
+
 // ============================================================================
 // Mapeamento de dispositivos Tuya <-> esquema do Google Smart Home
 // ============================================================================
 
-function mapTuyaCategoryToGoogleType(category: string): string {
-  const cat = (category || '').toLowerCase();
-  if (cat === 'dj') return 'action.devices.types.LIGHT';
-  if (cat === 'cz' || cat === 'pc') return 'action.devices.types.OUTLET';
-  if (cat === 'kg') return 'action.devices.types.SWITCH';
-  return 'action.devices.types.SWITCH';
+/**
+ * O tipo do aparelho decide o ícone e o vocabulário que o Assistente aceita: numa LIGHT ele
+ * entende "acende a sala", num OUTLET entende "liga a tomada". Tudo que caía no padrão
+ * SWITCH — inclusive toda lâmpada que não fosse da categoria 'dj' — perdia isso.
+ */
+const TIPO_POR_CATEGORIA: Record<string, string> = {
+  dj: 'LIGHT',     // lâmpada
+  dd: 'LIGHT',     // fita de LED
+  dc: 'LIGHT',     // cordão de luz
+  xdd: 'LIGHT',    // luminária de teto
+  fwd: 'LIGHT',    // luz ambiente
+  tyndj: 'LIGHT',  // luz solar
+  gyd: 'LIGHT',    // luz noturna
+  fsd: 'FAN',      // ventilador de teto com luz
+  fs: 'FAN',       // ventilador
+  cz: 'OUTLET',    // tomada
+  pc: 'OUTLET',    // régua de tomadas
+  kg: 'SWITCH',    // interruptor
+  tdq: 'SWITCH'    // disjuntor inteligente
+};
+
+function tipoDoGoogle(categoria: string): string {
+  return TIPO_POR_CATEGORIA[(categoria || '').toLowerCase().trim()] || 'SWITCH';
+}
+
+export interface AparelhoParaGoogle {
+  id: string;
+  nome: string;
+  categoria: string;
+  online: boolean;
+  /** Sem o prefixo 'action.devices.types.', para caber na tela do painel. */
+  tipo: string;
+  /** Sem o prefixo 'action.devices.traits.', pelo mesmo motivo. */
+  traits: string[];
+  recursos: RecursosDoAparelho;
+}
+
+export interface MapaParaGoogle {
+  expostos: AparelhoParaGoogle[];
+  /** O que ficou de fora e por quê — para a tela poder dizer, em vez de o aparelho sumir calado. */
+  ignorados: Array<{ id: string; nome: string; motivo: string }>;
 }
 
 /**
- * Descobre o código de liga/desliga real do dispositivo (mesma lógica usada no cliente para
- * o controle Tuya direto), para que EXECUTE funcione em qualquer categoria de dispositivo,
- * não só nos que usam "switch_1".
+ * Traduz a conta Tuya inteira no que o Google Assistant vai enxergar.
+ *
+ * Uma função só, usada pelo SYNC, pelo EXECUTE e pela tela de diagnóstico, porque as três
+ * precisam concordar: um aparelho que o SYNC anuncia e o EXECUTE recusa é pior do que um
+ * aparelho que nunca apareceu.
+ *
+ * FECHADURA NÃO ENTRA. Esta é a regra de segurança que o OSONE já aplicava no chat e no painel
+ * — comando de voz nunca abre trava, e no painel a fechadura exige confirmação humana no
+ * modal. A ponte do Google ignorava isso e entregava a fechadura como um interruptor comum:
+ * quem estivesse perto de qualquer aparelho com Assistente podia mandar destrancar falando, e
+ * a confirmação que existe no resto do sistema não era nem consultada. Cair no padrão SWITCH
+ * era o bastante para abrir esse buraco sozinho.
  */
-async function resolveDeviceSwitchCode(deviceId: string): Promise<{ code: string; currentValue: boolean } | null> {
-  // Sem try/catch aqui de propósito: engolir o erro fazia o chamador não conseguir distinguir
-  // "o aparelho respondeu mas não tem um código de liga/desliga conhecido" de "não foi
-  // possível falar com o aparelho" — e ele acabava reportando ao Google que um dispositivo
-  // inalcançável estava online e desligado.
-  const status = await getDeviceStatus(deviceId);
-  const dps: any[] = Array.isArray(status) ? status : [];
-  const preferredOrder = ['switch_led', 'switch_1', 'switch', 'switch_one', 'power_switch_1'];
-  for (const preferred of preferredOrder) {
-    const match = dps.find((d: any) => d.code === preferred);
-    if (match) return { code: match.code, currentValue: !!match.value };
+export async function mapearAparelhosParaGoogle(): Promise<MapaParaGoogle> {
+  const devices = await getTuyaDevices();
+  const lista: any[] = Array.isArray(devices) ? devices : [];
+
+  const expostos: AparelhoParaGoogle[] = [];
+  const ignorados: MapaParaGoogle['ignorados'] = [];
+
+  for (const d of lista) {
+    const nome = d?.name || d?.id;
+
+    if (ehFechadura(d?.category)) {
+      ignorados.push({
+        id: d.id,
+        nome,
+        motivo: 'É uma fechadura. Por segurança, o OSONE nunca entrega trava ao comando de voz — ela só é acionada pelo chat de texto, com confirmação humana explícita.'
+      });
+      continue;
+    }
+
+    // A lista da Tuya já costuma trazer os pontos de dados; a consulta por aparelho é o plano B.
+    let dps: any[] = Array.isArray(d?.status) ? d.status : [];
+    if (dps.length === 0) {
+      try {
+        const st = await getDeviceStatus(d.id);
+        dps = Array.isArray(st) ? st : [];
+      } catch (err: any) {
+        ignorados.push({ id: d.id, nome, motivo: `Não foi possível ler o que este aparelho aceita (${err?.message || err}).` });
+        continue;
+      }
+    }
+
+    const recursos = recursosDosDps(dps);
+    if (!recursos.liga) {
+      // Anunciar ao Google um aparelho sem liga/desliga legível seria prometer um controle que o
+      // EXECUTE vai ter de recusar depois — e o Assistente já teria dito "ok".
+      ignorados.push({ id: d.id, nome, motivo: 'Não expõe um liga/desliga que o OSONE saiba usar (sensores e aparelhos só de leitura caem aqui).' });
+      continue;
+    }
+
+    const traits = ['OnOff'];
+    if (recursos.brilho) traits.push('Brightness');
+    if (recursos.cor) traits.push('ColorSetting');
+
+    expostos.push({
+      id: d.id,
+      nome,
+      categoria: d.category || '',
+      online: d.online !== false,
+      tipo: tipoDoGoogle(d.category),
+      traits,
+      recursos
+    });
   }
-  const generic = dps.find((d: any) => /switch/i.test(d.code) && typeof d.value === 'boolean');
-  if (generic) return { code: generic.code, currentValue: !!generic.value };
-  return null;
+
+  return { expostos, ignorados };
 }
 
 export async function handleSync(): Promise<any> {
-  const devices = await getTuyaDevices();
-  const list = Array.isArray(devices) ? devices : [];
+  const { expostos } = await mapearAparelhosParaGoogle();
   return {
-    devices: list.map((d: any) => ({
-      id: d.id,
-      type: mapTuyaCategoryToGoogleType(d.category),
-      traits: ['action.devices.traits.OnOff'],
-      name: { name: d.name || d.id },
-      willReportState: false,
-      deviceInfo: { manufacturer: 'Tuya (via OSONE)', model: d.category || 'unknown' }
-    }))
+    devices: expostos.map(a => {
+      const dispositivo: any = {
+        id: a.id,
+        type: `action.devices.types.${a.tipo}`,
+        traits: a.traits.map(t => `action.devices.traits.${t}`),
+        name: { name: a.nome },
+        // O OSONE não tem como avisar o Google por conta própria quando alguém aperta o
+        // interruptor na parede: o Report State exige uma chave de conta de serviço do Google
+        // Cloud que só o usuário pode emitir. Declarar `false` é o que faz o Assistente
+        // PERGUNTAR o estado (QUERY) antes de responder, em vez de repetir um valor guardado.
+        willReportState: false,
+        deviceInfo: { manufacturer: 'Tuya (via OSONE)', model: a.categoria || 'unknown' }
+      };
+      // 'hsv' porque é o formato que a Tuya guarda; anunciar 'rgb' faria o Google mandar a cor
+      // numa representação que a conversão daqui não espera.
+      if (a.traits.includes('ColorSetting')) dispositivo.attributes = { colorModel: 'hsv' };
+      return dispositivo;
+    })
   };
 }
 
 export async function handleQuery(deviceIds: string[]): Promise<any> {
   const devices: Record<string, any> = {};
+
   for (const id of deviceIds) {
     try {
-      const resolved = await resolveDeviceSwitchCode(id);
-      devices[id] = resolved
-        // Respondeu e tem liga/desliga: estado real.
-        ? { status: 'SUCCESS', online: true, on: resolved.currentValue }
-        // Respondeu, mas não expõe um liga/desliga que saibamos ler: está online, e dizemos
-        // que não conseguimos determinar o estado em vez de inventar "desligado".
-        : { status: 'ERROR', online: true, errorCode: 'functionNotSupported' };
+      // Estado lido do aparelho AGORA: o QUERY é justamente a pergunta "como está neste
+      // instante", e um interruptor apertado na parede não passa por lugar nenhum daqui.
+      const status = await getDeviceStatus(id);
+      const recursos = recursosDosDps(Array.isArray(status) ? status : []);
+
+      if (!recursos.liga) {
+        // Respondeu, mas não expõe um liga/desliga que saibamos ler: está online, e dizemos que
+        // não conseguimos determinar o estado em vez de inventar "desligado".
+        devices[id] = { status: 'ERROR', online: true, errorCode: 'functionNotSupported' };
+        continue;
+      }
+
+      const estado: any = { status: 'SUCCESS', online: true, on: recursos.liga.ligado };
+
+      const brilho = brilhoEmPorcento(recursos.brilho);
+      if (brilho !== undefined) estado.brightness = brilho;
+
+      const cor = corDoAparelhoParaGoogle(recursos.cor);
+      if (cor) estado.color = { spectrumHsv: cor };
+
+      devices[id] = estado;
     } catch (err: any) {
       // A consulta falhou de fato (aparelho fora do ar, erro de credencial, timeout). Antes
       // este caso era praticamente inalcançável e o aparelho aparecia no Google Home como
@@ -225,35 +387,97 @@ export async function handleQuery(deviceIds: string[]): Promise<any> {
       devices[id] = { status: 'OFFLINE', online: false };
     }
   }
+
   return { devices };
+}
+
+/**
+ * Traduz um comando do Google na ação que `montarComandos` entende — a mesma que o painel e o
+ * chat usam. Devolve `null` para comando que esta ponte não implementa.
+ */
+function acaoDoComandoDoGoogle(comando: string, params: any):
+  | { acao: string; valor?: any; cor?: any; estado: Record<string, any> }
+  | null {
+  if (comando === 'action.devices.commands.OnOff') {
+    const ligado = !!params?.on;
+    return { acao: ligado ? 'turn_on' : 'turn_off', estado: { on: ligado } };
+  }
+
+  if (comando === 'action.devices.commands.BrightnessAbsolute') {
+    const brilho = Number(params?.brightness);
+    if (!Number.isFinite(brilho)) return null;
+    return { acao: 'set_value', valor: brilho, estado: { brightness: brilho, on: true } };
+  }
+
+  if (comando === 'action.devices.commands.ColorAbsolute') {
+    // O Google manda 'spectrumHSV' no EXECUTE e espera 'spectrumHsv' de volta no QUERY. A
+    // diferença de maiúsculas é dele, e ler só uma das duas grafias deixava a cor cair fora.
+    const hsv = params?.color?.spectrumHSV || params?.color?.spectrumHsv;
+    const hex = corDoGoogleParaHex(hsv);
+    if (!hex) return null;
+    return { acao: 'set_color', cor: hex, estado: { color: { spectrumHsv: hsv }, on: true } };
+  }
+
+  return null;
 }
 
 export async function handleExecute(commands: Array<{ devices: Array<{ id: string }>; execution: Array<{ command: string; params?: any }> }>): Promise<any> {
   const commandResults: any[] = [];
 
+  // Um levantamento só para a requisição inteira, e é ele que autoriza: aparelho que não está
+  // na lista de expostos não é comandado, ponto. É assim que a fechadura continua fora mesmo se
+  // o Google mandar o id dela por ter guardado um SYNC antigo — sem isto, o EXECUTE falaria
+  // direto com a Tuya, por fora da trava que o resto do OSONE aplica.
+  let mapa: MapaParaGoogle | null = null;
+  let erroDoMapa = '';
+  try {
+    mapa = await mapearAparelhosParaGoogle();
+  } catch (err: any) {
+    erroDoMapa = String(err?.message || err);
+    console.error('[Google Home] Não foi possível levantar os aparelhos da conta Tuya:', erroDoMapa);
+  }
+
   for (const cmd of commands) {
     for (const device of cmd.devices) {
       for (const execution of cmd.execution) {
+        if (!mapa) {
+          commandResults.push({
+            ids: [device.id],
+            status: 'ERROR',
+            errorCode: /não configurad|credenciais|client_id|client_secret|TUYA_/i.test(erroDoMapa) ? 'authFailure' : 'deviceOffline'
+          });
+          continue;
+        }
+
+        const alvo = mapa.expostos.find(a => a.id === device.id);
+        if (!alvo) {
+          const ignorado = mapa.ignorados.find(i => i.id === device.id);
+          if (ignorado) console.warn(`[Google Home] Comando recusado em ${device.id}: ${ignorado.motivo}`);
+          // 'deviceNotFound' faz o Google tirar o aparelho da casa do usuário, que é o certo
+          // para algo que o SYNC não anuncia mais.
+          commandResults.push({ ids: [device.id], status: 'ERROR', errorCode: 'deviceNotFound' });
+          continue;
+        }
+
+        const traduzido = acaoDoComandoDoGoogle(execution.command, execution.params);
+        if (!traduzido) {
+          commandResults.push({ ids: [device.id], status: 'ERROR', errorCode: 'functionNotSupported' });
+          continue;
+        }
+
+        // A recusa vem do que o aparelho REALMENTE tem. Antes, o EXECUTE mandava 'switch_1' para
+        // qualquer coisa e informava SUCCESS: o Assistente respondia "ok, liguei", o aparelho não
+        // mexia, e a resposta ainda envenenava o estado que o Google guarda.
+        const montagem = montarComandos(alvo.recursos, traduzido.acao, traduzido.valor, traduzido.cor);
+        if ('falha' in montagem) {
+          console.warn(`[Google Home] ${alvo.nome}: ${montagem.falha}`);
+          commandResults.push({ ids: [device.id], status: 'ERROR', errorCode: 'functionNotSupported' });
+          continue;
+        }
+
         try {
-          if (execution.command === 'action.devices.commands.OnOff') {
-            const resolved = await resolveDeviceSwitchCode(device.id);
-            // Sem um liga/desliga conhecido, o comando NÃO é chutado como 'switch_1'.
-            //
-            // O handleQuery já respondia 'functionNotSupported' nesse caso, e o EXECUTE fazia o
-            // oposto: mandava um ponto de dados que o aparelho pode não ter e informava SUCCESS
-            // ao Google. O Assistente respondia "ok, liguei", o aparelho não mexia, e a resposta
-            // ainda envenenava o estado que o Google guarda. Recusar é o que as duas rotas
-            // precisam fazer de forma coerente.
-            if (!resolved) {
-              commandResults.push({ ids: [device.id], status: 'ERROR', errorCode: 'functionNotSupported' });
-              continue;
-            }
-            const desiredOn = !!execution.params?.on;
-            await sendDeviceCommand(device.id, [{ code: resolved.code, value: desiredOn }]);
-            commandResults.push({ ids: [device.id], status: 'SUCCESS', states: { online: true, on: desiredOn } });
-          } else {
-            commandResults.push({ ids: [device.id], status: 'ERROR', errorCode: 'functionNotSupported' });
-          }
+          await sendDeviceCommand(device.id, montagem.comandos);
+          commandResults.push({ ids: [device.id], status: 'SUCCESS', states: { online: true, ...traduzido.estado } });
         } catch (err: any) {
           // Antes qualquer falha virava "deviceOffline", escondendo erro de credencial ou de
           // configuração atrás de uma mensagem de aparelho desligado. Agora o motivo real é
@@ -272,4 +496,100 @@ export async function handleExecute(commands: Array<{ devices: Array<{ id: strin
   }
 
   return { commands: commandResults };
+}
+
+/**
+ * DESVINCULAR DE VERDADE. O Google manda esta intent quando o usuário remove o OSONE no app
+ * Google Home, e a resposta era um `{}` vazio: os tokens continuavam gravados e válidos aqui.
+ * Desvincular pelo celular não desfazia nada — quem tivesse o access_token seguia comandando a
+ * casa pelo webhook, e o usuário tinha todo motivo para acreditar que havia cortado o acesso.
+ */
+export function handleDisconnect(): void {
+  revokeAllTokens();
+  console.log('[Google Home] Conta desvinculada pelo usuário: todos os tokens foram revogados.');
+}
+
+/**
+ * Diagnóstico de ponta a ponta, no mesmo espírito do `diagnosticarTuya`: em vez de dizer só se
+ * os campos estão preenchidos, percorre a corrente inteira — credenciais, Tuya, vínculo — e
+ * para no primeiro elo que falta, explicando o que fazer ali.
+ */
+export async function diagnosticarGoogleHome(): Promise<any> {
+  const { configured } = checkGoogleHomeConfig();
+  const vinculo = lerEstadoDoVinculo();
+
+  if (!configured) {
+    return {
+      ok: false,
+      etapa: 'credenciais',
+      resumo: 'Falta o par Client ID / Client Secret do Google Home.',
+      ...vinculo,
+      configurado: false,
+      expostos: [],
+      ignorados: [],
+      comoResolver:
+        'Invente um Client ID e um Client Secret (qualquer texto longo serve — eles são seus, não do Google), ' +
+        'preencha os dois aqui na aba Google Home e cole exatamente os mesmos valores em Account Linking, no seu ' +
+        'projeto do Actions on Google Console.'
+    };
+  }
+
+  let mapa: MapaParaGoogle;
+  try {
+    mapa = await mapearAparelhosParaGoogle();
+  } catch (err: any) {
+    const bruto = String(err?.message || err);
+    return {
+      ok: false,
+      etapa: 'tuya',
+      resumo: 'O Google Home está configurado, mas a conta Tuya não respondeu — e é dela que saem os aparelhos.',
+      ...vinculo,
+      configurado: true,
+      expostos: [],
+      ignorados: [],
+      erroTecnico: bruto,
+      comoResolver: explicarErroTuya(bruto)
+    };
+  }
+
+  if (mapa.expostos.length === 0) {
+    return {
+      ok: false,
+      etapa: 'aparelhos',
+      resumo: 'Nenhum aparelho da sua conta pode ser entregue ao Assistente.',
+      ...vinculo,
+      configurado: true,
+      expostos: [],
+      ignorados: mapa.ignorados,
+      comoResolver:
+        'Só entram aparelhos com um liga/desliga que o OSONE consiga ler, e fechaduras nunca entram. ' +
+        'A lista abaixo diz o motivo de cada um que ficou de fora.'
+    };
+  }
+
+  if (!vinculo.vinculado) {
+    return {
+      ok: false,
+      etapa: 'vinculo',
+      resumo: `${mapa.expostos.length} aparelho(s) prontos, mas nenhuma conta do Google foi vinculada ainda.`,
+      ...vinculo,
+      configurado: true,
+      expostos: mapa.expostos,
+      ignorados: mapa.ignorados,
+      comoResolver:
+        'No app Google Home do celular: + > Configurar dispositivo > "Funciona com o Google", procure o seu ' +
+        'projeto de teste e autorize na tela que o OSONE abrir. O vínculo só se conclui por aí — não há como ' +
+        'fazê-lo a partir daqui.'
+    };
+  }
+
+  return {
+    ok: true,
+    etapa: 'pronto',
+    resumo: `Conta vinculada e ${mapa.expostos.length} aparelho(s) entregues ao Assistente.`,
+    ...vinculo,
+    configurado: true,
+    expostos: mapa.expostos,
+    ignorados: mapa.ignorados
+  };
 }
