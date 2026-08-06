@@ -7,6 +7,7 @@ import { Request, Response, NextFunction, Router } from 'express';
 import {
   ehEndereco, normalizarEndereco, pareceNomeDePrograma, NAVEGADORES_DO_AGENTE, NOME_DO_PERFIL
 } from './lib/navegadorDoAgente';
+import { SondaDeDisco, CaminhoResolvido, resolverCaminho } from './lib/caminhoDoSistema';
 
 // ============================================================================
 // SEÇÃO 1: CONFIGURAÇÃO E INICIALIZAÇÃO
@@ -77,30 +78,26 @@ const WELL_KNOWN_FOLDER_ALIASES: Record<string, string[]> = {
  * só apelidos em inglês eram aceitos, e qualquer caminho real era recusado — que é a razão de
  * o agente "não achar os caminhos" e falhar ao criar, escrever ou apagar qualquer coisa.
  */
+/**
+ * A sonda que deixa a resolução de caminho PERGUNTAR AO DISCO em vez de adivinhar.
+ *
+ * As regras moram em lib/caminhoDoSistema.ts, separadas justamente para poderem ser conferidas
+ * contra um disco de mentira, com as pastas exatas de cada caso. Aqui só se liga o disco real.
+ */
+const sondaDoDisco: SondaDeDisco = {
+  existe: (caminho) => { try { return fs.existsSync(caminho); } catch { return false; } },
+  listar: (pasta) => { try { return fs.readdirSync(pasta); } catch { return []; } },
+  casa: USER_HOME_DIR,
+  ehWindows: process.platform === 'win32'
+};
+
+/** Como o caminho foi resolvido, para quem precisa CONTAR isso ao usuário. */
+export function resolverCaminhoDetalhado(input: string): CaminhoResolvido {
+  return resolverCaminho(String(input || ''), sondaDoDisco, { apelidosDePastas: WELL_KNOWN_FOLDER_ALIASES });
+}
+
 export function resolveAnyPath(input: string): string {
-  const raw = expandHomePath(String(input || '').trim());
-  if (!raw) return USER_HOME_DIR;
-
-  // Já é um caminho absoluto: usa como veio.
-  if (path.isAbsolute(raw)) return path.resolve(raw);
-
-  // Apelido de pasta conhecida (em qualquer idioma suportado).
-  const key = raw.toLowerCase().replace(/\s+/g, '_');
-  const aliasKey = Object.keys(WELL_KNOWN_FOLDER_ALIASES).find(k =>
-    k === key || WELL_KNOWN_FOLDER_ALIASES[k].some(n => n.toLowerCase().replace(/\s+/g, '_') === key)
-  );
-  if (aliasKey) {
-    for (const candidate of WELL_KNOWN_FOLDER_ALIASES[aliasKey]) {
-      const full = candidate ? path.join(USER_HOME_DIR, candidate) : USER_HOME_DIR;
-      if (fs.existsSync(full)) return full;
-    }
-    // Nenhum nome existe ainda: usa o primeiro, que será criado quando necessário.
-    const fallback = WELL_KNOWN_FOLDER_ALIASES[aliasKey][0];
-    return fallback ? path.join(USER_HOME_DIR, fallback) : USER_HOME_DIR;
-  }
-
-  // Caminho relativo qualquer: interpreta a partir da pasta do usuário, nunca da pasta do app.
-  return path.resolve(USER_HOME_DIR, raw);
+  return resolverCaminhoDetalhado(input).caminho;
 }
 
 /**
@@ -1083,7 +1080,19 @@ const handleOpenAny = async (req: Request, res: Response) => {
       return res.status(200).json({ message: `'${target}' aberto com sucesso.`, target, path: isLocationAlias ? openAtDir : undefined });
     }
 
-    const expandedTarget = expandHomePath(target);
+    /**
+     * O CAMINHO É RESOLVIDO NO DISCO, não apenas expandido como texto.
+     *
+     * Era aqui que "home/usuario/downloads" saía errado: 'expandHomePath' só troca o '~' e devolve
+     * o resto como veio, então um caminho sem a barra inicial chegava relativo ao comando — e
+     * relativo ao lugar onde o programa roda é a pasta do próprio OSONE. Daí o nome do app
+     * aparecer no meio de um caminho que ninguém escreveu assim.
+     *
+     * A resolução também conserta maiúsculas ('downloads' → 'Downloads', que no Linux são pastas
+     * diferentes) e reconhece caminho de outro sistema operacional.
+     */
+    const resolvido = resolverCaminhoDetalhado(target);
+    const expandedTarget = resolvido.existe ? resolvido.caminho : expandHomePath(target);
 
     /**
      * NOME DE PROGRAMA É PROGRAMA, NÃO CAMINHO DE ARQUIVO.
@@ -1111,8 +1120,22 @@ const handleOpenAny = async (req: Request, res: Response) => {
     // cwd na casa do usuário para que caminhos relativos nunca resolvam para a pasta do app.
     // O ambiente gráfico decide em QUAL tela a janela vai nascer — a do agente, quando ligada.
     await runShell(command, 4000, USER_HOME_DIR, ambienteGrafico());
-    logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto com sucesso`, { target, command });
-    return res.status(200).json({ message: `'${target}' aberto com sucesso.`, target });
+    logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto com sucesso`, { target, command, resolvido: expandedTarget });
+    return res.status(200).json({
+      message: `'${target}' aberto com sucesso.`,
+      target,
+      caminhoUsado: expandedTarget,
+      /**
+       * Dizer O QUE FOI ABERTO, quando não é exatamente o que foi pedido.
+       *
+       * Um ajuste silencioso de caminho é pior do que o erro que ele evita: o agente segue
+       * achando que está numa pasta e está noutra. Com o ajuste no relatório, quem acompanha vê
+       * "você pediu X, abri Y" e pode corrigir o rumo.
+       */
+      resumo: resolvido.comoResolveu
+        ? `${resolvido.comoResolveu} Abri "${expandedTarget}".`
+        : undefined
+    });
   } catch (error: any) {
     logAudit('ERROR', 'OPEN_ANY_FAILED', `Falha ao abrir '${target}': ${error.message}`, { target });
     return res.status(500).json({ error: `Não foi possível abrir '${target}': ${error.message}` });
