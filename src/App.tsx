@@ -519,8 +519,8 @@ const getFriendlyModeName = (mode: WorkspaceMode): string => {
     case 'code': return 'OSONE CODE (Swarm Harness)';
     case 'canvas': return 'Quadro Interativo / Desenho';
     case 'wellness': return 'Wellness & Style Lab';
-    case 'local_control': return 'Automação IoT (Sandbox Local)';
-    case 'smarthome': return 'Casa Inteligente — aparelhos reais da conta Tuya';
+    case 'local_control': return 'OSONE HOME — automação da casa';
+    case 'smarthome': return 'OSONE HOME — aparelhos reais da conta Tuya, no painel, no chat e no Google Home';
     case 'sounds': return 'Biblioteca de Sons';
     case 'whatsapp': return 'Gerenciador WhatsApp';
     case 'map': return 'Mapa OS';
@@ -744,6 +744,8 @@ export default function App() {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [showUi, setShowUi] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  /** Em qual aba as Configurações abrem. Serve para levar direto ao campo que está faltando. */
+  const [abaDasConfiguracoes, setAbaDasConfiguracoes] = useState<string | undefined>(undefined);
   const [isIntimateMissionOpen, setIsIntimateMissionOpen] = useState(false);
   const [isAiDossierOpen, setIsAiDossierOpen] = useState(false);
   const [aiDossierType, setAiDossierType] = useState<'gradual' | 'complete' | null>(() => {
@@ -983,10 +985,10 @@ export default function App() {
   - Quando o usuário mencionar qualquer local, endereço, coordenadas, cidade ou país (ex: "mostre São Paulo no mapa", "me leve até Tóquio", "onde fica Londres"), ou pedir para abrir o mapa em alguma localidade, você DEVE acionar imediatamente a ferramenta 'open_map_workspace' passando a localização indicada.
   - É EXPRESSAMENTE PROIBIDO fazer pesquisas na internet ou usar 'openUrl' para links externos do Google Maps ou OpenStreetMap para estes casos. Você deve se concentrar INTEGRALMENTE no ambiente do Mapa OS integrado.
 
-  DIRETRIZ CRÍTICA DE TRANSPARÊNCIA - AUTOMAÇÃO IOT & SMART HOME:
+  DIRETRIZ CRÍTICA DE TRANSPARÊNCIA - AUTOMAÇÃO IOT & OSONE HOME:
   - OSONE COWORK: quando a tarefa no computador tiver MAIS DE UM CLIQUE encadeado, chame a ferramenta 'osone_cowork' com o plano inteiro, em vez de ir clicando de um em um. E NÃO pergunte ao usuário no meio ("posso clicar?", "quer que eu continue?", "confirma?"): ele autorizou a tarefa quando pediu, e perguntar a cada etapa transforma uma tarefa de trinta segundos numa conversa de cinco minutos. O COWORK cuida sozinho de estimar o tempo de cada ação, esperar a tela carregar, tirar foto nova para conferir se pegou e tentar de novo quando não pegou. Só volte a falar com o usuário quando: o COWORK parar e devolver um motivo, a tarefa terminar, ou você precisar de uma informação que só ele tem (uma senha, qual das duas contas usar, o texto exato de uma mensagem). Dúvida sobre ONDE clicar não é pergunta para o usuário — é 'capturar_tela' e 'localizar'.
   - DINHEIRO: você NUNCA conclui pagamento, compra, transferência, PIX, boleto, assinatura, saque ou qualquer movimentação financeira — nem clicando, nem digitando dados de cartão, nem por plano automático. Isso vale mesmo que o usuário peça explicitamente e mesmo que ele insista. Você PODE ajudar até a porta: pesquisar preço, comparar, encher o carrinho, abrir a tela de pagamento e explicar o que fazer. Aí você PARA, diz que o passo final é dele e devolve o controle. O motivo é simples e não é burocrático: pagamento sai do computador e não volta com um desfazer, e um erro meu custaria dinheiro de verdade de alguém. Nunca digite número de cartão, CVV, senha de banco ou código de autenticação, ainda que estejam visíveis na tela ou o usuário os dite.
-  - O sistema de Smart Home (control_smart_device, get_connected_devices, run_smart_routine) comanda APENAS aparelhos físicos reais da conta Tuya do usuário. Não existe modo simulado nem ambiente de demonstração: se as credenciais da Tuya não estiverem configuradas no servidor, as ferramentas respondem que não há casa conectada, e você deve dizer isso ao usuário — NUNCA finja que ligou, desligou ou ajustou qualquer coisa. Relate sempre exatamente o que a resposta da ferramenta disse, incluindo as recusas.
+  - O OSONE HOME (control_smart_device, get_connected_devices, run_smart_routine) comanda APENAS aparelhos físicos reais da conta Tuya do usuário. Não existe modo simulado nem ambiente de demonstração: se as credenciais da Tuya não estiverem configuradas no servidor, as ferramentas respondem que não há casa conectada, e você deve dizer isso ao usuário — NUNCA finja que ligou, desligou ou ajustou qualquer coisa. Relate sempre exatamente o que a resposta da ferramenta disse, incluindo as recusas.
   - FECHADURAS/TRAVAS (categoria contém "lock", "fechadura", "door", "latch"): é EXPRESSAMENTE PROIBIDO acionar fechaduras por voz — se você estiver em uma sessão de voz e a ferramenta retornar bloqueio de segurança, informe ao usuário que ele precisa usar o chat de texto do OSONE para essa ação. Em texto, uma fechadura real só é acionada após o usuário confirmar explicitamente no painel de confirmação que aparece na tela; se ele não confirmar em 3 minutos ou cancelar, a ação não ocorre — nunca diga que a fechadura foi destravada/travada se a resposta da ferramenta indicar cancelamento, expiração ou erro.
 
   ${localAgentEnvironment ? `AMBIENTE REAL DESTE COMPUTADOR (já detectado — NÃO precisa chamar ferramenta para descobrir, e NÃO tente adivinhar):
@@ -7874,7 +7876,7 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
 
       functionDeclarations.push({
         name: "run_smart_routine",
-        description: "Executa uma cena criada pelo usuário no painel da Casa Inteligente, mandando comandos reais aos aparelhos dela. As cenas não vêm prontas: só existem as que o usuário guardou.",
+        description: "Executa uma cena criada pelo usuário no painel do OSONE HOME, mandando comandos reais aos aparelhos dela. As cenas não vêm prontas: só existem as que o usuário guardou.",
         parameters: {
           type: Type.OBJECT,
           properties: {
@@ -9540,7 +9542,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 },
                 {
                   name: "run_smart_routine",
-                  description: "Executa uma cena criada pelo usuário no painel da Casa Inteligente, mandando comandos reais aos aparelhos dela. As cenas não vêm prontas: só existem as que o usuário guardou.",
+                  description: "Executa uma cena criada pelo usuário no painel do OSONE HOME, mandando comandos reais aos aparelhos dela. As cenas não vêm prontas: só existem as que o usuário guardou.",
                   parameters: {
                     type: Type.OBJECT,
                     properties: {
@@ -12328,9 +12330,12 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
               exit={{ opacity: 0, scale: 0.985 }}
               className="w-full flex-1 flex flex-col min-h-0"
             >
-              <SmartHomeConnect 
+              <SmartHomeConnect
                 onClose={() => setWorkspaceMode('home')}
                 onNotification={addNotification}
+                // A aba do Google Home diz o que falta preencher; sem isto ela não teria como
+                // dizer ONDE, e o usuário sairia procurando o campo pelo app.
+                onOpenSettings={() => { setAbaDasConfiguracoes('automation'); setIsSettingsOpen(true); }}
               />
             </motion.div>
           ) : workspaceMode === 'memory_book' ? (
@@ -13081,9 +13086,10 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         onLimpar={limparAcoesDoMotor}
       />
 
-      <SettingsModal 
-        isOpen={isSettingsOpen} 
-        onClose={() => setIsSettingsOpen(false)} 
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => { setIsSettingsOpen(false); setAbaDasConfiguracoes(undefined); }}
+        abaInicial={abaDasConfiguracoes}
         keys={apiKeys}
         setKeys={setApiKeys}
         selectedVoice={selectedVoice}
