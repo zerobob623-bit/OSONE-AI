@@ -48,7 +48,9 @@ import { useLocalAgent } from ${JSON.stringify(path.join(RAIZ, 'src/hooks/useLoc
 
 function Arreio() {
   const { listarJanelas, janelaDeTrabalho, definirJanela, trabalharNoObjetivo, relatoDoAgente,
-          motorParado, pararMotor, retomarMotor } = useLocalAgent();
+          motorParado, pararMotor, retomarMotor,
+          areaParalela, consultarAreaParalela, ligarAreaParalela, desligarAreaParalela,
+          fotografarAreaParalela } = useLocalAgent();
   return React.createElement('div', { style: { height: '100vh' } },
     React.createElement(CoworkSection, {
       onBack: () => {},
@@ -57,7 +59,11 @@ function Arreio() {
       modeloGemini: 'gemini-3.6-flash',
       ambiente: { osName: 'Linux', userName: 'teste', homeDir: '/home/teste' },
       listarJanelas: () => listarJanelas('token-de-teste'),
-      janelaDeTrabalho, definirJanela, relatoDoAgente, motorParado,
+      janelaDeTrabalho, definirJanela, relatoDoAgente, motorParado, areaParalela,
+      onConsultarArea: () => consultarAreaParalela('token-de-teste'),
+      onLigarArea: () => ligarAreaParalela('token-de-teste'),
+      onDesligarArea: () => desligarAreaParalela('token-de-teste'),
+      onFotografarArea: () => fotografarAreaParalela('token-de-teste'),
       onTrabalhar: (objetivo, janela) => trabalharNoObjetivo(objetivo, {
         localAgentToken: 'token-de-teste',
         visao: { chaveGemini: 'x', modeloGemini: 'y' },
@@ -112,6 +118,11 @@ const instalarMundoFalso = async (pag) => {
     window.pedidos = [];
     window.decisoes = [];
     window.chamadasAoModelo = 0;
+    window.estadoDaArea = { ligada: false, suportada: true, explicacao: 'desligada' };
+    window.janelasAbertas = [
+      janela,
+      { id: '0x1100001', titulo: 'OSONE G5', app: 'electron', x: 0, y: 0, width: 1200, height: 800, ativa: false }
+    ];
 
     let tom = 0;
     const fotoDaJanela = () => {
@@ -149,19 +160,46 @@ const instalarMundoFalso = async (pag) => {
         return json({ text: JSON.stringify(proxima || { acao: 'desistir', args: { motivo: 'sem roteiro' }, pensamento: 'fim' }) });
       }
 
-      if (url.includes('/api/agent/status')) return json({ status: 'online', osName: 'Linux' });
+      if (url.includes('/api/agent/status')) return json({ status: 'online', osName: 'Linux', areaParalela: window.estadoDaArea });
+      if (url.includes('/api/agent/desktop/status')) return json(window.estadoDaArea);
+      if (url.includes('/api/agent/desktop/start')) {
+        window.estadoDaArea = { ligada: true, suportada: true, largura: 1600, altura: 900, gerenciadorDeJanelas: 'openbox', explicacao: 'tela propria' };
+        return json(window.estadoDaArea);
+      }
+      if (url.includes('/api/agent/desktop/stop')) {
+        window.estadoDaArea = { ligada: false, suportada: true, explicacao: 'desligada' };
+        return json(window.estadoDaArea);
+      }
+      if (url.includes('/api/agent/desktop/capture')) {
+        window.fotosDaArea = (window.fotosDaArea || 0) + 1;
+        return json({ image: fotoDaJanela(), mimeType: 'image/png', largura: 1600, altura: 900 });
+      }
       if (url.includes('/api/agent/screen-info')) return json({ ...tela, offsetX: 0, offsetY: 0 });
       if (url.includes('/api/agent/window/list')) {
-        return json({ janelas: [janela, { id: '0x1100001', titulo: 'OSONE G5', app: 'electron', x: 0, y: 0, width: 1200, height: 800, ativa: false }] });
+        return json({ janelas: [...window.janelasAbertas] });
       }
-      if (url.includes('/api/agent/window/capture')) return json({ image: fotoDaJanela(), mimeType: 'image/png', janela });
+      if (url.includes('/api/agent/window/capture')) {
+        const pedida = window.janelasAbertas.find(j => url.includes(encodeURIComponent(j.id))) || janela;
+        window.janelasFotografadas = (window.janelasFotografadas || []);
+        window.janelasFotografadas.push(pedida.id);
+        return json({ image: fotoDaJanela(), mimeType: 'image/png', janela: pedida });
+      }
       if (url.includes('/api/agent/window/focus')) return json({ success: true, geometria: janela });
       if (url.includes('/api/agent/mouse/move')) {
         const b = JSON.parse(corpo || '{}');
         return json({ pediuPx: b, ficouPx: b, telaPx: tela, execucaoExata: true });
       }
       if (url.includes('/api/agent/mouse/button')) { agiuNaJanela(); return json({ success: true }); }
-      if (url.includes('/api/agent/open-any')) { agiuNaJanela(); return json({ success: true }); }
+      if (url.includes('/api/agent/open-any')) {
+        agiuNaJanela();
+        // Como no mundo real: abrir faz nascer uma janela NOVA, e ela demora um instante a aparecer.
+        const n = window.janelasAbertas.length;
+        setTimeout(() => window.janelasAbertas.push({
+          id: '0x99000' + n, titulo: `Aberto ${n} — Navegador`, app: 'firefox',
+          x: 300, y: 120, width: 1000, height: 700, ativa: true
+        }), 300);
+        return json({ success: true });
+      }
       if (url.includes('/api/agent/keyboard/')) { agiuNaJanela(); return json({ success: true }); }
       if (url.startsWith('file://') || url.includes('.js')) return fetchOriginal(entrada, opcoes);
       return json({ success: true });
@@ -381,6 +419,107 @@ const decisao = (acao, args, pensamento) => ({ acao, args, pensamento, esperaDaT
 
   registrar('repetir refaz o caminho olhando a tela de agora',
     depois > antes, `${antes} → ${depois} chamada(s) ao modelo`);
+
+  await ctx.close();
+}
+
+// ====== 8) ABRIR NÃO GERA TRÊS ABAS, E ELE PASSA A OLHAR O QUE ABRIU ======
+// O erro relatado em uso: pedido "analise uma coisa no YouTube", ele abriu três abas. A causa não
+// era o modelo — era ele continuar olhando a janela ANTIGA depois de abrir, concluir que não
+// pegou, e abrir de novo. Aqui a janela nova nasce de verdade, com atraso, como no mundo real.
+{
+  const { pag, ctx } = await abrir();
+  await definirDecisoes(pag, [
+    decisao('abrir', { caminho: 'https://youtube.com' }, 'Vou abrir o YouTube'),
+    decisao('abrir', { caminho: 'https://youtube.com' }, 'Não parece ter aberto, vou de novo'),
+    decisao('abrir', { caminho: 'https://youtube.com' }, 'Ainda não vejo, mais uma vez'),
+    decisao('concluir', { resposta: 'estou no YouTube' }, 'Agora estou vendo')
+  ]);
+  await pedir(pag, 'analisar uma coisa no YouTube');
+  await esperarFim(pag);
+  await pag.waitForTimeout(600);
+
+  const aberturas = await pag.evaluate(() => window.pedidos.filter(p => p.url.includes('/open-any')).length);
+  registrar('pedir para abrir três vezes o mesmo site abre UMA aba',
+    aberturas === 1, `${aberturas} abertura(s) para 3 decisões de abrir`);
+
+  const fotografadas = await pag.evaluate(() => window.janelasFotografadas || []);
+  registrar('depois de abrir, ele passa a fotografar a janela NOVA',
+    fotografadas.some(id => id.startsWith('0x99000')),
+    `janelas fotografadas: ${[...new Set(fotografadas)].join(', ')}`);
+
+  const texto = await pag.locator('body').innerText();
+  registrar('o relatório diz que ele já está olhando a janela que abriu',
+    /passei a olhar a janela/i.test(texto), 'a troca aparece para quem está acompanhando');
+
+  registrar('a insistência em reabrir aparece como aviso, não como aba nova',
+    /JÁ ESTÁ ABERTO/.test(texto), 'a recusa é visível e explicada');
+
+  await ctx.close();
+}
+
+// ====== 9) A TELA DELE: VOCÊ FICA ONDE ESTIVER, ELE TRABALHA DO LADO ======
+{
+  const { pag, ctx } = await abrir();
+
+  const antes = await pag.locator('body').innerText();
+  registrar('com a tela dele desligada, a aba diz que ele usa a SUA tela',
+    /Ele trabalha na sua tela/.test(antes), 'a pessoa sabe em qual dos dois modos está');
+
+  await pag.getByRole('button', { name: /Dar uma tela só para ele/ }).click();
+  await pag.waitForTimeout(1200);
+
+  const depois = await pag.locator('body').innerText();
+  registrar('ligada, a aba diz que ele tem uma tela só dele',
+    /Ele tem uma tela só dele/.test(depois) && /1600×900/.test(depois),
+    'com o tamanho da tela dele');
+
+  registrar('a aba avisa que seu mouse e seu teclado continuam seus',
+    /Seu mouse e seu teclado continuam seus|seu mouse.*continuam seus/i.test(depois),
+    'é o ponto inteiro da tela separada');
+
+  registrar('o quadro passa a mostrar a tela dele ao vivo',
+    /A tela dele, ao vivo/.test(depois) && /atualizando sozinha/.test(depois),
+    'dá para acompanhar sem sair da aba do COWORK');
+
+  // A imagem chega sozinha, sem o agente estar trabalhando: é isso que significa "ao vivo".
+  const fotos1 = await pag.evaluate(() => window.fotosDaArea || 0);
+  await pag.waitForTimeout(5000);
+  const fotos2 = await pag.evaluate(() => window.fotosDaArea || 0);
+  registrar('a tela dele se atualiza sozinha, mesmo com ele parado',
+    fotos2 > fotos1, `${fotos1} → ${fotos2} capturas`);
+
+  /**
+   * A TELA DELE NASCE VAZIA — e a primeira tarefa precisa poder começar assim mesmo.
+   *
+   * Exigir uma janela escolhida antes de começar travaria tudo justamente no primeiro uso: não há
+   * nenhuma janela lá até ele abrir a primeira. Sem janela e com a tela dele ligada, o quadro é a
+   * tela dele inteira.
+   */
+  await pag.evaluate(() => { window.janelasAbertas = []; });
+  await pag.getByRole('button', { name: 'Atualizar a lista de janelas' }).click().catch(() => {});
+  await pag.waitForTimeout(600);
+  await definirDecisoes(pag, [
+    decisao('abrir', { caminho: 'https://youtube.com' }, 'A tela está vazia, vou abrir o YouTube'),
+    decisao('concluir', { resposta: 'abri o YouTube na minha tela' }, 'pronto')
+  ]);
+  await pedir(pag, 'abrir o youtube na sua tela');
+  await esperarFim(pag);
+  await pag.waitForTimeout(600);
+
+  const abriuNaTelaDele = await pag.evaluate(() => window.pedidos.filter(p => p.url.includes('/open-any')).length);
+  registrar('a tarefa começa mesmo com a tela dele ainda vazia',
+    abriuNaTelaDele >= 1, `${abriuNaTelaDele} abertura(s) na tela dele`);
+
+  const usouACapturaDaArea = await pag.evaluate(() => (window.fotosDaArea || 0) > 0);
+  registrar('sem janela, ele olha a tela dele inteira',
+    usouACapturaDaArea, 'a captura da área paralela serve de quadro');
+
+  await pag.getByRole('button', { name: /Desligar a tela dele/ }).click();
+  await pag.waitForTimeout(800);
+  const final = await pag.locator('body').innerText();
+  registrar('dá para desligar e voltar a trabalhar na sua tela',
+    /Ele trabalha na sua tela/.test(final), 'a escolha é reversível');
 
   await ctx.close();
 }

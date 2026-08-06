@@ -1950,7 +1950,9 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   const { pendingLocalAgentConfirmation, executeLocalAgentCall,
           acoesDoMotor, motorParado, pararMotor, retomarMotor, limparAcoesDoMotor,
           ultimaAcaoNoPcRef, executarCowork, planoEmCurso, alvoMedido,
-          listarJanelas, janelaDeTrabalho, definirJanela, trabalharNoObjetivo, relatoDoAgente } = useLocalAgent();
+          listarJanelas, janelaDeTrabalho, definirJanela, trabalharNoObjetivo, relatoDoAgente,
+          areaParalela, consultarAreaParalela, ligarAreaParalela, desligarAreaParalela,
+          fotografarAreaParalela } = useLocalAgent();
 
   /**
    * Envia uma mensagem de WhatsApp de verdade, a pedido do modelo.
@@ -12384,6 +12386,11 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   janela
                 })}
                 relatoDoAgente={relatoDoAgente}
+                areaParalela={areaParalela}
+                onConsultarArea={() => consultarAreaParalela(apiKeys.localAgentToken)}
+                onLigarArea={() => ligarAreaParalela(apiKeys.localAgentToken)}
+                onDesligarArea={() => desligarAreaParalela(apiKeys.localAgentToken)}
+                onFotografarArea={() => fotografarAreaParalela(apiKeys.localAgentToken)}
                 motorParado={motorParado}
                 onParar={pararMotor}
                 onRetomar={retomarMotor}
