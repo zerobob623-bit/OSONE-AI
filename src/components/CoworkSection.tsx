@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ArrowLeft, MousePointerClick, Play, Square, Loader2, Check, AlertTriangle,
-  History, Trash2, RefreshCw, Monitor, MonitorPlay, ShieldAlert, AppWindow, Eye, CornerDownRight
+  History, Trash2, RefreshCw, Monitor, MonitorPlay, ShieldAlert, AppWindow, Eye, CornerDownRight,
+  Volume2, VolumeX
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { VoltaDoAgente, RelatorioDoAgente } from '../lib/agenteAutonomo';
@@ -11,6 +12,7 @@ import {
   TarefaDoHistorico, desfechoDoMotivo,
   lerHistorico, guardarNoHistorico, limparHistorico
 } from '../lib/historicoDoCowork';
+import { tocar, notaDaAcao, somLigado, definirSom, baterPonto } from '../lib/somDoCowork';
 
 /**
  * OSONE COWORK — você diz o objetivo, ele trabalha e conta o que está fazendo.
@@ -174,8 +176,57 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
     return () => { vivo = false; clearInterval(t); };
   }, [areaParalela?.ligada, trabalhando]);
 
+  // ====== O SOM ======
+  const [comSom, setComSom] = useState(somLigado());
+  const alternarSom = () => {
+    const novo = !comSom;
+    definirSom(novo);
+    setComSom(novo);
+    // Tocar ao LIGAR é o que prova que funciona: um botão de som que não faz som ao ser ligado
+    // deixa a pessoa sem saber se está mudo por escolha dela ou por defeito.
+    if (novo) tocar('inicio');
+  };
+
   // ====== O RELATÓRIO AO VIVO ======
   const voltas = relatoDoAgente?.voltas || [];
+
+  /**
+   * CADA AÇÃO SOA, E CADA TIPO DE AÇÃO SOA DIFERENTE.
+   *
+   * O relato de uso foi "chega na tela do YouTube e fica tudo em silêncio". Com a tela dele
+   * separada da sua, o silêncio é o estado normal de quem está noutra aba — e trabalhando e
+   * travado ficam idênticos. O som devolve a diferença sem exigir que você olhe.
+   *
+   * O disparo é preso ao TAMANHO da lista, e não a cada renderização: o React redesenha por vários
+   * motivos, e tocar a cada redesenho encheria a tarefa de bipes repetidos da mesma ação.
+   */
+  const voltasJaSoadasRef = useRef(0);
+  useEffect(() => {
+    if (voltas.length <= voltasJaSoadasRef.current) {
+      // A lista zerou (tarefa nova): o contador precisa voltar junto, senão a tarefa seguinte
+      // começa muda até passar do tamanho da anterior.
+      voltasJaSoadasRef.current = voltas.length;
+      return;
+    }
+    for (let i = voltasJaSoadasRef.current; i < voltas.length; i++) {
+      const v = voltas[i];
+      if (v.acao === 'concluir' || v.acao === 'desistir') continue; // o fim tem som próprio
+      tocar(v.ok ? notaDaAcao(v.acao) : 'falha');
+    }
+    voltasJaSoadasRef.current = voltas.length;
+  }, [voltas.length]);
+
+  /**
+   * Enquanto ele trabalha, um toque baixinho de tempos em tempos.
+   *
+   * É para a espera longa — uma página pesada, o modelo pensando. Sem isso, o intervalo entre duas
+   * ações é silêncio puro, indistinguível de ter travado; com isso, o silêncio volta a significar
+   * "parou", que é a informação que se quer.
+   */
+  useEffect(() => {
+    if (!trabalhando) return;
+    return baterPonto();
+  }, [trabalhando]);
   const fimDoRelato = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     // Acompanhar o agente exige ver a ÚLTIMA linha; sem rolar sozinho, quem está assistindo passa
@@ -203,6 +254,10 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
 
     setTrabalhando(true);
     setRelatorio(null);
+    // O som de partida também é o que "acorda" o áudio do navegador: ele só libera som depois de
+    // um gesto da pessoa, e este clique é o gesto. Tocar aqui garante que os bipes seguintes,
+    // que não vêm de clique nenhum, já encontrem o caminho aberto.
+    tocar('inicio');
     try {
       const resultado = await onTrabalhar(alvo, janelaDeTrabalho);
       setRelatorio(resultado);
@@ -221,6 +276,19 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
         janela: janelaDeTrabalho.titulo
       }));
 
+      /**
+       * O SOM DE DESLIGAMENTO — o mais importante dos três.
+       *
+       * É ele que responde "ele ainda está trabalhando ou já acabou?" sem você voltar à aba. Os
+       * três desfechos soam diferentes de propósito: terminou, você mandou parar, ou empacou. Um
+       * som só para os três obrigaria a olhar justamente para saber o que aconteceu.
+       */
+      tocar(
+        (resultado as any)?.motivo === 'acao-recusada' ? 'recusa'
+          : desfecho === 'concluida' ? 'concluido'
+          : desfecho === 'parada' ? 'parado'
+          : 'falha'
+      );
       onNotification(texto || 'Tarefa finalizada.',
         desfecho === 'concluida' ? 'success' : desfecho === 'parada' ? 'info' : 'error');
     } finally {
@@ -259,6 +327,17 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
             Diga o objetivo. Ele olha a janela, decide o que fazer, faz — e vai contando tudo aqui.
           </p>
         </div>
+        <button
+          onClick={alternarSom}
+          title={comSom ? 'Desligar os sons do agente' : 'Ligar os sons do agente (saber o que ele faz sem olhar)'}
+          className={cn(
+            "p-2.5 rounded-full border shrink-0 transition-colors",
+            comSom ? "border-indigo-500/25 text-indigo-300 bg-indigo-500/[0.06] hover:bg-indigo-500/10"
+                   : "border-white/10 text-her-muted hover:bg-white/[0.04]"
+          )}
+        >
+          {comSom ? <Volume2 size={15} /> : <VolumeX size={15} />}
+        </button>
         <span className={cn(
           "text-[10px] uppercase tracking-[0.2em] px-3 py-1.5 rounded-full border shrink-0",
           disponibilidade === 'ok' ? "border-emerald-500/25 text-emerald-400 bg-emerald-500/[0.06]"
