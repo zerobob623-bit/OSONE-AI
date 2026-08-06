@@ -14,6 +14,18 @@ export interface VisaoDoMotor {
   modeloGemini?: string;
 }
 
+/** Em qual tela o agente está trabalhando: a sua, ou uma só dele. */
+export interface EstadoDaAreaParalela {
+  ligada: boolean;
+  /** Falso quando o sistema não tem como oferecer uma tela separada (hoje: fora do Linux). */
+  suportada: boolean;
+  largura?: number;
+  altura?: number;
+  gerenciadorDeJanelas?: string | null;
+  /** O texto que a aba mostra — em português, dizendo o que isso significa na prática. */
+  explicacao?: string;
+}
+
 /** Uma janela do sistema, como o agente local a enxerga. */
 export interface JanelaDeTrabalho {
   id: string;
@@ -1019,6 +1031,75 @@ export function useLocalAgent() {
     Authorization: `Bearer ${(token || '').trim()}`
   });
 
+  /**
+   * A TELA DO AGENTE — ligada, ele deixa de disputar a sua.
+   *
+   * Sem ela, mouse, teclado e foco de janela são um só recurso para os dois: ele trabalhar
+   * significa você parar. Ligada, as janelas dele nascem num servidor gráfico sem monitor, e você
+   * continua onde estiver — em qualquer aba, em qualquer programa — enquanto acompanha pela
+   * imagem. Só existe no Linux, com Xvfb; o estado diz em qual dos dois modos se está.
+   */
+  const [areaParalela, setAreaParalela] = useState<EstadoDaAreaParalela | null>(null);
+  /** Lido dentro do laço, que roda fora de renderização e não enxergaria o estado. */
+  const areaRef = useRef<EstadoDaAreaParalela | null>(null);
+  const definirArea = (a: EstadoDaAreaParalela | null) => { areaRef.current = a; setAreaParalela(a); };
+
+  const consultarAreaParalela = async (localAgentToken?: string) => {
+    try {
+      const res = await fetch('/api/agent/desktop/status', { headers: cabecalhoDoAgente(localAgentToken) });
+      const dados = await res.json().catch(() => null);
+      if (dados) definirArea(dados);
+      return dados as EstadoDaAreaParalela | null;
+    } catch {
+      return null;
+    }
+  };
+
+  const ligarAreaParalela = async (localAgentToken?: string, tamanho?: { largura: number; altura: number }) => {
+    try {
+      const res = await fetch('/api/agent/desktop/start', {
+        method: 'POST', headers: cabecalhoDoAgente(localAgentToken),
+        body: JSON.stringify(tamanho || {})
+      });
+      const dados = await res.json().catch(() => null);
+      if (res.ok && dados) {
+        definirArea(dados);
+        // A janela de trabalho de antes é da SUA tela; do outro lado ela não existe. Manter a
+        // referência faria o agente fotografar uma janela que não está na tela dele.
+        definirJanela(null);
+        return dados as EstadoDaAreaParalela;
+      }
+      return { ligada: false, suportada: false, explicacao: dados?.error || 'Não foi possível ligar a tela do agente.' } as EstadoDaAreaParalela;
+    } catch (err: any) {
+      return { ligada: false, suportada: false, explicacao: `Falha ao ligar a tela do agente: ${err?.message || err}` } as EstadoDaAreaParalela;
+    }
+  };
+
+  const desligarAreaParalela = async (localAgentToken?: string) => {
+    try {
+      const res = await fetch('/api/agent/desktop/stop', {
+        method: 'POST', headers: cabecalhoDoAgente(localAgentToken)
+      });
+      const dados = await res.json().catch(() => null);
+      if (dados) definirArea(dados);
+      definirJanela(null);
+      return dados as EstadoDaAreaParalela | null;
+    } catch {
+      return null;
+    }
+  };
+
+  /** A foto da tela do agente, para a aba mostrar ao vivo sem tirar você de onde está. */
+  const fotografarAreaParalela = async (localAgentToken?: string): Promise<string | null> => {
+    try {
+      const res = await fetch('/api/agent/desktop/capture', { headers: cabecalhoDoAgente(localAgentToken) });
+      const dados = await res.json().catch(() => null);
+      return res.ok && dados?.image ? dados.image : null;
+    } catch {
+      return null;
+    }
+  };
+
   /** As janelas abertas, para o usuário escolher uma — ou para o agente achar a que ele abriu. */
   const listarJanelas = async (localAgentToken?: string): Promise<JanelaDeTrabalho[]> => {
     try {
@@ -1031,10 +1112,29 @@ export function useLocalAgent() {
     }
   };
 
-  /** Foto SÓ da janela de trabalho, com a geometria recém-lida junto. */
+  /**
+   * Foto do que o agente está olhando: a janela de trabalho, ou a tela dele inteira.
+   *
+   * A segunda metade existe por um caso que sem ela travaria tudo: a tela do agente NASCE VAZIA.
+   * Exigir uma janela escolhida antes de começar impediria a primeira tarefa de sair do lugar,
+   * porque a primeira coisa que ele precisa fazer lá é justamente abrir algo. Sem janela e com a
+   * tela dele ligada, o quadro é a tela dele inteira — e as coordenadas são as dela.
+   */
   const fotografarJanelaDeTrabalho = async (localAgentToken?: string): Promise<{ imagem: string; janela: JanelaDeTrabalho } | null> => {
     const janela = janelaRef.current;
-    if (!janela) return null;
+    if (!janela) {
+      const area = areaRef.current;
+      if (!area?.ligada) return null;
+      const imagem = await fotografarAreaParalela(localAgentToken);
+      if (!imagem) return null;
+      return {
+        imagem,
+        janela: {
+          id: '', titulo: 'Tela do agente', app: 'área paralela',
+          x: 0, y: 0, width: area.largura || 1600, height: area.altura || 900
+        }
+      };
+    }
     try {
       const res = await fetch(`/api/agent/window/capture?id=${encodeURIComponent(janela.id)}`, {
         headers: cabecalhoDoAgente(localAgentToken)
@@ -1147,7 +1247,10 @@ export function useLocalAgent() {
     const { localAgentToken, visao } = opcoes;
     if (opcoes.janela !== undefined) definirJanela(opcoes.janela);
 
-    if (!janelaRef.current) {
+    // Com a tela do agente ligada, começar sem janela é o NORMAL: ela nasce vazia, e a primeira
+    // coisa que ele faz lá é abrir alguma coisa. Sem ela, escolher a janela é obrigatório — ele
+    // vai agir na sua tela, e "em qualquer janela" não é uma resposta aceitável para isso.
+    if (!janelaRef.current && !areaRef.current?.ligada) {
       return { error: 'Escolha em qual janela eu devo trabalhar antes de começar.' };
     }
     if (motorParadoRef.current) {
@@ -1211,6 +1314,48 @@ export function useLocalAgent() {
           if (!alvo) return { error: 'Para clicar é preciso descrever o alvo.' };
           return await clicarNaJanela(alvo, localAgentToken, visao);
         }
+
+        /**
+         * ABRIR E PASSAR A OLHAR O QUE ABRIU — no mesmo passo, sem depender do modelo lembrar.
+         *
+         * É o conserto do erro observado: pedido "analise uma coisa no YouTube", o agente abriu
+         * TRÊS abas. O motivo não foi burrice do modelo. Ele mandou abrir, e a foto seguinte ainda
+         * era da janela ANTERIOR — a nova tinha acabado de nascer e ninguém tinha trocado o olhar
+         * para ela. Vendo a tela velha, a conclusão correta a partir do que ele via era "não
+         * abriu", e ele abriu de novo.
+         *
+         * Deixar isso para o modelo resolver (mandando ele chamar 'trocar_janela' depois de abrir)
+         * seria confiar numa disciplina que a própria situação atrapalha: justamente quando ele
+         * precisa lembrar da regra, o que ele está vendo diz o contrário. Aqui a troca acontece
+         * como parte de abrir, medida comparando as janelas de antes e as de depois.
+         */
+        if (acao === 'abrir') {
+          const antes = new Set((await listarJanelas(localAgentToken)).map(j => j.id));
+          const r = await executeLocalAgentCall('controlar_pc', { acao, ...args }, localAgentToken, false, visao);
+          if (r?.error) return r;
+
+          for (let tentativa = 0; tentativa < 6; tentativa++) {
+            // Um programa que estava fechado leva segundos para desenhar a primeira janela.
+            await new Promise(res => setTimeout(res, 900));
+            const agora = await listarJanelas(localAgentToken);
+            const nova = agora.find(j => !antes.has(j.id));
+            if (nova) {
+              definirJanela(nova);
+              return { ...r, resumo: `Abri e passei a olhar a janela "${nova.titulo}".` };
+            }
+          }
+          /**
+           * Nenhuma janela nova é o caso do programa que JÁ ESTAVA aberto e só ganhou uma aba
+           * interna (um navegador aberto recebendo um endereço). Dizer isso é o que impede a
+           * conclusão errada de "não abriu" — que é o que gerava a abertura repetida.
+           */
+          return {
+            ...r,
+            resumo: 'Abri. Nenhuma janela NOVA apareceu, então provavelmente abriu como aba dentro ' +
+              'de uma janela que já existia. NÃO mande abrir de novo: olhe a foto e siga daí.'
+          };
+        }
+
         return await executeLocalAgentCall('controlar_pc', { acao, ...args }, localAgentToken, false, visao);
       },
 
@@ -1333,6 +1478,12 @@ export function useLocalAgent() {
     janelaDeTrabalho,
     definirJanela,
     trabalharNoObjetivo,
-    relatoDoAgente
+    relatoDoAgente,
+    // A tela do agente: ligada, ele para de disputar a sua.
+    areaParalela,
+    consultarAreaParalela,
+    ligarAreaParalela,
+    desligarAreaParalela,
+    fotografarAreaParalela
   };
 }

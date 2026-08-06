@@ -399,7 +399,10 @@ const handleStatus = (req: Request, res: Response) => {
       return out;
     })(),
     availableApps: Object.keys(CONFIG.apps || {}),
-    allowedFolders: Object.keys(CONFIG.allowedFolders || {})
+    allowedFolders: Object.keys(CONFIG.allowedFolders || {}),
+    // Em qual tela o agente está trabalhando agora — a sua ou a dele. Vai no status porque quem
+    // abre a aba precisa saber disso antes de mandar qualquer coisa, e não depois.
+    areaParalela: estadoDaArea()
   });
 };
 
@@ -858,10 +861,21 @@ const handleAuditLogs = (req: Request, res: Response) => {
 // SEÇÃO 6: ABRIR QUALQUER APP/ARQUIVO/PASTA/URL SEM PRECISAR DE ALLOWLIST
 // ============================================================================
 
-function runShell(cmd: string, timeoutMs: number = 10000, cwd: string = USER_HOME_DIR): Promise<{ stdout: string; stderr: string }> {
+function runShell(
+  cmd: string,
+  timeoutMs: number = 10000,
+  cwd: string = USER_HOME_DIR,
+  /**
+   * Ambiente do processo. Existe por causa da ÁREA PARALELA: o que decide se um comando age na
+   * tela do usuário ou na tela do agente é uma única variável (DISPLAY), e ela viaja pelo
+   * ambiente. Sem este parâmetro, todo comando gráfico iria para a tela de quem está usando o
+   * computador — que é exatamente o que a área paralela existe para evitar.
+   */
+  env: NodeJS.ProcessEnv = process.env
+): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const workingDir = fs.existsSync(cwd) ? cwd : USER_HOME_DIR;
-    exec(cmd, { timeout: timeoutMs, windowsHide: true, cwd: workingDir }, (error, stdout, stderr) => {
+    exec(cmd, { timeout: timeoutMs, windowsHide: true, cwd: workingDir, env }, (error, stdout, stderr) => {
       if (error) return reject(new Error(stderr?.toString().trim() || error.message));
       resolve({ stdout: stdout?.toString() || '', stderr: stderr?.toString() || '' });
     });
@@ -878,10 +892,11 @@ function execFileShellSafe(
   bin: string,
   args: string[],
   timeoutMs: number = 10000,
-  maxBuffer: number = 1024 * 1024
+  maxBuffer: number = 1024 * 1024,
+  env: NodeJS.ProcessEnv = process.env
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    execFile(bin, args, { timeout: timeoutMs, windowsHide: true, maxBuffer }, (error: any, stdout, stderr) => {
+    execFile(bin, args, { timeout: timeoutMs, windowsHide: true, maxBuffer, env }, (error: any, stdout, stderr) => {
       if (error) {
         /**
          * A mensagem do erro vem do PRÓPRIO erro; o stderr entra só como contexto.
@@ -945,7 +960,14 @@ function binaryExists(binary: string): Promise<boolean> {
  */
 function launchDetached(command: string, cwd: string = USER_HOME_DIR): void {
   const workingDir = fs.existsSync(cwd) ? cwd : USER_HOME_DIR;
-  const child = spawn(command, { shell: true, detached: true, stdio: 'ignore', cwd: workingDir });
+  /**
+   * O ambiente gráfico vai junto, e é ISTO que faz o programa nascer na tela do agente em vez da
+   * sua. Abrir é o único momento em que se decide de que lado a janela vai existir: depois de
+   * aberta, ela não muda de servidor gráfico.
+   */
+  const child = spawn(command, {
+    shell: true, detached: true, stdio: 'ignore', cwd: workingDir, env: ambienteGrafico()
+  });
   child.unref();
 }
 
@@ -1010,7 +1032,7 @@ const handleOpenAny = async (req: Request, res: Response) => {
       } else {
         command = isLocationAlias ? `${alias.darwin} "${openAtDir}"` : `${alias.darwin}`;
       }
-      await runShell(command, 4000);
+      await runShell(command, 4000, USER_HOME_DIR, ambienteGrafico());
       logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto com sucesso via alias`, { target, command, cwd: openAtDir });
       return res.status(200).json({ message: `'${target}' aberto com sucesso.`, target, path: isLocationAlias ? openAtDir : undefined });
     }
@@ -1023,7 +1045,8 @@ const handleOpenAny = async (req: Request, res: Response) => {
         ? `open "${safeTarget}"`
         : `xdg-open "${safeTarget}"`;
     // cwd na casa do usuário para que caminhos relativos nunca resolvam para a pasta do app.
-    await runShell(command, 4000, USER_HOME_DIR);
+    // O ambiente gráfico decide em QUAL tela a janela vai nascer — a do agente, quando ligada.
+    await runShell(command, 4000, USER_HOME_DIR, ambienteGrafico());
     logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto com sucesso`, { target, command });
     return res.status(200).json({ message: `'${target}' aberto com sucesso.`, target });
   } catch (error: any) {
@@ -1323,7 +1346,7 @@ const VALIDADE_DAS_DIMENSOES_MS = 15000;
 async function lerDimensoesDaTela(): Promise<DimensoesDaTela> {
   const platform = process.platform;
   if (platform === 'linux') {
-    const { stdout } = await runShell(`xdotool getdisplaygeometry`);
+    const { stdout } = await runShell('xdotool getdisplaygeometry', 10000, USER_HOME_DIR, ambienteGrafico());
     const [width, height] = stdout.trim().split(/\s+/).map(Number);
     return { width, height, offsetX: 0, offsetY: 0 };
   }
@@ -1395,7 +1418,7 @@ const WIN_MOUSEEVENTF = { LEFTDOWN: 0x0002, LEFTUP: 0x0004, RIGHTDOWN: 0x0008, R
 async function lerPosicaoDoCursor(): Promise<{ x: number; y: number } | null> {
   try {
     if (process.platform === 'linux') {
-      const { stdout } = await runShell('xdotool getmouselocation --shell', 3000);
+      const { stdout } = await runShell('xdotool getmouselocation --shell', 3000, USER_HOME_DIR, ambienteGrafico());
       const x = Number(stdout.match(/^X=(\d+)/m)?.[1]);
       const y = Number(stdout.match(/^Y=(\d+)/m)?.[1]);
       return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
@@ -1423,7 +1446,7 @@ const handleMouseMove = async (req: Request, res: Response) => {
   const alvo = { x: Math.round(x), y: Math.round(y) };
   try {
     if (platform === 'linux') {
-      await runShell(`xdotool mousemove ${alvo.x} ${alvo.y}`, 3000);
+      await runShell(`xdotool mousemove ${alvo.x} ${alvo.y}`, 3000, USER_HOME_DIR, ambienteGrafico());
     } else if (platform === 'win32') {
       await runShell(`powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${alvo.x},${alvo.y})"`, 3000);
     } else {
@@ -1484,9 +1507,9 @@ const handleMouseButton = async (req: Request, res: Response) => {
   const xdotoolButton = button === 'left' ? '1' : '3';
   try {
     if (platform === 'linux') {
-      if (action === 'down') await runShell(`xdotool mousedown ${xdotoolButton}`, 3000);
-      else if (action === 'up') await runShell(`xdotool mouseup ${xdotoolButton}`, 3000);
-      else await runShell(`xdotool click ${double ? '--repeat 2 --delay 120 ' : ''}${xdotoolButton}`, 3000);
+      if (action === 'down') await runShell(`xdotool mousedown ${xdotoolButton}`, 3000, USER_HOME_DIR, ambienteGrafico());
+      else if (action === 'up') await runShell(`xdotool mouseup ${xdotoolButton}`, 3000, USER_HOME_DIR, ambienteGrafico());
+      else await runShell(`xdotool click ${double ? '--repeat 2 --delay 120 ' : ''}${xdotoolButton}`, 3000, USER_HOME_DIR, ambienteGrafico());
     } else if (platform === 'win32') {
       const down = button === 'left' ? WIN_MOUSEEVENTF.LEFTDOWN : WIN_MOUSEEVENTF.RIGHTDOWN;
       const up = button === 'left' ? WIN_MOUSEEVENTF.LEFTUP : WIN_MOUSEEVENTF.RIGHTUP;
@@ -1542,10 +1565,10 @@ const handleMouseScroll = async (req: Request, res: Response) => {
   try {
     if (platform === 'linux') {
       if (x !== undefined && y !== undefined) {
-        await runShell(`xdotool mousemove ${Math.round(x)} ${Math.round(y)}`, 3000);
+        await runShell(`xdotool mousemove ${Math.round(x)} ${Math.round(y)}`, 3000, USER_HOME_DIR, ambienteGrafico());
       }
       const xdotoolButton = direction === 'up' ? '4' : '5';
-      await runShell(`xdotool click --repeat ${amount} --delay 40 ${xdotoolButton}`, 6000);
+      await runShell(`xdotool click --repeat ${amount} --delay 40 ${xdotoolButton}`, 6000, USER_HOME_DIR, ambienteGrafico());
     } else if (platform === 'win32') {
       const wheelData = (direction === 'up' ? 1 : -1) * 120 * amount;
       await runShell(winMouseWheelCommand(wheelData, x, y), 3000);
@@ -1616,7 +1639,7 @@ const handleKeyboardType = async (req: Request, res: Response) => {
   const platform = process.platform;
   try {
     if (platform === 'linux') {
-      await execFileShellSafe('xdotool', ['type', '--clearmodifiers', '--delay', '12', '--', text], 20000);
+      await execFileShellSafe('xdotool', ['type', '--clearmodifiers', '--delay', '12', '--', text], 20000, 1024 * 1024, ambienteGrafico());
     } else if (platform === 'win32') {
       const base64Text = Buffer.from(text, 'utf16le').toString('base64');
       await runShell(winTypeUnicodeCommand(base64Text), 20000);
@@ -1675,7 +1698,7 @@ const handleKeyboardKey = async (req: Request, res: Response) => {
     if (platform === 'linux') {
       const keysym = named ? named.xdotool : key;
       const combo = [...modifiers, keysym].join('+');
-      await runShell(`xdotool key ${combo}`, 5000);
+      await runShell(`xdotool key ${combo}`, 5000, USER_HOME_DIR, ambienteGrafico());
     } else if (platform === 'win32') {
       const prefix = modifiers.map(m => m === 'ctrl' ? '^' : m === 'alt' ? '%' : '+').join('');
       const token = named ? named.sendkeys : key;
@@ -1891,7 +1914,7 @@ const handleScreenCapture = async (req: Request, res: Response) => {
       let captured = false;
       for (const cmd of candidates) {
         try {
-          await runShell(cmd, 15000);
+          await runShell(cmd, 15000, USER_HOME_DIR, ambienteGrafico());
           if (fs.existsSync(tmpFile) && fs.statSync(tmpFile).size > 0) {
             captured = true;
             break;
@@ -2252,7 +2275,229 @@ const handleListPath = (req: Request, res: Response) => {
 };
 
 // ============================================================================
-// SEÇÃO 13: JANELAS — ESCOLHER UMA E TRABALHAR DENTRO DELA
+// SEÇÃO 13: A ÁREA PARALELA — O AGENTE TRABALHA NA TELA DELE, VOCÊ NA SUA
+// ============================================================================
+
+/**
+ * O PROBLEMA QUE ISTO RESOLVE, E POR QUE NÃO HAVIA JEITO SEM ELE.
+ *
+ * Um agente que move o mouse e digita age sobre a tela que existe — a mesma em que a pessoa está
+ * trabalhando. Isso obriga a uma escolha ruim: ou você para de mexer no computador enquanto ele
+ * trabalha, ou vocês dois disputam o mesmo cursor e o mesmo foco de janela, e os dois erram.
+ * Trazer a janela dele para frente antes de agir resolvia a correção do clique, mas ao preço de
+ * tomar a sua tela.
+ *
+ * A ÁREA PARALELA é um segundo servidor gráfico, na memória, sem monitor. As janelas que o agente
+ * abre nascem lá; o mouse e o teclado que ele usa são os de lá; a foto que ele tira é de lá. Nada
+ * disso encosta na sua tela — seu cursor continua seu, seu foco continua seu, e você pode estar em
+ * qualquer aba ou programa enquanto ele trabalha. Você acompanha pela imagem, dentro da aba do
+ * COWORK, sem precisar sair de onde está.
+ *
+ * O QUE DECIDE ISSO É UMA VARIÁVEL SÓ: DISPLAY. Todo comando gráfico (xdotool, import, o próprio
+ * navegador ao abrir) age no servidor gráfico que essa variável apontar. Por isso ela viaja pelo
+ * ambiente de cada comando, e não por um parâmetro em cada função.
+ *
+ * ONDE FUNCIONA: Linux com Xvfb instalado. É uma limitação real e vale dizê-la sem rodeio — no
+ * Windows não existe equivalente que aceite mouse e teclado sintéticos numa área separada de forma
+ * confiável, então lá o agente continua trabalhando na tela compartilhada, trazendo a janela dele
+ * para frente. A aba avisa em qual dos dois modos está.
+ */
+
+interface AreaParalela {
+  display: string;
+  largura: number;
+  altura: number;
+  /** O servidor gráfico sem monitor. */
+  xvfb: any;
+  /** O gerenciador de janelas, quando havia um instalado. Sem ele as janelas abrem sem moldura. */
+  gerenciador: any | null;
+  nomeDoGerenciador: string | null;
+  desde: number;
+}
+
+let areaParalela: AreaParalela | null = null;
+
+/** O ambiente com que os comandos gráficos rodam: a área paralela, quando ligada. */
+function ambienteGrafico(): NodeJS.ProcessEnv {
+  if (!areaParalela) return process.env;
+  return { ...process.env, DISPLAY: areaParalela.display };
+}
+
+/** Um número de display que ainda não está em uso (o :0 é sempre o da pessoa). */
+function acharDisplayLivre(): string {
+  for (let n = 91; n < 120; n++) {
+    if (!fs.existsSync(`/tmp/.X11-unix/X${n}`) && !fs.existsSync(`/tmp/.X${n}-lock`)) return `:${n}`;
+  }
+  throw new Error('Nenhum número de display livre entre :91 e :119.');
+}
+
+/**
+ * Gerenciadores de janela leves, em ordem de preferência.
+ *
+ * Sem um gerenciador, as janelas abrem sem moldura, empilhadas no canto e sem serem gerenciáveis
+ * — e o wmctrl, que lê a lista de janelas pelo padrão EWMH, não devolve nada. Dá para trabalhar
+ * assim (o xdotool ainda enxerga as janelas), mas com um gerenciador tudo se comporta como numa
+ * tela de verdade. Por isso: usa o que houver, e segue sem se não houver nenhum.
+ */
+const GERENCIADORES_LEVES = ['openbox', 'xfwm4', 'marco', 'fluxbox', 'i3', 'mutter'];
+
+const handleDesktopStart = async (req: Request, res: Response) => {
+  if (process.platform !== 'linux') {
+    return res.status(501).json({
+      naoSuportado: true,
+      error: `A área paralela precisa de um segundo servidor gráfico e hoje só existe no Linux (com Xvfb). ` +
+        `Nesta plataforma ('${process.platform}') o agente trabalha na tela compartilhada: ele traz a janela dele para frente antes de agir.`
+    });
+  }
+  if (areaParalela) {
+    return res.status(200).json({ jaEstavaLigada: true, ...estadoDaArea() });
+  }
+
+  const largura = Math.max(800, Math.min(3840, Number(req.body?.largura) || 1600));
+  const altura = Math.max(600, Math.min(2160, Number(req.body?.altura) || 900));
+
+  if (!(await binaryExists('Xvfb'))) {
+    return res.status(501).json({
+      faltaXvfb: true,
+      error: `O Xvfb não está instalado, e é ele que cria a tela do agente. ` +
+        `Instale com: sudo apt install xvfb   (ou o equivalente da sua distribuição). ` +
+        `Sem ele, o agente continua funcionando — mas na sua tela, trazendo a janela dele para frente.`
+    });
+  }
+
+  let display: string;
+  try {
+    display = acharDisplayLivre();
+  } catch (err: any) {
+    return res.status(500).json({ error: `Não foi possível reservar uma tela para o agente: ${err.message}` });
+  }
+
+  const xvfb = spawn('Xvfb', [display, '-screen', '0', `${largura}x${altura}x24`, '-nolisten', 'tcp'], {
+    detached: true, stdio: 'ignore'
+  });
+  /**
+   * Um Xvfb que morre logo depois de subir (versão incompatível, permissão negada em /tmp) deixaria
+   * a área "ligada" e tudo falhando adiante sem ninguém saber por quê. Guardar o erro aqui é o que
+   * transforma isso numa mensagem em vez de num mistério.
+   */
+  let morreuAoSubir = '';
+  xvfb.on('error', (e: any) => { morreuAoSubir = e?.message || String(e); });
+  xvfb.on('exit', (codigo: number | null) => {
+    if (areaParalela && areaParalela.xvfb === xvfb) {
+      logAudit('ERROR', 'DESKTOP_DIED', `A tela do agente (${display}) encerrou sozinha (código ${codigo}).`, { display });
+      areaParalela = null;
+      dimensoesEmCache = null;
+    }
+  });
+  xvfb.unref();
+
+  // O servidor gráfico leva um instante para aceitar conexões; abrir um programa antes disso
+  // falha com "cannot open display", que parece falta de suporte e é só pressa.
+  await new Promise(r => setTimeout(r, 800));
+
+  if (morreuAoSubir || xvfb.exitCode !== null) {
+    return res.status(500).json({
+      error: `O Xvfb não conseguiu subir a tela do agente${morreuAoSubir ? `: ${morreuAoSubir}` : ' (encerrou logo ao iniciar)'}. ` +
+        `O agente continua funcionando na sua tela.`
+    });
+  }
+
+  const ambiente = { ...process.env, DISPLAY: display };
+  let gerenciador: any = null;
+  let nomeDoGerenciador: string | null = null;
+  for (const wm of GERENCIADORES_LEVES) {
+    if (await binaryExists(wm)) {
+      gerenciador = spawn(wm, [], { detached: true, stdio: 'ignore', env: ambiente });
+      gerenciador.unref();
+      nomeDoGerenciador = wm;
+      await new Promise(r => setTimeout(r, 500));
+      break;
+    }
+  }
+
+  areaParalela = { display, largura, altura, xvfb, gerenciador, nomeDoGerenciador, desde: Date.now() };
+  // A resolução em cache é a da tela do usuário; com a área ligada ela deixou de valer.
+  dimensoesEmCache = null;
+  logAudit('INFO', 'DESKTOP_START', `Área paralela ligada em ${display} (${largura}x${altura}).`, { display, gerenciador: nomeDoGerenciador });
+
+  return res.status(200).json(estadoDaArea());
+};
+
+function estadoDaArea() {
+  if (!areaParalela) {
+    return {
+      ligada: false,
+      suportada: process.platform === 'linux',
+      explicacao: process.platform === 'linux'
+        ? 'A área paralela está desligada: o agente trabalha na sua tela e traz a janela dele para frente antes de agir.'
+        : `Nesta plataforma ('${process.platform}') a área paralela não existe; o agente trabalha na tela compartilhada.`
+    };
+  }
+  return {
+    ligada: true,
+    suportada: true,
+    display: areaParalela.display,
+    largura: areaParalela.largura,
+    altura: areaParalela.altura,
+    gerenciadorDeJanelas: areaParalela.nomeDoGerenciador,
+    desde: areaParalela.desde,
+    explicacao: areaParalela.nomeDoGerenciador
+      ? `O agente trabalha numa tela própria de ${areaParalela.largura}x${areaParalela.altura}. Seu mouse e seu teclado continuam só seus.`
+      : `O agente trabalha numa tela própria de ${areaParalela.largura}x${areaParalela.altura}. ` +
+        `Nenhum gerenciador de janelas foi encontrado, então as janelas dele abrem sem moldura — funciona, mas fica mais cru.`
+  };
+}
+
+const handleDesktopStatus = (_req: Request, res: Response) => res.status(200).json(estadoDaArea());
+
+const handleDesktopStop = (_req: Request, res: Response) => {
+  if (!areaParalela) return res.status(200).json(estadoDaArea());
+  const { display, xvfb, gerenciador } = areaParalela;
+  // Os programas que o agente abriu morrem junto com o servidor gráfico deles — é o que se quer:
+  // eles nunca existiram na tela do usuário e não devem sobrar por lá.
+  try { gerenciador?.kill('SIGTERM'); } catch { /* já não estava vivo */ }
+  try { xvfb?.kill('SIGTERM'); } catch { /* idem */ }
+  areaParalela = null;
+  dimensoesEmCache = null;
+  logAudit('INFO', 'DESKTOP_STOP', `Área paralela ${display} desligada.`, { display });
+  return res.status(200).json(estadoDaArea());
+};
+
+/**
+ * GET /desktop/capture — a foto da tela do agente, para a aba mostrar ao vivo.
+ *
+ * Esta captura pode ser pedida de segundo em segundo sem incomodar ninguém, e é essa a diferença
+ * que interessa: fotografar a tela do usuário repetidamente disputa recursos com o que ele está
+ * fazendo, fotografar uma tela na memória não disputa com nada.
+ */
+const handleDesktopCapture = async (_req: Request, res: Response) => {
+  if (!areaParalela) {
+    return res.status(409).json({ error: 'A área paralela não está ligada.' });
+  }
+  const tmpFile = path.join(os.tmpdir(), `osone-area-${crypto.randomBytes(6).toString('hex')}.png`);
+  try {
+    await runShell(`import -window root -silent "${tmpFile}"`, 12000, USER_HOME_DIR, ambienteGrafico());
+    if (!fs.existsSync(tmpFile) || fs.statSync(tmpFile).size === 0) {
+      throw new Error('a captura saiu vazia');
+    }
+    const buffer = fs.readFileSync(tmpFile);
+    fs.unlink(tmpFile, () => {});
+    return res.status(200).json({
+      image: `data:image/png;base64,${buffer.toString('base64')}`,
+      mimeType: 'image/png',
+      largura: areaParalela.largura,
+      altura: areaParalela.altura
+    });
+  } catch (err: any) {
+    fs.unlink(tmpFile, () => {});
+    return res.status(500).json({
+      error: `Não foi possível fotografar a área paralela: ${err.message}. É necessário ter o ImageMagick ('import') instalado.`
+    });
+  }
+};
+
+// ============================================================================
+// SEÇÃO 14: JANELAS — ESCOLHER UMA E TRABALHAR DENTRO DELA
 // ============================================================================
 
 /**
@@ -2294,15 +2539,60 @@ interface JanelaDoSistema {
  */
 const idDeJanelaValido = (id: string): boolean => /^(0x)?[0-9a-fA-F]{1,16}$/.test((id || '').trim());
 
+/** As janelas perguntadas direto ao servidor gráfico, sem depender de gerenciador de janelas. */
+async function listarJanelasPeloXdotool(): Promise<JanelaDoSistema[]> {
+  const env = ambienteGrafico();
+  const { stdout } = await runShell('xdotool search --onlyvisible --name ".+"', 6000, USER_HOME_DIR, env);
+  const ids = stdout.split('\n').map(s => s.trim()).filter(Boolean).slice(0, 40);
+  let ativa = '';
+  try {
+    const r = await runShell('xdotool getactivewindow', 3000, USER_HOME_DIR, env);
+    ativa = r.stdout.trim();
+  } catch { /* sem janela em foco: a lista continua valendo */ }
+
+  const janelas: JanelaDoSistema[] = [];
+  for (const id of ids) {
+    try {
+      const g = await runShell(`xdotool getwindowgeometry --shell ${Number(id)}`, 3000, USER_HOME_DIR, env);
+      const n = (chave: string) => Number(g.stdout.match(new RegExp(`^${chave}=(-?\\d+)`, 'm'))?.[1]);
+      const nome = await runShell(`xdotool getwindowname ${Number(id)}`, 3000, USER_HOME_DIR, env).catch(() => ({ stdout: '' }));
+      const width = n('WIDTH'), height = n('HEIGHT');
+      if (!Number.isFinite(width) || width <= 120 || height <= 80) continue;
+      janelas.push({
+        // O hexadecimal é o formato que o resto do código espera (e o wmctrl devolve).
+        id: '0x' + Number(id).toString(16).padStart(8, '0'),
+        titulo: nome.stdout.trim() || `Janela ${id}`,
+        app: 'x11',
+        x: n('X') || 0, y: n('Y') || 0, width, height,
+        ativa: id === ativa
+      });
+    } catch { /* janela que sumiu entre a busca e a consulta: só não entra na lista */ }
+  }
+  return janelas;
+}
+
 async function listarJanelas(): Promise<JanelaDoSistema[]> {
   const platform = process.platform;
 
   if (platform === 'linux') {
     // wmctrl -lGx: id, área de trabalho, x, y, largura, altura, classe, host, título.
-    const { stdout } = await runShell('wmctrl -lGx', 6000);
+    let stdout = '';
+    try {
+      ({ stdout } = await runShell('wmctrl -lGx', 6000, USER_HOME_DIR, ambienteGrafico()));
+    } catch (err) {
+      /**
+       * O wmctrl lê a lista pelo padrão EWMH, que quem publica é o GERENCIADOR de janelas. Numa
+       * área paralela sem gerenciador instalado não há quem publique, e ele falha — mesmo com as
+       * janelas ali, abertas e funcionando. O xdotool pergunta ao servidor gráfico direto, então
+       * enxerga as janelas de qualquer jeito. É mais cru (uma consulta de geometria por janela),
+       * e por isso é o segundo caminho e não o primeiro.
+       */
+      return await listarJanelasPeloXdotool();
+    }
+    if (!stdout.trim()) return await listarJanelasPeloXdotool();
     let ativa = '';
     try {
-      const r = await runShell('xdotool getactivewindow', 3000);
+      const r = await runShell('xdotool getactivewindow', 3000, USER_HOME_DIR, ambienteGrafico());
       // wmctrl usa hexadecimal com zeros à esquerda; xdotool devolve decimal. Sem normalizar,
       // nenhuma janela jamais apareceria como ativa.
       ativa = '0x' + Number(r.stdout.trim()).toString(16).padStart(8, '0');
@@ -2361,9 +2651,9 @@ async function focarJanela(id: string): Promise<void> {
   if (!idDeJanelaValido(id)) throw new Error('Identificador de janela inválido.');
   if (process.platform === 'linux') {
     try {
-      await runShell(`wmctrl -i -a ${id}`, 5000);
+      await runShell(`wmctrl -i -a ${id}`, 5000, USER_HOME_DIR, ambienteGrafico());
     } catch {
-      await runShell(`xdotool windowactivate ${Number(id)}`, 5000);
+      await runShell(`xdotool windowactivate ${Number(id)}`, 5000, USER_HOME_DIR, ambienteGrafico());
     }
     return;
   }
@@ -2450,12 +2740,12 @@ const handleWindowCapture = async (req: Request, res: Response) => {
 
     if (platform === 'linux') {
       try {
-        await runShell(`import -window ${id} -silent "${tmpFile}"`, 15000);
+        await runShell(`import -window ${id} -silent "${tmpFile}"`, 15000, USER_HOME_DIR, ambienteGrafico());
       } catch (err: any) {
         // Sem ImageMagick, recorta a janela da tela inteira: precisa da geometria, mas funciona
         // com qualquer ferramenta de captura já instalada.
         if (!geometria) throw err;
-        await runShell(`scrot -o "${tmpFile}" && convert "${tmpFile}" -crop ${geometria.width}x${geometria.height}+${geometria.x}+${geometria.y} +repage "${tmpFile}"`, 15000);
+        await runShell(`scrot -o "${tmpFile}" && convert "${tmpFile}" -crop ${geometria.width}x${geometria.height}+${geometria.x}+${geometria.y} +repage "${tmpFile}"`, 15000, USER_HOME_DIR, ambienteGrafico());
       }
     } else if (platform === 'win32') {
       if (!geometria) throw new Error('Não foi possível ler a posição da janela.');
@@ -2498,6 +2788,10 @@ const handleWindowCapture = async (req: Request, res: Response) => {
 
 // Mapeamento das rotas no router
 agentRouter.get('/status', handleStatus);
+agentRouter.post('/desktop/start', handleDesktopStart);
+agentRouter.post('/desktop/stop', handleDesktopStop);
+agentRouter.get('/desktop/status', handleDesktopStatus);
+agentRouter.get('/desktop/capture', handleDesktopCapture);
 agentRouter.get('/window/list', handleWindowList);
 agentRouter.post('/window/focus', handleWindowFocus);
 agentRouter.get('/window/capture', handleWindowCapture);
