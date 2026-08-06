@@ -38,9 +38,12 @@ import {
   exchangeToken,
   isValidAccessToken,
   revokeAllTokens,
+  lerEstadoDoVinculo,
+  diagnosticarGoogleHome,
   handleSync as googleHomeSync,
   handleQuery as googleHomeQuery,
-  handleExecute as googleHomeExecute
+  handleExecute as googleHomeExecute,
+  handleDisconnect as googleHomeDisconnect
 } from "./src/googleHomeService";
 
 dotenv.config();
@@ -4626,9 +4629,13 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
     ultimaChecagem: null
   };
 
-  const somenteDaPropriaMaquina = (req: express.Request, res: express.Response): boolean => {
+  const somenteDaPropriaMaquina = (
+    req: express.Request,
+    res: express.Response,
+    oQue: string = 'A atualização do app'
+  ): boolean => {
     if (isLoopbackAddress(req.socket?.remoteAddress)) return true;
-    res.status(403).json({ error: 'A atualização do app só pode ser comandada a partir do próprio computador.' });
+    res.status(403).json({ error: `${oQue} só pode ser comandada a partir do próprio computador.` });
     return false;
   };
 
@@ -5886,8 +5893,33 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
   // dispositivos Tuya reais já usados pelo painel/chat do OSONE. A configuração externa no
   // Actions on Google Console (criar o projeto, colar estas URLs, publicar em teste) só pode
   // ser feita pelo próprio usuário — aqui só existe o código do lado do servidor.
+  /**
+   * O estado do Google Home tem DOIS degraus, e a tela precisa dos dois: o par client_id/secret
+   * preenchido aqui, e a conta do Google efetivamente vinculada pelo app do celular. Quem
+   * preenchia os campos e nunca concluía o vínculo via tudo verde e não entendia por que o
+   * Assistente dizia não achar aparelho nenhum. Os campos de `configured`/`env` continuam iguais
+   * para não quebrar quem já lia esta rota.
+   */
   app.get("/api/google-home/status", (req, res) => {
-    res.json(checkGoogleHomeConfig());
+    res.json({ ...checkGoogleHomeConfig(), ...lerEstadoDoVinculo() });
+  });
+
+  /**
+   * Diagnóstico de ponta a ponta: percorre credenciais > Tuya > aparelhos > vínculo e para no
+   * primeiro elo que falta, dizendo o que fazer ali. Traz também a lista exata do que o
+   * Assistente vai enxergar e o motivo de cada aparelho que ficou de fora.
+   */
+  app.get("/api/google-home/diagnostico", async (_req, res) => {
+    try {
+      res.json(await diagnosticarGoogleHome());
+    } catch (err: any) {
+      res.status(500).json({
+        ok: false,
+        etapa: 'interno',
+        resumo: "O diagnóstico do Google Home falhou inesperadamente.",
+        erroTecnico: err?.message || String(err)
+      });
+    }
   });
 
   // Tela de consentimento simples exibida no navegador durante o fluxo "Vincular Conta" do
@@ -5985,6 +6017,9 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
       }
 
       if (intent === "action.devices.DISCONNECT") {
+        // Revoga de verdade. Antes a resposta era um {} vazio e os tokens continuavam válidos
+        // aqui: desvincular pelo celular não cortava acesso nenhum.
+        googleHomeDisconnect();
         return res.json({ requestId, payload: {} });
       }
 
@@ -5995,9 +6030,16 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
     }
   });
 
+  /**
+   * Desvincular a conta é destrutivo e não pedia credencial nenhuma: qualquer um que alcançasse
+   * o servidor derrubava o vínculo do Google Home do dono. Fica na mesma trava das credenciais —
+   * só a própria máquina. Pelo celular, o caminho é desvincular dentro do app Google Home, que
+   * chega aqui pela intent DISCONNECT (autenticada pelo token do Google).
+   */
   app.post("/api/google-home/revoke", (req, res) => {
+    if (!somenteDaPropriaMaquina(req, res, 'A desvinculação do Google Home')) return;
     revokeAllTokens();
-    res.json({ success: true, message: "Todos os tokens do Google Home foram revogados." });
+    res.json({ success: true, message: "Todos os tokens do Google Home foram revogados. Refaça o vínculo pelo app Google Home quando quiser voltar a comandar por voz." });
   });
 
   // ====== TIKTOK LIVE CO-PILOT API ENDPOINTS ======

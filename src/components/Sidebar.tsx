@@ -20,7 +20,7 @@ interface ItemDoMenu {
   icone: LucideIcon;
   /** Aba de destino. Ausente nos itens que abrem um painel em vez de trocar de aba. */
   modo?: WorkspaceMode;
-  /** Outros modos que também deixam este item aceso (a aba de Smart Home tem dois). */
+  /** Outros modos que também deixam este item aceso (a aba do OSONE HOME tem dois). */
   tambemEm?: WorkspaceMode[];
   /** Classes do estado ativo. Sem isto, todos os itens acendem na cor padrão do sistema. */
   ativo?: string;
@@ -39,7 +39,7 @@ const ATIVO_PADRAO = "bg-her-accent/10 text-her-accent border border-her-accent/
  * O menu em ordem de importância, e não de idade.
  *
  * A ordem anterior era a de quem foi construído primeiro: "Biblioteca" de sons aparecia em
- * segundo, logo abaixo de Início, enquanto o WhatsApp, a automação da casa e o controle do
+ * segundo, logo abaixo de Início, enquanto o WhatsApp, o OSONE HOME e o controle do
  * computador — o que o OSONE faz o dia inteiro — ficavam no meio e no fim de uma lista de treze.
  * Configurações ficava enfiado entre duas abas de trabalho.
  *
@@ -56,7 +56,7 @@ const GRUPOS: GrupoDoMenu[] = [
         ativo: "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
       },
       {
-        rotulo: 'Automação & Smart Home', icone: Zap, modo: 'smarthome', tambemEm: ['local_control'],
+        rotulo: 'OSONE HOME', icone: Zap, modo: 'smarthome', tambemEm: ['local_control'],
         ativo: "bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.15)]",
         corDoIcone: "text-cyan-400", pulsa: true
       },

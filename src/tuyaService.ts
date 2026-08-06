@@ -69,6 +69,17 @@ export function checkTuyaConfig() {
 export function explicarErroTuya(mensagem: string): string {
   const m = String(mensagem || '');
 
+  /**
+   * CAMPO VAZIO ≠ CAMPO ERRADO, e este teste vem primeiro porque a mensagem de UID ausente
+   * contém a palavra "UID" e caía no teste de região lá embaixo. O resultado era mandar
+   * conferir o TUYA_BASE_URL de quem simplesmente ainda não tinha preenchido nada — a instrução
+   * apontava para o campo errado logo na primeira vez que a pessoa abre o painel.
+   */
+  if (/não configurad|nenhum uid de usu[áa]rio tuya/i.test(m)) {
+    return "As credenciais da Tuya ainda não foram preenchidas neste OSONE. Abra Configurações > Automação > " +
+      "Tuya Cloud IoT Platform e preencha o Access ID, o Access Secret, o endereço da região e o UID da sua " +
+      "conta. Eles passam a valer na hora, sem reiniciar o app.";
+  }
   if (/sign invalid|1004/i.test(m)) {
     return "A Tuya recusou a assinatura da requisição. Quase sempre é o TUYA_CLIENT_SECRET copiado errado " +
       "(faltando um caractere, ou com espaço em volta). Abra o projeto em iot.tuya.com > Cloud > seu projeto > " +
