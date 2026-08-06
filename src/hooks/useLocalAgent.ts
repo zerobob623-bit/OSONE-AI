@@ -901,6 +901,14 @@ export function useLocalAgent() {
    * "abrir" costuma demorar nesta máquina, em vez de reaprender do zero.
    */
   const historicoDeEsperasRef = useRef<HistoricoDeEsperas>(historicoVazio());
+  /**
+   * Onde o passo atual MEDIU o alvo, na escala 0–1000 — para a tela poder marcar o ponto.
+   *
+   * Sai daqui, e não do plano, porque no plano ele não existe: o plano descreve o alvo em
+   * palavras e a posição só passa a ser um número no instante em que a tela é olhada. Marcar a
+   * coordenada que o plano trouxe seria desenhar um palpite; marcar esta é desenhar a medição.
+   */
+  const [alvoMedido, setAlvoMedido] = useState<{ x: number; y: number; rotulo: string; quando: number } | null>(null);
 
   /**
    * Executa um plano inteiro sem consultar o usuário passo a passo.
@@ -929,6 +937,9 @@ export function useLocalAgent() {
     }
 
     setPlanoEmCurso({ passos: [], total: passos.length, rodando: true });
+    // Alvo de um plano anterior não pode ficar marcado na tela deste: a marca diria que o passo
+    // atual vai agir num ponto que ninguém mediu para ele.
+    setAlvoMedido(null);
 
     /** Fotografa a tela pelo mesmo caminho das outras ações, e reduz à assinatura. */
     const fotografar = async () => {
@@ -943,6 +954,35 @@ export function useLocalAgent() {
       fotografar,
       cancelado: () => motorParadoRef.current,
       executar: async (acao, args) => {
+        /**
+         * CLICAR NUM ALVO DESCRITO: OLHA, DEPOIS CLICA.
+         *
+         * Um plano não pode trazer coordenada pronta. Quem escreve o plano não está vendo a tela
+         * do momento em que ele vai rodar — a janela pode estar em outra posição, o menu pode ter
+         * rolado, a resolução pode ser outra. Coordenada escrita de antemão é chute, e chute erra
+         * de 44 a 510 pixels (já medido); e como o passo seguinte age em cima do resultado do
+         * anterior, um clique fora do alvo estraga a sequência inteira, não só um passo.
+         *
+         * Por isso o plano descreve o ALVO ("o campo de busca do YouTube") e a coordenada é
+         * MEDIDA aqui, no instante do passo, com a tela à frente: 'localizar' olha e devolve a
+         * posição, e o clique usa exatamente ela. Sem este par, um 'clicar' sem coordenada
+         * clicaria onde o cursor estivesse parado — que é o mesmo que não clicar em nada.
+         */
+        if (acao === 'clicar' && args?.alvo && args?.x === undefined) {
+          const { alvo, ...restoDoClique } = args;
+          const achou = await executeLocalAgentCall(
+            'controlar_pc', { acao: 'localizar', alvo }, localAgentToken, isVoiceSession, visao
+          );
+          if (achou?.error) return achou;
+          if (!Number.isFinite(Number(achou?.x)) || !Number.isFinite(Number(achou?.y))) {
+            return { error: `Não consegui medir onde está "${alvo}" na tela, então não cliquei — clicar sem ter medido é clicar no escuro.` };
+          }
+          setAlvoMedido({ x: Number(achou.x), y: Number(achou.y), rotulo: String(alvo), quando: Date.now() });
+          return await executeLocalAgentCall(
+            'controlar_pc', { acao: 'clicar', x: achou.x, y: achou.y, ...restoDoClique },
+            localAgentToken, isVoiceSession, visao
+          );
+        }
         // Passa por executeLocalAgentCall para herdar a trava de concorrência, o registro no
         // painel de ações e a marca de "mexeu no PC" que cala o compartilhamento de tela.
         return await executeLocalAgentCall('controlar_pc', { acao, ...args }, localAgentToken, isVoiceSession, visao);
@@ -967,6 +1007,7 @@ export function useLocalAgent() {
     retomarMotor,
     limparAcoesDoMotor,
     executarCowork,
-    planoEmCurso
+    planoEmCurso,
+    alvoMedido
   };
 }

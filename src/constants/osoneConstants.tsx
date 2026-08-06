@@ -398,6 +398,8 @@ export const getFriendlyModeName = (mode: WorkspaceMode): string => {
     case 'rag': return 'RAG • Conector de Arquivos PC';
     case 'creator': return 'Estúdio de Criação Viral';
     case 'memory_book': return 'Livro de Memórias';
+    case 'vision_control': return 'Controle por Visão';
+    case 'cowork': return 'OSONE COWORK — agente que clica e digita no computador';
     default: return String(mode);
   }
 };
