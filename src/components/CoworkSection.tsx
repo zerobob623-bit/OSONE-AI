@@ -2,11 +2,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ArrowLeft, MousePointerClick, Play, Square, Loader2, Check, AlertTriangle,
-  History, Trash2, RefreshCw, Monitor, ShieldAlert, AppWindow, Eye, CornerDownRight
+  History, Trash2, RefreshCw, Monitor, MonitorPlay, ShieldAlert, AppWindow, Eye, CornerDownRight
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { VoltaDoAgente, RelatorioDoAgente } from '../lib/agenteAutonomo';
-import { JanelaDeTrabalho } from '../hooks/useLocalAgent';
+import { JanelaDeTrabalho, EstadoDaAreaParalela } from '../hooks/useLocalAgent';
 import {
   TarefaDoHistorico, desfechoDoMotivo,
   lerHistorico, guardarNoHistorico, limparHistorico
@@ -48,8 +48,14 @@ interface CoworkSectionProps {
   listarJanelas: () => Promise<JanelaDeTrabalho[]>;
   janelaDeTrabalho: JanelaDeTrabalho | null;
   definirJanela: (j: JanelaDeTrabalho | null) => void;
-  onTrabalhar: (objetivo: string, janela: JanelaDeTrabalho) => Promise<RelatorioDoAgente | { error: string }>;
+  /** A janela pode ser nula quando a tela do agente está ligada e ainda vazia. */
+  onTrabalhar: (objetivo: string, janela: JanelaDeTrabalho | null) => Promise<RelatorioDoAgente | { error: string }>;
   relatoDoAgente: { voltas: VoltaDoAgente[]; rodando: boolean } | null;
+  areaParalela: EstadoDaAreaParalela | null;
+  onConsultarArea: () => Promise<EstadoDaAreaParalela | null>;
+  onLigarArea: () => Promise<EstadoDaAreaParalela>;
+  onDesligarArea: () => Promise<EstadoDaAreaParalela | null>;
+  onFotografarArea: () => Promise<string | null>;
   motorParado: boolean;
   onParar: () => void;
   onRetomar: () => void;
@@ -64,7 +70,8 @@ const ehJanelaDoOsone = (j: JanelaDeTrabalho) =>
 
 export const CoworkSection: React.FC<CoworkSectionProps> = ({
   onBack, localAgentToken, ambiente, listarJanelas, janelaDeTrabalho, definirJanela,
-  onTrabalhar, relatoDoAgente, motorParado, onParar, onRetomar, onNotification
+  onTrabalhar, relatoDoAgente, areaParalela, onConsultarArea, onLigarArea, onDesligarArea,
+  onFotografarArea, motorParado, onParar, onRetomar, onNotification
 }) => {
   const [objetivo, setObjetivo] = useState('');
   const [trabalhando, setTrabalhando] = useState(false);
@@ -104,7 +111,9 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
     try {
       const lista = await listarJanelas();
       setJanelas(lista);
-      setErroDasJanelas(lista.length ? '' : 'Nenhuma janela encontrada. Abra o programa em que você quer que eu trabalhe.');
+      setErroDasJanelas(lista.length ? '' : (areaParalela?.ligada
+        ? 'A tela dele ainda está vazia. Diga o objetivo: a primeira coisa que ele faz é abrir o que precisar.'
+        : 'Nenhuma janela encontrada. Abra o programa em que você quer que eu trabalhe.'));
       // Escolha inicial: a janela que está na frente, desde que não seja o próprio OSONE — a
       // pessoa acabou de vir de lá, e trabalhar dentro do OSONE não é o que ela quer dizer.
       if (!janelaDeTrabalho) {
@@ -117,8 +126,53 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
   };
 
   useEffect(() => {
-    if (disponibilidade === 'ok') atualizarJanelas();
+    if (disponibilidade === 'ok') { atualizarJanelas(); onConsultarArea(); }
   }, [disponibilidade]);
+
+  // ====== A TELA DO AGENTE ======
+  const [mexendoNaArea, setMexendoNaArea] = useState(false);
+  const [fotoDaArea, setFotoDaArea] = useState<string | null>(null);
+
+  const alternarArea = async () => {
+    setMexendoNaArea(true);
+    try {
+      const estado = areaParalela?.ligada ? await onDesligarArea() : await onLigarArea();
+      if (estado && !estado.ligada && estado.explicacao && !areaParalela?.ligada) {
+        // Xvfb ausente ou plataforma sem suporte: o motivo é acionável e precisa ser lido, não
+        // virar um botão que não faz nada.
+        onNotification(estado.explicacao, 'error');
+      }
+      setFotoDaArea(null);
+      await atualizarJanelas();
+    } finally {
+      setMexendoNaArea(false);
+    }
+  };
+
+  /**
+   * A TELA DO AGENTE AO VIVO, SEM VOCÊ PRECISAR SAIR DAQUI.
+   *
+   * Este laço de um em um segundo só é aceitável porque a tela do agente vive na memória:
+   * fotografá-la não disputa nada com o que você está fazendo. Fotografar a SUA tela nesse ritmo
+   * seria o contrário — por isso, quando a área paralela está desligada, a imagem continua vindo
+   * uma vez por ação, e não continuamente.
+   */
+  useEffect(() => {
+    if (!areaParalela?.ligada) return;
+    let vivo = true;
+    let emVoo = false;
+    const puxar = async () => {
+      if (!vivo || emVoo) return;
+      emVoo = true;
+      const img = await onFotografarArea();
+      if (vivo && img) setFotoDaArea(img);
+      emVoo = false;
+    };
+    puxar();
+    // Mais rápido enquanto ele trabalha (é quando há o que ver), mais devagar quando está parado.
+    const t = setInterval(puxar, trabalhando ? 1000 : 4000);
+    return () => { vivo = false; clearInterval(t); };
+  }, [areaParalela?.ligada, trabalhando]);
 
   // ====== O RELATÓRIO AO VIVO ======
   const voltas = relatoDoAgente?.voltas || [];
@@ -129,12 +183,19 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
     fimDoRelato.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [voltas.length]);
 
-  const ultimaFoto = [...voltas].reverse().find(v => v.foto)?.foto;
+  /**
+   * O que aparece no quadro: a tela do agente ao vivo, quando ela existe; senão, a última foto que
+   * ele tirou ao agir. As duas são honestas sobre o que são — uma é "agora", a outra é "o que ele
+   * viu no último passo" — e a legenda abaixo do quadro diz qual das duas está ali.
+   */
+  const ultimaFoto = fotoDaArea || [...voltas].reverse().find(v => v.foto)?.foto;
 
   const comecar = async (texto?: string) => {
     const alvo = (texto ?? objetivo).trim();
     if (!alvo || trabalhando) return;
-    if (!janelaDeTrabalho) {
+    // Com a tela dele ligada, começar sem janela é o normal: ela nasce vazia e a primeira coisa
+    // que ele faz lá é abrir alguma coisa. Na SUA tela, escolher a janela continua obrigatório.
+    if (!janelaDeTrabalho && !areaParalela?.ligada) {
       onNotification('Escolha em qual janela eu devo começar a trabalhar.', 'error');
       return;
     }
@@ -255,7 +316,7 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
             ) : (
               <button
                 onClick={() => comecar()}
-                disabled={!objetivo.trim() || !janelaDeTrabalho || disponibilidade === 'web'}
+                disabled={!objetivo.trim() || (!janelaDeTrabalho && !areaParalela?.ligada) || disponibilidade === 'web'}
                 className="mt-3 w-full py-3 rounded-2xl text-sm font-light transition-all
                            bg-indigo-500/10 text-indigo-300 border border-indigo-500/25 hover:bg-indigo-500/15
                            disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
@@ -269,11 +330,64 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
             </p>
           </div>
 
+          {/* ====== A TELA DELE, OU A SUA ====== */}
+          <div className={cn(
+            "rounded-3xl border p-5",
+            areaParalela?.ligada ? "border-emerald-500/25 bg-emerald-500/[0.04]" : "border-white/[0.06] bg-white/[0.02]"
+          )}>
+            <div className="flex items-center gap-2 mb-2">
+              <MonitorPlay size={14} className={areaParalela?.ligada ? "text-emerald-400" : "text-her-muted"} />
+              <p className="text-[10px] uppercase tracking-[0.2em] text-her-muted flex-1">Onde ele trabalha</p>
+            </div>
+
+            <p className="text-sm text-her-ink/85 font-light leading-snug">
+              {areaParalela?.ligada
+                ? 'Ele tem uma tela só dele.'
+                : areaParalela?.suportada === false
+                  ? 'Ele trabalha na sua tela.'
+                  : 'Ele trabalha na sua tela.'}
+            </p>
+            <p className="mt-1 text-[11px] text-her-muted/80 font-light leading-relaxed">
+              {areaParalela?.ligada
+                ? `Tela de ${areaParalela.largura}×${areaParalela.altura} na memória, sem monitor. As janelas que ele abrir nascem lá; seu mouse, seu teclado e suas janelas não são tocados.`
+                : areaParalela?.suportada === false
+                  ? (areaParalela.explicacao || 'Este sistema não oferece uma tela separada.')
+                  : 'Isso significa que ele traz a janela dele para frente para agir — mouse e teclado agem sobre o que está na frente, em qualquer sistema. Com a tela dele ligada, isso deixa de acontecer.'}
+            </p>
+
+            {areaParalela?.suportada !== false && (
+              <button
+                onClick={alternarArea}
+                disabled={mexendoNaArea || trabalhando || disponibilidade !== 'ok'}
+                className={cn(
+                  "mt-3 w-full py-2.5 rounded-2xl text-sm font-light transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed",
+                  areaParalela?.ligada
+                    ? "bg-white/[0.03] text-her-ink/70 border border-white/10 hover:bg-white/[0.06]"
+                    : "bg-emerald-500/10 text-emerald-300 border border-emerald-500/25 hover:bg-emerald-500/15"
+                )}
+              >
+                {mexendoNaArea
+                  ? <><Loader2 size={14} className="animate-spin" /> Um instante...</>
+                  : areaParalela?.ligada
+                    ? 'Desligar a tela dele (voltar a trabalhar na minha)'
+                    : 'Dar uma tela só para ele'}
+              </button>
+            )}
+            {areaParalela?.ligada && !areaParalela.gerenciadorDeJanelas && (
+              <p className="mt-2 text-[10px] text-amber-400/80 font-light leading-relaxed">
+                Sem gerenciador de janelas instalado, as janelas dele abrem sem moldura. Funciona, mas fica mais cru —
+                instalar <code className="text-her-ink/60">openbox</code> deixa a tela dele igual a uma de verdade.
+              </p>
+            )}
+          </div>
+
           {/* ====== A JANELA DE TRABALHO ====== */}
           <div className={cn(CAIXA, "p-5")}>
             <div className="flex items-center gap-2 mb-3">
               <AppWindow size={14} className="text-her-muted" />
-              <p className="text-[10px] uppercase tracking-[0.2em] text-her-muted flex-1">Janela em que ele trabalha</p>
+              <p className="text-[10px] uppercase tracking-[0.2em] text-her-muted flex-1">
+                {areaParalela?.ligada ? 'Janelas na tela dele' : 'Janela em que ele trabalha'}
+              </p>
               <button
                 onClick={atualizarJanelas}
                 disabled={carregandoJanelas || disponibilidade !== 'ok'}
@@ -359,7 +473,7 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
                     </div>
                     <button
                       onClick={() => { setObjetivo(item.tarefa); comecar(item.tarefa); }}
-                      disabled={trabalhando || !janelaDeTrabalho}
+                      disabled={trabalhando || (!janelaDeTrabalho && !areaParalela?.ligada)}
                       title="Pedir de novo (ele refaz o caminho olhando a tela de agora)"
                       className="p-1.5 rounded-lg hover:bg-indigo-500/10 text-indigo-300 disabled:opacity-30 shrink-0"
                     >
@@ -400,9 +514,16 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
             <div className="flex items-center gap-2 mb-3">
               <Eye size={14} className="text-her-muted" />
               <p className="text-[10px] uppercase tracking-[0.2em] text-her-muted flex-1">
-                O que ele está vendo
-                {janelaDeTrabalho && <span className="normal-case tracking-normal text-her-muted/60"> · {janelaDeTrabalho.titulo}</span>}
+                {areaParalela?.ligada ? 'A tela dele, ao vivo' : 'O que ele está vendo'}
+                {!areaParalela?.ligada && janelaDeTrabalho && (
+                  <span className="normal-case tracking-normal text-her-muted/60"> · {janelaDeTrabalho.titulo}</span>
+                )}
               </p>
+              {areaParalela?.ligada && (
+                <span className="flex items-center gap-1.5 text-[9px] uppercase tracking-widest text-emerald-400">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> ao vivo
+                </span>
+              )}
             </div>
             <div className="relative rounded-2xl overflow-hidden border border-white/[0.06] bg-black aspect-video">
               {ultimaFoto ? (
@@ -410,10 +531,17 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
               ) : (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-her-muted">
                   <Monitor size={28} className="opacity-40" />
-                  <span className="text-xs font-light">A foto aparece quando ele começar a trabalhar</span>
+                  <span className="text-xs font-light">
+                    {areaParalela?.ligada ? 'A tela dele está vazia — ele ainda não abriu nada' : 'A foto aparece quando ele começar a trabalhar'}
+                  </span>
                 </div>
               )}
             </div>
+            <p className="mt-2 text-[10px] text-her-muted/70 font-light leading-relaxed">
+              {areaParalela?.ligada
+                ? 'Esta é a tela dele agora, atualizando sozinha. Seu mouse e seu teclado continuam seus — fique em qualquer aba ou programa.'
+                : 'A imagem é do último passo que ele deu. Ligue a tela dele para acompanhar ao vivo sem sair daqui.'}
+            </p>
           </div>
 
           {/* O RELATÓRIO AO VIVO */}

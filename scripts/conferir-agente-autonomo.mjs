@@ -411,7 +411,72 @@ const decisao = (acao, args, pensamento = `Vou ${acao}`) => ({ acao, args, pensa
 }
 
 // ============================================================================
-// 9) A INSTRUÇÃO CONTA AS REGRAS QUE O CÓDIGO APLICA
+// 9) ABRIR TRÊS ABAS DO MESMO SITE — O ERRO QUE ACONTECEU DE VERDADE
+// ============================================================================
+// Relato de uso: pedido "analise uma coisa no YouTube", o agente abriu TRÊS abas do YouTube sem
+// fazer mais nada. O mecanismo: ele manda abrir, a foto seguinte ainda é da janela anterior (a
+// nova acabou de nascer), ele conclui que não pegou, e manda abrir de novo. E de novo.
+{
+  const { estado, deps } = computadorDeMentira({
+    decidir: roteiro(
+      decisao('abrir', { caminho: 'https://youtube.com' }, 'Vou abrir o YouTube'),
+      decisao('abrir', { caminho: 'https://youtube.com' }, 'Acho que não abriu, vou abrir de novo'),
+      decisao('abrir', { caminho: 'https://youtube.com' }, 'Ainda não vejo, abrindo mais uma vez'),
+      decisao('concluir', { resposta: 'pronto' }, 'agora vi')
+    )
+  });
+  const r = await trabalharAteConcluir('analisar uma coisa no YouTube', deps);
+
+  const aberturas = estado.executadas.filter(e => e.acao === 'abrir').length;
+  registrar('o mesmo endereço é aberto UMA vez, por mais que ele insista',
+    aberturas === 1, `${aberturas} abertura(s) para 3 decisões de abrir`);
+
+  registrar('a insistência vira aviso no relatório, e não uma aba nova',
+    r.voltas.filter(v => v.acao === 'abrir' && /JÁ ESTÁ ABERTO/.test(v.relato || '')).length === 2,
+    'as duas repetições foram recusadas com explicação');
+
+  registrar('a recusa de reabrir não encerra a tarefa',
+    r.motivo === 'concluido', `${r.motivo} — ele segue e termina`);
+
+  registrar('o aviso diz o que fazer no lugar de abrir de novo',
+    r.voltas.some(v => /trocar_janela/.test(v.relato || '')),
+    'aponta para olhar a janela certa');
+}
+
+{
+  // Endereços DIFERENTES continuam podendo ser abertos: a trava é contra repetir, não contra abrir.
+  const { estado, deps } = computadorDeMentira({
+    decidir: roteiro(
+      decisao('abrir', { caminho: 'https://youtube.com' }, 'primeiro site'),
+      decisao('abrir', { caminho: 'https://studio.youtube.com' }, 'agora o Studio'),
+      decisao('concluir', { resposta: 'ok' }, 'pronto')
+    )
+  });
+  await trabalharAteConcluir('tarefa', deps);
+  registrar('abrir coisas diferentes continua permitido',
+    estado.executadas.filter(e => e.acao === 'abrir').length === 2,
+    'a trava é contra repetir o mesmo, não contra abrir');
+}
+
+{
+  // Uma abertura que FALHOU pode ser tentada de novo: ela não abriu nada.
+  let vezes = 0;
+  const { estado, deps } = computadorDeMentira({
+    executar: (acao) => (acao === 'abrir' && ++vezes === 1) ? { error: 'programa não encontrado' } : { success: true },
+    decidir: roteiro(
+      decisao('abrir', { caminho: 'meu-app' }, 'abrindo'),
+      decisao('abrir', { caminho: 'meu-app' }, 'falhou, tentando outra vez'),
+      decisao('concluir', { resposta: 'ok' }, 'pronto')
+    )
+  });
+  await trabalharAteConcluir('tarefa', deps);
+  registrar('uma abertura que falhou pode ser tentada de novo',
+    estado.executadas.filter(e => e.acao === 'abrir').length === 2,
+    'só conta como aberto o que abriu mesmo');
+}
+
+// ============================================================================
+// 10) A INSTRUÇÃO CONTA AS REGRAS QUE O CÓDIGO APLICA
 // ============================================================================
 {
   const t = INSTRUCAO_DO_AGENTE.toLowerCase();
@@ -428,6 +493,10 @@ const decisao = (acao, args, pensamento = `Vou ${acao}`) => ({ acao, args, pensa
 
   registrar('a instrução exige LER a informação antes de concluir',
     t.includes('concluir sem a informação'), 'tarefa de descobrir só acaba com a resposta na mão');
+
+  registrar('a instrução avisa para abrir cada coisa uma vez só',
+    t.includes('abra cada coisa uma vez só') && t.includes('nunca mande abrir de novo'),
+    'a regra que o código aplica também está escrita para o modelo');
 }
 
 fs.rmSync(pastaTemp, { recursive: true, force: true });

@@ -122,7 +122,7 @@ RESPONDA APENAS UM OBJETO JSON, nada mais:
 { "pensamento": "o que estou vendo e por que esta ação agora", "acao": "clicar", "args": { "alvo": "o botão Análises no menu da esquerda" }, "esperaDaTela": "mudar" }
 
 AÇÕES:
-- "abrir" { "caminho": "..." } — abre um programa, arquivo, pasta ou ENDEREÇO DE SITE. É assim que você chega onde precisa: prefira abrir o endereço direto (ex: "https://studio.youtube.com") a navegar clicando de tela em tela.
+- "abrir" { "caminho": "..." } — abre um programa, arquivo, pasta ou ENDEREÇO DE SITE. É assim que você chega onde precisa: prefira abrir o endereço direto (ex: "https://studio.youtube.com") a navegar clicando de tela em tela. ABRA CADA COISA UMA VEZ SÓ: depois de abrir, você JÁ PASSA A OLHAR a janela que nasceu, automaticamente. Se a foto seguinte ainda parecer a tela anterior, a página está carregando — use "esperar", NUNCA mande abrir de novo. Abrir duas vezes cria uma segunda aba com o mesmo conteúdo e atrapalha a tarefa.
 - "clicar" { "alvo": "descrição do que clicar" } — NUNCA passe x/y. Descreva o alvo como você o vê na foto ("o botão azul Entrar", "a aba Análises"); a posição é medida na hora.
 - "digitar" { "texto": "..." } — digita no campo que está em foco. Clique no campo antes.
 - "tecla" { "tecla": "enter" } — teclas nomeadas: enter, tab, escape, backspace, delete, arrowup/down/left/right, home, end, pageup, pagedown. Aceita "modificadores": ["ctrl"].
@@ -196,6 +196,28 @@ export function lerDecisao(respostaDoModelo: string): LeituraDaDecisao {
     }
   };
 }
+
+/**
+ * ABRIR A MESMA COISA DUAS VEZES NUNCA É O QUE SE QUER.
+ *
+ * Foi o erro observado em uso: pedido "analise uma coisa no YouTube", o agente abriu TRÊS abas do
+ * YouTube sem fazer mais nada. O mecanismo é simples e teria acontecido com qualquer modelo: ele
+ * manda abrir, a foto que ele recebe em seguida ainda é da janela ANTERIOR (a nova acabou de
+ * nascer e ele não estava olhando para ela), conclui que o comando não pegou, e manda abrir de
+ * novo. E de novo.
+ *
+ * O conserto tem duas metades, e as duas são necessárias:
+ *   1. Depois de abrir, o agente PASSA A OLHAR a janela que nasceu — isso é feito na ponte
+ *      (useLocalAgent), que compara a lista de janelas antes e depois.
+ *   2. Abrir o mesmo alvo outra vez é RECUSADO aqui, sem tocar no computador. Mesmo com a
+ *      primeira metade funcionando, uma tela lenta pode fazê-lo insistir; a diferença é que agora
+ *      a insistência custa uma linha no relatório em vez de mais uma aba.
+ *
+ * A recusa não encerra a tarefa: ela volta como resultado da ação, e ele decide o que fazer
+ * sabendo que aquilo já está aberto. Encerrar seria trocar um erro barato por um caro.
+ */
+const jaAbriu = (voltas: VoltaDoAgente[], caminho: string): boolean =>
+  voltas.some(v => v.acao === 'abrir' && v.ok && String(v.args?.caminho || '').trim() === caminho);
 
 /** Ações que terminam o trabalho em vez de mexer no computador. */
 const ACOES_QUE_ENCERRAM = new Set(['concluir', 'desistir']);
@@ -371,6 +393,23 @@ export async function trabalharAteConcluir(
         duracaoMs: deps.agora() - comecouAVolta, mudancaDaTela: 0
       });
       falhasSeguidas = 0;
+      continue;
+    }
+
+    // ====== ABRIR DE NOVO O QUE JÁ ESTÁ ABERTO: RECUSADO ANTES DE ABRIR ======
+    if (decisao.acao === 'abrir' && jaAbriu(voltas, String(decisao.args?.caminho || '').trim())) {
+      const caminho = String(decisao.args?.caminho || '').trim();
+      const aviso =
+        `"${caminho}" JÁ ESTÁ ABERTO — você mandou abrir isso agora há pouco e deu certo. Não abri de novo. ` +
+        `Se a foto não parece a janela certa, use "trocar_janela" para olhar a janela dele em vez de abrir outra.`;
+      registrar({
+        indice: i, pensamento: decisao.pensamento, acao: 'abrir', args: decisao.args, ok: false,
+        relato: aviso, erro: aviso,
+        duracaoMs: deps.agora() - comecouAVolta, mudancaDaTela: 0, foto: foto || undefined
+      });
+      // Não conta como falha do computador: o computador não foi tocado. Contar levaria o laço a
+      // encerrar por "falhas seguidas" numa situação que ele mesmo consegue corrigir na volta
+      // seguinte, agora sabendo que a coisa já está aberta.
       continue;
     }
 
