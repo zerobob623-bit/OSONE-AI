@@ -37,13 +37,15 @@ const pastaTemp = fs.mkdtempSync(path.join(os.tmpdir(), 'osone-cred-'));
  * consultas iam para ele, que já não tinha a pasta de dados, e o conferidor reprovava culpando o
  * recurso. O defeito era do conferidor.
  */
-const PORTA = await new Promise((resolve) => {
+const portaLivre = () => new Promise((resolve) => {
   const t = net.createServer();
   t.listen(0, '127.0.0.1', () => {
     const p = t.address().port;
     t.close(() => resolve(p));
   });
 });
+
+const PORTA = await portaLivre();
 
 // O servidor roda com a pasta temporária como diretório de trabalho: é lá que o arquivo de
 // credenciais é gravado, então o teste não encosta em nada do projeto.
@@ -183,7 +185,10 @@ const SEGREDO = 'segredo-super-secreto-da-tuya-123456';
   // loopback neste teste, então o que se verifica é que a trava EXISTE nas duas rotas.
   const fonte = fs.readFileSync(path.join(RAIZ, 'server.ts'), 'utf-8');
   const trecho = fonte.slice(fonte.indexOf('app.get("/api/credenciais"'), fonte.indexOf('app.post("/api/gemini/generateContent"'));
-  const travas = (trecho.match(/somenteDaPropriaMaquina\(req, res\)/g) || []).length;
+  // Sem o `)` final no padrão de propósito: a trava passou a receber um rótulo para explicar na
+  // recusa O QUE foi recusado, e casar a assinatura exata fazia esta conferência reprovar por
+  // causa de um argumento a mais — apontando falta de segurança onde ela continuava lá.
+  const travas = (trecho.match(/somenteDaPropriaMaquina\(req, res/g) || []).length;
   registrar('as duas rotas de credencial só respondem à própria máquina',
     travas === 2,
     `${travas} trava(s) encontradas (esperado 2)`);
@@ -208,6 +213,80 @@ const SEGREDO = 'segredo-super-secreto-da-tuya-123456';
   registrar('campo desconhecido é ignorado em vez de gravado',
     !sujou,
     sujou ? 'ENTROU no arquivo' : 'ignorado');
+}
+
+/**
+ * 11) NA VERCEL A ROTA RECUSA SEM NEM OLHAR O ENDEREÇO DE ORIGEM.
+ *
+ * A trava inteira dependia de `req.socket.remoteAddress` não ser loopback. Numa função
+ * serverless quem abre a conexão TCP é o proxy da própria hospedagem, e o endereço que chega ao
+ * servidor é escolha da infraestrutura dela — não do visitante. Se um dia vier como 127.0.0.1, a
+ * checagem passa e a rota que GRAVA o segredo da Tuya fica aberta para a internet inteira, porque
+ * numa implantação pública não existe "própria máquina". É exatamente esse caso que se exercita
+ * aqui: o pedido VEM do loopback, e ainda assim tem de ser recusado.
+ */
+{
+  const pastaVercel = fs.mkdtempSync(path.join(os.tmpdir(), 'osone-vercel-'));
+  const portaVercel = await portaLivre();
+
+  /**
+   * Com VERCEL=1 o server.ts NÃO abre porta nenhuma: lá ele é um handler que a plataforma
+   * chama (ver api/index.ts), e não um processo que escuta. Então o arnês faz o que a Vercel
+   * faz — importa o app e o serve por um http.createServer próprio. Sem isto o conferidor
+   * ficava esperando uma porta que, por definição, nunca ia abrir, e reprovava culpando o
+   * recurso: o defeito seria do conferidor.
+   */
+  const iniciador = path.join(pastaVercel, 'como-na-vercel.mjs');
+  fs.writeFileSync(iniciador, `
+    import http from 'http';
+    const app = await (await import(${JSON.stringify('file://' + path.join(RAIZ, 'server.ts'))})).default;
+    http.createServer(app).listen(${portaVercel}, '127.0.0.1');
+  `);
+
+  const servidorVercel = spawn(process.execPath, [path.join(RAIZ, 'node_modules/tsx/dist/cli.mjs'), iniciador], {
+    cwd: pastaVercel,
+    env: { ...process.env, PORT: String(portaVercel), NODE_ENV: 'production', VERCEL: '1' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true
+  });
+
+  const baseVercel = `http://127.0.0.1:${portaVercel}`;
+  let subiu = false;
+  for (let i = 0; i < 90; i++) {
+    try {
+      const r = await fetch(`${baseVercel}/api/health`);
+      if (r.ok) { subiu = true; break; }
+    } catch { /* ainda subindo */ }
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  if (!subiu) {
+    registrar('na Vercel, gravar credencial pela tela é recusado', false, 'o servidor de teste não subiu');
+  } else {
+    const leitura = await fetch(`${baseVercel}/api/credenciais`);
+    const escrita = await fetch(`${baseVercel}/api/credenciais`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ TUYA_CLIENT_SECRET: SEGREDO })
+    });
+    const gravou = fs.existsSync(path.join(pastaVercel, 'credenciais-osone.json'));
+    const corpo = await escrita.json().catch(() => null);
+
+    registrar('na Vercel a rota recusa mesmo vindo do loopback, e nada é gravado',
+      leitura.status === 403 && escrita.status === 403 && !gravou,
+      gravou
+        ? 'O SEGREDO FOI GRAVADO NUMA HOSPEDAGEM PÚBLICA'
+        : `leitura ${leitura.status}, escrita ${escrita.status}`);
+
+    // A recusa precisa DIZER o que fazer: sem isso, quem está na Vercel só vê a porta fechada.
+    registrar('a recusa na Vercel explica o caminho das variáveis de ambiente',
+      /Environment Variables/i.test(corpo?.error || '') && corpo?.hospedagemRemota === true,
+      (corpo?.error || '(sem mensagem)').slice(0, 80) + '…');
+  }
+
+  try { process.kill(-servidorVercel.pid, 'SIGKILL'); } catch {}
+  try { servidorVercel.kill('SIGKILL'); } catch {}
+  fs.rmSync(pastaVercel, { recursive: true, force: true });
 }
 
 const passaram = casos.filter(c => c.passou).length;
