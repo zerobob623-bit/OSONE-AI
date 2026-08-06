@@ -55,12 +55,43 @@ const VOLTAS_NO_CONTEXTO = 12;
  * É por isso que ele consegue lidar com o que ninguém previu (um aviso de cookies, um login, um
  * botão que mudou de lugar): para ele, não existe "imprevisto", existe a tela que está ali.
  */
+/**
+ * O QUE ESTE COMPUTADOR É — dito ao agente antes de ele decidir qualquer coisa.
+ *
+ * Sem isto ele agia às cegas sobre o sistema: tentava caminho de Windows num Linux, escrevia
+ * "Downloads" onde a pasta se chama "Transferências", chutava o nome do navegador. Nenhum desses
+ * é erro de raciocínio — é falta de um dado que a máquina sabe e ele não.
+ *
+ * Vai em TODA rodada, junto da foto, e não só na primeira: o agente decide uma ação por vez, e
+ * uma informação dada só no começo se perde no meio de uma tarefa longa exatamente quando começa a
+ * fazer falta.
+ */
+function descreverOComputador(ambiente: any, area?: EstadoDaAreaParalela | null): string {
+  if (!ambiente?.osName) return '';
+  const pastas = Object.entries(ambiente.userFolders || {});
+  return [
+    `ESTE COMPUTADOR: ${ambiente.osName} (${ambiente.platform}). Usuário "${ambiente.userName}".`,
+    `Pasta pessoal: ${ambiente.homeDir}. Separador de caminho: "${ambiente.pathSeparator}".`,
+    pastas.length
+      ? `PASTAS DESTE USUÁRIO, com o nome REAL que elas têm aqui (use exatamente estes):\n${pastas.map(([k, v]) => `  ${k}: ${v}`).join('\n')}`
+      : '',
+    ambiente.platform === 'win32'
+      ? 'Use caminhos de Windows (C:\\...). NUNCA use caminhos como /home/usuario.'
+      : 'Use caminhos de Linux/macOS começando com "/" ou "~". NUNCA use caminhos como C:\\Users\\... — aqui não existem letras de unidade.',
+    area?.ligada
+      ? `Você está trabalhando numa TELA SÓ SUA (${area.largura}x${area.altura}), separada da tela do usuário. As janelas que você abrir nascem lá.`
+      : ''
+  ].filter(Boolean).join('\n');
+}
+
 async function perguntarProximaAcao(
   objetivo: string,
   foto: string | null,
   historico: VoltaDoAgente[],
   janela: JanelaDeTrabalho | null,
-  visao?: VisaoDoMotor
+  visao?: VisaoDoMotor,
+  ambiente?: any,
+  area?: EstadoDaAreaParalela | null
 ): Promise<string> {
   const feito = historico.slice(-VOLTAS_NO_CONTEXTO).map((v, i) =>
     `${historico.length - Math.min(historico.length, VOLTAS_NO_CONTEXTO) + i + 1}. [${v.ok ? 'ok' : 'FALHOU'}] ${v.pensamento} → ${v.relato}`
@@ -68,6 +99,7 @@ async function perguntarProximaAcao(
 
   const contexto = [
     `OBJETIVO DO USUÁRIO: ${objetivo}`,
+    descreverOComputador(ambiente, area),
     janela ? `JANELA EM QUE VOCÊ ESTÁ: "${janela.titulo}" (${janela.app}), ${janela.width}x${janela.height}.` : '',
     foto ? 'A IMAGEM ACIMA é a foto ATUAL dessa janela. Olhe-a antes de decidir.' : 'ATENÇÃO: não foi possível fotografar a janela nesta rodada.',
     historico.length ? `O QUE VOCÊ JÁ FEZ:\n${feito}` : 'Você ainda não fez nada. Esta é a primeira ação.',
@@ -1100,6 +1132,26 @@ export function useLocalAgent() {
     }
   };
 
+  /**
+   * O que esta máquina é: sistema, pasta pessoal, e o NOME REAL de cada pasta do usuário.
+   *
+   * Lido uma vez e guardado. Nada disso muda no meio de uma tarefa, e consultar a cada decisão
+   * acrescentaria uma ida ao agente antes de cada ação — num laço de quarenta ações, quarenta
+   * idas para receber quarenta vezes a mesma resposta.
+   */
+  const ambienteDaMaquinaRef = useRef<any>(null);
+  const lerAmbienteDaMaquina = async (localAgentToken?: string) => {
+    if (ambienteDaMaquinaRef.current) return ambienteDaMaquinaRef.current;
+    try {
+      const res = await fetch('/api/agent/status', { headers: cabecalhoDoAgente(localAgentToken) });
+      const dados = await res.json().catch(() => null);
+      if (res.ok && dados?.osName) ambienteDaMaquinaRef.current = dados;
+      return ambienteDaMaquinaRef.current;
+    } catch {
+      return null;
+    }
+  };
+
   /** As janelas abertas, para o usuário escolher uma — ou para o agente achar a que ele abriu. */
   const listarJanelas = async (localAgentToken?: string): Promise<JanelaDeTrabalho[]> => {
     try {
@@ -1360,7 +1412,10 @@ export function useLocalAgent() {
       },
 
       decidir: async (objetivoAtual, foto, historico) => {
-        return await perguntarProximaAcao(objetivoAtual, foto, historico, janelaRef.current, visao);
+        return await perguntarProximaAcao(
+          objetivoAtual, foto, historico, janelaRef.current, visao,
+          await lerAmbienteDaMaquina(localAgentToken), areaRef.current
+        );
       },
 
       aoProgredir: (volta) => {
