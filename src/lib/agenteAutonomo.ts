@@ -216,8 +216,16 @@ export function lerDecisao(respostaDoModelo: string): LeituraDaDecisao {
  * A recusa não encerra a tarefa: ela volta como resultado da ação, e ele decide o que fazer
  * sabendo que aquilo já está aberto. Encerrar seria trocar um erro barato por um caro.
  */
+const mesmoAlvo = (a: string, b: string): boolean => {
+  // "studio.youtube.com", "https://studio.youtube.com" e ".../" são o mesmo endereço. Comparar
+  // texto cru deixaria a trava passar em qualquer uma dessas variações — e é justamente delas que
+  // um modelo se serve ao "tentar de outro jeito" a mesma coisa.
+  const limpo = (t: string) => t.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/+$/, '');
+  return !!a && limpo(a) === limpo(b);
+};
+
 const jaAbriu = (voltas: VoltaDoAgente[], caminho: string): boolean =>
-  voltas.some(v => v.acao === 'abrir' && v.ok && String(v.args?.caminho || '').trim() === caminho);
+  voltas.some(v => v.acao === 'abrir' && v.ok && mesmoAlvo(String(v.args?.caminho || ''), caminho));
 
 /** Ações que terminam o trabalho em vez de mexer no computador. */
 const ACOES_QUE_ENCERRAM = new Set(['concluir', 'desistir']);

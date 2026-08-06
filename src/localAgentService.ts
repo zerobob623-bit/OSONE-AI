@@ -4,6 +4,9 @@ import os from 'os';
 import crypto from 'crypto';
 import { exec, execFile, spawn } from 'child_process';
 import { Request, Response, NextFunction, Router } from 'express';
+import {
+  ehEndereco, normalizarEndereco, pareceNomeDePrograma, NAVEGADORES_DO_AGENTE, NOME_DO_PERFIL
+} from './lib/navegadorDoAgente';
 
 // ============================================================================
 // SEÇÃO 1: CONFIGURAÇÃO E INICIALIZAÇÃO
@@ -953,11 +956,31 @@ function binaryExists(binary: string): Promise<boolean> {
 }
 
 /**
- * Lança um comando em segundo plano, totalmente desacoplado do processo do servidor
- * (spawn + detached + unref), sem esperar o app fechar — crucial para apps que ficam
- * abertos indefinidamente (ex: um editor de texto ou um terminal), diferente de exec com
- * timeout, que mataria o app assim que o tempo limite estourasse.
+ * Abre um endereço numa instância PRÓPRIA do navegador, na tela do agente.
+ *
+ * A decisão de QUAL navegador e com QUE argumentos mora em lib/navegadorDoAgente.ts, junto com a
+ * explicação de por que um perfil separado é obrigatório aqui. Este trecho só lança.
  */
+async function abrirEnderecoNaAreaDoAgente(url: string): Promise<{ navegador: string } | { error: string }> {
+  const perfil = path.join(os.tmpdir(), NOME_DO_PERFIL);
+  try { fs.mkdirSync(perfil, { recursive: true }); } catch { /* já existe, ou sem permissão — o navegador reclama e dizemos qual foi */ }
+
+  const endereco = normalizarEndereco(url);
+
+  for (const navegador of NAVEGADORES_DO_AGENTE) {
+    if (!(await binaryExists(navegador.bin))) continue;
+    const filho = spawn(navegador.bin, navegador.argumentos(perfil, endereco), {
+      detached: true, stdio: 'ignore', env: ambienteGrafico(), cwd: USER_HOME_DIR
+    });
+    filho.unref();
+    return { navegador: navegador.bin };
+  }
+  return {
+    error: `Nenhum navegador encontrado para abrir na tela do agente (procurei: ${NAVEGADORES_DO_AGENTE.map(n => n.bin).join(', ')}). ` +
+      `Instale um deles, ou desligue a tela do agente para usar o navegador padrão do sistema.`
+  };
+}
+
 function launchDetached(command: string, cwd: string = USER_HOME_DIR): void {
   const workingDir = fs.existsSync(cwd) ? cwd : USER_HOME_DIR;
   /**
@@ -1008,6 +1031,29 @@ const handleOpenAny = async (req: Request, res: Response) => {
   const openAtDir = fs.existsSync(requestedPath) ? requestedPath : USER_HOME_DIR;
 
   try {
+    /**
+     * ENDEREÇO NA TELA DO AGENTE: instância própria, sempre.
+     *
+     * Vem antes de tudo porque é o caminho que estava quebrado em silêncio — devolvendo "sucesso"
+     * enquanto a aba nascia na tela do usuário. Com a tela do agente desligada, nada disso se
+     * aplica: entregar o endereço ao navegador que a pessoa já tem aberto é exatamente o certo.
+     */
+    if (areaParalela && ehEndereco(target)) {
+      const r = await abrirEnderecoNaAreaDoAgente(target);
+      if ('error' in r) {
+        logAudit('ERROR', 'OPEN_ANY_FAILED', `Falha ao abrir '${target}' na área do agente: ${r.error}`, { target });
+        return res.status(500).json({ error: r.error });
+      }
+      logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto na área do agente via ${r.navegador}`, { target, navegador: r.navegador });
+      return res.status(200).json({
+        message: `'${target}' aberto na tela do agente (${r.navegador}).`,
+        target,
+        // O navegador leva alguns segundos para desenhar a primeira janela; dizer isso evita a
+        // conclusão errada de "não abriu" enquanto ele ainda está subindo.
+        resumo: `Abri "${target}" numa janela própria do ${r.navegador}, na sua tela. Ela pode levar alguns segundos para aparecer.`
+      });
+    }
+
     if (alias) {
       const isLocationAlias = LOCATION_ALIASES.has(conceptKey);
 
@@ -1038,6 +1084,24 @@ const handleOpenAny = async (req: Request, res: Response) => {
     }
 
     const expandedTarget = expandHomePath(target);
+
+    /**
+     * NOME DE PROGRAMA É PROGRAMA, NÃO CAMINHO DE ARQUIVO.
+     *
+     * Sem isto, pedir "google-chrome" virava `xdg-open google-chrome`, que interpreta o texto como
+     * caminho relativo e responde `gio: file:///home/usuario/google-chrome: arquivo não
+     * encontrado` — uma mensagem que aponta para o lugar errado e faz parecer que o programa não
+     * está instalado, quando ele está no PATH. Foi exatamente o que apareceu em uso.
+     */
+    if (platform !== 'win32' && !ehEndereco(target) && !fs.existsSync(expandedTarget)) {
+      const nomeDeBinario = target.trim().split(/\s+/)[0];
+      if (pareceNomeDePrograma(target) && await binaryExists(nomeDeBinario)) {
+        launchDetached(target.replace(/[;&|`$<>]/g, ''), USER_HOME_DIR);
+        logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto como programa`, { target });
+        return res.status(200).json({ message: `'${target}' aberto com sucesso.`, target });
+      }
+    }
+
     const safeTarget = expandedTarget.replace(/"/g, '\\"');
     const command = platform === 'win32'
       ? `start "" "${safeTarget}"`
