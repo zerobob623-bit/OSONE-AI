@@ -160,7 +160,13 @@ const instalarMundoFalso = async (pag) => {
         return json({ text: JSON.stringify(proxima || { acao: 'desistir', args: { motivo: 'sem roteiro' }, pensamento: 'fim' }) });
       }
 
-      if (url.includes('/api/agent/status')) return json({ status: 'online', osName: 'Linux', areaParalela: window.estadoDaArea });
+      if (url.includes('/api/agent/status')) return json({
+        status: 'online', osName: 'Linux', platform: 'linux', userName: 'usuario',
+        homeDir: '/home/usuario', pathSeparator: '/',
+        // Nomes REAIS das pastas nesta máquina — em português, como num sistema brasileiro.
+        userFolders: { downloads: '/home/usuario/Downloads', desktop: '/home/usuario/Área de Trabalho', documents: '/home/usuario/Documentos' },
+        areaParalela: window.estadoDaArea
+      });
       if (url.includes('/api/agent/desktop/status')) return json(window.estadoDaArea);
       if (url.includes('/api/agent/desktop/start')) {
         window.estadoDaArea = { ligada: true, suportada: true, largura: 1600, altura: 900, gerenciadorDeJanelas: 'openbox', explicacao: 'tela propria' };
@@ -520,6 +526,42 @@ const decisao = (acao, args, pensamento) => ({ acao, args, pensamento, esperaDaT
   const final = await pag.locator('body').innerText();
   registrar('dá para desligar e voltar a trabalhar na sua tela',
     /Ele trabalha na sua tela/.test(final), 'a escolha é reversível');
+
+  await ctx.close();
+}
+
+// ====== 10) O AGENTE SABE EM QUE SISTEMA ESTÁ ======
+// O relato: ele tentava caminho de Windows num Linux, e procurava "Downloads" onde a pasta tem
+// outro nome. Não era erro de raciocínio — era falta de um dado que a máquina sabe e ele não.
+{
+  const { pag, ctx } = await abrir();
+  await definirDecisoes(pag, [
+    decisao('abrir', { caminho: '/home/usuario/Downloads' }, 'Vou abrir a pasta de downloads'),
+    decisao('concluir', { resposta: 'abri a pasta' }, 'pronto')
+  ]);
+  await pedir(pag, 'abrir minha pasta de downloads');
+  await esperarFim(pag);
+  await pag.waitForTimeout(500);
+
+  const pedidosAoModelo = await pag.evaluate(() => window.pedidos
+    .filter(p => p.url.includes('/api/gemini/generateContent') && !p.corpo.includes('Elemento a localizar'))
+    .map(p => p.corpo));
+
+  registrar('o sistema da máquina vai junto de toda decisão',
+    pedidosAoModelo.length > 0 && pedidosAoModelo.every(c => c.includes('ESTE COMPUTADOR: Linux')),
+    `${pedidosAoModelo.length} decisão(ões), todas com o sistema informado`);
+
+  registrar('os nomes REAIS das pastas deste usuário vão junto',
+    pedidosAoModelo[0].includes('Área de Trabalho') && pedidosAoModelo[0].includes('/home/usuario/Downloads'),
+    'ele não precisa adivinhar como a pasta se chama aqui');
+
+  registrar('a proibição de caminho do outro sistema é explícita',
+    /NUNCA use caminhos como C/.test(pedidosAoModelo[0]),
+    'num Linux, dizer que C:\\ não existe evita a tentativa inteira');
+
+  registrar('o sistema é repetido em TODA rodada, e não só na primeira',
+    pedidosAoModelo.length > 1 && pedidosAoModelo[pedidosAoModelo.length - 1].includes('ESTE COMPUTADOR'),
+    'informação dada só no começo se perde no meio de uma tarefa longa');
 
   await ctx.close();
 }
