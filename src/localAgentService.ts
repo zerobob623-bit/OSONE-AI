@@ -2251,8 +2251,256 @@ const handleListPath = (req: Request, res: Response) => {
   }
 };
 
+// ============================================================================
+// SEÇÃO 13: JANELAS — ESCOLHER UMA E TRABALHAR DENTRO DELA
+// ============================================================================
+
+/**
+ * POR QUE O AGENTE PRECISA ENXERGAR UMA JANELA, E NÃO A TELA INTEIRA.
+ *
+ * Até aqui a única visão disponível era a tela toda. Isso obriga o modelo a reencontrar, a cada
+ * foto, qual pedaço da imagem é o programa em que ele está trabalhando — e a tela toda inclui o
+ * próprio OSONE, outras janelas, notificações que aparecem por cima. Quando o usuário troca de
+ * janela no meio, a foto muda inteira e o agente perde o fio sem ter feito nada errado.
+ *
+ * Escolhida uma janela, a foto passa a ser só dela: o conteúdo do quadro é sempre o mesmo
+ * programa, as coordenadas são relativas a ele, e o que acontece fora dele deixa de ser ruído.
+ * É a diferença entre "olhe a mesa inteira e ache o caderno" e "olhe o caderno".
+ *
+ * O QUE ISTO NÃO CONSEGUE FAZER, e é melhor dizer do que fingir: clicar numa janela que está
+ * atrás de outra. Mouse e teclado do sistema agem sobre o que está NA FRENTE, em qualquer sistema
+ * operacional — não existe clique invisível numa janela de fundo. Por isso o agente traz a janela
+ * dele para frente antes de agir. Você não precisa manter a janela selecionada, nem ficar
+ * escolhendo: ele mesmo se coloca onde precisa estar, e volta a olhar só o quadro dela.
+ */
+
+interface JanelaDoSistema {
+  id: string;
+  titulo: string;
+  app: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  ativa: boolean;
+}
+
+/**
+ * O identificador de janela é interpolado em comandos, então é conferido antes de qualquer uso.
+ *
+ * Ele vem do cliente, que o recebeu de uma listagem nossa — mas "veio de nós" não é garantia
+ * nenhuma depois de dar uma volta pela rede. Aceitar só hexadecimal/decimal fecha a porta de
+ * injeção sem precisar confiar em quem chamou.
+ */
+const idDeJanelaValido = (id: string): boolean => /^(0x)?[0-9a-fA-F]{1,16}$/.test((id || '').trim());
+
+async function listarJanelas(): Promise<JanelaDoSistema[]> {
+  const platform = process.platform;
+
+  if (platform === 'linux') {
+    // wmctrl -lGx: id, área de trabalho, x, y, largura, altura, classe, host, título.
+    const { stdout } = await runShell('wmctrl -lGx', 6000);
+    let ativa = '';
+    try {
+      const r = await runShell('xdotool getactivewindow', 3000);
+      // wmctrl usa hexadecimal com zeros à esquerda; xdotool devolve decimal. Sem normalizar,
+      // nenhuma janela jamais apareceria como ativa.
+      ativa = '0x' + Number(r.stdout.trim()).toString(16).padStart(8, '0');
+    } catch { /* sem xdotool: a lista continua útil, só não sabe qual está na frente */ }
+
+    return stdout.split('\n').map(linha => {
+      const p = linha.trim().split(/\s+/);
+      if (p.length < 8) return null;
+      const [id, , x, y, width, height, classe, ...resto] = p;
+      // O host é o primeiro do resto; o título é tudo o que sobra (e tem espaços).
+      const titulo = resto.slice(1).join(' ');
+      return {
+        id,
+        titulo: titulo || classe,
+        app: (classe.split('.').pop() || classe),
+        x: Number(x), y: Number(y), width: Number(width), height: Number(height),
+        ativa: id.toLowerCase() === ativa.toLowerCase()
+      };
+    }).filter((j): j is JanelaDoSistema =>
+      // Janelas de tamanho degenerado são painéis, barras e janelas ocultas: listá-las só
+      // enche a escolha do usuário de linhas em que não dá para trabalhar.
+      !!j && Number.isFinite(j.width) && j.width > 120 && j.height > 80);
+  }
+
+  if (platform === 'win32') {
+    const script = [
+      'Add-Type @"',
+      'using System;using System.Runtime.InteropServices;',
+      'public struct R{public int L;public int T;public int Rr;public int B;}',
+      'public class W{[DllImport(\\"user32.dll\\")]public static extern bool GetWindowRect(IntPtr h,out R r);',
+      '[DllImport(\\"user32.dll\\")]public static extern IntPtr GetForegroundWindow();}',
+      '"@;',
+      '$fg=[W]::GetForegroundWindow();',
+      'Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle } | ForEach-Object {',
+      '$r=New-Object R; [void][W]::GetWindowRect($_.MainWindowHandle,[ref]$r);',
+      'Write-Output ("{0}|{1}|{2}|{3}|{4}|{5}|{6}|{7}" -f $_.MainWindowHandle,$_.ProcessName,$r.L,$r.T,($r.Rr-$r.L),($r.B-$r.T),($(if($_.MainWindowHandle -eq $fg){1}else{0})),$_.MainWindowTitle) }'
+    ].join(' ');
+    const { stdout } = await runShell(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`, 12000);
+
+    return stdout.split('\n').map(linha => {
+      const p = linha.trim().split('|');
+      if (p.length < 8) return null;
+      return {
+        id: p[0], app: p[1],
+        x: Number(p[2]), y: Number(p[3]), width: Number(p[4]), height: Number(p[5]),
+        ativa: p[6] === '1', titulo: p.slice(7).join('|')
+      };
+    }).filter((j): j is JanelaDoSistema =>
+      !!j && Number.isFinite(j.width) && j.width > 120 && j.height > 80);
+  }
+
+  throw new Error(`Listagem de janelas ainda não suportada na plataforma '${platform}'.`);
+}
+
+async function focarJanela(id: string): Promise<void> {
+  if (!idDeJanelaValido(id)) throw new Error('Identificador de janela inválido.');
+  if (process.platform === 'linux') {
+    try {
+      await runShell(`wmctrl -i -a ${id}`, 5000);
+    } catch {
+      await runShell(`xdotool windowactivate ${Number(id)}`, 5000);
+    }
+    return;
+  }
+  if (process.platform === 'win32') {
+    const script = [
+      'Add-Type @"',
+      'using System;using System.Runtime.InteropServices;',
+      'public class F{[DllImport(\\"user32.dll\\")]public static extern bool SetForegroundWindow(IntPtr h);',
+      '[DllImport(\\"user32.dll\\")]public static extern bool ShowWindow(IntPtr h,int c);}',
+      '"@;',
+      // 9 = SW_RESTORE: uma janela minimizada precisa voltar antes de poder vir para frente.
+      `[void][F]::ShowWindow([IntPtr]${Number(id)},9); [void][F]::SetForegroundWindow([IntPtr]${Number(id)});`
+    ].join(' ');
+    await runShell(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`, 8000);
+    return;
+  }
+  throw new Error(`Foco de janela ainda não suportado na plataforma '${process.platform}'.`);
+}
+
+/** A geometria RECÉM-LIDA da janela: ela pode ter sido movida ou redimensionada desde a listagem. */
+async function geometriaDaJanela(id: string): Promise<{ x: number; y: number; width: number; height: number } | null> {
+  const todas = await listarJanelas().catch(() => [] as JanelaDoSistema[]);
+  const achou = todas.find(j => j.id.toLowerCase() === id.toLowerCase());
+  return achou ? { x: achou.x, y: achou.y, width: achou.width, height: achou.height } : null;
+}
+
+/**
+ * GET /window/list — as janelas abertas, com título, aplicativo e posição.
+ */
+const handleWindowList = async (_req: Request, res: Response) => {
+  try {
+    const janelas = await listarJanelas();
+    return res.status(200).json({ janelas });
+  } catch (err: any) {
+    return res.status(500).json({
+      error: `Não foi possível listar as janelas: ${err.message}. ` +
+        `No Linux é necessário ter os pacotes 'wmctrl' e 'xdotool' instalados.`
+    });
+  }
+};
+
+/**
+ * POST /window/focus — traz uma janela para a frente, para poder agir nela.
+ */
+const handleWindowFocus = async (req: Request, res: Response) => {
+  const id = String(req.body?.id || '').trim();
+  if (!idDeJanelaValido(id)) {
+    return res.status(400).json({ error: "Parâmetro 'id' inválido (identificador de janela)." });
+  }
+  try {
+    await focarJanela(id);
+    // A geometria volta junto porque quem foca vai agir logo em seguida, e agir exige saber onde
+    // a janela está AGORA — trazê-la para frente é justamente um dos momentos em que ela se move.
+    const geometria = await geometriaDaJanela(id);
+    return res.status(200).json({ success: true, geometria });
+  } catch (err: any) {
+    return res.status(500).json({ error: `Não foi possível trazer a janela para frente: ${err.message}` });
+  }
+};
+
+/**
+ * GET /window/capture?id=... — a foto de UMA janela, e não da tela inteira.
+ *
+ * A janela é trazida para frente antes da foto. Não é um efeito colateral indesejado: uma janela
+ * atrás de outra é fotografada com a outra por cima (ou com lixo de buffer, dependendo do
+ * compositor), e uma foto errada é pior do que nenhuma — ela leva o agente a decidir sobre o que
+ * não está lá.
+ */
+const handleWindowCapture = async (req: Request, res: Response) => {
+  const id = String(req.query?.id || '').trim();
+  if (!idDeJanelaValido(id)) {
+    return res.status(400).json({ error: "Parâmetro 'id' inválido (identificador de janela)." });
+  }
+
+  const platform = process.platform;
+  const tmpFile = path.join(os.tmpdir(), `osone-janela-${crypto.randomBytes(6).toString('hex')}.png`);
+  try {
+    await focarJanela(id).catch(() => { /* segue: em alguns gerenciadores a foto ainda sai certa */ });
+    // Um instante para o gerenciador de janelas terminar de trazer a janela e redesenhar. Sem
+    // isto a foto pega a transição, que é justamente o quadro em que nada está no lugar.
+    await new Promise(r => setTimeout(r, 250));
+
+    const geometria = await geometriaDaJanela(id);
+
+    if (platform === 'linux') {
+      try {
+        await runShell(`import -window ${id} -silent "${tmpFile}"`, 15000);
+      } catch (err: any) {
+        // Sem ImageMagick, recorta a janela da tela inteira: precisa da geometria, mas funciona
+        // com qualquer ferramenta de captura já instalada.
+        if (!geometria) throw err;
+        await runShell(`scrot -o "${tmpFile}" && convert "${tmpFile}" -crop ${geometria.width}x${geometria.height}+${geometria.x}+${geometria.y} +repage "${tmpFile}"`, 15000);
+      }
+    } else if (platform === 'win32') {
+      if (!geometria) throw new Error('Não foi possível ler a posição da janela.');
+      const winPath = tmpFile.replace(/'/g, "''");
+      const script = `Add-Type -AssemblyName System.Drawing; $bmp = New-Object System.Drawing.Bitmap(${geometria.width}, ${geometria.height}); $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen(${geometria.x}, ${geometria.y}, 0, 0, $bmp.Size); $bmp.Save('${winPath}', [System.Drawing.Imaging.ImageFormat]::Png); $g.Dispose(); $bmp.Dispose();`;
+      await runShell(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`, 15000);
+    } else {
+      return res.status(501).json({ error: `Captura de janela ainda não suportada na plataforma '${platform}'.` });
+    }
+
+    if (!fs.existsSync(tmpFile) || fs.statSync(tmpFile).size === 0) {
+      throw new Error('A captura da janela retornou vazia.');
+    }
+    const buffer = fs.readFileSync(tmpFile);
+    fs.unlink(tmpFile, () => {});
+
+    return res.status(200).json({
+      image: `data:image/png;base64,${buffer.toString('base64')}`,
+      mimeType: 'image/png',
+      janela: geometria,
+      /**
+       * A régua vai junto da foto: quem olhar esta imagem vai apontar posições nela em 0–1000, e
+       * essas posições precisam ser convertidas de volta para pixels da TELA na hora de clicar.
+       * Sem dizer onde a janela está, a conversão não tem como ser feita.
+       */
+      comoUsar: geometria
+        ? `Foto SÓ desta janela (${geometria.width}x${geometria.height}, canto em ${geometria.x},${geometria.y} da tela). ` +
+          `Posições apontadas nesta imagem são relativas à JANELA, não à tela.`
+        : 'Foto desta janela. A posição dela na tela não pôde ser lida.'
+    });
+  } catch (err: any) {
+    fs.unlink(tmpFile, () => {});
+    logAudit('ERROR', 'WINDOW_CAPTURE_FAILED', err.message, { platform, id });
+    return res.status(500).json({
+      error: `Não foi possível capturar a janela: ${err.message}. ` +
+        `No Linux é necessário ter 'wmctrl', 'xdotool' e ImageMagick ('import') instalados.`
+    });
+  }
+};
+
 // Mapeamento das rotas no router
 agentRouter.get('/status', handleStatus);
+agentRouter.get('/window/list', handleWindowList);
+agentRouter.post('/window/focus', handleWindowFocus);
+agentRouter.get('/window/capture', handleWindowCapture);
 agentRouter.post('/window/close', handleCloseWindow);
 agentRouter.post('/media', handleMediaControl);
 agentRouter.post('/path/delete', handleDeletePath);

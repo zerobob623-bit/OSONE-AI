@@ -1,23 +1,21 @@
 /**
- * Abre a aba do OSONE COWORK num Chromium e confere que ela aciona o motor REAL — com as travas.
+ * Abre a aba do OSONE COWORK num Chromium e confere o encaixe entre a tela e o agente REAL.
  *
- * A leitura do plano é conferida sem navegador em conferir-plano-do-cowork.mjs. O que só a tela
- * prova é o encaixe, e o encaixe é justamente onde uma aba nova costuma dar errado:
+ * O laço em si é conferido sem navegador em conferir-agente-autonomo.mjs. O que só a tela prova:
  *
- *   - que NADA acontece no computador enquanto o plano não é aprovado — a aba existe para acabar
- *     com o "posso clicar? confirma?" a cada passo, e o preço disso é que a aprovação inicial
- *     precisa ser real, e não um botão que já executou antes de ser apertado;
- *   - que a aba passa pelo MESMO motor (useLocalAgent → planoDeAcoes), e não por um caminho
- *     paralelo sem os limites: um plano com dinheiro não pode nem chegar a ter botão de executar;
- *   - que o clique descrito em palavras vira uma posição MEDIDA na hora — 'localizar' antes de
- *     'clicar' —, porque um clique sem medição cai onde o cursor estiver parado;
- *   - que dá para parar no meio, e que parar interrompe de verdade;
- *   - que a tarefa concluída entra no histórico e repetir reusa os passos sem voltar ao modelo.
+ *   - que a aba lista as janelas e trabalha DENTRO de uma delas, e não na tela inteira;
+ *   - que o clique num alvo descrito vira a posição certa: o modelo aponta na foto DA JANELA, e
+ *     essa posição relativa precisa ser somada ao canto da janela antes de virar pixel de tela.
+ *     Errar essa conta clica no lugar errado com total confiança, e é o tipo de erro que só
+ *     aparece quando a janela não está colada no canto superior esquerdo;
+ *   - que o relatório mostra o MOTIVO de cada ação enquanto ela acontece;
+ *   - que a resposta lida da tela aparece em destaque no fim;
+ *   - que dinheiro é recusado antes de tocar no computador, pela aba nova como pela antiga;
+ *   - que dá para parar no meio, e que parar para.
  *
- * O agente local é falsificado aqui (nenhum teste pode clicar de verdade no computador de quem
- * roda), mas o MOTOR não é: o laço, as esperas, a conferência por foto e a validação são os de
- * produção. A tela de mentira muda de cor a cada captura justamente para o motor poder confirmar
- * que o passo pegou, como ele faria numa tela real.
+ * O agente local e o modelo são falsificados (nenhum teste pode clicar de verdade no computador de
+ * quem roda, nem gastar cota), mas o AGENTE não é: o laço, os freios, as travas e a conversão de
+ * coordenada são os de produção.
  *
  * Como rodar:
  *   npm i -D playwright   (uma vez; o navegador já vem no ambiente de desenvolvimento)
@@ -42,13 +40,6 @@ const pastaTemp = fs.mkdtempSync(path.join(os.tmpdir(), 'osone-cowork-tela-'));
 const entrada = path.join(pastaTemp, 'entrada.tsx');
 const pagina = path.join(pastaTemp, 'index.html');
 
-/**
- * O arreio: a aba ligada ao motor DE VERDADE, pelo mesmo hook que o App usa.
- *
- * Passar um onExecutar de mentira aqui tornaria o conferidor inútil — ele provaria que a tela
- * chama uma função, e não que a tarefa passa pelas travas. Ligando no useLocalAgent real, um
- * plano com dinheiro é recusado pelo mesmo código que recusa no caminho antigo.
- */
 fs.writeFileSync(entrada, `
 import React from 'react';
 import { createRoot } from 'react-dom/client';
@@ -56,7 +47,8 @@ import { CoworkSection } from ${JSON.stringify(path.join(RAIZ, 'src/components/C
 import { useLocalAgent } from ${JSON.stringify(path.join(RAIZ, 'src/hooks/useLocalAgent'))};
 
 function Arreio() {
-  const { executarCowork, planoEmCurso, alvoMedido, motorParado, pararMotor, retomarMotor } = useLocalAgent();
+  const { listarJanelas, janelaDeTrabalho, definirJanela, trabalharNoObjetivo, relatoDoAgente,
+          motorParado, pararMotor, retomarMotor } = useLocalAgent();
   return React.createElement('div', { style: { height: '100vh' } },
     React.createElement(CoworkSection, {
       onBack: () => {},
@@ -64,8 +56,13 @@ function Arreio() {
       chaveGemini: 'chave-de-teste',
       modeloGemini: 'gemini-3.6-flash',
       ambiente: { osName: 'Linux', userName: 'teste', homeDir: '/home/teste' },
-      onExecutar: (passos) => executarCowork(passos, 'token-de-teste', false, { chaveGemini: 'x', modeloGemini: 'y' }),
-      planoEmCurso, alvoMedido, motorParado,
+      listarJanelas: () => listarJanelas('token-de-teste'),
+      janelaDeTrabalho, definirJanela, relatoDoAgente, motorParado,
+      onTrabalhar: (objetivo, janela) => trabalharNoObjetivo(objetivo, {
+        localAgentToken: 'token-de-teste',
+        visao: { chaveGemini: 'x', modeloGemini: 'y' },
+        janela
+      }),
       onParar: pararMotor,
       onRetomar: retomarMotor,
       onNotification: (m, t) => { (window.avisos = window.avisos || []).push({ m, t }); }
@@ -96,38 +93,37 @@ const executavel = process.env.CHROMIUM_PATH
 const nav = await chromium.launch(executavel ? { executablePath: executavel } : {});
 
 /**
- * O agente local de mentira, instalado antes de a página carregar.
+ * A JANELA DE MENTIRA NÃO FICA NO CANTO DA TELA, e isso é de propósito.
  *
- * Ele REGISTRA tudo o que foi pedido — é essa lista que responde à pergunta que mais importa:
- * o computador foi tocado antes da aprovação? A tela devolvida muda de cor a cada captura para
- * que a conferência por foto do motor tenha o que confirmar.
+ * Se ela começasse em (0,0), a posição relativa à janela e a posição na tela seriam o mesmo número
+ * — e a conta que converte uma na outra passaria mesmo estando errada. Deslocada, um erro na
+ * conversão vira um clique visivelmente fora do lugar, que é o que se quer detectar aqui.
  */
-const instalarAgenteFalso = async (pag) => {
-  await pag.addInitScript(() => {
+const JANELA = { id: '0x2200003', titulo: 'YouTube Studio — Navegador', app: 'firefox', x: 300, y: 120, width: 1000, height: 700, ativa: true };
+const TELA = { width: 1920, height: 1080 };
+/** O alvo no centro da foto da janela (500,500 em 0–1000) cai neste pixel da TELA. */
+const PIXEL_ESPERADO = {
+  x: Math.round(JANELA.x + 0.5 * JANELA.width),   // 800
+  y: Math.round(JANELA.y + 0.5 * JANELA.height)   // 470
+};
+
+const instalarMundoFalso = async (pag) => {
+  await pag.addInitScript(([janela, tela]) => {
     window.pedidos = [];
-    window.planoDoModelo = null;
+    window.decisoes = [];
     window.chamadasAoModelo = 0;
 
-    /**
-     * A TELA DE MENTIRA SE COMPORTA COMO UMA DE VERDADE: muda quando alguém age, e fica parada
-     * quando ninguém age.
-     *
-     * As duas metades importam. Se ela mudasse a cada foto, o motor nunca veria a tela "parar" e
-     * ficaria fotografando até estourar o prazo em todo passo — o conferidor levaria minutos e
-     * mediria a paciência dele, não o comportamento dele. Se ela nunca mudasse, todo passo seria
-     * dado como não confirmado e o plano morreria no primeiro. Mudando só depois de uma ação, a
-     * conferência por foto do motor funciona exatamente como funcionaria numa tela real.
-     */
     let tom = 0;
-    const telaFalsa = () => {
+    const fotoDaJanela = () => {
       const c = document.createElement('canvas');
-      c.width = 160; c.height = 90;
+      c.width = 200; c.height = 140;
       const ctx = c.getContext('2d');
       ctx.fillStyle = (tom % 2) === 0 ? '#101010' : '#f0f0f0';
-      ctx.fillRect(0, 0, 160, 90);
+      ctx.fillRect(0, 0, 200, 140);
       return c.toDataURL('image/png');
     };
-    const agiuNaTela = () => { tom++; };
+    // A janela muda quando alguém age nela, e fica parada quando ninguém age — como uma de verdade.
+    const agiuNaJanela = () => { tom++; };
 
     const json = (corpo, ok = true) => Promise.resolve(new Response(JSON.stringify(corpo), {
       status: ok ? 200 : 500, headers: { 'Content-Type': 'application/json' }
@@ -136,264 +132,255 @@ const instalarAgenteFalso = async (pag) => {
     const fetchOriginal = window.fetch;
     window.fetch = (entrada, opcoes = {}) => {
       const url = String(typeof entrada === 'string' ? entrada : entrada.url);
-      window.pedidos.push({ url, corpo: opcoes.body || '' });
+      const corpo = opcoes.body || '';
+      window.pedidos.push({ url, corpo });
 
-      /**
-       * O modelo OLHANDO a tela para achar o alvo — o mesmo endpoint que mirarPorVisao usa.
-       *
-       * Devolve uma caixa fixa no formato box_2d ([ymin, xmin, ymax, xmax] em escala 0–1000), que
-       * é o que o código de produção espera. Assim o passo 'clicar' percorre o caminho inteiro de
-       * verdade: olhar, medir, clicar na medição.
-       */
       if (url.includes('/api/gemini/generateContent')) {
-        return json({ text: JSON.stringify({ encontrado: true, box_2d: [340, 620, 380, 660], descricao: 'campo de busca' }) });
-      }
-      if (url.includes('/api/generate')) {
         window.chamadasAoModelo++;
-        return json({ text: JSON.stringify(window.planoDoModelo || { passos: [] }) });
+        /**
+         * O MESMO endpoint serve duas perguntas diferentes, e o teste precisa separá-las:
+         * "onde está este alvo na foto?" (mirarPorVisao) e "qual a próxima ação?" (o agente).
+         */
+        if (corpo.includes('Elemento a localizar')) {
+          // Centro exato da foto da janela: 500,500 na escala 0–1000.
+          return json({ text: JSON.stringify({ encontrado: true, box_2d: [480, 480, 520, 520], descricao: 'alvo de teste' }) });
+        }
+        const proxima = window.decisoes.length > 1 ? window.decisoes.shift() : window.decisoes[0];
+        return json({ text: JSON.stringify(proxima || { acao: 'desistir', args: { motivo: 'sem roteiro' }, pensamento: 'fim' }) });
       }
+
       if (url.includes('/api/agent/status')) return json({ status: 'online', osName: 'Linux' });
-      if (url.includes('/api/agent/screen-info')) return json({ width: 1920, height: 1080, offsetX: 0, offsetY: 0 });
-      if (url.includes('/api/agent/screen/capture')) {
-        return json({ image: telaFalsa(), mimeType: 'image/png', screenWidth: 1920, screenHeight: 1080 });
+      if (url.includes('/api/agent/screen-info')) return json({ ...tela, offsetX: 0, offsetY: 0 });
+      if (url.includes('/api/agent/window/list')) {
+        return json({ janelas: [janela, { id: '0x1100001', titulo: 'OSONE G5', app: 'electron', x: 0, y: 0, width: 1200, height: 800, ativa: false }] });
       }
+      if (url.includes('/api/agent/window/capture')) return json({ image: fotoDaJanela(), mimeType: 'image/png', janela });
+      if (url.includes('/api/agent/window/focus')) return json({ success: true, geometria: janela });
       if (url.includes('/api/agent/mouse/move')) {
-        const corpo = JSON.parse(opcoes.body || '{}');
-        return json({ pediuPx: corpo, ficouPx: corpo, telaPx: { width: 1920, height: 1080 }, execucaoExata: true });
+        const b = JSON.parse(corpo || '{}');
+        return json({ pediuPx: b, ficouPx: b, telaPx: tela, execucaoExata: true });
       }
-      // Ações que mexem na tela: a tela passa a estar diferente da foto anterior, e é isso que o
-      // motor usa para confirmar que o passo pegou.
-      if (url.includes('/api/agent/mouse/button')) { agiuNaTela(); return json({ success: true }); }
-      if (url.includes('/api/agent/open-any')) { agiuNaTela(); return json({ success: true }); }
-      if (url.includes('/api/agent/keyboard/type')) { agiuNaTela(); return json({ success: true }); }
-      if (url.includes('/api/agent/keyboard/key')) { agiuNaTela(); return json({ success: true }); }
+      if (url.includes('/api/agent/mouse/button')) { agiuNaJanela(); return json({ success: true }); }
+      if (url.includes('/api/agent/open-any')) { agiuNaJanela(); return json({ success: true }); }
+      if (url.includes('/api/agent/keyboard/')) { agiuNaJanela(); return json({ success: true }); }
       if (url.startsWith('file://') || url.includes('.js')) return fetchOriginal(entrada, opcoes);
       return json({ success: true });
     };
-  });
+  }, [JANELA, TELA]);
 };
 
 const abrir = async () => {
-  const ctx = await nav.newContext({ viewport: { width: 1500, height: 1000 } });
+  const ctx = await nav.newContext({ viewport: { width: 1500, height: 1050 } });
   const pag = await ctx.newPage();
-  await instalarAgenteFalso(pag);
+  await instalarMundoFalso(pag);
   await pag.goto('file://' + pagina);
-  await pag.waitForTimeout(600);
+  await pag.waitForTimeout(800);
   return { pag, ctx };
 };
 
-const definirPlano = (pag, plano) => pag.evaluate(p => { window.planoDoModelo = p; }, plano);
-const pedir = async (pag, tarefa) => {
-  await pag.getByPlaceholder(/Ex:/).fill(tarefa);
-  await pag.getByRole('button', { name: 'Montar o plano' }).click();
-  await pag.waitForTimeout(700);
+const definirDecisoes = (pag, lista) => pag.evaluate(d => { window.decisoes = d; }, lista);
+const pedir = async (pag, objetivo) => {
+  await pag.getByPlaceholder(/Ex:/).fill(objetivo);
+  await pag.getByRole('button', { name: 'Começar' }).click();
 };
-const urls = (pag) => pag.evaluate(() => window.pedidos.map(p => p.url));
 const tocouNoComputador = (pag) => pag.evaluate(() =>
   window.pedidos.filter(p =>
     p.url.includes('/mouse/') || p.url.includes('/keyboard/') || p.url.includes('/open-any')).length);
+const esperarFim = (pag) =>
+  pag.waitForFunction(() => (window.avisos || []).length > 0, null, { timeout: 90000 }).catch(() => {});
 
-/** O botão de repetir uma tarefa do histórico — o mesmo seletor usado para esperar e para clicar. */
-const BOTAO_REPETIR = 'button[title="Repetir esta tarefa (o plano volta para aprovação)"]';
+const decisao = (acao, args, pensamento) => ({ acao, args, pensamento, esperaDaTela: 'mudar' });
 
-const PLANO_SIMPLES = {
-  passos: [
-    { acao: 'abrir', args: { caminho: 'navegador' }, descricao: 'Abrir o navegador', esperaDaTela: 'mudar' },
-    { acao: 'clicar', args: { alvo: 'o campo de busca' }, descricao: 'Clicar no campo de busca', esperaDaTela: 'mudar' }
-  ]
-};
-
-// ====== 1) NADA ACONTECE ANTES DA APROVAÇÃO ======
+// ====== 1) A JANELA DE TRABALHO ======
 {
   const { pag, ctx } = await abrir();
-  await definirPlano(pag, PLANO_SIMPLES);
-  await pedir(pag, 'abrir o navegador e buscar');
-
-  const mostrou = await pag.getByText('Plano: 2 passo(s)').isVisible().catch(() => false);
-  registrar('o plano aparece na tela para ser aprovado', mostrou, mostrou ? '2 passos listados' : 'não apareceu');
-
-  const naTela = await pag.locator('body').innerText();
-  registrar('cada passo aparece com a descrição em português',
-    naTela.includes('Abrir o navegador') && naTela.includes('Clicar no campo de busca'),
-    'o usuário lê o que vai acontecer antes de acontecer');
-
-  registrar('o passo mostra o alvo descrito, e não uma coordenada inventada',
-    naTela.includes('alvo: o campo de busca') && !/x=\d+, y=\d+/.test(naTela),
-    'o plano descreve o alvo; a posição é medida na hora');
-
-  const tocou = await tocouNoComputador(pag);
-  registrar('montar o plano não toca no computador',
-    tocou === 0, tocou === 0 ? 'nenhuma ação executada' : `${tocou} ação(ões) antes da aprovação`);
-
-  const temBotao = await pag.getByRole('button', { name: /Aprovar e executar/ }).isVisible().catch(() => false);
-  registrar('o botão de aprovar existe e é o único caminho para executar', temBotao, 'aprovação explícita');
-
-  await ctx.close();
-}
-
-// ====== 2) DINHEIRO NÃO CHEGA A TER BOTÃO ======
-// A trava vem de planoDeAcoes.ts, o mesmo arquivo que protege o caminho antigo. Se a aba tivesse
-// virado uma porta dos fundos, este caso mostraria um plano executável.
-{
-  const { pag, ctx } = await abrir();
-  await definirPlano(pag, {
-    passos: [
-      { acao: 'abrir', args: { caminho: 'loja' }, descricao: 'Abrir a loja', esperaDaTela: 'mudar' },
-      { acao: 'clicar', args: { alvo: 'botão' }, descricao: 'Finalizar a compra no cartão', esperaDaTela: 'mudar' }
-    ]
-  });
-  await pedir(pag, 'comprar um fone pra mim');
-
-  const recusou = await pag.getByText('Plano não aprovado').isVisible().catch(() => false);
-  registrar('um plano com pagamento é recusado na aba', recusou, 'recusa mostrada no lugar dos passos');
 
   const texto = await pag.locator('body').innerText();
-  registrar('a recusa diz que quem paga é a pessoa',
-    /quem paga é a pessoa/i.test(texto), 'a mensagem do motor chegou inteira à tela');
+  registrar('a aba lista as janelas abertas',
+    texto.includes('YouTube Studio — Navegador') && texto.includes('OSONE G5'),
+    'as duas janelas apareceram para escolher');
 
-  const temBotao = await pag.getByRole('button', { name: /Aprovar e executar/ }).isVisible().catch(() => false);
-  registrar('plano recusado não ganha botão de executar',
-    !temBotao, temBotao ? 'ofereceu executar um plano recusado' : 'sem caminho para rodar');
+  registrar('a janela escolhida sozinha não é o próprio OSONE',
+    /YouTube Studio — Navegador[\s\S]{0,120}na frente agora/.test(texto) && !texto.includes('OSONE G5 ·'),
+    'ele não começa trabalhando dentro de si mesmo');
+
+  registrar('a tela diz que o agente troca de janela sozinho',
+    /muda sozinho/.test(texto), 'a pessoa não precisa ficar escolhendo');
+
+  await ctx.close();
+}
+
+// ====== 2) NADA ACONTECE ANTES DE COMEÇAR ======
+{
+  const { pag, ctx } = await abrir();
+  await definirDecisoes(pag, [decisao('concluir', { resposta: 'ok' }, 'nada a fazer')]);
+  await pag.getByPlaceholder(/Ex:/).fill('uma tarefa qualquer');
+  await pag.waitForTimeout(300);
 
   const tocou = await tocouNoComputador(pag);
-  registrar('plano recusado não encosta no computador', tocou === 0, `${tocou} ação(ões)`);
+  registrar('escrever o objetivo não toca no computador',
+    tocou === 0, tocou === 0 ? 'nenhuma ação executada' : `${tocou} ação(ões) antes de começar`);
+
+  const chamou = await pag.evaluate(() => window.chamadasAoModelo);
+  registrar('escrever o objetivo não chama o modelo',
+    chamou === 0, `${chamou} chamada(s)`);
 
   await ctx.close();
 }
 
-// ====== 3) APROVAR EXECUTA, PELO MOTOR DE VERDADE ======
+// ====== 3) O CLIQUE NUM ALVO DESCRITO CAI NO PIXEL CERTO DA TELA ======
+// A conta que importa: o modelo aponta na foto DA JANELA; a posição precisa ser somada ao canto
+// da janela antes de virar pixel. Com a janela em (300,120), errar isso clica 300px à esquerda.
 {
   const { pag, ctx } = await abrir();
-  await definirPlano(pag, PLANO_SIMPLES);
-  await pedir(pag, 'abrir o navegador e buscar');
+  await definirDecisoes(pag, [
+    decisao('clicar', { alvo: 'a aba Análises' }, 'Vejo o menu da esquerda com Análises'),
+    decisao('concluir', { resposta: 'O gráfico mostra 12.400 visualizações, alta de 18%.' }, 'Li o gráfico')
+  ]);
+  await pedir(pag, 'analisar o gráfico do canal');
+  await esperarFim(pag);
+  await pag.waitForTimeout(400);
 
-  await pag.getByRole('button', { name: /Aprovar e executar/ }).click();
-  await pag.waitForTimeout(1200);
-
-  const parando = await pag.getByRole('button', { name: /Parar agora/ }).isVisible().catch(() => false);
-  registrar('enquanto roda, existe um botão de parar',
-    parando, parando ? 'parada disponível durante a execução' : 'não dava para interromper');
-
-  /**
-   * A marca do alvo é conferida ENQUANTO o plano roda, e não depois.
-   *
-   * Ela existe para dizer onde o passo em curso vai agir; terminada a execução ela some de
-   * propósito, porque uma marca parada sobre um plano encerrado aponta com confiança para um
-   * ponto que não é mais alvo de nada. Conferir no fim seria conferir justamente o estado em que
-   * ela não deve aparecer.
-   */
-  const marcouDurante = await pag.waitForFunction(
-    () => /Alvo medido na tela:.*x=640, y=360/.test(document.body.innerText),
-    null, { timeout: 90000 }
-  ).then(() => true).catch(() => false);
-  registrar('durante a execução, a tela marca o alvo MEDIDO e diz a posição usada',
-    marcouDurante, 'a marca sobre a foto vem da medição, não do plano');
-
-  await pag.waitForFunction(() => (window.avisos || []).length > 0, null, { timeout: 90000 }).catch(() => {});
-
-  const pedidos = await pag.evaluate(() => window.pedidos);
-  const lista = pedidos.map(p => p.url);
-  const abriu = lista.some(u => u.includes('/open-any'));
-  registrar('o passo "abrir" chegou ao agente', abriu, 'POST /open-any registrado');
-
-  const iOlhar = lista.findIndex(u => u.includes('/api/gemini/generateContent'));
-  const iClicar = lista.findIndex(u => u.includes('/mouse/button'));
-  registrar('o clique só acontece depois de a tela ser olhada',
-    iOlhar !== -1 && iClicar !== -1 && iOlhar < iClicar,
-    'olhar antes, clicar depois — nunca clicar de memória');
-
-  /**
-   * O clique usou a posição MEDIDA, e não outra.
-   *
-   * A caixa devolvida pelo modelo de mentira tem centro em x=640, y=360 na escala 0–1000, que numa
-   * tela de 1920x1080 é o pixel (1229, 389). É esse pixel que o cursor tem de ter recebido: se o
-   * clique tivesse ido para qualquer outro lugar, a medição teria sido desperdiçada no caminho.
-   */
-  const moveuPara = pedidos
+  const moveu = await pag.evaluate(() => window.pedidos
     .filter(p => p.url.includes('/mouse/move'))
-    .map(p => { try { return JSON.parse(p.corpo); } catch { return null; } })
-    .filter(Boolean);
-  const acertou = moveuPara.some(m => Math.abs(m.x - 1229) <= 2 && Math.abs(m.y - 389) <= 2);
-  registrar('o cursor foi para o pixel que a medição indicou',
-    acertou, moveuPara.map(m => `(${m.x},${m.y})`).join(' ') || 'nenhum movimento');
+    .map(p => { try { return JSON.parse(p.corpo); } catch { return null; } }).filter(Boolean));
 
-  const capturou = lista.filter(u => u.includes('/screen/capture')).length;
-  registrar('o motor conferiu a tela entre os passos',
-    capturou >= 3, `${capturou} captura(s) — a foto nova é o que confirma que a ação pegou`);
+  const acertou = moveu.some(m => Math.abs(m.x - PIXEL_ESPERADO.x) <= 2 && Math.abs(m.y - PIXEL_ESPERADO.y) <= 2);
+  registrar('o clique num alvo da janela cai no pixel certo da TELA',
+    acertou,
+    `esperado (${PIXEL_ESPERADO.x},${PIXEL_ESPERADO.y}) · recebido ${moveu.map(m => `(${m.x},${m.y})`).join(' ') || 'nenhum'}`);
 
-  const naTelaNoFim = await pag.locator('body').innerText();
-  registrar('terminada a execução, a marca do alvo some',
-    !/Alvo medido na tela/.test(naTelaNoFim),
-    'nada continua apontado depois que não há mais passo em curso');
+  const capturouJanela = await pag.evaluate(() => window.pedidos.filter(p => p.url.includes('/window/capture')).length);
+  const capturouTelaInteira = await pag.evaluate(() => window.pedidos.filter(p => p.url.includes('/screen/capture')).length);
+  registrar('ele olha a JANELA, e não a tela inteira',
+    capturouJanela > 0 && capturouTelaInteira === 0,
+    `${capturouJanela} foto(s) da janela, ${capturouTelaInteira} da tela inteira`);
 
   await ctx.close();
 }
 
-// ====== 4) A TAREFA FEITA ENTRA NO HISTÓRICO, E REPETIR NÃO VOLTA AO MODELO ======
+// ====== 4) O RELATÓRIO CONTA O QUE ELE ESTÁ FAZENDO, E A RESPOSTA APARECE ======
 {
   const { pag, ctx } = await abrir();
-  await definirPlano(pag, PLANO_SIMPLES);
-  await pedir(pag, 'abrir o navegador e buscar');
-  await pag.getByRole('button', { name: /Aprovar e executar/ }).click();
-  // Esperar a LINHA DO HISTÓRICO aparecer, e não um tempo fixo: o plano leva o que levar (cada
-  // passo espera a tela parar de mudar), e um relógio chutado aqui reprovaria a execução por ser
-  // lenta em vez de por estar errada.
-  await pag.waitForSelector(BOTAO_REPETIR, { timeout: 90000 }).catch(() => {});
+  await definirDecisoes(pag, [
+    decisao('abrir', { caminho: 'https://studio.youtube.com' }, 'Preciso abrir o Studio antes de qualquer coisa'),
+    decisao('clicar', { alvo: 'a aba Análises' }, 'Vejo o menu da esquerda com Análises'),
+    decisao('concluir', { resposta: 'O gráfico dos últimos 28 dias mostra 12.400 visualizações, alta de 18%.' }, 'Li o gráfico na tela')
+  ]);
+  await pedir(pag, 'analisar o gráfico do canal');
 
-  // A linha do histórico é lida a partir do próprio botão de repetir: procurar o texto solto na
-  // página acharia também o que ficou escrito na caixa do pedido, e não provaria nada.
-  const linhaDoHistorico = await pag.locator(BOTAO_REPETIR).first().locator('xpath=..').innerText().catch(() => '');
-  registrar('a tarefa executada aparece no histórico',
-    linhaDoHistorico.includes('abrir o navegador e buscar') && /2 passo\(s\)/.test(linhaDoHistorico),
-    linhaDoHistorico.split('\n').join(' · ') || 'nenhuma linha no histórico');
+  // O motivo da ação tem de aparecer ENQUANTO ela acontece, e não só no fim.
+  const contouDurante = await pag.waitForFunction(
+    () => document.body.innerText.includes('Preciso abrir o Studio antes de qualquer coisa'),
+    null, { timeout: 60000 }
+  ).then(() => true).catch(() => false);
+  registrar('o motivo de cada ação aparece enquanto ele trabalha',
+    contouDurante, 'o relatório é ao vivo, não um resumo no fim');
+
+  await esperarFim(pag);
+  await pag.waitForTimeout(500);
+  const texto = await pag.locator('body').innerText();
+
+  registrar('o relatório guarda a sequência inteira, com motivo e ação',
+    texto.includes('Preciso abrir o Studio') && texto.includes('Vejo o menu da esquerda')
+      && texto.includes('Abri "https://studio.youtube.com"'),
+    'cada linha diz por que agiu e o que fez');
+
+  registrar('a RESPOSTA lida da tela aparece em destaque como Resultado',
+    /Resultado[\s\S]{0,200}12\.400 visualizações/.test(texto),
+    'o que a pessoa pediu não fica escondido no registro');
+
+  registrar('a foto do que ele está vendo aparece na tela',
+    await pag.locator('img[alt="A janela em que o agente trabalha"]').isVisible().catch(() => false),
+    'dá para acompanhar olhando');
+
+  await ctx.close();
+}
+
+// ====== 5) DINHEIRO É RECUSADO ANTES DE TOCAR NO COMPUTADOR ======
+{
+  const { pag, ctx } = await abrir();
+  await definirDecisoes(pag, [
+    decisao('clicar', { alvo: 'o botão azul' }, 'Vou finalizar a compra no cartão salvo')
+  ]);
+  await pedir(pag, 'comprar um fone pra mim');
+  await esperarFim(pag);
+  await pag.waitForTimeout(400);
+
+  const tocou = await tocouNoComputador(pag);
+  registrar('a ação com dinheiro não chega a ser executada',
+    tocou === 0, `${tocou} ação(ões) no computador`);
+
+  const texto = await pag.locator('body').innerText();
+  registrar('a recusa aparece na tela dizendo que quem paga é a pessoa',
+    /quem paga é a pessoa/i.test(texto), 'a mensagem do motor chegou inteira');
+
+  await ctx.close();
+}
+
+// ====== 6) PARAR PARA DE VERDADE ======
+{
+  const { pag, ctx } = await abrir();
+  // Um roteiro que nunca termina sozinho: só o botão de parar encerra.
+  await definirDecisoes(pag, [
+    decisao('clicar', { alvo: 'algo 1' }, 'clicando 1'),
+    decisao('clicar', { alvo: 'algo 2' }, 'clicando 2'),
+    decisao('clicar', { alvo: 'algo 3' }, 'clicando 3'),
+    decisao('clicar', { alvo: 'algo 4' }, 'clicando 4'),
+    decisao('clicar', { alvo: 'algo 5' }, 'clicando 5'),
+    decisao('clicar', { alvo: 'algo 6' }, 'clicando 6'),
+    decisao('clicar', { alvo: 'algo 7' }, 'clicando 7'),
+    decisao('clicar', { alvo: 'algo 8' }, 'clicando 8')
+  ]);
+  await pedir(pag, 'clicar em muita coisa');
+  await pag.waitForTimeout(2500);
+
+  const parar = pag.getByRole('button', { name: /Parar agora/ });
+  registrar('enquanto trabalha, existe um botão de parar',
+    await parar.isVisible().catch(() => false), 'a interrupção está à mão');
+
+  await parar.click();
+  await esperarFim(pag);
+  await pag.waitForTimeout(500);
+
+  const cliquesAoParar = await pag.evaluate(() => window.pedidos.filter(p => p.url.includes('/mouse/button')).length);
+  await pag.waitForTimeout(3000);
+  const cliquesDepois = await pag.evaluate(() => window.pedidos.filter(p => p.url.includes('/mouse/button')).length);
+
+  registrar('depois de parar, nenhum clique novo sai',
+    cliquesDepois === cliquesAoParar && cliquesDepois < 8,
+    `${cliquesAoParar} → ${cliquesDepois} clique(s)`);
+
+  const texto = await pag.locator('body').innerText();
+  registrar('a parada é explicada, dizendo quantas ações foram feitas',
+    /Parado por você/i.test(texto), 'o motivo aparece em vez de um silêncio');
+
+  await ctx.close();
+}
+
+// ====== 7) O HISTÓRICO GUARDA O OBJETIVO, E REPETIR REFAZ O CAMINHO ======
+// Guardar passos seria pior: eles envelhecem. Guardar o objetivo deixa o agente refazer o caminho
+// olhando a tela de hoje.
+{
+  const { pag, ctx } = await abrir();
+  await definirDecisoes(pag, [decisao('concluir', { resposta: 'feito' }, 'nada a fazer aqui')]);
+  await pedir(pag, 'conferir as notificações');
+  await esperarFim(pag);
+  await pag.waitForTimeout(600);
 
   const guardado = await pag.evaluate(() => JSON.parse(localStorage.getItem('osone_cowork_historico') || '[]'));
-  registrar('o histórico guarda os passos, e não só o texto da tarefa',
-    guardado[0]?.passos?.length === 2, `${guardado[0]?.passos?.length} passo(s) guardados`);
+  registrar('o histórico guarda o OBJETIVO, e não uma lista de passos',
+    guardado[0]?.tarefa === 'conferir as notificações' && guardado[0]?.passos === undefined,
+    JSON.stringify(guardado[0] || {}).slice(0, 120));
 
   const antes = await pag.evaluate(() => window.chamadasAoModelo);
-  await pag.locator(BOTAO_REPETIR).first().click();
-  await pag.waitForTimeout(500);
+  await pag.locator('button[title="Pedir de novo (ele refaz o caminho olhando a tela de agora)"]').first().click();
+  await esperarFim(pag);
+  await pag.waitForTimeout(600);
   const depois = await pag.evaluate(() => window.chamadasAoModelo);
 
-  registrar('repetir reusa o plano guardado sem chamar o modelo de novo',
-    depois === antes, `${antes} → ${depois} chamada(s) ao modelo`);
-
-  const voltouParaAprovar = await pag.getByRole('button', { name: /Aprovar e executar/ }).isVisible().catch(() => false);
-  registrar('repetir volta para aprovação em vez de sair executando',
-    voltouParaAprovar, 'a tela de hoje não é a de ontem: aprova-se de novo');
-
-  await ctx.close();
-}
-
-// ====== 5) PARAR NO MEIO PARA DE VERDADE ======
-{
-  const { pag, ctx } = await abrir();
-  await definirPlano(pag, {
-    passos: Array.from({ length: 8 }, (_, i) => ({
-      acao: 'abrir', args: { caminho: `programa-${i}` }, descricao: `Abrir o programa ${i + 1}`, esperaDaTela: 'mudar'
-    }))
-  });
-  await pedir(pag, 'abrir oito programas');
-  await pag.getByRole('button', { name: /Aprovar e executar/ }).click();
-  await pag.waitForTimeout(1500);
-
-  await pag.getByRole('button', { name: /Parar agora/ }).click();
-  await pag.waitForFunction(() => (window.avisos || []).length > 0, null, { timeout: 90000 }).catch(() => {});
-  await pag.waitForTimeout(500);
-
-  const contarAberturas = () => pag.evaluate(() => window.pedidos.filter(p => p.url.includes('/open-any')).length);
-  const aberturasAoParar = await contarAberturas();
-  await pag.waitForTimeout(2500);
-  const aberturasDepois = await contarAberturas();
-
-  registrar('depois de parar, nenhuma ação nova sai',
-    aberturasDepois === aberturasAoParar && aberturasDepois < 8,
-    `${aberturasAoParar} → ${aberturasDepois} de 8 passos`);
-
-  const texto = await pag.locator('body').innerText();
-  registrar('a parada é explicada na tela, com o passo em que parou',
-    /parad[oa]|Parei/i.test(texto), 'o motivo aparece em vez de um silêncio');
+  registrar('repetir refaz o caminho olhando a tela de agora',
+    depois > antes, `${antes} → ${depois} chamada(s) ao modelo`);
 
   await ctx.close();
 }
