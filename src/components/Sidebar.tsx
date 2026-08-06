@@ -2,7 +2,8 @@ import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   X, Volume2, FileText, Code2, Music, Gamepad2, Zap, Activity, LogOut, MessageSquare,
-  Compass, Database, Video, Radio, Eye, Heart, BookOpen, Settings, type LucideIcon
+  Compass, Database, Video, Radio, Eye, Heart, BookOpen, Settings, MousePointerClick,
+  type LucideIcon
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { WorkspaceMode } from '../types';
@@ -58,6 +59,19 @@ const GRUPOS: GrupoDoMenu[] = [
         rotulo: 'Automação & Smart Home', icone: Zap, modo: 'smarthome', tambemEm: ['local_control'],
         ativo: "bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.15)]",
         corDoIcone: "text-cyan-400", pulsa: true
+      },
+      {
+        /**
+         * O agente que clica e digita ganha entrada própria, e fica no grupo de todo dia.
+         *
+         * Até aqui ele só existia dentro da conversa: era preciso pedir no chat e torcer para o
+         * modelo decidir chamar a ferramenta. Uma capacidade que não tem onde ser acionada é, na
+         * prática, uma capacidade que ninguém usa. Fica logo abaixo da automação da casa porque é
+         * o par dela — uma automatiza os aparelhos, a outra automatiza o computador.
+         */
+        rotulo: 'OSONE COWORK', icone: MousePointerClick, modo: 'cowork',
+        ativo: "bg-indigo-500/10 text-indigo-300 border border-indigo-500/25 shadow-[0_0_15px_rgba(99,102,241,0.15)]",
+        corDoIcone: "text-indigo-400"
       },
       {
         rotulo: 'Controle por Visão', icone: Eye, modo: 'vision_control',

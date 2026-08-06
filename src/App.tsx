@@ -103,6 +103,7 @@ import { PERSONAS, Persona } from './components/PersonaSwitcher';
 import { NotificationToast, NotificationType } from './components/NotificationToast';
 import { MemoryBookPanel } from './components/MemoryBookPanel';
 import { VisionControlPanel } from './components/VisionControlPanel';
+import { CoworkSection } from './components/CoworkSection';
 import { MemoryBookEntry } from './types';
 import osoneOrbImage from './assets/images/osone_constellation_orb_1782154846239.jpg';
 import { SoundEffect, DrawingObject, User } from './types';
@@ -527,6 +528,7 @@ const getFriendlyModeName = (mode: WorkspaceMode): string => {
     case 'creator': return 'Estúdio de Criação Viral';
     case 'memory_book': return 'Livro de Memórias';
     case 'vision_control': return 'Controle por Visão';
+    case 'cowork': return 'OSONE COWORK — agente que clica e digita no computador';
     default: return String(mode);
   }
 };
@@ -1947,7 +1949,7 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   const [proposedPlan, setProposedPlan] = useState<SkeletonPlan | null>(null);
   const { pendingLocalAgentConfirmation, executeLocalAgentCall,
           acoesDoMotor, motorParado, pararMotor, retomarMotor, limparAcoesDoMotor,
-          ultimaAcaoNoPcRef, executarCowork, planoEmCurso } = useLocalAgent();
+          ultimaAcaoNoPcRef, executarCowork, planoEmCurso, alvoMedido } = useLocalAgent();
 
   /**
    * Envia uma mensagem de WhatsApp de verdade, a pedido do modelo.
@@ -9108,6 +9110,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
           • 'wellness': Saúde e Estilo.
           • 'whatsapp': OSONE ZAP (Atendimento e Auto-resposta pelo WhatsApp).
           • 'creator': Criador de Conteúdo Viral.
+          • 'cowork': OSONE COWORK — a aba onde o usuário PEDE uma tarefa no computador ("abre o YouTube e procura tal coisa"), vê o plano de passos, aprova, e acompanha o agente clicando e digitando. Quando ele pedir uma automação no computador e quiser ACOMPANHAR o que vai ser feito antes de acontecer, abra esta aba em vez de executar direto.
         - Se o usuário disser "Abra o OSONE CODE" ou "Abra a aba de código", chame 'switch_workspace_mode' com mode 'code'.
         - Se o usuário disser "Abra a aba de escrita" ou "Prosa", chame 'switch_workspace_mode' com mode 'writing'.
         - Se o usuário disser "Feche a aba", "Volte para o início" ou "Sair da aba", chame 'close_workspace_tab' ou 'switch_workspace_mode' com mode 'home'.
@@ -9443,8 +9446,8 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     properties: {
                       mode: {
                         type: Type.STRING,
-                        enum: ["home", "writing", "code", "sounds", "canvas", "wellness", "whatsapp", "creator", "smarthome", "tiktok", "map"],
-                        description: "O modo para o qual alternar: 'writing' (Aba de Prosa e Escrita de Texto/Documentos), 'code' (Aba OSONE CODE - Programação, Desenvolvimento de Jogos e Software), 'home' (Fechar aba atual / Voltar ao Início), 'canvas' (Lousa Interativa), 'sounds' (Biblioteca de Sons), 'wellness' (Saúde), 'whatsapp' (OSONE ZAP - Atendimento pelo WhatsApp)."
+                        enum: ["home", "writing", "code", "sounds", "canvas", "wellness", "whatsapp", "creator", "smarthome", "tiktok", "map", "cowork"],
+                        description: "O modo para o qual alternar: 'writing' (Aba de Prosa e Escrita de Texto/Documentos), 'code' (Aba OSONE CODE - Programação, Desenvolvimento de Jogos e Software), 'home' (Fechar aba atual / Voltar ao Início), 'canvas' (Lousa Interativa), 'sounds' (Biblioteca de Sons), 'wellness' (Saúde), 'whatsapp' (OSONE ZAP - Atendimento pelo WhatsApp), 'cowork' (OSONE COWORK - a aba onde o usuário pede uma tarefa no computador, aprova o plano e vê o agente clicar e digitar sozinho)."
                       }
                     },
                     required: ["mode"]
@@ -12351,6 +12354,37 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
               <VisionControlPanel
                 onBack={() => setWorkspaceMode('home')}
                 localAgentToken={apiKeys.localAgentToken || ''}
+                onNotification={addNotification}
+              />
+            </motion.div>
+          ) : workspaceMode === 'cowork' ? (
+            <motion.div
+              key="workspace-cowork"
+              initial={{ opacity: 0, scale: 0.985 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.985 }}
+              className="w-full flex-1 flex flex-col min-h-0"
+            >
+              {/* A aba ACIONA o motor que já existe; ela não tem laço próprio. Por isso recebe o
+                  executarCowork e o planoEmCurso do useLocalAgent em vez de reimplementá-los —
+                  os limites e a recusa de dinheiro continuam valendo por vir de lá. */}
+              <CoworkSection
+                onBack={() => setWorkspaceMode('home')}
+                localAgentToken={apiKeys.localAgentToken || ''}
+                chaveGemini={apiKeys.gemini || ''}
+                modeloGemini={apiKeys.geminiModel || 'gemini-3.6-flash'}
+                ambiente={localAgentEnvironment}
+                onExecutar={(passos) => executarCowork(
+                  passos,
+                  apiKeys.localAgentToken,
+                  false,
+                  { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.6-flash' }
+                )}
+                planoEmCurso={planoEmCurso}
+                alvoMedido={alvoMedido}
+                motorParado={motorParado}
+                onParar={pararMotor}
+                onRetomar={retomarMotor}
                 onNotification={addNotification}
               />
             </motion.div>
