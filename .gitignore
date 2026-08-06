@@ -9,6 +9,11 @@ vendor
 .env.local
 .env.*.local
 .baileys_auth
+# Sessão do WhatsApp Web (whatsapp-web.js). É a MESMA classe de segredo do .baileys_auth acima e
+# ficou de fora só porque a outra biblioteca entrou depois: quem tiver esta pasta entra na conta
+# de WhatsApp sem senha e sem QR. O cache é peso morto — centenas de MB de navegador baixado.
+.wwebjs_auth/
+.wwebjs_cache/
 firebase-applet-config.json
 
 # OSONE ZAP (WhatsApp) local data — contains customer PII, never commit
