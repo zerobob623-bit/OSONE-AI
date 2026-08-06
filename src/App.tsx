@@ -1949,7 +1949,8 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   const [proposedPlan, setProposedPlan] = useState<SkeletonPlan | null>(null);
   const { pendingLocalAgentConfirmation, executeLocalAgentCall,
           acoesDoMotor, motorParado, pararMotor, retomarMotor, limparAcoesDoMotor,
-          ultimaAcaoNoPcRef, executarCowork, planoEmCurso, alvoMedido } = useLocalAgent();
+          ultimaAcaoNoPcRef, executarCowork, planoEmCurso, alvoMedido,
+          listarJanelas, janelaDeTrabalho, definirJanela, trabalharNoObjetivo, relatoDoAgente } = useLocalAgent();
 
   /**
    * Envia uma mensagem de WhatsApp de verdade, a pedido do modelo.
@@ -12365,23 +12366,24 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
               exit={{ opacity: 0, scale: 0.985 }}
               className="w-full flex-1 flex flex-col min-h-0"
             >
-              {/* A aba ACIONA o motor que já existe; ela não tem laço próprio. Por isso recebe o
-                  executarCowork e o planoEmCurso do useLocalAgent em vez de reimplementá-los —
-                  os limites e a recusa de dinheiro continuam valendo por vir de lá. */}
+              {/* A aba ACIONA o agente que já existe; ela não tem laço próprio. O laço, os freios
+                  e a validação de cada ação ficam em agenteAutonomo.ts + planoDeAcoes.ts, e a aba
+                  só liga a tela neles — a recusa de dinheiro continua valendo por vir de lá. */}
               <CoworkSection
                 onBack={() => setWorkspaceMode('home')}
                 localAgentToken={apiKeys.localAgentToken || ''}
                 chaveGemini={apiKeys.gemini || ''}
                 modeloGemini={apiKeys.geminiModel || 'gemini-3.6-flash'}
                 ambiente={localAgentEnvironment}
-                onExecutar={(passos) => executarCowork(
-                  passos,
-                  apiKeys.localAgentToken,
-                  false,
-                  { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.6-flash' }
-                )}
-                planoEmCurso={planoEmCurso}
-                alvoMedido={alvoMedido}
+                listarJanelas={() => listarJanelas(apiKeys.localAgentToken)}
+                janelaDeTrabalho={janelaDeTrabalho}
+                definirJanela={definirJanela}
+                onTrabalhar={(objetivo, janela) => trabalharNoObjetivo(objetivo, {
+                  localAgentToken: apiKeys.localAgentToken,
+                  visao: { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.6-flash' },
+                  janela
+                })}
+                relatoDoAgente={relatoDoAgente}
                 motorParado={motorParado}
                 onParar={pararMotor}
                 onRetomar={retomarMotor}

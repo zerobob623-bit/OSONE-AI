@@ -186,6 +186,35 @@ export function acharMencaoADinheiro(passo: PassoDoPlano): string | null {
   return null;
 }
 
+/**
+ * As travas de UM passo, isoladas — a peça que todo acionador do motor precisa chamar.
+ *
+ * Ela vive separada porque existe mais de uma forma de chegar até aqui: o plano escrito de uma vez
+ * (validado inteiro, antes de começar) e o agente autônomo, que decide a próxima ação olhando a
+ * tela e por isso só tem UM passo para validar de cada vez. Se cada caminho tivesse sua própria
+ * checagem, bastaria um deles envelhecer para a regra deixar de valer — e o que envelhece em
+ * silêncio é sempre o que deixa passar.
+ *
+ * O rótulo entra na mensagem no lugar do número do passo: num laço autônomo não existe "passo 3
+ * do plano", existe a ação que acabou de ser decidida.
+ */
+export function validarPasso(passo: PassoDoPlano, rotulo: string = 'A ação'): string | null {
+  if (!passo || typeof passo.acao !== 'string' || !passo.acao.trim()) {
+    return `${rotulo} não diz qual ação executar.`;
+  }
+  if (!passo.descricao || !String(passo.descricao).trim()) {
+    return `${rotulo} não tem descrição. Cada passo precisa dizer para que serve, porque é isso que o usuário lê enquanto o plano roda.`;
+  }
+  if (ACOES_FORA_DO_LACO.has(passo.acao)) {
+    return `${rotulo} usa '${passo.acao}', que não pode rodar dentro de um plano automático — ações que mexem em arquivos ou rodam comandos precisam da confirmação normal, uma a uma.`;
+  }
+  const dinheiro = acharMencaoADinheiro(passo);
+  if (dinheiro) {
+    return `${rotulo} ("${passo.descricao}") envolve dinheiro ("${dinheiro}"), e o OSONE NÃO executa pagamento, compra, transferência ou qualquer movimentação financeira sozinho — nem dentro de um plano, nem fora dele. Leve o usuário até a tela e devolva o controle para ele concluir: quem paga é a pessoa.`;
+  }
+  return null;
+}
+
 export function validarPlano(passos: PassoDoPlano[], limites: LimitesDoPlano = LIMITES_PADRAO): string | null {
   if (!Array.isArray(passos) || passos.length === 0) {
     return 'O plano está vazio. Descreva os passos antes de executar.';
@@ -194,20 +223,8 @@ export function validarPlano(passos: PassoDoPlano[], limites: LimitesDoPlano = L
     return `O plano tem ${passos.length} passos, acima do teto de ${limites.maxPassos}. Divida em partes menores e execute uma de cada vez.`;
   }
   for (let i = 0; i < passos.length; i++) {
-    const p = passos[i];
-    if (!p || typeof p.acao !== 'string' || !p.acao.trim()) {
-      return `O passo ${i + 1} não diz qual ação executar.`;
-    }
-    if (!p.descricao || !String(p.descricao).trim()) {
-      return `O passo ${i + 1} não tem descrição. Cada passo precisa dizer para que serve, porque é isso que o usuário lê enquanto o plano roda.`;
-    }
-    if (ACOES_FORA_DO_LACO.has(p.acao)) {
-      return `O passo ${i + 1} usa '${p.acao}', que não pode rodar dentro de um plano automático — ações que mexem em arquivos ou rodam comandos precisam da confirmação normal, uma a uma.`;
-    }
-    const dinheiro = acharMencaoADinheiro(p);
-    if (dinheiro) {
-      return `O passo ${i + 1} ("${p.descricao}") envolve dinheiro ("${dinheiro}"), e o OSONE NÃO executa pagamento, compra, transferência ou qualquer movimentação financeira sozinho — nem dentro de um plano, nem fora dele. Leve o usuário até a tela e devolva o controle para ele concluir: quem paga é a pessoa.`;
-    }
+    const problema = validarPasso(passos[i], `O passo ${i + 1}`);
+    if (problema) return problema;
   }
   return null;
 }
