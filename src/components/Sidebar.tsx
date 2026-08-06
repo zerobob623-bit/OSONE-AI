@@ -2,7 +2,7 @@ import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   X, Volume2, FileText, Code2, Music, Gamepad2, Zap, Activity, LogOut, MessageSquare,
-  Compass, Database, Video, Radio, Eye, Heart, BookOpen, Settings, MousePointerClick,
+  Compass, Database, Video, Radio, Eye, Heart, BookOpen, Settings, MousePointerClick, Ear,
   type LucideIcon
 } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -72,6 +72,16 @@ const GRUPOS: GrupoDoMenu[] = [
         rotulo: 'OSONE COWORK', icone: MousePointerClick, modo: 'cowork',
         ativo: "bg-indigo-500/10 text-indigo-300 border border-indigo-500/25 shadow-[0_0_15px_rgba(99,102,241,0.15)]",
         corDoIcone: "text-indigo-400"
+      },
+      {
+        /**
+         * A escuta fica no grupo de todo dia, e não em "Criação": o que ela faz primeiro é
+         * capturar o que está sendo dito agora — numa aula, numa reunião, numa ideia falada em
+         * voz alta. A elaboração vem depois, e só se a pessoa pedir.
+         */
+        rotulo: 'OSONE HEAR', icone: Ear, modo: 'hear',
+        ativo: "bg-violet-500/10 text-violet-300 border border-violet-500/25 shadow-[0_0_15px_rgba(139,92,246,0.15)]",
+        corDoIcone: "text-violet-400"
       },
       {
         rotulo: 'Controle por Visão', icone: Eye, modo: 'vision_control',

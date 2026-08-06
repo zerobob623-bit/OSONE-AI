@@ -4,6 +4,26 @@ Este projeto integra o OSONE (baseado em React, Express e Google Gemini) com a p
 
 ---
 
+## 👂 OSONE HEAR — a aba da escuta
+
+Fale à vontade; o OSONE escreve tudo e depois organiza.
+
+1. **Microfone** — toque uma vez e comece a falar. A escuta é *ativa*: o reconhecimento de voz do navegador desiste sozinho em cada silêncio mais longo, e a aba o religa. **Pausar entre parágrafos não encerra a gravação** — só o botão de parar encerra.
+2. **Transcrição do discurso** — o que já foi reconhecido em definitivo aparece em branco; a cauda que o navegador ainda está decidindo aparece em cinza itálico, porque ainda pode mudar. A transcrição sobrevive a um recarregar sem querer.
+3. **Elaborar discurso** — o Gemini lê tudo, dá um **nome específico ao tema** e escolhe **a forma que aquele assunto pede**.
+
+### O que "adaptativo" significa aqui
+
+Pedir a um modelo que "seja adaptativo" é a forma mais confiável de receber sempre a mesma coisa: ele cai no formato mais provável do treino — título, três bullets, conclusão — e uma aula, uma ata de reunião e um desabafo saem com o mesmo esqueleto. Então a escolha é forçada por três mecanismos, em `src/lib/elaborarDiscurso.ts`:
+
+- **Um cardápio com o sinal de cada formato.** Dissertativo, tópicos hierárquicos, linha do tempo, decisões e pendências, passo a passo, perguntas e respostas, comparativo, narrativa, explicação de conceito, roteiro de ação — cada um acompanhado da marca que o denuncia no discurso. Escolher deixa de ser gosto e vira reconhecimento.
+- **A escolha tem de ser declarada.** O modelo devolve, em campos separados, **qual** formato usou e **por quê** — e os dois aparecem na tela. Quem precisa nomear a escolha não cai no padrão sem perceber, e você descobre na hora se a escolha fez sentido.
+- **A lista é aberta.** Se nenhum formato servir, o modelo inventa o que serve e explica. Um cardápio fechado só trocaria um formato genérico por dez.
+
+> ℹ️ **Requisitos**: a transcrição usa o reconhecimento de voz do próprio navegador — funciona no **Chrome, Edge e no app instalado**, e **não** no Firefox (a aba avisa em vez de mostrar um botão que não faz nada). Ele também depende de internet para transcrever. A elaboração usa a sua chave do Gemini, configurada em Configurações.
+
+---
+
 ## 🏠 OSONE HOME — a aba da casa
 
 Tudo que é automação residencial vive na aba **OSONE HOME**. Ela tem quatro seções:
