@@ -126,6 +126,7 @@ import { TelaDeEntrada } from './components/TelaDeEntrada';
 import { WritingStudioSection } from './components/WritingStudioSection';
 import { CodeWorkspaceSection } from './components/CodeWorkspaceSection';
 import { HomeWorkspaceSection } from './components/HomeWorkspaceSection';
+import { OsoneHearPanel } from './components/OsoneHearPanel';
 
 // Safe helper to dynamically load PDF.js from cdnjs for client-side PDF text extraction
 const loadPdfJs = async (): Promise<any> => {
@@ -529,6 +530,7 @@ const getFriendlyModeName = (mode: WorkspaceMode): string => {
     case 'memory_book': return 'Livro de Memórias';
     case 'vision_control': return 'Controle por Visão';
     case 'cowork': return 'OSONE COWORK — agente que clica e digita no computador';
+    case 'hear': return 'OSONE HEAR — escuta ativa, transcrição do discurso e elaboração adaptativa';
     default: return String(mode);
   }
 };
@@ -9445,14 +9447,14 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 },
                 {
                   name: "switch_workspace_mode",
-                  description: "Altera o modo de visualização do workspace / abre ou alterna qualquer aba (Prosa e Escrita, OSONE CODE, Saúde e Estilo, Sons, WhatsApp, Criador de Conteúdo, Lousa Canvas ou Início). Use sempre que o usuário pedir para abrir qualquer aba.",
+                  description: "Altera o modo de visualização do workspace / abre ou alterna qualquer aba (Prosa e Escrita, OSONE CODE, Saúde e Estilo, Sons, WhatsApp, Criador de Conteúdo, Lousa Canvas, OSONE HEAR ou Início). Use sempre que o usuário pedir para abrir qualquer aba.",
                   parameters: {
                     type: Type.OBJECT,
                     properties: {
                       mode: {
                         type: Type.STRING,
-                        enum: ["home", "writing", "code", "sounds", "canvas", "wellness", "whatsapp", "creator", "smarthome", "tiktok", "map", "cowork"],
-                        description: "O modo para o qual alternar: 'writing' (Aba de Prosa e Escrita de Texto/Documentos), 'code' (Aba OSONE CODE - Programação, Desenvolvimento de Jogos e Software), 'home' (Fechar aba atual / Voltar ao Início), 'canvas' (Lousa Interativa), 'sounds' (Biblioteca de Sons), 'wellness' (Saúde), 'whatsapp' (OSONE ZAP - Atendimento pelo WhatsApp), 'cowork' (OSONE COWORK - a aba onde o usuário pede uma tarefa no computador, aprova o plano e vê o agente clicar e digitar sozinho)."
+                        enum: ["home", "writing", "code", "sounds", "canvas", "wellness", "whatsapp", "creator", "smarthome", "tiktok", "map", "cowork", "hear"],
+                        description: "O modo para o qual alternar: 'writing' (Aba de Prosa e Escrita de Texto/Documentos), 'code' (Aba OSONE CODE - Programação, Desenvolvimento de Jogos e Software), 'home' (Fechar aba atual / Voltar ao Início), 'canvas' (Lousa Interativa), 'sounds' (Biblioteca de Sons), 'wellness' (Saúde), 'whatsapp' (OSONE ZAP - Atendimento pelo WhatsApp), 'cowork' (OSONE COWORK - a aba onde o usuário pede uma tarefa no computador, aprova o plano e vê o agente clicar e digitar sozinho), 'hear' (OSONE HEAR - escuta ativa que transcreve um discurso falado e depois o organiza; abra quando o usuário pedir para ouvir, gravar, transcrever, anotar uma reunião/aula, ou 'escutar o que eu vou falar')."
                       }
                     },
                     required: ["mode"]
@@ -12336,6 +12338,20 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 // A aba do Google Home diz o que falta preencher; sem isto ela não teria como
                 // dizer ONDE, e o usuário sairia procurando o campo pelo app.
                 onOpenSettings={() => { setAbaDasConfiguracoes('automation'); setIsSettingsOpen(true); }}
+              />
+            </motion.div>
+          ) : workspaceMode === 'hear' ? (
+            <motion.div
+              key="workspace-hear"
+              initial={{ opacity: 0, scale: 0.985 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.985 }}
+              className="w-full flex-1 flex flex-col min-h-0"
+            >
+              <OsoneHearPanel
+                chaveGemini={apiKeys.gemini || ''}
+                modeloGemini={apiKeys.geminiModel || 'gemini-3.6-flash'}
+                onNotification={addNotification}
               />
             </motion.div>
           ) : workspaceMode === 'memory_book' ? (
