@@ -17,6 +17,20 @@ Tudo que é automação residencial vive na aba **OSONE HOME**. Ela tem quatro s
 
 O mesmo aparelho responde no painel, no chat de texto, na voz do OSONE e no Google Assistente — os quatro caminhos passam pela **mesma** tradução de comandos (`src/lib/tuyaDispositivos.ts`), então nenhum deles promete um recurso que o aparelho não tem.
 
+### Quem fala com quem
+
+Esta é a parte que mais confunde, então vai explícita:
+
+```
+OSONE  →  Tuya  →  seus aparelhos          ← sempre. É o único caminho até a lâmpada.
+
+Google →  OSONE  →  Tuya  →  seus aparelhos   ← opcional. Só se você ligar o Google Home.
+```
+
+- **Tuya é obrigatória.** Ela é a nuvem do fabricante das suas lâmpadas e tomadas — a mesma que o app **Smart Life** usa no seu celular. É por ela que qualquer coisa liga e desliga, inclusive quando você aperta o botão no próprio app do fabricante. Sem essa conta, o OSONE não tem por onde alcançar aparelho nenhum.
+- **Google Home é opcional, e não fica no meio.** Ele é uma porta de **entrada** a mais: serve para você falar com uma caixinha ou celular do Google e o comando chegar até o OSONE. O OSONE nunca passa pelo Google para comandar nada. Se você não usa Assistente do Google, pode ignorar essa parte inteira sem perder nenhuma função.
+- Por isso, **conectar o Google sem a Tuya não liga nada**: não existe aparelho do outro lado.
+
 > 🔒 **Fechaduras**: nunca são acionadas por voz e nunca são entregues ao Google Assistente. No chat de texto, exigem confirmação humana explícita num modal. Um toque no painel também não as aciona.
 
 ---
@@ -80,6 +94,8 @@ A integração com a Tuya Cloud roda **exclusivamente no backend** (`server.ts` 
 
 Ao implantar este projeto na **Vercel**, você **NÃO** precisa enviar nenhum arquivo `.env`.
 
+> ℹ️ **Na Vercel, os campos de credencial da tela não aparecem** — e isso é de propósito. O disco das funções serverless é temporário (o valor salvo sumiria no próximo deploy) e a tela fica aberta na internet, então o OSONE recusa gravar credencial ali e manda usar as variáveis de ambiente, que é o lugar certo delas naquele ambiente. Se você quer o caminho curto — digitar e pronto —, rode o OSONE no seu computador ou pelo app instalado.
+
 1. Acesse o painel da sua aplicação na Vercel.
 2. Navegue até **Project Settings** > **Environment Variables**.
 3. Adicione as 4 variáveis de ambiente:
@@ -87,7 +103,10 @@ Ao implantar este projeto na **Vercel**, você **NÃO** precisa enviar nenhum ar
    - `TUYA_CLIENT_SECRET`
    - `TUYA_BASE_URL` (ex: `https://openapi.tuyaus.com`)
    - `TUYA_USER_UID`
-4. Salve e re-faça o deploy. A Vercel injetará automaticamente as variáveis no `process.env` do ambiente serverless.
+   - *(opcional, só para o Assistente do Google: `GOOGLE_HOME_CLIENT_ID` e `GOOGLE_HOME_CLIENT_SECRET`)*
+4. Salve e **refaça o deploy** (Deployments > ⋯ > Redeploy). Variável nova só passa a valer num deploy novo — salvar e recarregar a página não basta, e é aí que a maioria conclui que a instrução não funcionou.
+
+> ⚠️ **Atenção à trava de IP da Tuya.** Se o seu projeto na Tuya tiver uma lista de IPs autorizados (*IP Whitelist* / *Allowlist*), ela não combina com a Vercel: o IP das funções serverless muda a cada execução, então nunca vai estar na lista. Nesse caso, ou remova a trava no painel da Tuya, ou rode o OSONE numa máquina de IP estável.
 
 ---
 
@@ -121,7 +140,9 @@ Esta parte só pode ser feita por você — criar projeto no Google não é algo
 5. No app Google Home do celular: **+ > Configurar dispositivo > "Funciona com o Google"**, procure seu projeto de teste e autorize.
 6. Volte à aba Google Home e clique em **Reconferir** — o cartão passa a dizer "Vinculada".
 
-> ⚠️ **O Google só alcança endereço público em HTTPS.** Ele não entra em `localhost` nem na sua rede local, então o vínculo exige o OSONE publicado num domínio (a Vercel serve) ou exposto por um túnel. O painel, o chat e a voz do próprio OSONE funcionam localmente de qualquer jeito.
+> ⚠️ **Isto exige endereço público em HTTPS — e só isto.** O Google precisa *alcançar* o OSONE de fora para entregar os comandos das caixinhas, e ele não entra em `localhost` nem na sua rede local. Então o **vínculo** pede o OSONE publicado num domínio (a Vercel serve) ou exposto por um túnel (ngrok, Cloudflare Tunnel).
+>
+> **Seus aparelhos não dependem disso.** O painel, o chat e a voz do OSONE falam com a Tuya direto da sua máquina — em `localhost` você controla tudo igual. Sem Google, sem Vercel, sem túnel.
 
 ### Limites conhecidos desta ponte
 

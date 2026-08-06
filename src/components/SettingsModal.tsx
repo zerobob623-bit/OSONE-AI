@@ -16,6 +16,16 @@ const VOICE_DETAILS = [
 type TabId = 'general' | 'elevenlabs' | 'interface' | 'profile' | 'automation' | 'atualizacao';
 type ConnectionStatus = 'idle' | 'testing' | 'connected' | 'error';
 
+/**
+ * Os nomes das variáveis de cada grupo, para a hospedagem remota — onde não há campo para
+ * digitar e o que a pessoa precisa é justamente saber o que cadastrar no painel do provedor.
+ * Ficam aqui, e não vindos do servidor, porque naquele cenário ele responde 403 sem lista.
+ */
+const VARIAVEIS_POR_GRUPO: Record<string, string[]> = {
+  'TUYA_': ['TUYA_CLIENT_ID', 'TUYA_CLIENT_SECRET', 'TUYA_BASE_URL', 'TUYA_USER_UID'],
+  'GOOGLE_HOME_': ['GOOGLE_HOME_CLIENT_ID', 'GOOGLE_HOME_CLIENT_SECRET']
+};
+
 export const SettingsModal = ({ 
   isOpen, 
   onClose, 
@@ -395,11 +405,50 @@ export const SettingsModal = ({
    * valia e era impossível de cumprir no app instalado.
    */
   const blocoDeCredenciais = (prefixo: string, descricao: React.ReactNode) => {
+    /**
+     * HOSPEDAGEM REMOTA: a tela dizia "defina nas variáveis de ambiente do provedor" e parava
+     * aí. Quem estava na Vercel ficava sem saber QUAIS variáveis, e sem saber que variável nova
+     * só entra em deploy novo — salvava as quatro, recarregava, e o painel continuava vazio,
+     * com toda a aparência de a instrução não funcionar. Aqui vão os nomes, prontos para copiar,
+     * e o passo do redeploy.
+     */
     if (!credenciaisDisponivel) {
+      const variaveis = VARIAVEIS_POR_GRUPO[prefixo] || [];
       return (
-        <div className="p-4 rounded-2xl bg-sky-500/[0.06] border border-sky-500/20 text-[10px] text-sky-200/80 leading-relaxed font-sans">
-          Hospedagem remota: credenciais só podem ser digitadas do próprio computador onde o OSONE roda.
-          Defina estes valores nas variáveis de ambiente do provedor (ex: Vercel &gt; Project Settings &gt; Environment Variables).
+        <div className="p-4 rounded-2xl bg-sky-500/[0.06] border border-sky-500/20 space-y-3 text-[10px] text-sky-200/80 leading-relaxed font-sans">
+          <p>
+            <strong className="text-sky-200">Hospedagem remota (Vercel e afins).</strong> Aqui a credencial não pode
+            ser digitada na tela: esta página está aberta na internet, e o disco desta hospedagem é temporário — o
+            valor salvo sumiria no próximo deploy. Nela, as credenciais entram como variáveis de ambiente.
+          </p>
+
+          <div className="space-y-1.5">
+            <span className="text-[9px] uppercase tracking-wider text-sky-300/70 font-bold">Defina estas variáveis</span>
+            {variaveis.map((nome) => (
+              <div key={nome} className="flex items-center gap-2">
+                <code className="flex-1 text-[10px] font-mono text-her-ink/80 bg-black/40 px-3 py-1.5 rounded-xl truncate">{nome}</code>
+                <button
+                  type="button"
+                  onClick={() => navigator.clipboard?.writeText(nome)}
+                  className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-her-muted hover:text-white transition-all shrink-0 cursor-pointer"
+                  title="Copiar nome da variável"
+                >
+                  <Copy size={11} />
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <p>
+            <strong className="text-sky-200">Onde:</strong> Vercel &gt; seu projeto &gt; Settings &gt; Environment
+            Variables &gt; Add. <strong className="text-sky-200">Depois de salvar, refaça o deploy</strong>
+            {' '}(Deployments &gt; ⋯ &gt; Redeploy) — variável nova só passa a valer num deploy novo.
+          </p>
+
+          <p className="text-amber-300/80">
+            Prefere o caminho curto? Rodando o OSONE no seu próprio computador (ou pelo app instalado), estes campos
+            viram caixas de texto aqui mesmo e valem na hora, sem deploy nenhum.
+          </p>
         </div>
       );
     }
@@ -1713,7 +1762,7 @@ export const SettingsModal = ({
                           </div>
                           <div>
                             <h3 className="text-sm font-bold text-white">Tuya Cloud IoT Platform</h3>
-                            <p className="text-[10px] text-amber-400/80 uppercase tracking-widest font-mono">Hardware Físico Real</p>
+                            <p className="text-[10px] text-amber-400/80 uppercase tracking-widest font-mono">Obrigatório • O caminho até os aparelhos</p>
                           </div>
                         </div>
                         <span className={cn(
@@ -1726,8 +1775,17 @@ export const SettingsModal = ({
                         </span>
                       </div>
 
+                      {/*
+                        O que a Tuya É vinha faltando aqui, e a falta custava caro: com um cartão
+                        de Google Home logo abaixo, quem não conhece o nome conclui que a Tuya é
+                        uma etapa de dentro do Google. É o contrário — a Tuya é a nuvem do
+                        fabricante das lâmpadas, o único caminho até elas, e o Google é opcional.
+                      */}
                       <p className="text-xs text-her-muted leading-relaxed font-light">
-                        A integração com a Tuya é mantida com segurança total no backend. O client secret e tokens vivem apenas nas variáveis de ambiente do servidor (<code className="font-mono text-amber-300">process.env</code>).
+                        <strong className="text-amber-300">É por aqui que o OSONE mexe nos seus aparelhos.</strong> A Tuya
+                        é a nuvem do fabricante das suas lâmpadas e tomadas — a mesma que o app Smart Life usa no
+                        celular. Sem esta conta o OSONE não alcança aparelho nenhum, e nenhuma outra integração
+                        substitui isso. O Access Secret fica guardado só do lado do servidor e nunca volta para o navegador.
                       </p>
 
                       <button
@@ -1808,7 +1866,7 @@ export const SettingsModal = ({
                           </div>
                           <div>
                             <h3 className="text-sm font-bold text-white">Google Home</h3>
-                            <p className="text-[10px] text-sky-400/80 uppercase tracking-widest font-mono">Comandar a mesma casa por voz</p>
+                            <p className="text-[10px] text-sky-400/80 uppercase tracking-widest font-mono">Opcional • Só para caixinhas do Google</p>
                           </div>
                         </div>
                         <span className={cn(
@@ -1822,9 +1880,11 @@ export const SettingsModal = ({
                       </div>
 
                       <p className="text-xs text-her-muted leading-relaxed font-light">
-                        Entrega ao Assistente os MESMOS aparelhos da sua conta Tuya, com liga/desliga, brilho e
-                        cor — cada um leva só o que realmente aceita. Fechaduras nunca entram: comando de voz não
-                        abre trava no OSONE. O painel completo, com a lista do que o Assistente enxerga, está na
+                        <strong className="text-sky-300">Pode deixar em branco.</strong> O OSONE já comanda a casa
+                        sozinho pela Tuya, acima — no painel, no chat e por voz. Isto aqui abre uma porta a MAIS:
+                        falar com uma caixinha do Google e o comando chegar até o OSONE (Google → OSONE → Tuya →
+                        aparelhos). O Assistente recebe os mesmos aparelhos, com liga/desliga, brilho e cor conforme
+                        cada um aceita; fechaduras nunca entram. O painel completo está na
                         aba <strong className="text-sky-300">OSONE HOME &gt; Google Home</strong>.
                       </p>
 
@@ -1898,9 +1958,10 @@ export const SettingsModal = ({
                           </div>
                         ))}
                         <p className="text-[10px] text-amber-400/80 leading-relaxed pt-1">
-                          ⚠️ O Google só alcança endereço público em HTTPS — não entra em localhost. Estas URLs
-                          valem depois que o OSONE estiver publicado num domínio (ex: Vercel) ou exposto por um
-                          túnel. O painel, o chat e a voz do OSONE funcionam aqui de qualquer jeito.
+                          ⚠️ Vale só para ESTE vínculo: o Google precisa alcançar o OSONE de fora e não entra em
+                          localhost, então estas URLs pedem o OSONE publicado num domínio (ex: Vercel) ou exposto
+                          por um túnel. <strong>Seus aparelhos não dependem disso</strong> — painel, chat e voz do
+                          OSONE falam com a Tuya direto desta máquina, inclusive em localhost.
                         </p>
                       </div>
 
