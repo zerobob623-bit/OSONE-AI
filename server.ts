@@ -4634,6 +4634,27 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
     res: express.Response,
     oQue: string = 'A atualização do app'
   ): boolean => {
+    /**
+     * NA VERCEL, RECUSA SEM NEM OLHAR O ENDEREÇO DE ORIGEM.
+     *
+     * A trava toda dependia de `req.socket.remoteAddress` não ser loopback. Numa função
+     * serverless quem abre a conexão TCP é o proxy da própria hospedagem, e o endereço que
+     * chega aqui é escolha da infraestrutura dela — não do visitante. Se um dia esse endereço
+     * vier como 127.0.0.1, a checagem passa e a rota que GRAVA o segredo da Tuya fica aberta
+     * para a internet inteira, porque numa implantação pública não existe "própria máquina".
+     * Depender de um detalhe de rede alheio para segurar uma escrita de credencial é apostar,
+     * e a recusa explícita custa uma linha.
+     *
+     * Não é só segurança: lá o disco não sobrevive à invocação, então o valor salvo sumiria
+     * no deploy seguinte de qualquer forma. A resposta diz o caminho que de fato funciona.
+     */
+    if (isVercel) {
+      res.status(403).json({
+        error: `${oQue} não funciona numa implantação na Vercel: o disco das funções serverless é temporário (o valor salvo sumiria no próximo deploy) e esta tela está aberta na internet. Defina as variáveis de ambiente em Project Settings > Environment Variables e refaça o deploy — ou rode o OSONE no seu computador, onde dá para preencher tudo pela tela.`,
+        hospedagemRemota: true
+      });
+      return false;
+    }
     if (isLoopbackAddress(req.socket?.remoteAddress)) return true;
     res.status(403).json({ error: `${oQue} só pode ser comandada a partir do próprio computador.` });
     return false;
@@ -4647,7 +4668,7 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
    * realmente parou, que é o que separa uma coisa da outra.
    */
   app.get("/api/login/diagnostico", (req, res) => {
-    if (!somenteDaPropriaMaquina(req, res)) return;
+    if (!somenteDaPropriaMaquina(req, res, 'O diagnóstico da janela de login')) return;
     const diag = (globalThis as any).__osoneLogin;
     if (!diag) {
       return res.json({ noAppInstalado: false, eventos: [], userAgent: req.headers['user-agent'] || '' });
@@ -4689,12 +4710,12 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
    * pelas variáveis de ambiente do painel da hospedagem, que é o lugar certo delas.
    */
   app.get("/api/credenciais", (req, res) => {
-    if (!somenteDaPropriaMaquina(req, res)) return;
+    if (!somenteDaPropriaMaquina(req, res, 'O preenchimento de credenciais pela tela')) return;
     return res.json(lerEstadoDasCredenciais());
   });
 
   app.post("/api/credenciais", (req, res) => {
-    if (!somenteDaPropriaMaquina(req, res)) return;
+    if (!somenteDaPropriaMaquina(req, res, 'O preenchimento de credenciais pela tela')) return;
     try {
       const { salvos, apagados } = salvarCredenciais(req.body || {});
       // A resposta devolve o ESTADO, nunca os valores: o segredo entra na tela e não volta dela.
