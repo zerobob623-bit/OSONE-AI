@@ -449,39 +449,90 @@ if __name__ == "__main__":
             {/*
               Sem credenciais, a tela DIZ isso. Antes ela se enchia de aparelhos inventados, e o
               usuário não tinha como saber que estava olhando uma demonstração.
+
+              E DIZ POR QUÊ. Esta tela pedia a credencial da Tuya sem nunca explicar o que a Tuya
+              é, enquanto a aba do lado falava de Google Home — e a conclusão natural de quem lê
+              as duas é que o OSONE fala com o Google, que fala com a Tuya, que fala com as
+              lâmpadas. É o contrário: a Tuya é o único caminho até o aparelho, e o Google é uma
+              porta a mais, opcional, que ninguém precisa abrir. Quem entendeu ao contrário
+              conectou o Google primeiro e ficou sem entender por que o painel continuava vazio.
             */}
             {estado === 'sem-credenciais' && (
-              <div className="p-8 rounded-3xl bg-[#0c0e17] border border-amber-500/30 space-y-4 max-w-3xl">
+              <div className="p-8 rounded-3xl bg-[#0c0e17] border border-amber-500/30 space-y-5 max-w-3xl">
                 <div className="flex items-center gap-3">
                   <div className="w-12 h-12 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
                     <AlertCircle size={24} />
                   </div>
                   <div>
-                    <h3 className="text-base font-bold text-white font-mono">Nenhuma conta Tuya conectada</h3>
-                    <p className="text-xs text-amber-200/70">O OSONE ainda não tem acesso a nenhum aparelho seu.</p>
+                    <h3 className="text-base font-bold text-white font-mono">Falta conectar a conta Tuya</h3>
+                    <p className="text-xs text-amber-200/70">É ela que dá ao OSONE acesso aos seus aparelhos.</p>
                   </div>
                 </div>
+
                 <p className="text-sm text-zinc-300 leading-relaxed">
-                  O controle da casa funciona com as credenciais da <strong>Tuya Cloud</strong>, guardadas no
-                  servidor — nunca no navegador. Enquanto elas não existirem, este painel fica vazio de
-                  propósito: aparelho que aparece aqui é aparelho que existe.
+                  <strong className="text-white">Tuya</strong> é a nuvem do fabricante das suas lâmpadas e tomadas —
+                  a mesma que o app <strong className="text-white">Smart Life</strong> usa no seu celular. É por ela
+                  que qualquer coisa liga e desliga, inclusive quando você aperta o botão no próprio app. Sem essa
+                  conta, o OSONE não tem por onde alcançar aparelho nenhum, e este painel fica vazio de propósito:
+                  aparelho que aparece aqui é aparelho que existe.
                 </p>
+
+                {/* O DESENHO DO CAMINHO. Uma linha resolve a confusão que dois parágrafos não
+                    resolviam: o Google não está no meio de nada. */}
+                <div className="p-4 rounded-2xl bg-black/40 border border-white/5 space-y-3">
+                  <div className="flex items-center gap-2 flex-wrap text-xs font-mono">
+                    <span className="px-2.5 py-1 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-bold">OSONE</span>
+                    <span className="text-zinc-600">→</span>
+                    <span className="px-2.5 py-1 rounded-lg bg-orange-500/15 text-orange-300 border border-orange-500/30 font-bold">Tuya</span>
+                    <span className="text-zinc-600">→</span>
+                    <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-bold">seus aparelhos</span>
+                    <span className="text-[10px] text-zinc-500 ml-1">← este é o caminho, e é o único</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-500 leading-relaxed">
+                    O <strong className="text-zinc-400">Google Home não entra nessa linha</strong>. Ele é uma porta
+                    a mais, opcional, para quando você quiser mandar comando por uma caixinha do Google — e nem
+                    assim o OSONE passa por ele: o Google fala com o OSONE, e o OSONE fala com a Tuya. Conectar o
+                    Google sem a Tuya não liga nada, porque não existe aparelho do outro lado.
+                  </p>
+                </div>
+
                 <div className="p-4 rounded-2xl bg-black/40 border border-white/5 text-xs text-zinc-400 font-mono space-y-1.5">
                   <p className="text-zinc-300 font-bold">Para conectar:</p>
                   <p>1. Crie um projeto em <span className="text-cyan-300">iot.tuya.com</span> (Cloud &gt; Development).</p>
                   <p>2. Copie o <span className="text-cyan-300">Access ID</span> e o <span className="text-cyan-300">Access Secret</span> da aba Overview.</p>
                   <p>3. Vincule o app Smart Life em <span className="text-cyan-300">Devices &gt; Link App Account</span> e copie o UID.</p>
-                  <p>4. Preencha <span className="text-cyan-300">TUYA_CLIENT_ID</span>, <span className="text-cyan-300">TUYA_CLIENT_SECRET</span>, <span className="text-cyan-300">TUYA_BASE_URL</span> e <span className="text-cyan-300">TUYA_USER_UID</span> no .env.local e reinicie.</p>
+                  {/* Este passo mandava editar o .env.local e reiniciar — arquivo que não existe
+                      no app instalado. Os campos estão a um clique daqui. A ressalva da
+                      hospedagem vem junto porque lá a tela é outra, e prometer "vale na hora"
+                      para quem está na Vercel seria mandar a pessoa procurar um campo que não
+                      existe naquele contexto. */}
+                  <p>4. Cole os quatro em <span className="text-cyan-300">Configurações &gt; Automação &gt; Tuya</span>.</p>
+                  <p className="text-zinc-500 normal-case">
+                    No seu computador vale na hora, sem reiniciar. Numa hospedagem (Vercel), a própria tela mostra
+                    quais variáveis cadastrar lá.
+                  </p>
                 </div>
-                <a
-                  href="https://iot.tuya.com"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-orange-500/90 hover:bg-orange-400 text-black font-bold text-xs font-mono transition-all"
-                >
-                  <ExternalLink size={14} />
-                  <span>Abrir o painel da Tuya</span>
-                </a>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {onOpenSettings && (
+                    <button
+                      onClick={onOpenSettings}
+                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs font-mono transition-all cursor-pointer"
+                    >
+                      <Settings size={14} />
+                      <span>Preencher as credenciais da Tuya</span>
+                    </button>
+                  )}
+                  <a
+                    href="https://iot.tuya.com"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-orange-500/90 hover:bg-orange-400 text-black font-bold text-xs font-mono transition-all"
+                  >
+                    <ExternalLink size={14} />
+                    <span>Abrir o painel da Tuya</span>
+                  </a>
+                </div>
               </div>
             )}
 
@@ -715,6 +766,45 @@ if __name__ == "__main__":
         {activeTab === 'google' && (
           <div className="space-y-5 max-w-4xl">
 
+            {/*
+              ESTA ABA É OPCIONAL, E ISSO PRECISA VIR ANTES DE TUDO.
+              Existindo lado a lado com a aba de aparelhos, ela passava a impressão de ser um
+              passo do caminho — como se o OSONE falasse com o Google para chegar aos aparelhos.
+              Não é: o Google é uma porta de ENTRADA a mais, e a seta aponta para cá.
+            */}
+            <div className="p-5 rounded-3xl bg-[#0a0c14] border border-white/10 space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] uppercase tracking-[0.2em] text-zinc-500 font-bold px-2 py-0.5 rounded-lg bg-white/5 border border-white/10">
+                  Opcional
+                </span>
+                <h3 className="text-sm font-bold text-white font-mono">Você não precisa disto para usar o OSONE HOME</h3>
+              </div>
+              <p className="text-xs text-zinc-400 leading-relaxed">
+                O OSONE já comanda seus aparelhos sozinho, pela conta Tuya — no painel, no chat e por voz.
+                Esta aba serve para <strong className="text-zinc-300">uma coisa só</strong>: poder falar com uma
+                caixinha ou celular do Google e o comando chegar até aqui. Se você não usa Assistente do Google,
+                pode ignorar esta aba inteira sem perder nada.
+              </p>
+              <div className="p-3.5 rounded-2xl bg-black/40 border border-white/5 space-y-2 text-xs font-mono">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2.5 py-1 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-bold">OSONE</span>
+                  <span className="text-zinc-600">→</span>
+                  <span className="px-2.5 py-1 rounded-lg bg-orange-500/15 text-orange-300 border border-orange-500/30 font-bold">Tuya</span>
+                  <span className="text-zinc-600">→</span>
+                  <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-bold">aparelhos</span>
+                  <span className="text-[10px] text-zinc-500 font-sans ml-1">sempre, com ou sem Google</span>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2.5 py-1 rounded-lg bg-sky-500/15 text-sky-300 border border-sky-500/30 font-bold">Google</span>
+                  <span className="text-zinc-600">→</span>
+                  <span className="px-2.5 py-1 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-bold">OSONE</span>
+                  <span className="text-zinc-600">→</span>
+                  <span className="px-2.5 py-1 rounded-lg bg-orange-500/15 text-orange-300 border border-orange-500/30 font-bold">Tuya</span>
+                  <span className="text-[10px] text-zinc-500 font-sans ml-1">só se você ligar esta aba</span>
+                </div>
+              </div>
+            </div>
+
             {/* ESTADO DA PONTE. Os dois degraus aparecem separados de propósito: credencial
                 preenchida e conta vinculada são coisas diferentes, e confundi-las era o que
                 fazia a tela dizer "configurado" para quem o Assistente não atendia. */}
@@ -782,19 +872,29 @@ if __name__ == "__main__":
               )}
             </div>
 
-            {/* O Google não alcança um endereço que só existe nesta máquina. Dizer isso ANTES é
-                o que evita a hora perdida colando URLs de localhost no console dele. */}
+            {/*
+              O Google não alcança um endereço que só existe nesta máquina — mas o aviso começava
+              por essa má notícia, e quem o lia entendia que a casa inteira dependia de publicar o
+              OSONE na Vercel. Não depende: só a ponte do Google depende. A ordem das frases é o
+              conserto, porque é a primeira que fica.
+            */}
             {!enderecoAlcancavelPeloGoogle && (
               <div className="p-5 rounded-3xl bg-amber-500/[0.06] border border-amber-500/25 flex items-start gap-3">
                 <AlertCircle size={16} className="text-amber-400 shrink-0 mt-0.5" />
-                <div className="text-xs text-amber-100/80 leading-relaxed space-y-1">
-                  <p className="font-bold text-amber-300">Este endereço o Google não alcança.</p>
+                <div className="text-xs text-amber-100/80 leading-relaxed space-y-2">
+                  <p className="font-bold text-amber-300">Seus aparelhos funcionam aqui normalmente.</p>
                   <p>
-                    O Assistente só fala com um endereço público em HTTPS — ele não entra em
+                    O painel, o chat e a voz do OSONE falam com a Tuya direto desta máquina e não passam
+                    pelo Google em momento nenhum. Rodando em
                     <code className="mx-1 px-1.5 py-0.5 rounded bg-black/40 font-mono text-amber-200">localhost</code>
-                    nem na sua rede de casa. As URLs abaixo servem para conferir o caminho, mas o vínculo
-                    só se completa com o OSONE publicado num domínio (a Vercel serve) ou exposto por um túnel.
-                    O painel, o chat e a voz do próprio OSONE seguem funcionando normalmente aqui.
+                    você controla tudo igual — nada disso precisa de Vercel.
+                  </p>
+                  <p>
+                    O que <strong className="text-amber-300">só</strong> falta neste endereço é o vínculo desta aba:
+                    para as caixinhas do Google mandarem comando, o Google precisa ALCANÇAR o OSONE de fora, e ele
+                    só entra em endereço público com HTTPS. Se quiser essa porta, publique o OSONE num domínio
+                    (a Vercel serve) ou exponha esta máquina por um túnel (ngrok, Cloudflare Tunnel). Se não quiser,
+                    ignore esta aba: não falta nada.
                   </p>
                 </div>
               </div>
