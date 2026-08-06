@@ -4,11 +4,93 @@ import { mirarNaInterface } from '../lib/mirarNaInterface';
 import { mirarPorVisao } from '../lib/mirarPorVisao';
 import { assinaturaDaImagem, historicoVazio, HistoricoDeEsperas } from '../lib/esperarTela';
 import { PassoDoPlano, RelatorioDoPlano, ResultadoDoPasso, executarPlano, validarPlano } from '../lib/planoDeAcoes';
+import {
+  INSTRUCAO_DO_AGENTE, RelatorioDoAgente, VoltaDoAgente, trabalharAteConcluir
+} from '../lib/agenteAutonomo';
 
 /** Chave e modelo usados quando o motor precisa OLHAR a tela para achar um alvo. */
 export interface VisaoDoMotor {
   chaveGemini?: string;
   modeloGemini?: string;
+}
+
+/** Uma janela do sistema, como o agente local a enxerga. */
+export interface JanelaDeTrabalho {
+  id: string;
+  titulo: string;
+  app: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  ativa?: boolean;
+}
+
+/**
+ * Quantas voltas do laço voltam para o modelo a cada decisão.
+ *
+ * O histórico inteiro cresceria sem limite numa tarefa longa, e uma tarefa longa é justamente
+ * aquela em que ele não pode acabar estourando o contexto no meio. As últimas voltas são as que
+ * explicam a tela atual; o objetivo, que é o que não pode se perder, vai inteiro em toda rodada.
+ */
+const VOLTAS_NO_CONTEXTO = 12;
+
+/**
+ * Pergunta ao modelo qual é a PRÓXIMA ação, com a foto da janela à frente.
+ *
+ * É aqui que a "visão computacional" acontece de verdade: não é um roteiro escrito antes e
+ * executado às cegas — a cada rodada o modelo recebe a imagem do estado atual e decide olhando.
+ * É por isso que ele consegue lidar com o que ninguém previu (um aviso de cookies, um login, um
+ * botão que mudou de lugar): para ele, não existe "imprevisto", existe a tela que está ali.
+ */
+async function perguntarProximaAcao(
+  objetivo: string,
+  foto: string | null,
+  historico: VoltaDoAgente[],
+  janela: JanelaDeTrabalho | null,
+  visao?: VisaoDoMotor
+): Promise<string> {
+  const feito = historico.slice(-VOLTAS_NO_CONTEXTO).map((v, i) =>
+    `${historico.length - Math.min(historico.length, VOLTAS_NO_CONTEXTO) + i + 1}. [${v.ok ? 'ok' : 'FALHOU'}] ${v.pensamento} → ${v.relato}`
+  ).join('\n');
+
+  const contexto = [
+    `OBJETIVO DO USUÁRIO: ${objetivo}`,
+    janela ? `JANELA EM QUE VOCÊ ESTÁ: "${janela.titulo}" (${janela.app}), ${janela.width}x${janela.height}.` : '',
+    foto ? 'A IMAGEM ACIMA é a foto ATUAL dessa janela. Olhe-a antes de decidir.' : 'ATENÇÃO: não foi possível fotografar a janela nesta rodada.',
+    historico.length ? `O QUE VOCÊ JÁ FEZ:\n${feito}` : 'Você ainda não fez nada. Esta é a primeira ação.',
+    'Qual é a PRÓXIMA ação? Responda só o JSON.'
+  ].filter(Boolean).join('\n\n');
+
+  const partes: any[] = [];
+  if (foto) {
+    const dados = foto.includes(',') ? foto.split(',')[1] : foto;
+    partes.push({ inlineData: { mimeType: 'image/png', data: dados } });
+  }
+  partes.push({ text: contexto });
+
+  const res = await fetch('/api/gemini/generateContent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      clientApiKey: visao?.chaveGemini || undefined,
+      model: visao?.modeloGemini || 'gemini-3.6-flash',
+      contents: [{ role: 'user', parts: partes }],
+      config: {
+        systemInstruction: INSTRUCAO_DO_AGENTE,
+        // Baixa, mas não zero: decidir o passo seguinte tem mais de um caminho certo, e temperatura
+        // zero faz o modelo insistir na mesma decisão errada quando a primeira não funciona.
+        temperature: 0.2,
+        responseMimeType: 'application/json'
+      }
+    })
+  });
+
+  const corpo = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(corpo?.error || `O modelo não respondeu ao decidir a ação (HTTP ${res.status}).`);
+  return corpo?.text
+    ?? corpo?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text).filter(Boolean).join('')
+    ?? '';
 }
 
 /**
@@ -910,6 +992,243 @@ export function useLocalAgent() {
    */
   const [alvoMedido, setAlvoMedido] = useState<{ x: number; y: number; rotulo: string; quando: number } | null>(null);
 
+  // ==========================================================================
+  // O AGENTE AUTÔNOMO: TRABALHA DENTRO DE UMA JANELA, DECIDINDO A CADA OLHADA
+  // ==========================================================================
+
+  /**
+   * A janela em que o agente está trabalhando AGORA.
+   *
+   * Existe porque olhar a tela inteira obriga o modelo a reencontrar, em toda foto, qual pedaço da
+   * imagem é o programa dele — e a tela inteira inclui o próprio OSONE, outras janelas e o que
+   * aparecer por cima. Fixada uma janela, a foto é sempre do mesmo programa, e o que acontece fora
+   * dela deixa de existir para a decisão.
+   *
+   * A geometria é relida a cada foto: uma janela pode ser movida ou redimensionada no meio do
+   * trabalho, e clicar com a posição antiga erra por toda a distância que ela andou.
+   */
+  const [janelaDeTrabalho, setJanelaDeTrabalho] = useState<JanelaDeTrabalho | null>(null);
+  const janelaRef = useRef<JanelaDeTrabalho | null>(null);
+  const definirJanela = (j: JanelaDeTrabalho | null) => { janelaRef.current = j; setJanelaDeTrabalho(j); };
+
+  /** O relatório ao vivo do agente: cada volta do laço, na ordem em que aconteceu. */
+  const [relatoDoAgente, setRelatoDoAgente] = useState<{ voltas: VoltaDoAgente[]; rodando: boolean } | null>(null);
+
+  const cabecalhoDoAgente = (token?: string) => ({
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${(token || '').trim()}`
+  });
+
+  /** As janelas abertas, para o usuário escolher uma — ou para o agente achar a que ele abriu. */
+  const listarJanelas = async (localAgentToken?: string): Promise<JanelaDeTrabalho[]> => {
+    try {
+      const res = await fetch('/api/agent/window/list', { headers: cabecalhoDoAgente(localAgentToken) });
+      const dados = await res.json().catch(() => null);
+      if (!res.ok || !Array.isArray(dados?.janelas)) return [];
+      return dados.janelas;
+    } catch {
+      return [];
+    }
+  };
+
+  /** Foto SÓ da janela de trabalho, com a geometria recém-lida junto. */
+  const fotografarJanelaDeTrabalho = async (localAgentToken?: string): Promise<{ imagem: string; janela: JanelaDeTrabalho } | null> => {
+    const janela = janelaRef.current;
+    if (!janela) return null;
+    try {
+      const res = await fetch(`/api/agent/window/capture?id=${encodeURIComponent(janela.id)}`, {
+        headers: cabecalhoDoAgente(localAgentToken)
+      });
+      const dados = await res.json().catch(() => null);
+      if (!res.ok || !dados?.image) return null;
+      // A geometria vem da captura porque ela acabou de trazer a janela para frente — o momento
+      // exato em que a posição costuma mudar.
+      const atualizada = dados.janela
+        ? { ...janela, ...dados.janela }
+        : janela;
+      janelaRef.current = atualizada;
+      return { imagem: dados.image, janela: atualizada };
+    } catch {
+      return null;
+    }
+  };
+
+  /**
+   * CLICAR DENTRO DA JANELA: olha a janela, mede o alvo NELA, e converte para o pixel da tela.
+   *
+   * A conversão é a parte que não pode errar. O modelo aponta a posição na foto que recebeu, que é
+   * a foto da JANELA — um ponto no meio dela é "500,500" mesmo que a janela esteja no canto
+   * direito do monitor. Tratar esse 500 como posição de tela clicaria no meio do monitor, longe do
+   * alvo. Por isso a medição relativa é somada ao canto da janela antes de virar pixel.
+   */
+  const clicarNaJanela = async (
+    alvoDescrito: string,
+    localAgentToken?: string,
+    visao?: VisaoDoMotor
+  ): Promise<any> => {
+    const foto = await fotografarJanelaDeTrabalho(localAgentToken);
+    if (!foto) return { error: 'Não consegui fotografar a janela para localizar o alvo.' };
+
+    const visto = await mirarPorVisao(
+      alvoDescrito, foto.imagem, 'image/png',
+      visao?.chaveGemini || '', visao?.modeloGemini || 'gemini-3.6-flash'
+    );
+    if (!visto.encontrado || !visto.alvo) {
+      return { error: `Não achei "${alvoDescrito}" nesta janela: ${visto.motivo}` };
+    }
+
+    const j = foto.janela;
+    const pixel = {
+      x: Math.round(j.x + (visto.alvo.centro.x / 1000) * j.width),
+      y: Math.round(j.y + (visto.alvo.centro.y / 1000) * j.height)
+    };
+
+    const tela = await lerDimensoesDaTelaDoAgente(localAgentToken);
+    if (!tela) return { error: 'Não consegui ler as dimensões da tela para converter a posição do clique.' };
+
+    const escala0a1000 = {
+      x: Math.round((pixel.x / tela.width) * 1000),
+      y: Math.round((pixel.y / tela.height) * 1000)
+    };
+
+    /**
+     * A medição é registrada nos mesmos refs que a recusa de clique cego consulta.
+     *
+     * O clique com coordenada é recusado quando não houve leitura recente da tela — a trava que
+     * existe para impedir clique de memória. Aqui a leitura ACONTECEU, e é ela que produziu a
+     * coordenada; registrar isso é dizer a verdade ao verificador, não contorná-lo. E gravar o
+     * pixel exato faz o clique usar a medição inteira em vez da versão arredondada dela.
+     */
+    ultimaCapturaRef.current = {
+      quando: Date.now(), ampliada: true,
+      regiao: { x0: escala0a1000.x - 1, y0: escala0a1000.y - 1, x1: escala0a1000.x + 1, y1: escala0a1000.y + 1 }
+    };
+    ultimaMiraRef.current = { quando: Date.now(), escala0a1000, pixel };
+    setAlvoMedido({ x: escala0a1000.x, y: escala0a1000.y, rotulo: alvoDescrito, quando: Date.now() });
+
+    return await executeLocalAgentCall(
+      'controlar_pc', { acao: 'clicar', x: escala0a1000.x, y: escala0a1000.y },
+      localAgentToken, false, visao
+    );
+  };
+
+  const dimensoesDaTelaRef = useRef<{ quando: number; valor: { width: number; height: number } } | null>(null);
+  const lerDimensoesDaTelaDoAgente = async (localAgentToken?: string) => {
+    const emCache = dimensoesDaTelaRef.current;
+    if (emCache && Date.now() - emCache.quando < 15000) return emCache.valor;
+    try {
+      const res = await fetch('/api/agent/screen-info', { headers: cabecalhoDoAgente(localAgentToken) });
+      const dados = await res.json().catch(() => null);
+      if (!res.ok || !dados?.width) return null;
+      const valor = { width: Number(dados.width), height: Number(dados.height) };
+      dimensoesDaTelaRef.current = { quando: Date.now(), valor };
+      return valor;
+    } catch {
+      return null;
+    }
+  };
+
+  /**
+   * O agente trabalha até concluir, decidindo cada ação com a janela à frente.
+   *
+   * Aqui só mora a LIGAÇÃO com o mundo — fotografar, executar, perguntar ao modelo, trocar de
+   * janela. O laço, os freios e as travas ficam em agenteAutonomo.ts, que por sua vez valida cada
+   * ação com a mesma função do plano fixo. Nada de segurança é decidido neste arquivo.
+   */
+  const trabalharNoObjetivo = async (
+    objetivo: string,
+    opcoes: {
+      localAgentToken?: string;
+      visao?: VisaoDoMotor;
+      janela?: JanelaDeTrabalho | null;
+      aoProgredir?: (volta: VoltaDoAgente) => void;
+    } = {}
+  ): Promise<RelatorioDoAgente | { error: string }> => {
+    const { localAgentToken, visao } = opcoes;
+    if (opcoes.janela !== undefined) definirJanela(opcoes.janela);
+
+    if (!janelaRef.current) {
+      return { error: 'Escolha em qual janela eu devo trabalhar antes de começar.' };
+    }
+    if (motorParadoRef.current) {
+      return { error: 'O motor de ações está PARADO por pedido seu. Retome antes de começar uma tarefa.' };
+    }
+
+    setRelatoDoAgente({ voltas: [], rodando: true });
+    setAlvoMedido(null);
+
+    const fotografar = async () => {
+      const f = await fotografarJanelaDeTrabalho(localAgentToken);
+      return f ? await assinaturaDaImagem(f.imagem) : null;
+    };
+
+    const relatorio = await trabalharAteConcluir(objetivo, {
+      agora: () => Date.now(),
+      dormir: (ms) => new Promise(r => setTimeout(r, ms)),
+      fotografar,
+      cancelado: () => motorParadoRef.current,
+
+      fotografarJanela: async () => {
+        const f = await fotografarJanelaDeTrabalho(localAgentToken);
+        return f ? f.imagem : null;
+      },
+
+      /**
+       * TROCAR DE JANELA É DECISÃO DO AGENTE.
+       *
+       * É o que permite abrir algo novo e continuar trabalhando lá: ele abre, procura a janela
+       * pelo título e passa a olhar aquela. Sem isto, abrir um programa deixaria o agente
+       * fotografando a janela antiga enquanto o trabalho acontece noutra — vendo o lugar errado
+       * com total confiança.
+       */
+      trocarJanela: async (tituloContem: string) => {
+        const procurado = (tituloContem || '').trim().toLowerCase();
+        if (!procurado) return { error: 'Não disse qual janela procurar.' };
+        // Uma janela recém-aberta pode ainda não existir na lista: o sistema leva um instante
+        // para registrá-la. Tentar uma vez só transformaria "abriu e trocou" em falha constante.
+        for (let tentativa = 0; tentativa < 3; tentativa++) {
+          const janelas = await listarJanelas(localAgentToken);
+          const achou = janelas.find(j =>
+            (j.titulo || '').toLowerCase().includes(procurado) || (j.app || '').toLowerCase().includes(procurado));
+          if (achou) {
+            definirJanela(achou);
+            await fetch('/api/agent/window/focus', {
+              method: 'POST', headers: cabecalhoDoAgente(localAgentToken),
+              body: JSON.stringify({ id: achou.id })
+            }).catch(() => { /* a captura foca de novo logo em seguida */ });
+            return { titulo: achou.titulo };
+          }
+          await new Promise(r => setTimeout(r, 900));
+        }
+        const abertas = (await listarJanelas(localAgentToken)).map(j => j.titulo).slice(0, 12);
+        return { error: `Não achei nenhuma janela com "${tituloContem}" no título. Abertas agora: ${abertas.join(' / ') || 'nenhuma'}` };
+      },
+
+      executar: async (acao, args) => {
+        // Clicar passa pelo caminho que MEDE dentro da janela; o resto vai direto.
+        if (acao === 'clicar') {
+          const alvo = String(args?.alvo || '').trim();
+          if (!alvo) return { error: 'Para clicar é preciso descrever o alvo.' };
+          return await clicarNaJanela(alvo, localAgentToken, visao);
+        }
+        return await executeLocalAgentCall('controlar_pc', { acao, ...args }, localAgentToken, false, visao);
+      },
+
+      decidir: async (objetivoAtual, foto, historico) => {
+        return await perguntarProximaAcao(objetivoAtual, foto, historico, janelaRef.current, visao);
+      },
+
+      aoProgredir: (volta) => {
+        setRelatoDoAgente(prev => ({ voltas: [...(prev?.voltas || []), volta], rodando: true }));
+        opcoes.aoProgredir?.(volta);
+      }
+    }, { historicoDeEsperas: historicoDeEsperasRef.current });
+
+    historicoDeEsperasRef.current = relatorio.historico;
+    setRelatoDoAgente({ voltas: relatorio.voltas, rodando: false });
+    return relatorio;
+  };
+
   /**
    * Executa um plano inteiro sem consultar o usuário passo a passo.
    *
@@ -1008,6 +1327,12 @@ export function useLocalAgent() {
     limparAcoesDoMotor,
     executarCowork,
     planoEmCurso,
-    alvoMedido
+    alvoMedido,
+    // O agente autônomo e a janela em que ele trabalha.
+    listarJanelas,
+    janelaDeTrabalho,
+    definirJanela,
+    trabalharNoObjetivo,
+    relatoDoAgente
   };
 }
