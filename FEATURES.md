@@ -120,9 +120,17 @@ Este documento registra todas as funcionalidades, rotas e módulos ativos no eco
 
 ## 7. Planos e Assinaturas (`billingService.ts`, `PlansModal.tsx`, `useSubscription.ts`)
 - **Plano Grátis**: mantém chat de texto, conversa por voz, Hands-Free, OSONE CODE e Agente Local para controle do PC. O Agente Local não é confundido com COWORK e não recebe portão pago.
-- **Plano Plus**: R$ 39,90/mês ou R$ 399/ano; acrescenta OSONE HEAR e OSONE COWORK para cliques/escrita no navegador.
-- **Plano Pro**: R$ 69,90/mês ou R$ 699/ano; acrescenta OSONE ZAP a tudo do Plus.
+- **Plano Plus**: R$ 39,90/mês ou R$ 339,90/ano; acrescenta OSONE HEAR e OSONE COWORK para cliques/escrita no navegador.
+- **Plano Pro**: R$ 69,90/mês ou R$ 669,90/ano; acrescenta OSONE ZAP a tudo do Plus.
 - **Stripe Checkout e Portal**: cobrança recorrente abre no navegador externo; o app não recebe nem manipula dados de cartão. O cliente pode gerenciar ou cancelar a assinatura pelo portal da Stripe.
 - **Entitlements protegidos**: Firebase ID Token identifica o assinante; webhooks assinados gravam `entitlements/{uid}` via Admin SDK. As regras do Firestore permitem ao usuário ler o próprio plano e proíbem escrita pelo cliente.
 - **Portões em profundidade na interface**: menu, navegação por voz e chamadas de ferramentas da IA verificam o plano antes de abrir HEAR/ZAP ou executar COWORK, sem bloquear conversa nem `controlar_pc`.
 - **Configuração segura**: sem chaves/Price IDs no backend, a tela de planos continua visível para validação visual, mas os botões de cobrança permanecem desativados e nenhum pagamento é simulado.
+
+---
+
+## 8. Aplicativo Android (`android/twa-manifest.json`)
+- **APK via Trusted Web Activity**: empacota a PWA hospedada em `osone-ai-six.vercel.app` para Android, preservando login Firebase e Checkout Stripe no contexto seguro do navegador.
+- **Assinatura estável**: o GitHub Actions restaura uma chave privada protegida por secrets e verifica o APK assinado antes de anexá-lo à Release.
+- **Vínculo com o domínio**: `/.well-known/assetlinks.json` associa `com.osone.app` ao certificado oficial, permitindo abrir a interface em tela cheia sem barra do navegador.
+- **Escopo móvel**: conversa, chat e recursos web funcionam no Android; automações que controlam diretamente o PC continuam disponíveis nos instaladores desktop.

@@ -156,7 +156,7 @@ export function registerBillingApi(app: Express) {
 
   app.get('/api/billing/config', (_req, res) => {
     const config = billingConfiguration();
-    res.json({ enabled: config.enabled, plans: { plus: { monthly: 39.90, yearly: 399 }, pro: { monthly: 69.90, yearly: 699 } } });
+    res.json({ enabled: config.enabled, plans: { plus: { monthly: 39.90, yearly: 339.90 }, pro: { monthly: 69.90, yearly: 669.90 } } });
   });
 
   app.get('/api/billing/status', async (req, res) => {

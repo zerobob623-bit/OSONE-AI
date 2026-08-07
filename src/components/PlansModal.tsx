@@ -44,7 +44,7 @@ export function PlansModal({
               {requestedFeature && <div className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-amber-500/10 border border-amber-400/20 text-amber-200 text-xs"><Lock size={13} /> {requestedFeature} requer um plano pago.</div>}
               <div className="mt-6 inline-flex p-1 rounded-full border border-white/10 bg-black/30">
                 <button onClick={() => setInterval('month')} className={cn('px-5 py-2 rounded-full text-xs transition', interval === 'month' ? 'bg-white text-black' : 'text-zinc-400')}>Mensal</button>
-                <button onClick={() => setInterval('year')} className={cn('px-5 py-2 rounded-full text-xs transition', interval === 'year' ? 'bg-white text-black' : 'text-zinc-400')}>Anual · 2 meses grátis</button>
+                <button onClick={() => setInterval('year')} className={cn('px-5 py-2 rounded-full text-xs transition', interval === 'year' ? 'bg-white text-black' : 'text-zinc-400')}>Anual · economize</button>
               </div>
             </div>
 

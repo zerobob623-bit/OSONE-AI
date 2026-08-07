@@ -32,13 +32,13 @@ export const OSONE_PLANS: Record<OsonePlanId, OsonePlan> = {
     name: 'Plus',
     tagline: 'Escuta e automação avançada.',
     monthlyPrice: 39.90,
-    yearlyPrice: 399,
+    yearlyPrice: 339.90,
     features: ['cowork_browser', 'hear'],
     highlights: [
       'Tudo do plano Grátis',
       'OSONE HEAR completo',
       'OSONE COWORK: cliques e escrita no navegador',
-      'Economia de duas mensalidades no anual'
+      'Economize no plano anual'
     ]
   },
   pro: {
@@ -46,13 +46,13 @@ export const OSONE_PLANS: Record<OsonePlanId, OsonePlan> = {
     name: 'Pro',
     tagline: 'O OSONE pronto para trabalhar e atender.',
     monthlyPrice: 69.90,
-    yearlyPrice: 699,
+    yearlyPrice: 669.90,
     features: ['cowork_browser', 'hear', 'whatsapp'],
     highlights: [
       'Tudo do plano Plus',
       'OSONE ZAP completo',
       'Automação de atendimento e base de conhecimento',
-      'Economia de duas mensalidades no anual'
+      'Economize no plano anual'
     ]
   }
 };

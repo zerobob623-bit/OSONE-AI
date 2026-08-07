@@ -7,8 +7,8 @@ As propostas históricas abaixo permanecem como estudo, mas o catálogo ativo do
 | Plano | Mensal | Anual | Recursos pagos |
 |---|---:|---:|---|
 | **Grátis** | R$ 0 | R$ 0 | Núcleo completo: chat, voz, Hands-Free, CODE e Agente Local para controlar o PC |
-| **Plus** | R$ 39,90 | R$ 399 | OSONE HEAR + OSONE COWORK (cliques e escrita no navegador) |
-| **Pro** | R$ 69,90 | R$ 699 | Tudo do Plus + OSONE ZAP |
+| **Plus** | R$ 39,90 | R$ 339,90 | OSONE HEAR + OSONE COWORK (cliques e escrita no navegador) |
+| **Pro** | R$ 69,90 | R$ 669,90 | Tudo do Plus + OSONE ZAP |
 
 O controle local comum (`controlar_pc`) continua gratuito. Apenas o laço autônomo COWORK de
 navegador é pago. A implementação usa Stripe Checkout/Customer Portal, Firebase Authentication,
