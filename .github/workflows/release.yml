@@ -338,7 +338,7 @@ jobs:
             --signingKeyAlias="$KEY_ALIAS"
           versao=$(node -p "require('./package.json').version")
           mv android/app-release-signed.apk "OSONE-G5-${versao}.apk"
-          apksigner verify --verbose "OSONE-G5-${versao}.apk"
+          "$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner" verify --verbose "OSONE-G5-${versao}.apk"
 
       - name: Anexar APK a Release
         shell: bash
