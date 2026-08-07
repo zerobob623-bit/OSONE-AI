@@ -5182,6 +5182,44 @@ ${isBad
 
   const elevenLabsRecognitionRef = useRef<any>(null);
 
+  // Impede que a palavra de ativacao e a palma, que escutam o mesmo ambiente,
+  // abram duas sessoes de voz quando reconhecem o mesmo instante.
+  const handsFreeActivationLockRef = useRef(false);
+
+  const activateHandsFreeVoice = (source: 'voice' | 'clap') => {
+    if (
+      handsFreeActivationLockRef.current ||
+      !isWaitingRef.current ||
+      isElevenLabsLiveActiveRef.current ||
+      liveStateRef.current.status === 'connected' ||
+      liveStateRef.current.status === 'connecting'
+    ) return;
+
+    handsFreeActivationLockRef.current = true;
+    isWaitingRef.current = false;
+    setIsWaitingForWakeWord(false);
+    setIsChatExpanded(true);
+    addNotification(
+      source === 'clap' ? "👏 Palma detectada. OSONE está ouvindo." : "OSONE detectado. Estou ouvindo.",
+      "success"
+    );
+
+    if (chosenInitSoundUrl) {
+      playSoundEffect(chosenInitSoundUrl).catch(err => console.error("Error playing startup sound:", err));
+    }
+
+    // Da tempo de os detectores passivos soltarem o microfone antes de a sessao
+    // ativa assumir. Respeita o motor de voz escolhido nas Configuracoes.
+    setTimeout(() => {
+      if (voiceEngine === 'elevenlabs') {
+        startElevenLabsLiveSession();
+      } else {
+        startLiveSession();
+      }
+      handsFreeActivationLockRef.current = false;
+    }, 400);
+  };
+
   // Wake Word listener implementation
   const isWaitingRef = useRef(isWaitingForWakeWord);
   useEffect(() => {
@@ -5216,17 +5254,18 @@ ${isBad
 
     wakeWordRec.onresult = (event: any) => {
       const resultIndex = event.resultIndex;
-      const transcript = event.results[resultIndex][0].transcript.toLowerCase().trim();
-      
-      const wakeWordPatterns = [
-        'ei osone', 'ei ozone', 'ei osorni', 'ei osorne', 'ei o zone', 'eiosone', 'eiozone',
-        'ei uasone', 'ei uazone', 'hey osone', 'hey ozone', 'ei o sono', 'ei oson',
-        'ei o som', 'ei o sol', 'ei au som', 'oi osone', 'oi ozone', 'osone', 'ozone',
-        'ei ozone', 'ei ozoni', 'ei ozeni', 'ei osoni'
-      ];
+      const transcript = event.results[resultIndex][0].transcript
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
 
-      // Verificar se a parte atual da fala contém o comando
-      const isMatch = wakeWordPatterns.some(pattern => transcript.includes(pattern));
+      // O usuario nao precisa dizer "Ei Osone": a palavra isolada basta.
+      // Variantes foneticas curtas cobrem a transcricao comum "ozone", mas a
+      // verificacao por palavra evita ativar dentro de outra palavra/frase parcial.
+      const isMatch = /(?:^|\s)(?:osone|osoni|ozone|ozoni)(?:$|\s)/.test(transcript);
 
       if (isMatch) {
         console.log('Comando detectado!', transcript);
@@ -5234,28 +5273,15 @@ ${isBad
         stoppedManually = true;
         try { wakeWordRec.stop(); } catch(e) {}
         
-        addNotification("Ativando via voz...", "success");
-
-        // Play the chosen initialization sound!
-        if (chosenInitSoundUrl) {
-          playSoundEffect(chosenInitSoundUrl).catch(err => console.error("Error playing startup sound:", err));
-        }
-
-        // Disparar o chat com a frase "Ei, Osone"
-        // Isso fará o chat abrir e a IA responder por texto
-        setIsChatExpanded(true);
-        handleHomeChat('Ei, Osone');
-
-        // Ativar o modo de voz (iniciar sessão) após um pequeno delay para a IA começar a responder
-        setTimeout(() => {
-          startLiveSession();
-        }, 1500);
+        activateHandsFreeVoice('voice');
       }
     };
 
     wakeWordRec.onerror = (event: any) => {
       if (event.error === 'not-allowed') {
+        setIsHandsFreeActive(false);
         setIsWaitingForWakeWord(false);
+        addNotification("Hands-Free sem acesso ao microfone. Autorize o microfone e tente novamente.", "error");
         return;
       }
       if (event.error !== 'aborted') {
@@ -5281,7 +5307,7 @@ ${isBad
       stoppedManually = true;
       try { wakeWordRec.stop(); } catch(e) {}
     };
-  }, [isWaitingForWakeWord, isListening, isTranscribing, isElevenLabsLiveActive, liveState.status, chosenInitSoundUrl]);
+  }, [isWaitingForWakeWord, isListening, isTranscribing, isElevenLabsLiveActive, liveState.status, chosenInitSoundUrl, voiceEngine]);
 
   const soundLibraryRef = useRef(soundLibrary);
   useEffect(() => {
@@ -5303,12 +5329,17 @@ ${isBad
     let audioCtx: AudioContext | null = null;
     let analyser: AnalyserNode | null = null;
     let stream: MediaStream | null = null;
-    let animId: number | null = null;
     let stopped = false;
 
     const startClapDetection = async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+          }
+        });
         if (stopped) {
           stream.getTracks().forEach(t => t.stop());
           return;
@@ -5316,70 +5347,73 @@ ${isBad
 
         audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
         analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 256;
+        analyser.fftSize = 1024;
+        analyser.smoothingTimeConstant = 0.15;
 
         const source = audioCtx.createMediaStreamSource(stream);
         source.connect(analyser);
 
-        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const dataArray = new Uint8Array(analyser.fftSize);
         const history: number[] = [];
-        const historyLen = 25;
+        const historyLen = 35;
         let lastClapTime = 0;
 
         let timerId: any = null;
 
         const loop = () => {
           if (stopped) return;
-          analyser!.getByteFrequencyData(dataArray);
+          analyser!.getByteTimeDomainData(dataArray);
 
-          // Sum energy levels
-          let currentVolume = 0;
+          // Uma palma e um pico curto: mede amplitude, energia e quao agudo foi
+          // o transiente. Voz sustentada tende a ter uma relacao pico/RMS menor.
+          let squaredEnergy = 0;
+          let peak = 0;
           for (let i = 0; i < dataArray.length; i++) {
-            currentVolume += dataArray[i];
+            const sample = Math.abs((dataArray[i] - 128) / 128);
+            squaredEnergy += sample * sample;
+            peak = Math.max(peak, sample);
           }
-          currentVolume = currentVolume / dataArray.length;
+          const currentRms = Math.sqrt(squaredEnergy / dataArray.length);
+          const backgroundRms = history.length > 0
+            ? history.reduce((a, b) => a + b, 0) / history.length
+            : currentRms;
+          const crestFactor = peak / Math.max(currentRms, 0.001);
 
-          // Maintain floating background history window
+          // A media precisa representar o ambiente ANTES do pico atual; incluir
+          // a palma nela elevava o limiar exatamente quando deveria detecta-la.
           if (history.length >= historyLen) {
             history.shift();
           }
-          history.push(currentVolume);
-
-          const avgHistory = history.reduce((a, b) => a + b, 0) / history.length;
           const now = Date.now();
 
-          // Standard clap threshold pattern: sudden peak above 55 volume and 3.4x average background noise
-          if (currentVolume > 55 && currentVolume > avgHistory * 3.4 && (now - lastClapTime > 2000)) {
+          const isSharpTransient =
+            history.length >= 8 &&
+            peak >= 0.55 &&
+            currentRms >= Math.max(0.045, backgroundRms * 2.4) &&
+            crestFactor >= 2.2;
+
+          if (isSharpTransient && (now - lastClapTime > 1200)) {
             lastClapTime = now;
-            console.log("👏 Clap detected! Volume:", currentVolume, "Background average:", avgHistory);
-
-            addNotification("👏 Palma detectada! Abrindo videoclipe no Pop-up...", "success");
-
-            // Open YouTube Video Clip Popup (Homem de Ferro - XgWUDbYfNe4) as requested
-            setYoutubeVideoPopup({
-              isOpen: true,
-              videoId: "XgWUDbYfNe4",
-              title: "Homem de Ferro (Iron Man) - Videoclipe Oficial"
-            });
-
-            // Expand primary text chat and issue the greeting prompt
-            setIsChatExpanded(true);
-            handleHomeChat("Ei, Osone");
-
-            // Trigger live agent audio connection shortly after
-            setTimeout(() => {
-              if (liveStateRef.current.status !== 'connected' && liveStateRef.current.status !== 'connecting') {
-                startLiveSession();
-              }
-            }, 1500);
+            console.log("👏 Clap detected! Peak:", peak, "RMS:", currentRms, "Background:", backgroundRms);
+            activateHandsFreeVoice('clap');
           }
 
-          timerId = setTimeout(loop, 100);
+          // Nao contamina o ruido de fundo com o pico que acabou de disparar.
+          if (!isSharpTransient) history.push(currentRms);
+
+          // Uma palma pode durar menos de 100 ms; amostrar quatro vezes mais
+          // evita que o pico inteiro caia entre duas leituras.
+          timerId = setTimeout(loop, 25);
         };
 
         loop();
       } catch (err) {
         console.warn("Microphone access denied or busy for clap detection:", err);
+        if (err instanceof DOMException && (err.name === 'NotAllowedError' || err.name === 'SecurityError')) {
+          setIsHandsFreeActive(false);
+          setIsWaitingForWakeWord(false);
+          addNotification("Hands-Free sem acesso ao microfone. Autorize o microfone e tente novamente.", "error");
+        }
       }
     };
 
@@ -5387,7 +5421,6 @@ ${isBad
 
     return () => {
       stopped = true;
-      if (animId) cancelAnimationFrame(animId);
       if (stream) {
         stream.getTracks().forEach(t => t.stop());
       }
@@ -5395,7 +5428,7 @@ ${isBad
         audioCtx.close().catch(e => {});
       }
     };
-  }, [isWaitingForWakeWord, isListening, isTranscribing, isElevenLabsLiveActive, liveState.status, chosenInitSoundUrl]);
+  }, [isWaitingForWakeWord, isListening, isTranscribing, isElevenLabsLiveActive, liveState.status, chosenInitSoundUrl, voiceEngine]);
 
   const stopElevenLabsLiveSession = () => {
     setIsElevenLabsLiveActive(false);
@@ -11381,7 +11414,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
     const newState = !isHandsFreeActive;
     setIsHandsFreeActive(newState);
     if (newState) {
-      addNotification("Hands-Free Ativado: 'Ei Osone'", "success");
+      addNotification("Hands-Free Ativado: diga 'OSONE' ou bata uma palma", "success");
       setIsWaitingForWakeWord(true);
     } else {
       addNotification("Hands-Free Desativado", "info");
@@ -11745,7 +11778,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 ? "bg-her-accent/10 border-her-accent/30 text-her-accent" 
                 : "bg-white/[0.03] border-white/[0.08] text-her-muted hover:border-white/20 hover:bg-white/[0.05]"
             )}
-            title={isHandsFreeActive ? "Desativar Mãos Livres" : "Ativar Mãos Livres (Ei Osone)"}
+            title={isHandsFreeActive ? "Desativar Mãos Livres" : "Ativar Mãos Livres (diga OSONE ou bata uma palma)"}
           >
             <Headphones size={14} className={isHandsFreeActive ? "animate-pulse" : ""} />
             <span className="hidden sm:inline">{isHandsFreeActive ? "HANDS-FREE ON" : "VOZ PASSIVA"}</span>
