@@ -7,6 +7,15 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      target:
+        description: Parte da release que deve ser compilada
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - android
 
 # Necessário para o electron-builder criar a Release e subir os instaladores.
 permissions:
@@ -14,6 +23,9 @@ permissions:
 
 jobs:
   build:
+    # Em uma publicacao normal compila os dois desktops. A opcao manual `android` permite
+    # testar ou republicar somente o APK sem gastar tempo nem sobrescrever EXE/AppImage.
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.target != 'android' }}
     strategy:
       # Um de cada vez de propósito: os dois jobs publicam na MESMA Release do GitHub, e
       # rodando em paralelo os dois tentam criá-la ao mesmo tempo, o que pode gerar release
@@ -243,8 +255,10 @@ jobs:
   android:
     name: Android (APK assinado)
     # O desktop cria a Release primeiro. Assim o Android apenas anexa o APK e nao existe corrida
-    # entre tres jobs tentando criar a mesma Release.
+    # entre tres jobs tentando criar a mesma Release. No modo manual `android`, a Release da
+    # versao ja existe e o job pode prosseguir mesmo com o desktop intencionalmente ignorado.
     needs: build
+    if: ${{ always() && (needs.build.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.target == 'android')) }}
     runs-on: ubuntu-latest
 
     steps:
