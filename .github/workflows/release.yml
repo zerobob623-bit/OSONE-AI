@@ -269,7 +269,10 @@ jobs:
       - name: Instalar plataforma Android
         shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null
+          # sdkmanager fecha a entrada assim que termina de aceitar as licencas. Nesse momento o
+          # `yes` recebe SIGPIPE, o que e esperado; com `pipefail`, porem, isso viraria erro 1.
+          # A instalacao seguinte continua sendo a verificacao real e falhara se faltar licenca.
+          yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
       - name: Instalar dependencias
