@@ -1,0 +1,42 @@
+{
+  "packageId": "com.osone.app",
+  "host": "osone-ai-six.vercel.app",
+  "name": "OSONE G5",
+  "launcherName": "OSONE",
+  "display": "standalone",
+  "themeColor": "#050505",
+  "themeColorDark": "#050505",
+  "navigationColor": "#050505",
+  "navigationColorDark": "#050505",
+  "navigationDividerColor": "#050505",
+  "navigationDividerColorDark": "#050505",
+  "backgroundColor": "#050505",
+  "enableNotifications": false,
+  "startUrl": "/",
+  "iconUrl": "https://osone-ai-six.vercel.app/icons/android-chrome-512x512.png",
+  "maskableIconUrl": "https://osone-ai-six.vercel.app/icons/maskable-512x512.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": {
+    "path": "./android-release.jks",
+    "alias": "osone"
+  },
+  "appVersionCode": 10308,
+  "appVersion": "1.3.8",
+  "shortcuts": [],
+  "generatorApp": "@bubblewrap/cli",
+  "webManifestUrl": "https://osone-ai-six.vercel.app/manifest.json",
+  "fallbackType": "customtabs",
+  "features": {},
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://osone-ai-six.vercel.app/",
+  "minSdkVersion": 23,
+  "orientation": "any",
+  "fingerprints": [],
+  "additionalTrustedOrigins": [],
+  "retainedBundles": []
+}

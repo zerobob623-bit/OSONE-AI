@@ -30,3 +30,12 @@ google-home-tokens.json
 # Credenciais da casa inteligente preenchidas pela tela de Configuracoes (Tuya/Google Home).
 # Contem o Access Secret que assina as requisicoes da Tuya — nunca commitar.
 credenciais-osone.json
+
+# Credenciais privadas usadas para assinar o APK. A mesma chave precisa assinar todas as
+# versoes Android, mas nunca pode entrar no repositorio.
+.secrets/
+
+# O projeto Gradle da TWA e regenerado pelo Bubblewrap no GitHub Actions. O manifesto e a unica
+# fonte Android versionada; manter milhares de arquivos gerados duplicaria configuracao.
+android/*
+!android/twa-manifest.json
