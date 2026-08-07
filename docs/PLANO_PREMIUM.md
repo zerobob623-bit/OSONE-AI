@@ -1,5 +1,20 @@
 # PLANO DE MONETIZAÇÃO DO OSONE — VIP / PREMIUM
 
+## DECISÃO IMPLEMENTADA — AGOSTO DE 2026
+
+As propostas históricas abaixo permanecem como estudo, mas o catálogo ativo do aplicativo é:
+
+| Plano | Mensal | Anual | Recursos pagos |
+|---|---:|---:|---|
+| **Grátis** | R$ 0 | R$ 0 | Núcleo completo: chat, voz, Hands-Free, CODE e Agente Local para controlar o PC |
+| **Plus** | R$ 39,90 | R$ 399 | OSONE HEAR + OSONE COWORK (cliques e escrita no navegador) |
+| **Pro** | R$ 69,90 | R$ 699 | Tudo do Plus + OSONE ZAP |
+
+O controle local comum (`controlar_pc`) continua gratuito. Apenas o laço autônomo COWORK de
+navegador é pago. A implementação usa Stripe Checkout/Customer Portal, Firebase Authentication,
+webhook assinado e `entitlements/{uid}` sem permissão de escrita pelo cliente. Os valores e a
+distribuição desta seção substituem preços e combinações exploratórias que aparecem mais abaixo.
+
 Como transformar o OSONE em produto com mensalidade: o que vender, como o dinheiro chega até
 você, e o que precisa ser construído dentro do app.
 
