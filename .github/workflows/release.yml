@@ -1,4 +1,4 @@
-name: Publicar Release (.exe e AppImage)
+name: Publicar Release (.exe, AppImage e APK)
 
 # Dispara ao empurrar uma tag de versão (ex: v1.1.0), ou manualmente pelo botão
 # "Run workflow" na aba Actions do GitHub.
@@ -60,6 +60,9 @@ jobs:
           VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
           VITE_FIREBASE_MEASUREMENT_ID: ${{ secrets.VITE_FIREBASE_MEASUREMENT_ID }}
           VITE_FIREBASE_FIRESTORE_DATABASE_ID: ${{ secrets.VITE_FIREBASE_FIRESTORE_DATABASE_ID }}
+          # URL publica, nao secreta. O desktop continua local; somente assinatura/checkout usam
+          # a API hospedada para que nenhuma chave Stripe viaje dentro do instalador.
+          VITE_OSONE_BILLING_URL: https://osone-ai-six.vercel.app
 
       - name: Conferir se o Firebase entrou no build
         # Trava de segurança: se um secret estiver faltando ou com o nome escrito errado, o
@@ -236,3 +239,94 @@ jobs:
             sleep 10
           done
           exit 1
+
+  android:
+    name: Android (APK assinado)
+    # O desktop cria a Release primeiro. Assim o Android apenas anexa o APK e nao existe corrida
+    # entre tres jobs tentando criar a mesma Release.
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar o codigo
+        uses: actions/checkout@v4
+
+      - name: Instalar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Preparar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar plataforma Android
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Conferir secrets de assinatura
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          faltando=""
+          [ -z "$KEYSTORE_BASE64" ] && faltando="$faltando ANDROID_KEYSTORE_BASE64"
+          [ -z "$KEYSTORE_PASSWORD" ] && faltando="$faltando ANDROID_KEYSTORE_PASSWORD"
+          [ -z "$KEY_ALIAS" ] && faltando="$faltando ANDROID_KEY_ALIAS"
+          [ -z "$KEY_PASSWORD" ] && faltando="$faltando ANDROID_KEY_PASSWORD"
+          if [ -n "$faltando" ]; then
+            echo "ERRO: secrets Android ausentes:$faltando"
+            echo "Cadastre-os em Settings > Secrets and variables > Actions antes de publicar a tag."
+            exit 1
+          fi
+
+      - name: Restaurar chave de assinatura
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/osone-android.jks"
+
+      - name: Gerar projeto Android
+        shell: bash
+        run: |
+          config="$RUNNER_TEMP/bubblewrap-config.json"
+          jq -n --arg jdk "$JAVA_HOME" --arg sdk "$ANDROID_SDK_ROOT" \
+            '{jdkPath: $jdk, androidSdkPath: $sdk}' > "$config"
+          npm run android:prepare -- --config="$config"
+
+      - name: Compilar e assinar APK
+        shell: bash
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          npm run android:build -- \
+            --config="$RUNNER_TEMP/bubblewrap-config.json" \
+            --signingKeyPath="$RUNNER_TEMP/osone-android.jks" \
+            --signingKeyAlias="$KEY_ALIAS"
+          versao=$(node -p "require('./package.json').version")
+          mv android/app-release-signed.apk "OSONE-G5-${versao}.apk"
+          apksigner verify --verbose "OSONE-G5-${versao}.apk"
+
+      - name: Anexar APK a Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          versao=$(node -p "require('./package.json').version")
+          gh release upload "v${versao}" "OSONE-G5-${versao}.apk" --clobber

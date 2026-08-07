@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.osone.app",
+      "sha256_cert_fingerprints": [
+        "EF:79:4C:BB:83:4E:53:E3:56:25:09:A6:EF:5E:AF:71:AB:46:2A:1B:33:9D:F0:56:CF:E1:A6:95:DA:3F:C2:67"
+      ]
+    }
+  }
+]
