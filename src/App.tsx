@@ -127,6 +127,9 @@ import { WritingStudioSection } from './components/WritingStudioSection';
 import { CodeWorkspaceSection } from './components/CodeWorkspaceSection';
 import { HomeWorkspaceSection } from './components/HomeWorkspaceSection';
 import { OsoneHearPanel } from './components/OsoneHearPanel';
+import { PlansModal } from './components/PlansModal';
+import { useSubscription } from './hooks/useSubscription';
+import { PaidFeature } from './lib/planos';
 
 // Safe helper to dynamically load PDF.js from cdnjs for client-side PDF text extraction
 const loadPdfJs = async (): Promise<any> => {
@@ -718,6 +721,11 @@ export default function App() {
    * quando há Firebase para responder — sem configuração não há o que esperar.
    */
   const [verificandoSessao, setVerificandoSessao] = useState(isFirebaseFullyConfigured);
+  const subscription = useSubscription(user);
+  const hasPaidFeatureRef = useRef(subscription.hasFeature);
+  useEffect(() => { hasPaidFeatureRef.current = subscription.hasFeature; }, [subscription.hasFeature]);
+  const [isPlansOpen, setIsPlansOpen] = useState(false);
+  const [requestedPaidFeature, setRequestedPaidFeature] = useState<string>();
 
   // Ambiente real da máquina (sistema operacional, pastas do usuário com os nomes que
   // realmente têm no disco). Descoberto uma vez e injetado no prompt, para o modelo agir
@@ -767,6 +775,43 @@ export default function App() {
     }
   }, [aiDossierType]);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('home');
+
+  const paidFeatureForMode = (mode: WorkspaceMode): PaidFeature | null => {
+    if (mode === 'cowork') return 'cowork_browser';
+    if (mode === 'hear') return 'hear';
+    if (mode === 'whatsapp') return 'whatsapp';
+    return null;
+  };
+
+  const paidFeatureLabel: Record<PaidFeature, string> = {
+    cowork_browser: 'OSONE COWORK',
+    hear: 'OSONE HEAR',
+    whatsapp: 'OSONE ZAP'
+  };
+
+  const requestPaidFeature = (feature: PaidFeature): boolean => {
+    if (hasPaidFeatureRef.current(feature)) return true;
+    setRequestedPaidFeature(paidFeatureLabel[feature]);
+    setIsPlansOpen(true);
+    return false;
+  };
+
+  const openWorkspaceMode = (mode: WorkspaceMode) => {
+    const feature = paidFeatureForMode(mode);
+    if (feature && !requestPaidFeature(feature)) return;
+    setWorkspaceMode(mode);
+  };
+
+  // Também cobre navegação pedida por voz/ferramenta, que altera workspaceMode sem passar
+  // pelo menu lateral. A aba paga nunca chega a montar para uma conta sem entitlement.
+  useEffect(() => {
+    const feature = paidFeatureForMode(workspaceMode);
+    if (feature && !subscription.loading && !subscription.hasFeature(feature)) {
+      setWorkspaceMode('home');
+      setRequestedPaidFeature(paidFeatureLabel[feature]);
+      setIsPlansOpen(true);
+    }
+  }, [workspaceMode, subscription.loading, subscription.subscription.plan, subscription.subscription.status]);
   const [summonedAba, setSummonedAba] = useState<WorkspaceMode | null>(null);
 
   const [ragFiles, setRagFiles] = useState<RagFile[]>([]);
@@ -1187,6 +1232,12 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   const recognitionRef = useRef<any>(null);
   const wakeWordRecognitionRef = useRef<any>(null);
   const [isWaitingForWakeWord, setIsWaitingForWakeWord] = useState(false);
+  const [isHandsFreeActive, setIsHandsFreeActive] = useState(false);
+  const isWaitingRef = useRef(false);
+  const handsFreeActiveRef = useRef(false);
+  const handsFreeRearmTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handsFreeActivationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handsFreeUnmountedRef = useRef(false);
   const [shouldAutoUnmute, setShouldAutoUnmute] = useState(false);
   const shouldAutoUnmuteRef = useRef(false);
 
@@ -1974,6 +2025,9 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
    * destinatário, e por que só funcionava quando o número era ditado em voz alta.
    */
   const listarContatosWhatsApp = async (args: any): Promise<any> => {
+    if (!requestPaidFeature('whatsapp')) {
+      return { error: 'OSONE ZAP requer o plano Pro. A tela de planos foi aberta para o usuário.' };
+    }
     try {
       const res = await fetch('/api/whatsapp/contacts');
       if (!res.ok) {
@@ -2009,6 +2063,9 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   };
 
   const sendWhatsAppFromModel = async (args: any): Promise<{ message: string; error?: string }> => {
+    if (!requestPaidFeature('whatsapp')) {
+      return { message: '', error: 'OSONE ZAP requer o plano Pro. Nenhuma mensagem foi enviada.' };
+    }
     const number = String(args?.number || '').replace(/\D/g, '');
     const message = String(args?.message || '').trim();
 
@@ -5186,6 +5243,55 @@ ${isBad
   // abram duas sessoes de voz quando reconhecem o mesmo instante.
   const handsFreeActivationLockRef = useRef(false);
 
+  const cancelHandsFreeRearm = () => {
+    if (handsFreeRearmTimeoutRef.current) {
+      clearTimeout(handsFreeRearmTimeoutRef.current);
+      handsFreeRearmTimeoutRef.current = null;
+    }
+  };
+
+  const pauseHandsFreeDetection = () => {
+    cancelHandsFreeRearm();
+    isWaitingRef.current = false;
+    setIsWaitingForWakeWord(false);
+  };
+
+  const scheduleHandsFreeRearm = () => {
+    cancelHandsFreeRearm();
+    if (!handsFreeActiveRef.current || handsFreeUnmountedRef.current) return;
+
+    // O AudioContext e a trilha do Gemini/ElevenLabs fecham de forma assincrona.
+    // Esperar evita que os detectores passivos tentem capturar o microfone ainda ocupado.
+    handsFreeRearmTimeoutRef.current = setTimeout(() => {
+      handsFreeRearmTimeoutRef.current = null;
+      const liveStatus = liveStateRef.current.status;
+      if (
+        !handsFreeActiveRef.current ||
+        handsFreeUnmountedRef.current ||
+        isElevenLabsLiveActiveRef.current ||
+        liveStatus === 'connected' ||
+        liveStatus === 'connecting'
+      ) return;
+
+      handsFreeActivationLockRef.current = false;
+      isWaitingRef.current = true;
+      setIsWaitingForWakeWord(true);
+    }, 700);
+  };
+
+  const disableHandsFreeForMicrophonePermission = () => {
+    cancelHandsFreeRearm();
+    if (handsFreeActivationTimeoutRef.current) {
+      clearTimeout(handsFreeActivationTimeoutRef.current);
+      handsFreeActivationTimeoutRef.current = null;
+    }
+    handsFreeActiveRef.current = false;
+    handsFreeActivationLockRef.current = false;
+    isWaitingRef.current = false;
+    setIsHandsFreeActive(false);
+    setIsWaitingForWakeWord(false);
+  };
+
   const activateHandsFreeVoice = (source: 'voice' | 'clap') => {
     if (
       handsFreeActivationLockRef.current ||
@@ -5196,8 +5302,7 @@ ${isBad
     ) return;
 
     handsFreeActivationLockRef.current = true;
-    isWaitingRef.current = false;
-    setIsWaitingForWakeWord(false);
+    pauseHandsFreeDetection();
     setIsChatExpanded(true);
     addNotification(
       source === 'clap' ? "👏 Palma detectada. OSONE está ouvindo." : "OSONE detectado. Estou ouvindo.",
@@ -5210,7 +5315,15 @@ ${isBad
 
     // Da tempo de os detectores passivos soltarem o microfone antes de a sessao
     // ativa assumir. Respeita o motor de voz escolhido nas Configuracoes.
-    setTimeout(() => {
+    if (handsFreeActivationTimeoutRef.current) {
+      clearTimeout(handsFreeActivationTimeoutRef.current);
+    }
+    handsFreeActivationTimeoutRef.current = setTimeout(() => {
+      handsFreeActivationTimeoutRef.current = null;
+      if (!handsFreeActiveRef.current || handsFreeUnmountedRef.current) {
+        handsFreeActivationLockRef.current = false;
+        return;
+      }
       if (voiceEngine === 'elevenlabs') {
         startElevenLabsLiveSession();
       } else {
@@ -5221,7 +5334,6 @@ ${isBad
   };
 
   // Wake Word listener implementation
-  const isWaitingRef = useRef(isWaitingForWakeWord);
   useEffect(() => {
     isWaitingRef.current = isWaitingForWakeWord;
   }, [isWaitingForWakeWord]);
@@ -5279,8 +5391,7 @@ ${isBad
 
     wakeWordRec.onerror = (event: any) => {
       if (event.error === 'not-allowed') {
-        setIsHandsFreeActive(false);
-        setIsWaitingForWakeWord(false);
+        disableHandsFreeForMicrophonePermission();
         addNotification("Hands-Free sem acesso ao microfone. Autorize o microfone e tente novamente.", "error");
         return;
       }
@@ -5410,8 +5521,7 @@ ${isBad
       } catch (err) {
         console.warn("Microphone access denied or busy for clap detection:", err);
         if (err instanceof DOMException && (err.name === 'NotAllowedError' || err.name === 'SecurityError')) {
-          setIsHandsFreeActive(false);
-          setIsWaitingForWakeWord(false);
+          disableHandsFreeForMicrophonePermission();
           addNotification("Hands-Free sem acesso ao microfone. Autorize o microfone e tente novamente.", "error");
         }
       }
@@ -5430,7 +5540,7 @@ ${isBad
     };
   }, [isWaitingForWakeWord, isListening, isTranscribing, isElevenLabsLiveActive, liveState.status, chosenInitSoundUrl, voiceEngine]);
 
-  const stopElevenLabsLiveSession = () => {
+  const stopElevenLabsLiveSession = (rearmHandsFree = true) => {
     setIsElevenLabsLiveActive(false);
     isElevenLabsLiveActiveRef.current = false;
     elevenLabsStateRef.current = 'idle';
@@ -5474,9 +5584,11 @@ ${isBad
     setIsSpeaking(false);
     setIsTranscribing(false);
     setIsGenerating(false);
+    if (rearmHandsFree) scheduleHandsFreeRearm();
   };
 
   const startElevenLabsLiveSession = async () => {
+    pauseHandsFreeDetection();
     // Para APENAS o Gemini Live, não reseta liveState ainda
     if (liveSessionRef.current) {
       try { liveSessionRef.current?.close?.(); } catch(_) {}
@@ -6165,9 +6277,19 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
   }, [apiKeys.localAgentToken, localAgentEnvironment]);
 
   useEffect(() => {
+    // O React StrictMode monta, desmonta e monta novamente em desenvolvimento.
+    // Reabrir esta guarda evita confundir o ensaio do StrictMode com unmount real.
+    handsFreeUnmountedRef.current = false;
     return () => {
       // Cleanup on unmount
-      stopLiveSession();
+      handsFreeUnmountedRef.current = true;
+      handsFreeActiveRef.current = false;
+      cancelHandsFreeRearm();
+      if (handsFreeActivationTimeoutRef.current) {
+        clearTimeout(handsFreeActivationTimeoutRef.current);
+        handsFreeActivationTimeoutRef.current = null;
+      }
+      stopLiveSession(false, false);
     };
   }, []);
 
@@ -6193,12 +6315,12 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
     if (!keepError) {
       setLiveState({ status: 'idle' });
     }
-    setIsWaitingForWakeWord(isHandsFreeActive); // Restart wake word listener only if hands-free is active
   };
 
-  const stopLiveSession = (keepError = false) => {
+  const stopLiveSession = (keepError = false, rearmHandsFree = true) => {
     stopLiveSessionInternal(keepError);
-    stopElevenLabsLiveSession();
+    stopElevenLabsLiveSession(false);
+    if (rearmHandsFree) scheduleHandsFreeRearm();
   };
 
   const startScreenSharing = async () => {
@@ -8844,7 +8966,9 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
             addNotification(waRes.error || waRes.message, waRes.error ? 'error' : 'success');
           } else if (call.name === 'osone_cowork') {
             const { objetivo, passos } = call.args as any;
-            const rel: any = await executarCowork(passos || [], apiKeys.localAgentToken, false, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.6-flash' });
+            const rel: any = requestPaidFeature('cowork_browser')
+              ? await executarCowork(passos || [], apiKeys.localAgentToken, false, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.6-flash' })
+              : { error: 'OSONE COWORK requer o plano Plus ou Pro. Nenhuma ação foi executada no navegador.' };
 
             if (rel?.error) {
               addNotification(rel.error, 'error');
@@ -9052,6 +9176,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
   const startLiveSession = async (initiallyCameraActive = isCameraActive) => {
     const apiKey = apiKeys.gemini || '';
 
+    pauseHandsFreeDetection();
     setIsVoiceOutputPaused(false);
     setLiveState({ status: 'connecting' });
     
@@ -9980,7 +10105,12 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 setIsListening(false);
                 setLiveState({ status: 'error', error: explicacao });
                 addNotification(explicacao, "error");
-                stopLiveSession(true);
+                if (err?.name === 'NotAllowedError') {
+                  disableHandsFreeForMicrophonePermission();
+                  stopLiveSession(true, false);
+                } else {
+                  stopLiveSession(true);
+                }
               });
               
               if (attachedFiles.length > 0) {
@@ -10329,7 +10459,9 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     });
                   } else if (call.name === "osone_cowork") {
                     const { passos } = call.args as any;
-                    const rel: any = await executarCowork(passos || [], apiKeys.localAgentToken, true, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.6-flash' });
+                    const rel: any = requestPaidFeature('cowork_browser')
+                      ? await executarCowork(passos || [], apiKeys.localAgentToken, true, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.6-flash' })
+                      : { error: 'OSONE COWORK requer o plano Plus ou Pro. Nenhuma ação foi executada no navegador.' };
                     if (rel?.error) {
                       addNotification(rel.error, 'error');
                       responses.push({ name: call.name, id: call.id, response: { error: rel.error } });
@@ -11366,6 +11498,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
       console.error("Failed to start Live session:", error);
       setLiveState({ status: 'error', error: "Falha ao iniciar sessão de voz." });
       setIsListening(false);
+      scheduleHandsFreeRearm();
     }
   };
 
@@ -11408,15 +11541,23 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
     }
   };
 
-  const [isHandsFreeActive, setIsHandsFreeActive] = useState(false);
-  
   const handleHandsFreeToggle = () => {
     const newState = !isHandsFreeActive;
+    handsFreeActiveRef.current = newState;
     setIsHandsFreeActive(newState);
     if (newState) {
+      handsFreeActivationLockRef.current = false;
+      isWaitingRef.current = true;
       addNotification("Hands-Free Ativado: diga 'OSONE' ou bata uma palma", "success");
       setIsWaitingForWakeWord(true);
     } else {
+      cancelHandsFreeRearm();
+      if (handsFreeActivationTimeoutRef.current) {
+        clearTimeout(handsFreeActivationTimeoutRef.current);
+        handsFreeActivationTimeoutRef.current = null;
+      }
+      handsFreeActivationLockRef.current = false;
+      isWaitingRef.current = false;
       addNotification("Hands-Free Desativado", "info");
       setIsWaitingForWakeWord(false);
     }
@@ -11620,19 +11761,19 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
           checkAndPromptMemory(() => {});
         }
       } else {
+        pauseHandsFreeDetection();
         startElevenLabsLiveSession();
       }
     } else {
       if (liveState.status === 'connected' || liveState.status === 'connecting') {
         const wasConnected = liveState.status === 'connected';
         stopLiveSession();
-        setIsWaitingForWakeWord(isHandsFreeActive); // Respect hands-free state when manually stopping
         if (wasConnected) {
           checkAndPromptMemory(() => {});
         }
       } else {
         setLiveState({ status: 'connecting' }); // Clear any previous error
-        setIsWaitingForWakeWord(false); // Disable wake word while connecting/active
+        pauseHandsFreeDetection();
         startLiveSession();
       }
     }
@@ -13121,11 +13262,24 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         isOpen={isSidebarOpen} 
         onClose={() => setIsSidebarOpen(false)} 
         mode={workspaceMode}
-        setMode={setWorkspaceMode}
+        setMode={openWorkspaceMode}
         user={user}
+        currentPlan={subscription.subscription.plan}
         onLogout={handleLogout}
         onOpenProfileModal={() => setIsProfileModalOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenPlans={() => { setRequestedPaidFeature(undefined); setIsPlansOpen(true); }}
+      />
+      <PlansModal
+        open={isPlansOpen}
+        onClose={() => { setIsPlansOpen(false); setRequestedPaidFeature(undefined); }}
+        current={subscription.subscription}
+        loading={subscription.loading}
+        error={subscription.error}
+        loggedIn={!!user && !user.isLocal}
+        requestedFeature={requestedPaidFeature}
+        onCheckout={(plan, interval) => subscription.openCheckout(plan, interval).catch(() => {})}
+        onPortal={() => subscription.openPortal().catch(() => {})}
       />
       <MotorDeAcoes
         acoes={acoesDoMotor}

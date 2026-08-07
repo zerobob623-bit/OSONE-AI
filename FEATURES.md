@@ -24,7 +24,7 @@ Este documento registra todas as funcionalidades, rotas e módulos ativos no eco
 ## 3. Comunicação de Voz & IA Multimodal (Gemini Live & ElevenLabs)
 - **Integração Gemini Live WebSocket Proxy (`/api/live-ws`)**: Comunicação bidirecional de áudio e texto com o modelo `gemini-3.1-flash-live-preview`. Requer servidor persistente (não funciona em deploy serverless na Vercel).
 - **ElevenLabs Streaming TTS**: com chave própria do usuário nas Configurações, o navegador conecta direto na ElevenLabs (funciona em qualquer hospedagem, inclusive Vercel); sem chave própria, usa o proxy do backend (`/api/elevenlabs-ws`) com a chave do servidor, que requer servidor persistente.
-- **Hands-Free por voz ou palma**: com o botão Hands-Free ativo, a palavra isolada **“OSONE”** (sem precisar dizer “Ei”) ou uma palma nítida inicia a sessão no motor de voz escolhido. Os dois detectores compartilham uma trava contra ativação duplicada e não enviam uma saudação artificial ao chat.
+- **Hands-Free contínuo por voz ou palma**: com o botão Hands-Free ativo, a palavra isolada **“OSONE”** (sem precisar dizer “Ei”) ou uma palma nítida inicia a sessão no motor de voz escolhido. Ao encerrar a conversa, o app aguarda a liberação do microfone e rearma sozinho os dois detectores, permitindo ciclos ilimitados e misturados de voz/palma até o usuário desligar o botão. Uma trava impede ativação duplicada e nenhuma saudação artificial é enviada ao chat.
 - **Perfis e Alternador de Vozes (`VoiceSwitcher.tsx`)**: Configuração de tom e personalidade vocal (Escarlate, Fenrir, etc.).
 
 ---
@@ -115,3 +115,14 @@ Este documento registra todas as funcionalidades, rotas e módulos ativos no eco
 - **Empacotamento Multiplataforma (Electron + electron-builder)**: Arquitetura Desktop que carrega a interface OSONE G5 e executa o servidor backend Express (`dist/server.cjs`) como um processo interno na máquina do usuário, sem necessidade de inicialização manual via terminal.
 - **Gerador de Instaladores Nativos (`npm run build:desktop`)**: Configuração para geração automatizada de instaladores .exe (NSIS para Windows) e .AppImage (Linux) no diretório `dist-desktop/` utilizando o ícone customizado (`build/icon.png`).
 - **Persistência Segura no Disco do Sistema (`app.getPath('userData')`)**: Redirecionamento dinâmico do diretório de dados em ambiente empacotado para a pasta de dados do aplicativo no SO (AppData / Application Support), garantindo que arquivos como `knowledge-base.json`, `contacts.json`, `favorites.json`, sessões do WhatsApp (`.wwebjs_auth`) e mídias geradas (`generated-content/`) continuem funcionando normalmente sem restrições de permissão.
+
+---
+
+## 7. Planos e Assinaturas (`billingService.ts`, `PlansModal.tsx`, `useSubscription.ts`)
+- **Plano Grátis**: mantém chat de texto, conversa por voz, Hands-Free, OSONE CODE e Agente Local para controle do PC. O Agente Local não é confundido com COWORK e não recebe portão pago.
+- **Plano Plus**: R$ 39,90/mês ou R$ 399/ano; acrescenta OSONE HEAR e OSONE COWORK para cliques/escrita no navegador.
+- **Plano Pro**: R$ 69,90/mês ou R$ 699/ano; acrescenta OSONE ZAP a tudo do Plus.
+- **Stripe Checkout e Portal**: cobrança recorrente abre no navegador externo; o app não recebe nem manipula dados de cartão. O cliente pode gerenciar ou cancelar a assinatura pelo portal da Stripe.
+- **Entitlements protegidos**: Firebase ID Token identifica o assinante; webhooks assinados gravam `entitlements/{uid}` via Admin SDK. As regras do Firestore permitem ao usuário ler o próprio plano e proíbem escrita pelo cliente.
+- **Portões em profundidade na interface**: menu, navegação por voz e chamadas de ferramentas da IA verificam o plano antes de abrir HEAR/ZAP ou executar COWORK, sem bloquear conversa nem `controlar_pc`.
+- **Configuração segura**: sem chaves/Price IDs no backend, a tela de planos continua visível para validação visual, mas os botões de cobrança permanecem desativados e nenhum pagamento é simulado.

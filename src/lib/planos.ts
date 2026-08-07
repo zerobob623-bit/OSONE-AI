@@ -1,0 +1,69 @@
+export type OsonePlanId = 'free' | 'plus' | 'pro';
+export type BillingInterval = 'month' | 'year';
+export type PaidFeature = 'cowork_browser' | 'hear' | 'whatsapp';
+
+export interface OsonePlan {
+  id: OsonePlanId;
+  name: string;
+  tagline: string;
+  monthlyPrice: number;
+  yearlyPrice: number;
+  features: PaidFeature[];
+  highlights: string[];
+}
+
+export const OSONE_PLANS: Record<OsonePlanId, OsonePlan> = {
+  free: {
+    id: 'free',
+    name: 'Grátis',
+    tagline: 'O núcleo do OSONE continua seu.',
+    monthlyPrice: 0,
+    yearlyPrice: 0,
+    features: [],
+    highlights: [
+      'Chat de texto e conversa por voz',
+      'Hands-Free por OSOne ou palma',
+      'Agente Local para controlar o PC',
+      'OSONE CODE e recursos essenciais'
+    ]
+  },
+  plus: {
+    id: 'plus',
+    name: 'Plus',
+    tagline: 'Escuta e automação avançada.',
+    monthlyPrice: 39.90,
+    yearlyPrice: 399,
+    features: ['cowork_browser', 'hear'],
+    highlights: [
+      'Tudo do plano Grátis',
+      'OSONE HEAR completo',
+      'OSONE COWORK: cliques e escrita no navegador',
+      'Economia de duas mensalidades no anual'
+    ]
+  },
+  pro: {
+    id: 'pro',
+    name: 'Pro',
+    tagline: 'O OSONE pronto para trabalhar e atender.',
+    monthlyPrice: 69.90,
+    yearlyPrice: 699,
+    features: ['cowork_browser', 'hear', 'whatsapp'],
+    highlights: [
+      'Tudo do plano Plus',
+      'OSONE ZAP completo',
+      'Automação de atendimento e base de conhecimento',
+      'Economia de duas mensalidades no anual'
+    ]
+  }
+};
+
+export const PLAN_RANK: Record<OsonePlanId, number> = { free: 0, plus: 1, pro: 2 };
+
+export const planHasFeature = (plan: OsonePlanId, feature: PaidFeature): boolean =>
+  OSONE_PLANS[plan].features.includes(feature);
+
+export const minimumPlanForFeature = (feature: PaidFeature): OsonePlanId =>
+  feature === 'whatsapp' ? 'pro' : 'plus';
+
+export const formatPlanPrice = (value: number): string =>
+  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);

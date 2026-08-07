@@ -45,6 +45,7 @@ import {
   handleExecute as googleHomeExecute,
   handleDisconnect as googleHomeDisconnect
 } from "./src/googleHomeService";
+import { registerBillingApi, registerBillingWebhook } from "./src/billingService";
 
 dotenv.config();
 // Antes de qualquer checagem: o que o usuário preencheu pela tela entra no ambiente aqui, senão a
@@ -186,8 +187,11 @@ async function startServer() {
     return sanitizeMessageOfKeys(msg);
   };
 
+  // A Stripe assina os bytes crus do webhook; esta rota precisa existir antes do parser JSON.
+  registerBillingWebhook(app);
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  registerBillingApi(app);
 
   // Rotas do Agente Local Unificado no Servidor Express Principal. Na Vercel, "a máquina que
   // o servidor está rodando" é o contêiner efêmero da função serverless, não o PC do usuário —

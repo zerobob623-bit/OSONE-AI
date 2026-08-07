@@ -2,7 +2,7 @@ import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   X, Volume2, FileText, Code2, Music, Gamepad2, Zap, Activity, LogOut, MessageSquare,
-  Compass, Database, Video, Radio, Eye, Heart, BookOpen, Settings, MousePointerClick, Ear,
+  Compass, Crown, Database, Video, Radio, Eye, Heart, BookOpen, Settings, MousePointerClick, Ear,
   type LucideIcon
 } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -148,15 +148,17 @@ const GRUPOS: GrupoDoMenu[] = [
 
 const CLASSE_DO_BOTAO = "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-light text-sm";
 
-export const Sidebar = ({ isOpen, onClose, mode, setMode, user, onLogout, onOpenProfileModal, onOpenSettings }: {
+export const Sidebar = ({ isOpen, onClose, mode, setMode, user, currentPlan, onLogout, onOpenProfileModal, onOpenSettings, onOpenPlans }: {
   isOpen: boolean;
   onClose: () => void;
   mode: WorkspaceMode;
   setMode: (mode: WorkspaceMode) => void;
   user?: any;
+  currentPlan?: 'free' | 'plus' | 'pro';
   onLogout?: () => void;
   onOpenProfileModal?: () => void;
   onOpenSettings?: () => void;
+  onOpenPlans?: () => void;
 }) => (
   <AnimatePresence>
     {isOpen && (
@@ -212,6 +214,14 @@ export const Sidebar = ({ isOpen, onClose, mode, setMode, user, onLogout, onOpen
           {/* Configurações fica junto do perfil, e não no meio das abas de trabalho: é ajuste do
               sistema, não um lugar para onde se vai trabalhar. */}
           <div className="mt-auto pt-6 border-t border-white/[0.03]">
+            <button
+              onClick={() => { onOpenPlans?.(); onClose(); }}
+              className={cn(CLASSE_DO_BOTAO, "mb-3 bg-gradient-to-r from-cyan-500/10 to-indigo-500/10 border border-cyan-400/15 text-cyan-200 cursor-pointer")}
+            >
+              <Crown size={18} className="text-amber-300" />
+              <span>Planos</span>
+              <span className="ml-auto text-[8px] uppercase tracking-widest text-cyan-300/70">{currentPlan || 'free'}</span>
+            </button>
             <button
               onClick={() => { if (onOpenSettings) onOpenSettings(); onClose(); }}
               className={cn(CLASSE_DO_BOTAO, "mb-3 hover:bg-white/[0.02] text-her-ink/60 cursor-pointer")}
