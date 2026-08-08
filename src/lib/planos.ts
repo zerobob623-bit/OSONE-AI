@@ -1,6 +1,6 @@
 export type OsonePlanId = 'free' | 'plus' | 'pro';
 export type BillingInterval = 'month' | 'year';
-export type PaidFeature = 'cowork_browser' | 'hear' | 'whatsapp';
+export type PaidFeature = 'cowork_browser' | 'hear' | 'osone_code' | 'whatsapp';
 
 export interface OsonePlan {
   id: OsonePlanId;
@@ -24,7 +24,7 @@ export const OSONE_PLANS: Record<OsonePlanId, OsonePlan> = {
       'Chat de texto e conversa por voz',
       'Hands-Free por OSOne ou palma',
       'Agente Local para controlar o PC',
-      'OSONE CODE e recursos essenciais'
+      'Aba de Escrita, inclusive para escrever código'
     ]
   },
   plus: {
@@ -33,11 +33,12 @@ export const OSONE_PLANS: Record<OsonePlanId, OsonePlan> = {
     tagline: 'Escuta e automação avançada.',
     monthlyPrice: 39.90,
     yearlyPrice: 339.90,
-    features: ['cowork_browser', 'hear'],
+    features: ['cowork_browser', 'hear', 'osone_code'],
     highlights: [
       'Tudo do plano Grátis',
       'OSONE HEAR completo',
       'OSONE COWORK: cliques e escrita no navegador',
+      'OSONE CODE: Enxame, Hunter e runtimes de código',
       'Economize no plano anual'
     ]
   },
@@ -47,7 +48,7 @@ export const OSONE_PLANS: Record<OsonePlanId, OsonePlan> = {
     tagline: 'O OSONE pronto para trabalhar e atender.',
     monthlyPrice: 69.90,
     yearlyPrice: 669.90,
-    features: ['cowork_browser', 'hear', 'whatsapp'],
+    features: ['cowork_browser', 'hear', 'osone_code', 'whatsapp'],
     highlights: [
       'Tudo do plano Plus',
       'OSONE ZAP completo',
@@ -64,6 +65,15 @@ export const planHasFeature = (plan: OsonePlanId, feature: PaidFeature): boolean
 
 export const minimumPlanForFeature = (feature: PaidFeature): OsonePlanId =>
   feature === 'whatsapp' ? 'pro' : 'plus';
+
+/** Um único mapa para menu, comandos de voz e ferramentas não divergirem sobre o que é pago. */
+export const paidFeatureForWorkspace = (mode: string): PaidFeature | null => {
+  if (mode === 'cowork') return 'cowork_browser';
+  if (mode === 'hear') return 'hear';
+  if (mode === 'code') return 'osone_code';
+  if (mode === 'whatsapp') return 'whatsapp';
+  return null;
+};
 
 export const formatPlanPrice = (value: number): string =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);

@@ -1,4 +1,4 @@
-import { MotivoDeParadaDoAgente } from './agenteAutonomo';
+import type { MotivoDeParadaDoAgente, RelatorioDoAgente, VoltaDoAgente } from './agenteAutonomo';
 
 /**
  * As tarefas que o COWORK já executou, para repetir com um clique.
@@ -26,10 +26,96 @@ export interface TarefaDoHistorico {
   voltas?: number;
   /** Em que janela começou, para a pessoa lembrar do contexto. */
   janela?: string;
+  /** Houve uma execução concluída cujos alvos semânticos podem orientar a próxima tentativa. */
+  aprendida?: boolean;
 }
 
 const CHAVE_DO_HISTORICO = 'osone_cowork_historico';
 const MAXIMO_NO_HISTORICO = 20;
+const CHAVE_DAS_AUTOMACOES = 'osone_cowork_automacoes_v1';
+
+export interface MemoriaDeAutomacao {
+  objetivo: string;
+  atualizadoEm: number;
+  sucessos: number;
+  /** Pistas sem coordenadas e sem o conteúdo digitado. Nunca são reproduzidas às cegas. */
+  pistas: Array<{ acao: string; descricao: string }>;
+}
+
+const normalizarObjetivo = (texto: string) => texto.trim().toLocaleLowerCase('pt-BR').replace(/\s+/g, ' ');
+
+function lerAutomacoes(): MemoriaDeAutomacao[] {
+  try {
+    const valor = JSON.parse(localStorage.getItem(CHAVE_DAS_AUTOMACOES) || '[]');
+    return Array.isArray(valor) ? valor : [];
+  } catch { return []; }
+}
+
+/**
+ * Converte uma execução bem-sucedida em memória SEM transformar o COWORK num macro gravado.
+ * Coordenadas e textos digitados são descartados; senha, token ou mensagem do usuário não entram
+ * no armazenamento. Na próxima vez, o modelo recebe só descrições como “clicou no botão Enviar”
+ * e continua obrigado a olhar a tela atual antes de cada ação.
+ */
+function pistaSegura(volta: VoltaDoAgente): { acao: string; descricao: string } | null {
+  if (!volta.ok) return null;
+  const args = volta.args || {};
+  switch (volta.acao) {
+    case 'clicar': {
+      const alvo = String(args.alvo || '').trim();
+      return alvo ? { acao: 'clicar', descricao: `clicar em ${alvo}` } : null;
+    }
+    case 'abrir': {
+      let caminho = String(args.caminho || '').trim();
+      try {
+        const url = new URL(caminho);
+        url.search = ''; url.hash = '';
+        caminho = url.toString();
+      } catch { /* caminho local fica local; esta memória nunca sai do aparelho */ }
+      return caminho ? { acao: 'abrir', descricao: `abrir ${caminho}` } : null;
+    }
+    case 'trocar_janela': {
+      const titulo = String(args.tituloContem || '').trim();
+      return titulo ? { acao: 'trocar_janela', descricao: `procurar janela ${titulo}` } : null;
+    }
+    case 'tecla': {
+      const tecla = String(args.tecla || '').trim();
+      return tecla ? { acao: 'tecla', descricao: `pressionar ${tecla}` } : null;
+    }
+    case 'rolar':
+      return { acao: 'rolar', descricao: `rolar ${String(args.direcao || 'down')}` };
+    case 'digitar':
+      return { acao: 'digitar', descricao: 'digitar no campo em foco (conteúdo omitido por privacidade)' };
+    default:
+      return null;
+  }
+}
+
+export function aprenderAutomacao(objetivo: string, relatorio: RelatorioDoAgente): boolean {
+  if (relatorio.motivo !== 'concluido') return false;
+  const pistas = relatorio.voltas.map(pistaSegura).filter(Boolean).slice(0, 24) as MemoriaDeAutomacao['pistas'];
+  if (!pistas.length) return false;
+  const chave = normalizarObjetivo(objetivo);
+  const atuais = lerAutomacoes();
+  const anterior = atuais.find(a => normalizarObjetivo(a.objetivo) === chave);
+  const memoria: MemoriaDeAutomacao = {
+    objetivo: objetivo.trim(), atualizadoEm: Date.now(), sucessos: (anterior?.sucessos || 0) + 1, pistas
+  };
+  const nova = [memoria, ...atuais.filter(a => normalizarObjetivo(a.objetivo) !== chave)].slice(0, 20);
+  try { localStorage.setItem(CHAVE_DAS_AUTOMACOES, JSON.stringify(nova)); } catch { return false; }
+  return true;
+}
+
+export function pistasDaAutomacao(objetivo: string): string {
+  const chave = normalizarObjetivo(objetivo);
+  const memoria = lerAutomacoes().find(a => normalizarObjetivo(a.objetivo) === chave);
+  if (!memoria?.pistas?.length) return '';
+  return [
+    `MEMÓRIA DE UMA EXECUÇÃO BEM-SUCEDIDA DESTE OBJETIVO (${memoria.sucessos} vez(es)):`,
+    ...memoria.pistas.map((p, i) => `${i + 1}. ${p.descricao}`),
+    'Use isto apenas como pista. NÃO repita coordenadas nem ações cegamente: confira a foto atual, adapte o caminho e valide o resultado de cada passo.'
+  ].join('\n');
+}
 
 /** Traduz o motivo de parada do agente para o desfecho que a lista mostra. */
 export function desfechoDoMotivo(motivo: MotivoDeParadaDoAgente | string): TarefaDoHistorico['desfecho'] {
@@ -60,5 +146,8 @@ export function guardarNoHistorico(item: TarefaDoHistorico): TarefaDoHistorico[]
 }
 
 export function limparHistorico(): void {
-  try { localStorage.removeItem(CHAVE_DO_HISTORICO); } catch { /* idem */ }
+  try {
+    localStorage.removeItem(CHAVE_DO_HISTORICO);
+    localStorage.removeItem(CHAVE_DAS_AUTOMACOES);
+  } catch { /* idem */ }
 }

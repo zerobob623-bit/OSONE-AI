@@ -19,21 +19,22 @@
  * palavra-chave, senão a palavra 'for' escrita dentro de um comentário sai pintada como comando.
  */
 
-export type LinguagemDeRealce = 'javascript' | 'css' | 'html' | 'python' | 'json' | 'markdown' | 'texto';
+export type LinguagemDeRealce = 'javascript' | 'typescript' | 'css' | 'html' | 'python' | 'sql' | 'json' | 'markdown' | 'texto';
 
 /** Descobre a linguagem pelo nome do arquivo — é o que o editor tem em mãos. */
 export function linguagemDoArquivo(nome: string, linguagemDeclarada?: string): LinguagemDeRealce {
   const ext = (nome || '').split('.').pop()?.toLowerCase() || '';
-  if (['js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx'].includes(ext)) return 'javascript';
+  if (['js', 'jsx', 'mjs', 'cjs'].includes(ext)) return 'javascript';
+  if (['ts', 'tsx'].includes(ext)) return 'typescript';
   if (ext === 'css' || ext === 'scss' || ext === 'less') return 'css';
   if (ext === 'html' || ext === 'htm' || ext === 'svg' || ext === 'xml') return 'html';
   if (ext === 'py') return 'python';
+  if (ext === 'sql') return 'sql';
   if (ext === 'json') return 'json';
   if (ext === 'md' || ext === 'markdown') return 'markdown';
 
   const d = (linguagemDeclarada || '').toLowerCase();
-  if (['javascript', 'typescript'].includes(d)) return 'javascript';
-  if (['css', 'html', 'python', 'json', 'markdown'].includes(d)) return d as LinguagemDeRealce;
+  if (['javascript', 'typescript', 'css', 'html', 'python', 'sql', 'json', 'markdown'].includes(d)) return d as LinguagemDeRealce;
   return 'texto';
 }
 
@@ -67,6 +68,15 @@ const REGRAS: Record<LinguagemDeRealce, Regra[]> = {
     { classe: 'r-fn', re: /\b[A-Za-z_$][\w$]*(?=\s*\()/y },
     { classe: 'r-tipo', re: /\b[A-Z][\w$]*\b/y }
   ],
+  typescript: [
+    { classe: 'r-com', re: /\/\/[^\n]*|\/\*[\s\S]*?\*\//y },
+    { classe: 'r-str', re: /`(?:\\[\s\S]|[^`\\])*`|'(?:\\[\s\S]|[^'\\\n])*'|"(?:\\[\s\S]|[^"\\\n])*"/y },
+    { classe: 'r-num', re: /\b0[xX][0-9a-fA-F]+\b|\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/y },
+    { classe: 'r-lit', re: new RegExp(`\\b(?:${LITERAIS_JS})\\b`, 'y') },
+    { classe: 'r-kw', re: new RegExp(`\\b(?:${PALAVRAS_JS}|interface|type|enum|namespace|declare|implements|private|protected|public|readonly|abstract|keyof|unknown|never)\\b`, 'y') },
+    { classe: 'r-fn', re: /\b[A-Za-z_$][\w$]*(?=\s*\()/y },
+    { classe: 'r-tipo', re: /\b[A-Z][\w$]*\b/y }
+  ],
   python: [
     { classe: 'r-com', re: /#[^\n]*/y },
     { classe: 'r-str', re: /"""[\s\S]*?"""|'''[\s\S]*?'''|'(?:\\[\s\S]|[^'\\\n])*'|"(?:\\[\s\S]|[^"\\\n])*"/y },
@@ -74,6 +84,13 @@ const REGRAS: Record<LinguagemDeRealce, Regra[]> = {
     { classe: 'r-lit', re: new RegExp(`\\b(?:${LITERAIS_PY})\\b`, 'y') },
     { classe: 'r-kw', re: new RegExp(`\\b(?:${PALAVRAS_PY})\\b`, 'y') },
     { classe: 'r-dec', re: /@[A-Za-z_][\w.]*/y },
+    { classe: 'r-fn', re: /\b[A-Za-z_][\w]*(?=\s*\()/y }
+  ],
+  sql: [
+    { classe: 'r-com', re: /--[^\n]*|\/\*[\s\S]*?\*\//y },
+    { classe: 'r-str', re: /'(?:''|[^'])*'|"(?:""|[^"])*"/y },
+    { classe: 'r-num', re: /\b\d+(?:\.\d+)?\b/y },
+    { classe: 'r-kw', re: /\b(?:SELECT|FROM|WHERE|INSERT|INTO|VALUES|UPDATE|SET|DELETE|CREATE|DROP|ALTER|TABLE|INDEX|JOIN|LEFT|RIGHT|INNER|OUTER|ON|AS|GROUP|BY|ORDER|HAVING|LIMIT|OFFSET|DISTINCT|UNION|ALL|AND|OR|NOT|NULL|IS|IN|LIKE|CASE|WHEN|THEN|ELSE|END|PRIMARY|KEY|FOREIGN|REFERENCES|DEFAULT|CHECK|UNIQUE)\b/iy },
     { classe: 'r-fn', re: /\b[A-Za-z_][\w]*(?=\s*\()/y }
   ],
   css: [

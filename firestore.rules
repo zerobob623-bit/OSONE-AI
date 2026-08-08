@@ -28,6 +28,26 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /billingPurchases/{document=**} {
+      allow read, write: if false;
+    }
+
+    // Um documento por versão: o usuário autenticado pode registrar o próprio aceite uma vez.
+    // acceptedAt precisa ser o horário do servidor; alteração e exclusão ficam proibidas.
+    match /legalAcceptances/{userId}/versions/{version} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow create: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly([
+          'version', 'termsVersion', 'privacyVersion', 'acceptedAt'
+        ])
+        && request.resource.data.version == version
+        && request.resource.data.termsVersion == version
+        && request.resource.data.privacyVersion == version
+        && request.resource.data.acceptedAt == request.time;
+      allow update, delete: if false;
+    }
+
     // Nega tudo o mais por padrão (comportamento implícito do Firestore quando nenhuma regra
     // casa, mas deixamos explícito aqui para não haver dúvida).
     match /{document=**} {

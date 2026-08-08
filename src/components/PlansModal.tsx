@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Check, Crown, Loader2, Lock, Sparkles, X } from 'lucide-react';
+import { Check, CreditCard, Crown, Loader2, Lock, QrCode, Sparkles, X } from 'lucide-react';
 import { BillingInterval, OSONE_PLANS, OsonePlanId, formatPlanPrice } from '../lib/planos';
 import type { SubscriptionSnapshot } from '../hooks/useSubscription';
 import { cn } from '../lib/utils';
@@ -23,10 +23,11 @@ export function PlansModal({
   error: string;
   loggedIn: boolean;
   requestedFeature?: string;
-  onCheckout: (plan: 'plus' | 'pro', interval: BillingInterval) => Promise<void>;
+  onCheckout: (plan: 'plus' | 'pro', interval: BillingInterval, paymentMethod: 'card' | 'pix') => Promise<void>;
   onPortal: () => Promise<void>;
 }) {
   const [interval, setInterval] = useState<BillingInterval>('month');
+  const [paymentMethod, setPaymentMethod] = useState<'card' | 'pix'>('card');
   const plans = Object.values(OSONE_PLANS);
 
   return (
@@ -46,6 +47,11 @@ export function PlansModal({
                 <button onClick={() => setInterval('month')} className={cn('px-5 py-2 rounded-full text-xs transition', interval === 'month' ? 'bg-white text-black' : 'text-zinc-400')}>Mensal</button>
                 <button onClick={() => setInterval('year')} className={cn('px-5 py-2 rounded-full text-xs transition', interval === 'year' ? 'bg-white text-black' : 'text-zinc-400')}>Anual · economize</button>
               </div>
+              <div className="mt-3 flex justify-center gap-2">
+                <button onClick={() => setPaymentMethod('card')} className={cn('flex items-center gap-2 px-4 py-2 rounded-full border text-xs transition', paymentMethod === 'card' ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-200' : 'border-white/10 text-zinc-500')}><CreditCard size={13} /> Cartão · renovação automática</button>
+                <button disabled={!current.pixEnabled} onClick={() => setPaymentMethod('pix')} className={cn('flex items-center gap-2 px-4 py-2 rounded-full border text-xs transition disabled:cursor-not-allowed disabled:opacity-40', paymentMethod === 'pix' ? 'border-emerald-300/40 bg-emerald-300/10 text-emerald-200' : 'border-white/10 text-zinc-500')}><QrCode size={13} /> {current.pixEnabled ? 'PIX · pagamento único' : 'PIX · aguardando liberação'}</button>
+              </div>
+              {paymentMethod === 'pix' && <p className="mt-2 text-[11px] text-emerald-200/70">O acesso vale pelo período escolhido. Ao vencer, faça um novo PIX para continuar.</p>}
             </div>
 
             <div className="relative grid md:grid-cols-3 gap-4 px-6 md:px-10 pb-10">
@@ -72,8 +78,8 @@ export function PlansModal({
                         {loading ? <Loader2 size={15} className="animate-spin mx-auto" /> : `Alterar para ${plan.name} no portal`}
                       </button>
                     ) : paidPlan ? (
-                      <button disabled={loading || !loggedIn || !current.billingEnabled} onClick={() => onCheckout(plan.id as 'plus' | 'pro', interval)} className="mt-6 w-full py-3 rounded-xl bg-white text-black text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-cyan-100 transition">
-                        {loading ? <Loader2 size={15} className="animate-spin mx-auto" /> : !loggedIn ? 'Entre com Google para assinar' : !current.billingEnabled ? 'Cobrança aguardando configuração' : `Assinar ${plan.name}`}
+                      <button disabled={loading || !loggedIn || !current.billingEnabled} onClick={() => onCheckout(plan.id as 'plus' | 'pro', interval, paymentMethod)} className="mt-6 w-full py-3 rounded-xl bg-white text-black text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-cyan-100 transition">
+                        {loading ? <Loader2 size={15} className="animate-spin mx-auto" /> : !loggedIn ? 'Entre com Google para assinar' : !current.billingEnabled ? 'Cobrança aguardando configuração' : paymentMethod === 'pix' ? `Pagar ${plan.name} com PIX` : `Assinar ${plan.name}`}
                       </button>
                     ) : <div className="mt-6 py-3 text-center text-xs text-zinc-500">Sempre disponível</div>}
                   </div>

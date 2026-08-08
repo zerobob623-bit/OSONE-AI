@@ -26,7 +26,7 @@ const RAIZ = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
 
 let chromium;
 try {
-  ({ chromium } = await import('playwright'));
+  ({ chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright'));
 } catch {
   console.error("Este conferidor precisa do playwright: rode 'npm i -D playwright' e tente de novo.");
   process.exit(2);
@@ -85,8 +85,8 @@ const registrar = (nome, passou, detalhe) => {
 };
 
 const executavel = process.env.CHROMIUM_PATH
-  || ['/opt/pw-browsers/chromium-1194/chrome-linux/chrome', '/opt/pw-browsers/chromium/chrome-linux/chrome'].find(p => fs.existsSync(p));
-const nav = await chromium.launch(executavel ? { executablePath: executavel } : {});
+  || ['/usr/bin/google-chrome', '/usr/bin/chromium', '/opt/google/chrome/chrome', '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', '/opt/pw-browsers/chromium/chrome-linux/chrome'].find(p => fs.existsSync(p));
+const nav = await chromium.launch(executavel ? { executablePath: executavel, args: ['--no-sandbox'] } : {});
 
 /**
  * @param respostasProntas textos devolvidos de imediato, na ordem das chamadas; quando a lista
@@ -262,6 +262,37 @@ const conteudoGravado = async (pag) => {
   const gravado = await conteudoGravado(pag);
   registrar('fechar o modal do Enxame para a execução em vez de deixá-la gravando por baixo',
     gravado === ORIGINAL, gravado === ORIGINAL ? 'arquivo intocado' : 'GRAVOU depois de fechado');
+
+  await ctx.close();
+}
+
+// ====== 5) O ENXAME INTEIRO CHEGA À APROVAÇÃO E SALVA O RESULTADO ======
+{
+  const codigoFinal = '<!doctype html><html><head><title>Nave</title></head><body><canvas></canvas><script>function loop(){requestAnimationFrame(loop)}loop()</script></body></html>';
+  const { pag, ctx } = await abrir([
+    JSON.stringify({ gdd: 'jogo de nave', mechanics: ['controle', 'pontuação'], requirements: ['canvas'] }),
+    JSON.stringify({ fileStructure: 'index.html', gameLoopStrategy: 'requestAnimationFrame', librariesUsed: ['Canvas'] }),
+    codigoFinal,
+    JSON.stringify({ score: 100, passed: true, feedback: 'Tudo funcional.', missingItems: [] })
+  ]);
+
+  await pag.getByRole('button', { name: /ENXAME OSONE CODE/ }).click();
+  await pag.waitForTimeout(300);
+  await pag.getByPlaceholder(/Ex:/).first().fill('faz um jogo de nave');
+  await pag.getByRole('button', { name: /Disparar|Iniciar|Executar|ENXAME/i }).last().click();
+  await pag.waitForFunction(() => window.__chamadas >= 4, null, { timeout: 10000 }).catch(() => null);
+  await pag.waitForTimeout(300);
+
+  const gravado = await conteudoGravado(pag);
+  const textoDaTela = await pag.locator('body').innerText();
+  const chamadas = await pag.evaluate(() => window.__chamadas);
+  registrar('o Enxame completo passa por Produto, Arquitetura, Engenharia e QA',
+    chamadas === 4, `${chamadas} chamadas`);
+  registrar('o Enxame aprovado grava exatamente o código produzido',
+    gravado === codigoFinal, gravado === codigoFinal ? 'arquivo final preservado' : 'arquivo divergente');
+  registrar('o Enxame só anuncia sucesso depois da aprovação do QA',
+    /APROVADO COM SUCESSO|Jogo criado e testado pelo Enxame/i.test(textoDaTela),
+    /APROVADO COM SUCESSO|Jogo criado e testado pelo Enxame/i.test(textoDaTela) ? 'QA 100/100' : textoDaTela.slice(-180));
 
   await ctx.close();
 }

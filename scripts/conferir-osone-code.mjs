@@ -24,7 +24,7 @@ const RAIZ = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
 
 let chromium;
 try {
-  ({ chromium } = await import('playwright'));
+  ({ chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright'));
 } catch {
   console.error("Este conferidor precisa do playwright: rode 'npm i -D playwright' e tente de novo.");
   process.exit(2);
@@ -91,8 +91,8 @@ const registrar = (nome, passou, detalhe) => {
 };
 
 const executavel = process.env.CHROMIUM_PATH
-  || ['/opt/pw-browsers/chromium-1194/chrome-linux/chrome', '/opt/pw-browsers/chromium/chrome-linux/chrome'].find(p => fs.existsSync(p));
-const nav = await chromium.launch(executavel ? { executablePath: executavel } : {});
+  || ['/usr/bin/google-chrome', '/usr/bin/chromium', '/opt/google/chrome/chrome', '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', '/opt/pw-browsers/chromium/chrome-linux/chrome'].find(p => fs.existsSync(p));
+const nav = await chromium.launch(executavel ? { executablePath: executavel, args: ['--no-sandbox'] } : {});
 
 const abrir = async () => {
   const ctx = await nav.newContext({ viewport: { width: 1400, height: 900 } });

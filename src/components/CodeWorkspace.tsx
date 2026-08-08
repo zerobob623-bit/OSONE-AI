@@ -105,6 +105,7 @@ export function linguagemPelaExtensao(nomeDoArquivo: string): string {
   if (ext === 'html' || ext === 'htm') return 'html';
   if (ext === 'css') return 'css';
   if (ext === 'py') return 'python';
+  if (ext === 'ts' || ext === 'tsx') return 'typescript';
   if (ext === 'json') return 'json';
   if (ext === 'md') return 'markdown';
   if (ext === 'sql') return 'sql';
@@ -1225,26 +1226,23 @@ export const CodeWorkspace: React.FC<{
   };
 
   const handleCreateNewFile = () => {
-    const fileName = window.prompt('Nome do novo arquivo (ex: index.html, script.js, style.css, app.py):');
+    const fileName = window.prompt('Nome do novo arquivo (ex: index.html, script.ts, app.py, consulta.sql):');
     if (!fileName || !fileName.trim()) return;
 
     pushHistory(files);
     const trimmed = fileName.trim();
-    const ext = trimmed.split('.').pop()?.toLowerCase() || 'txt';
-    let lang = 'javascript';
-    if (ext === 'html' || ext === 'htm') lang = 'html';
-    else if (ext === 'css') lang = 'css';
-    else if (ext === 'js' || ext === 'jsx' || ext === 'ts' || ext === 'tsx') lang = 'javascript';
-    else if (ext === 'py') lang = 'python';
-    else if (ext === 'json') lang = 'json';
-    else if (ext === 'md') lang = 'markdown';
-    else if (ext === 'sql') lang = 'sql';
+    const lang = linguagemPelaExtensao(trimmed);
+    const conteudoInicial = lang === 'html'
+      ? `<!DOCTYPE html>\n<html>\n<head>\n  <title>${trimmed}</title>\n</head>\n<body>\n  <h1>${trimmed}</h1>\n</body>\n</html>`
+      : lang === 'python' ? `# Arquivo: ${trimmed}\n`
+      : lang === 'sql' ? `-- Arquivo: ${trimmed}\n`
+      : `// Arquivo: ${trimmed}\n`;
 
     const newFile: CodeRepositoryFile = {
       id: 'file-' + Date.now(),
       name: trimmed,
       language: lang,
-      content: lang === 'html' ? `<!DOCTYPE html>\n<html>\n<head>\n  <title>${trimmed}</title>\n</head>\n<body>\n  <h1>${trimmed}</h1>\n</body>\n</html>` : `// Arquivo: ${trimmed}\n`,
+      content: conteudoInicial,
       updatedAt: Date.now()
     };
 
@@ -1427,7 +1425,8 @@ Responda APENAS um array JSON de 4 strings. Exemplo do formato:
    * styles.css e o script.js embutidos no HTML. Quando o navegador diz "erro na linha 312", é
    * desta montagem que ele fala — e é só aqui que dá para descobrir o que essa linha contém.
    */
-  const codigoQueRoda = linguagemDoArquivo(activeFile?.name || '', activeFile?.language) === 'python'
+  const linguagemAtiva = linguagemDoArquivo(activeFile?.name || '', activeFile?.language);
+  const codigoQueRoda = ['python', 'typescript', 'sql'].includes(linguagemAtiva)
     ? (activeFile?.content || '')
     : montarPreview(files, activeFile);
 
@@ -2721,7 +2720,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
                 <div className="flex items-center gap-1">
                   <label className="p-1 rounded bg-white/[0.03] hover:bg-white/10 text-zinc-400 cursor-pointer transition-colors" title="Importar do PC">
                     <Upload size={13} />
-                    <input type="file" onChange={handleImportFileDisk} className="hidden" accept=".html,.css,.js,.ts,.json,.txt,.md" />
+                    <input type="file" onChange={handleImportFileDisk} className="hidden" accept=".html,.css,.js,.jsx,.ts,.tsx,.py,.sql,.json,.txt,.md" />
                   </label>
                   
                   <button 
@@ -3051,7 +3050,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
                   cru como se fosse página quando o arquivo aberto não é uma. */}
               <CodePreview
                 code={codigoQueRoda}
-                linguagem={linguagemDoArquivo(activeFile?.name || '', activeFile?.language)}
+                linguagem={linguagemAtiva}
                 aoDetectarProblema={registrarProblemaDoPreview}
               />
             </div>

@@ -46,6 +46,9 @@ function calcular(a, b) {
   return null; /* fim */
 }
 class Coisa extends Base {}`,
+  typescript: `interface Pessoa { nome: string; idade: number }
+const pessoa: Pessoa = { nome: "Ana", idade: 30 };
+console.log(pessoa.nome);`,
   python: `# cabeçalho
 import os
 @decorador
@@ -55,6 +58,10 @@ def calcular(n):
     if n is not None and n > 0:
         return n * 2
     return None`,
+  sql: `-- consulta
+CREATE TABLE pessoas (id INTEGER PRIMARY KEY, nome TEXT);
+INSERT INTO pessoas VALUES (1, 'Ana');
+SELECT nome FROM pessoas WHERE id = 1;`,
   css: `/* comentário */
 @media (max-width: 600px) {
   .caixa#topo { color: #ff0000; width: 10px; }
@@ -130,8 +137,8 @@ for (const [linguagem, amostra] of Object.entries(AMOSTRAS)) {
 
 // 13) A linguagem é descoberta pela extensão do arquivo.
 {
-  const mapa = [['app.tsx', 'javascript'], ['estilo.css', 'css'], ['pagina.html', 'html'],
-                ['script.py', 'python'], ['dados.json', 'json'], ['leia.md', 'markdown'],
+  const mapa = [['app.tsx', 'typescript'], ['estilo.css', 'css'], ['pagina.html', 'html'],
+                ['script.py', 'python'], ['consulta.sql', 'sql'], ['dados.json', 'json'], ['leia.md', 'markdown'],
                 ['nota.xyz', 'texto']];
   const erros = mapa.filter(([nome, esperado]) => linguagemDoArquivo(nome) !== esperado);
   registrar('a linguagem é descoberta pela extensão do arquivo',

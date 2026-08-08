@@ -35,6 +35,7 @@ assert.ok(endpoint, `Não existe webhook Stripe apontando para ${webhookUrl}.`);
 assert.equal(endpoint.status, 'enabled', 'O webhook existe, mas está desativado.');
 const requiredEvents = [
   'checkout.session.completed',
+  'checkout.session.async_payment_succeeded',
   'customer.subscription.created',
   'customer.subscription.updated',
   'customer.subscription.deleted'
@@ -44,7 +45,7 @@ for (const event of requiredEvents) {
   assert.ok(allEvents || endpoint.enabled_events.includes(event as Stripe.WebhookEndpointCreateParams.EnabledEvent),
     `O webhook não está ouvindo ${event}.`);
 }
-console.log('  ok  webhook ativo no endereço certo e ouvindo os quatro eventos de assinatura');
+console.log('  ok  webhook ativo no endereço certo e ouvindo assinatura e confirmação assíncrona do PIX');
 
 const portalConfigurations = await stripe.billingPortal.configurations.list({ active: true, limit: 100 });
 const portalSummary = portalConfigurations.data.find(config =>
@@ -68,5 +69,11 @@ for (const item of prices) {
   assert.ok(portalPriceIds.has(required(item.env)), `O Portal não inclui ${item.plan.toUpperCase()} ${item.interval}.`);
 }
 console.log('  ok  Portal permite pagamento, faturas, cancelamento e troca entre os quatro preços');
+
+const paymentMethods = await stripe.paymentMethodConfigurations.list({ active: true, limit: 100 });
+const pix = paymentMethods.data[0]?.pix;
+console.log(pix?.available && pix.display_preference?.value === 'on'
+  ? '  ok  PIX de pagamento único disponível e ativado'
+  : '  aviso  PIX ainda indisponível na conta; o app manterá o botão bloqueado');
 
 console.log(`6/6 grupos da configuração Stripe passaram (${secretKey.startsWith('sk_live_') ? 'modo produção' : 'modo teste'}; somente leitura).`);
