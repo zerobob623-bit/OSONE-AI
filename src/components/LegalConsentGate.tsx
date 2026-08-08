@@ -3,7 +3,7 @@ import { AlertTriangle, Check, Loader2, LogOut, ShieldCheck } from 'lucide-react
 import { db, doc, getDoc, serverTimestamp, setDoc } from '../firebase';
 import type { User } from '../types';
 
-export const LEGAL_VERSION = '2026-08-08';
+export const LEGAL_VERSION = '2026-08-08-v2';
 
 const valor = (nome: string): string => String(import.meta.env[nome] ?? '').trim();
 
@@ -170,7 +170,7 @@ function LegalText() {
       </section>
       <section>
         <h2 className="text-base font-semibold text-white">3. Recursos gratuitos, cotas e terceiros</h2>
-        <p className="mt-2">Chat, voz, Hands-Free, OSONE CODE e controle local do PC permanecem disponíveis no plano gratuito conforme a descrição vigente. Alguns recursos dependem de internet, aparelho compatível, permissões do sistema e serviços como Google/Firebase/Gemini, ElevenLabs, Stripe, Vercel, WhatsApp e outros escolhidos pelo usuário.</p>
+        <p className="mt-2">Chat, voz, Hands-Free, a aba de Escrita — inclusive para escrever código — e o controle local do PC permanecem disponíveis no plano gratuito conforme a descrição vigente. O ambiente OSONE CODE, com Enxame, Hunter, execução e ferramentas avançadas de desenvolvimento, integra o plano Plus e também o Pro. Alguns recursos dependem de internet, aparelho compatível, permissões do sistema e serviços como Google/Firebase/Gemini, ElevenLabs, Stripe, Vercel, WhatsApp e outros escolhidos pelo usuário.</p>
         <p className="mt-2">APIs externas podem impor cotas gratuitas, preços, bloqueios regionais, indisponibilidade ou mudanças sem controle do OSONE. O fim de uma cota externa não significa que o usuário foi induzido a contratar um plano OSONE e não cria garantia de uso ilimitado. Quando o recurso aceitar chave própria, o consumo e a relação com o provedor da chave são responsabilidade do usuário.</p>
       </section>
       <section>

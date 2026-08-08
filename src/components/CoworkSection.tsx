@@ -273,7 +273,8 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
         desfecho,
         detalhe: texto,
         voltas: (resultado as any)?.voltas?.length,
-        janela: janelaDeTrabalho.titulo
+        janela: janelaDeTrabalho?.titulo || (areaParalela?.ligada ? 'Tela do agente' : undefined),
+        aprendida: desfecho === 'concluida' && Array.isArray((resultado as any)?.voltas) && (resultado as any).voltas.some((v: any) => v.ok && ['abrir', 'clicar', 'digitar', 'tecla', 'rolar', 'trocar_janela'].includes(v.acao))
       }));
 
       /**
@@ -522,7 +523,7 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
               {historico.length > 0 && (
                 <button
                   onClick={() => { limparHistorico(); setHistorico([]); }}
-                  title="Limpar o histórico"
+                  title="Limpar o histórico e o aprendizado de automações"
                   className="p-1.5 rounded-lg hover:bg-white/[0.05] text-her-muted"
                 >
                   <Trash2 size={14} />
@@ -548,6 +549,7 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
                         {item.voltas ? `${item.voltas} ação(ões) · ` : ''}
                         {new Date(item.quando).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
                         {item.desfecho !== 'concluida' && ` · ${item.desfecho === 'parada' ? 'parada' : 'não concluiu'}`}
+                        {item.aprendida && ' · automação aprendida com segurança'}
                       </p>
                     </div>
                     <button
