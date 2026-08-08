@@ -4,6 +4,10 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
+      "source": "/api/billing/:path*",
+      "destination": "/api/billing"
+    },
+    {
       "source": "/api/:path*",
       "destination": "/api"
     },
