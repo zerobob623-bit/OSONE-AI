@@ -5,6 +5,9 @@
   "description": "OSONE G5 - Sistema Operacional Neural",
   "author": "OSONE",
   "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
   "main": "electron/main.js",
   "repository": {
     "type": "git",
