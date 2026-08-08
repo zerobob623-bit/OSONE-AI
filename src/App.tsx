@@ -122,6 +122,7 @@ import { generatePDF } from './lib/pdfUtils';
 import { resolveAudioUrl, deleteAudio } from './lib/audioDb';
 import { auth, googleProvider, signInWithPopup, signOut, onAuthStateChanged, db, doc, setDoc, getDoc, OperationType, handleFirestoreError, isFirebaseFullyConfigured, firebaseConfigFaltando, explicarErroDeLogin } from './firebase';
 import { TelaDeEntrada } from './components/TelaDeEntrada';
+import { LegalConsentGate } from './components/LegalConsentGate';
 
 import { WritingStudioSection } from './components/WritingStudioSection';
 import { CodeWorkspaceSection } from './components/CodeWorkspaceSection';
@@ -11827,6 +11828,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
   }
 
   return (
+    <LegalConsentGate user={user} onSair={handleLogout}>
     <motion.div
       onPanEnd={(e, info) => {
         // Only trigger gesture when on the initial home interface
@@ -13278,7 +13280,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         error={subscription.error}
         loggedIn={!!user && !user.isLocal}
         requestedFeature={requestedPaidFeature}
-        onCheckout={(plan, interval) => subscription.openCheckout(plan, interval).catch(() => {})}
+        onCheckout={(plan, interval, paymentMethod) => subscription.openCheckout(plan, interval, paymentMethod).catch(() => {})}
         onPortal={() => subscription.openPortal().catch(() => {})}
       />
       <MotorDeAcoes
@@ -13856,5 +13858,6 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         </div>
       )}
     </motion.div>
+    </LegalConsentGate>
   );
 }

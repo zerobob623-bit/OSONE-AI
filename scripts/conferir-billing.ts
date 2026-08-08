@@ -4,7 +4,7 @@ import http from 'node:http';
 import path from 'node:path';
 import Stripe from 'stripe';
 import handler from '../api/billing';
-import { billingResultUrl, validateStripePrice } from '../src/billingService';
+import { billingResultUrl, pixPeriodEnd, validatePixCheckout, validateStripePrice } from '../src/billingService';
 import { OSONE_PLANS, planHasFeature } from '../src/lib/planos';
 
 const PROJECT_ROOT = path.resolve(import.meta.dirname, '..');
@@ -35,6 +35,7 @@ try {
   assert.equal(directData.plans.plus.yearly, 339.90);
   assert.equal(directData.plans.pro.monthly, 69.90);
   assert.equal(directData.plans.pro.yearly, 669.90);
+  assert.equal(directData.pixEnabled, false);
   console.log('  ok  função isolada responde à rota direta com os quatro preços');
 
   const rewritten = await fetch(`${base}/api/billing?path=config`);
@@ -147,6 +148,13 @@ try {
   }, 'plus', 'year'), /pagamento foi bloqueado/i);
   console.log('  ok  valor, moeda e periodicidade divergentes bloqueiam o Checkout');
 
+  validatePixCheckout({ mode: 'payment', payment_status: 'paid', currency: 'brl', amount_total: 3990 }, 'plus', 'month');
+  assert.throws(() => validatePixCheckout({ mode: 'payment', payment_status: 'unpaid', currency: 'brl', amount_total: 3990 }, 'plus', 'month'));
+  assert.throws(() => validatePixCheckout({ mode: 'payment', payment_status: 'paid', currency: 'brl', amount_total: 6990 }, 'plus', 'month'));
+  assert.equal(pixPeriodEnd(new Date('2026-08-08T12:00:00Z'), 'month').toISOString(), '2026-09-08T12:00:00.000Z');
+  assert.equal(pixPeriodEnd(new Date('2026-08-08T12:00:00Z'), 'year').toISOString(), '2027-08-08T12:00:00.000Z');
+  console.log('  ok  PIX só libera após confirmação, no valor exato, por um mês ou um ano');
+
   assert.equal(OSONE_PLANS.plus.monthlyPrice, 39.90);
   assert.equal(OSONE_PLANS.plus.yearlyPrice, 339.90);
   assert.equal(OSONE_PLANS.pro.monthlyPrice, 69.90);
@@ -187,4 +195,4 @@ try {
   await new Promise<void>(resolve => server.close(() => resolve()));
 }
 
-console.log('17/17 grupos de conferências de cobrança passaram.');
+console.log('18/18 grupos de conferências de cobrança passaram.');

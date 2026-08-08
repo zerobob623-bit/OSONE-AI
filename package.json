@@ -23,6 +23,7 @@
     "build:vercel": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=server-build/server.cjs",
     "test:billing": "tsx scripts/conferir-billing.ts",
     "test:stripe-config": "tsx scripts/conferir-stripe-config.ts",
+    "test:legal": "node scripts/conferir-legal.mjs",
     "android:prepare": "node scripts/preparar-android.mjs && cd android && npx bubblewrap update --manifest=twa-manifest.json --skipVersionUpgrade",
     "android:build": "cd android && npx bubblewrap build --manifest=twa-manifest.json --skipPwaValidation",
     "publicar": "node scripts/publicar.mjs",
