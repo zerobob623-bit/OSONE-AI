@@ -8,6 +8,7 @@ import {
   INSTRUCAO_DO_AGENTE, RelatorioDoAgente, VoltaDoAgente, trabalharAteConcluir
 } from '../lib/agenteAutonomo';
 import { aprenderAutomacao, pistasDaAutomacao } from '../lib/historicoDoCowork';
+import { MetadadosDaCaptura, novoIdDeCaptura, validarCapturaAtual } from '../lib/capturaAtual';
 
 /** Chave e modelo usados quando o motor precisa OLHAR a tela para achar um alvo. */
 export interface VisaoDoMotor {
@@ -37,6 +38,10 @@ export interface JanelaDeTrabalho {
   width: number;
   height: number;
   ativa?: boolean;
+}
+
+export interface CapturaConfirmada extends MetadadosDaCaptura {
+  idadeMs: number;
 }
 
 /**
@@ -93,7 +98,8 @@ async function perguntarProximaAcao(
   visao?: VisaoDoMotor,
   ambiente?: any,
   area?: EstadoDaAreaParalela | null,
-  memoriaDaAutomacao?: string
+  memoriaDaAutomacao?: string,
+  frameAtual?: CapturaConfirmada | null
 ): Promise<string> {
   const feito = historico.slice(-VOLTAS_NO_CONTEXTO).map((v, i) =>
     `${historico.length - Math.min(historico.length, VOLTAS_NO_CONTEXTO) + i + 1}. [${v.ok ? 'ok' : 'FALHOU'}] ${v.pensamento} → ${v.relato}`
@@ -104,7 +110,10 @@ async function perguntarProximaAcao(
     memoriaDaAutomacao,
     descreverOComputador(ambiente, area),
     janela ? `JANELA EM QUE VOCÊ ESTÁ: "${janela.titulo}" (${janela.app}), ${janela.width}x${janela.height}.` : '',
-    foto ? 'A IMAGEM ACIMA é a foto ATUAL dessa janela. Olhe-a antes de decidir.' : 'ATENÇÃO: não foi possível fotografar a janela nesta rodada.',
+    foto
+      ? `A IMAGEM ACIMA é o frame ATUAL ${frameAtual?.captureId || '(sem id)'} dessa janela, ` +
+        `confirmado há ${Math.max(0, frameAtual?.idadeMs || 0)}ms. Olhe-a antes de decidir.`
+      : 'ATENÇÃO: não foi possível fotografar a janela nesta rodada.',
     historico.length ? `O QUE VOCÊ JÁ FEZ:\n${feito}` : 'Você ainda não fez nada. Esta é a primeira ação.',
     'Qual é a PRÓXIMA ação? Responda só o JSON.'
   ].filter(Boolean).join('\n\n');
@@ -116,22 +125,34 @@ async function perguntarProximaAcao(
   }
   partes.push({ text: contexto });
 
-  const res = await fetch('/api/gemini/generateContent', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      clientApiKey: visao?.chaveGemini || undefined,
-      model: visao?.modeloGemini || 'gemini-3.6-flash',
-      contents: [{ role: 'user', parts: partes }],
-      config: {
-        systemInstruction: INSTRUCAO_DO_AGENTE,
-        // Baixa, mas não zero: decidir o passo seguinte tem mais de um caminho certo, e temperatura
-        // zero faz o modelo insistir na mesma decisão errada quando a primeira não funciona.
-        temperature: 0.2,
-        responseMimeType: 'application/json'
-      }
-    })
-  });
+  const controle = new AbortController();
+  // “Pensando” por cinco minutos é uma falha, não trabalho. Em 45s a decisão curta já deveria ter
+  // vindo; cancelar devolve um erro explícito ao laço e mantém o computador intocado.
+  const limite = setTimeout(() => controle.abort(), 45_000);
+  let res: Response;
+  try {
+    res = await fetch('/api/gemini/generateContent', {
+      method: 'POST', signal: controle.signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clientApiKey: visao?.chaveGemini || undefined,
+        model: visao?.modeloGemini || 'gemini-3.6-flash',
+        contents: [{ role: 'user', parts: partes }],
+        config: {
+          systemInstruction: INSTRUCAO_DO_AGENTE,
+          // Baixa, mas não zero: decidir o passo seguinte tem mais de um caminho certo, e temperatura
+          // zero faz o modelo insistir na mesma decisão errada quando a primeira não funciona.
+          temperature: 0.2,
+          responseMimeType: 'application/json'
+        }
+      })
+    });
+  } catch (err: any) {
+    if (err?.name === 'AbortError') throw new Error('A decisão passou de 45 segundos e foi cancelada para não ficar presa pensando.');
+    throw err;
+  } finally {
+    clearTimeout(limite);
+  }
 
   const corpo = await res.json().catch(() => null);
   if (!res.ok) throw new Error(corpo?.error || `O modelo não respondeu ao decidir a ação (HTTP ${res.status}).`);
@@ -1078,6 +1099,51 @@ export function useLocalAgent() {
   /** Lido dentro do laço, que roda fora de renderização e não enxergaria o estado. */
   const areaRef = useRef<EstadoDaAreaParalela | null>(null);
   const definirArea = (a: EstadoDaAreaParalela | null) => { areaRef.current = a; setAreaParalela(a); };
+  const ultimoIdDeFrameRef = useRef<string | null>(null);
+  const ultimoFrameConfirmadoRef = useRef<CapturaConfirmada | null>(null);
+  const sequenciaPedidaRef = useRef(0);
+  const sequenciaAceitaRef = useRef(0);
+
+  /**
+   * Faz um pedido impossível de ser confundido com o anterior: URL única, cache desabilitado e
+   * eco do requestId. Uma resposta sem prova de atualidade é descartada e refeita uma vez.
+   */
+  const pedirCapturaAtual = async (
+    caminho: string,
+    localAgentToken?: string,
+    aoCapturar?: (frame: CapturaConfirmada) => void
+  ): Promise<any | null> => {
+    for (let tentativa = 0; tentativa < 2; tentativa++) {
+      const sequencia = ++sequenciaPedidaRef.current;
+      const requestId = novoIdDeCaptura();
+      const iniciadoEm = Date.now();
+      const separador = caminho.includes('?') ? '&' : '?';
+      try {
+        const res = await fetch(`${caminho}${separador}requestId=${encodeURIComponent(requestId)}&_=${iniciadoEm}`, {
+          headers: cabecalhoDoAgente(localAgentToken), cache: 'no-store'
+        });
+        const dados = await res.json().catch(() => null);
+        if (!res.ok) return null;
+        const problema = validarCapturaAtual(dados, {
+          requestId, iniciadoEm, agora: Date.now(), ultimoCaptureId: ultimoIdDeFrameRef.current
+        });
+        if (problema) continue;
+        // Dois consumidores podem fotografar ao mesmo tempo (quadro ao vivo e decisão). Se o
+        // pedido mais novo já voltou, a resposta atrasada do anterior não pode virar “presente”.
+        if (sequencia < sequenciaAceitaRef.current) continue;
+        sequenciaAceitaRef.current = sequencia;
+        ultimoIdDeFrameRef.current = dados.captureId;
+        const frame: CapturaConfirmada = {
+          captureId: dados.captureId, requestId, capturedAt: Number(dados.capturedAt),
+          idadeMs: Math.max(0, Date.now() - Number(dados.capturedAt))
+        };
+        ultimoFrameConfirmadoRef.current = frame;
+        aoCapturar?.(frame);
+        return dados;
+      } catch { /* segunda tentativa; se também falhar, devolve null */ }
+    }
+    return null;
+  };
 
   const consultarAreaParalela = async (localAgentToken?: string) => {
     try {
@@ -1125,14 +1191,12 @@ export function useLocalAgent() {
   };
 
   /** A foto da tela do agente, para a aba mostrar ao vivo sem tirar você de onde está. */
-  const fotografarAreaParalela = async (localAgentToken?: string): Promise<string | null> => {
-    try {
-      const res = await fetch('/api/agent/desktop/capture', { headers: cabecalhoDoAgente(localAgentToken) });
-      const dados = await res.json().catch(() => null);
-      return res.ok && dados?.image ? dados.image : null;
-    } catch {
-      return null;
-    }
+  const fotografarAreaParalela = async (
+    localAgentToken?: string,
+    aoCapturar?: (frame: CapturaConfirmada) => void
+  ): Promise<string | null> => {
+    const dados = await pedirCapturaAtual('/api/agent/desktop/capture', localAgentToken, aoCapturar);
+    return dados?.image || null;
   };
 
   /**
@@ -1175,12 +1239,15 @@ export function useLocalAgent() {
    * porque a primeira coisa que ele precisa fazer lá é justamente abrir algo. Sem janela e com a
    * tela dele ligada, o quadro é a tela dele inteira — e as coordenadas são as dela.
    */
-  const fotografarJanelaDeTrabalho = async (localAgentToken?: string): Promise<{ imagem: string; janela: JanelaDeTrabalho } | null> => {
+  const fotografarJanelaDeTrabalho = async (
+    localAgentToken?: string,
+    aoCapturar?: (frame: CapturaConfirmada) => void
+  ): Promise<{ imagem: string; janela: JanelaDeTrabalho } | null> => {
     const janela = janelaRef.current;
     if (!janela) {
       const area = areaRef.current;
       if (!area?.ligada) return null;
-      const imagem = await fotografarAreaParalela(localAgentToken);
+      const imagem = await fotografarAreaParalela(localAgentToken, aoCapturar);
       if (!imagem) return null;
       return {
         imagem,
@@ -1191,11 +1258,11 @@ export function useLocalAgent() {
       };
     }
     try {
-      const res = await fetch(`/api/agent/window/capture?id=${encodeURIComponent(janela.id)}`, {
-        headers: cabecalhoDoAgente(localAgentToken)
-      });
-      const dados = await res.json().catch(() => null);
-      if (!res.ok || !dados?.image) return null;
+      const dados = await pedirCapturaAtual(
+        `/api/agent/window/capture?id=${encodeURIComponent(janela.id)}`,
+        localAgentToken, aoCapturar
+      );
+      if (!dados?.image) return null;
       // A geometria vem da captura porque ela acabou de trazer a janela para frente — o momento
       // exato em que a posição costuma mudar.
       const atualizada = dados.janela
@@ -1219,9 +1286,10 @@ export function useLocalAgent() {
   const clicarNaJanela = async (
     alvoDescrito: string,
     localAgentToken?: string,
-    visao?: VisaoDoMotor
+    visao?: VisaoDoMotor,
+    aoCapturar?: (frame: CapturaConfirmada) => void
   ): Promise<any> => {
-    const foto = await fotografarJanelaDeTrabalho(localAgentToken);
+    const foto = await fotografarJanelaDeTrabalho(localAgentToken, aoCapturar);
     if (!foto) return { error: 'Não consegui fotografar a janela para localizar o alvo.' };
 
     const visto = await mirarPorVisao(
@@ -1297,6 +1365,7 @@ export function useLocalAgent() {
       visao?: VisaoDoMotor;
       janela?: JanelaDeTrabalho | null;
       aoProgredir?: (volta: VoltaDoAgente) => void;
+      aoCapturar?: (frame: CapturaConfirmada) => void;
     } = {}
   ): Promise<RelatorioDoAgente | { error: string }> => {
     const { localAgentToken, visao } = opcoes;
@@ -1317,7 +1386,7 @@ export function useLocalAgent() {
     const memoriaDaAutomacao = pistasDaAutomacao(objetivo);
 
     const fotografar = async () => {
-      const f = await fotografarJanelaDeTrabalho(localAgentToken);
+      const f = await fotografarJanelaDeTrabalho(localAgentToken, opcoes.aoCapturar);
       return f ? await assinaturaDaImagem(f.imagem) : null;
     };
 
@@ -1328,7 +1397,7 @@ export function useLocalAgent() {
       cancelado: () => motorParadoRef.current,
 
       fotografarJanela: async () => {
-        const f = await fotografarJanelaDeTrabalho(localAgentToken);
+        const f = await fotografarJanelaDeTrabalho(localAgentToken, opcoes.aoCapturar);
         return f ? f.imagem : null;
       },
 
@@ -1368,7 +1437,7 @@ export function useLocalAgent() {
         if (acao === 'clicar') {
           const alvo = String(args?.alvo || '').trim();
           if (!alvo) return { error: 'Para clicar é preciso descrever o alvo.' };
-          return await clicarNaJanela(alvo, localAgentToken, visao);
+          return await clicarNaJanela(alvo, localAgentToken, visao, opcoes.aoCapturar);
         }
 
         /**
@@ -1418,7 +1487,10 @@ export function useLocalAgent() {
       decidir: async (objetivoAtual, foto, historico) => {
         return await perguntarProximaAcao(
           objetivoAtual, foto, historico, janelaRef.current, visao,
-          await lerAmbienteDaMaquina(localAgentToken), areaRef.current, memoriaDaAutomacao
+          await lerAmbienteDaMaquina(localAgentToken), areaRef.current, memoriaDaAutomacao,
+          ultimoFrameConfirmadoRef.current
+            ? { ...ultimoFrameConfirmadoRef.current, idadeMs: Date.now() - ultimoFrameConfirmadoRef.current.capturedAt }
+            : null
         );
       },
 

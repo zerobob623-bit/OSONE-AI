@@ -34,6 +34,8 @@ export type NotaDoCowork =
   | 'trocar_janela'
   | 'esperar'
   | 'olhando'
+  | 'captura'
+  | 'ensinando'
   | 'falha'
   | 'recusa'
   | 'concluido'
@@ -70,6 +72,9 @@ const TOQUES: Record<NotaDoCowork, Toque> = {
   esperar: { notas: [440.0], duracao: 0.07, volume: 0.06, tipo: 'sine' },
   /** Ele está pensando/olhando a tela — o momento em que o silêncio mais parecia travamento. */
   olhando: { notas: [349.23], duracao: 0.04, volume: 0.045, tipo: 'sine' },
+  // Obturador curto em duas camadas: deixa inequívoco o instante do frame sem parecer erro.
+  captura: { notas: [1250, 820], duracao: 0.035, volume: 0.065, tipo: 'triangle' },
+  ensinando: { notas: [440, 554.37, 659.25], duracao: 0.08, volume: 0.12, tipo: 'sine' },
 
   // Algo saiu errado: grave, para não se confundir com uma ação comum.
   falha: { notas: [311.13, 261.63], duracao: 0.12, volume: 0.14, tipo: 'square' },

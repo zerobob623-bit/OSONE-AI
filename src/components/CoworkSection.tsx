@@ -7,12 +7,13 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { VoltaDoAgente, RelatorioDoAgente } from '../lib/agenteAutonomo';
-import { JanelaDeTrabalho, EstadoDaAreaParalela } from '../hooks/useLocalAgent';
+import { JanelaDeTrabalho, EstadoDaAreaParalela, CapturaConfirmada } from '../hooks/useLocalAgent';
 import {
   TarefaDoHistorico, desfechoDoMotivo,
   lerHistorico, guardarNoHistorico, limparHistorico
 } from '../lib/historicoDoCowork';
 import { tocar, notaDaAcao, somLigado, definirSom, baterPonto } from '../lib/somDoCowork';
+import { CoworkTeachingPanel } from './CoworkTeachingPanel';
 
 /**
  * OSONE COWORK — você diz o objetivo, ele trabalha e conta o que está fazendo.
@@ -51,7 +52,11 @@ interface CoworkSectionProps {
   janelaDeTrabalho: JanelaDeTrabalho | null;
   definirJanela: (j: JanelaDeTrabalho | null) => void;
   /** A janela pode ser nula quando a tela do agente está ligada e ainda vazia. */
-  onTrabalhar: (objetivo: string, janela: JanelaDeTrabalho | null) => Promise<RelatorioDoAgente | { error: string }>;
+  onTrabalhar: (
+    objetivo: string,
+    janela: JanelaDeTrabalho | null,
+    aoCapturar?: (frame: CapturaConfirmada) => void
+  ) => Promise<RelatorioDoAgente | { error: string }>;
   relatoDoAgente: { voltas: VoltaDoAgente[]; rodando: boolean } | null;
   areaParalela: EstadoDaAreaParalela | null;
   onConsultarArea: () => Promise<EstadoDaAreaParalela | null>;
@@ -71,7 +76,7 @@ const ehJanelaDoOsone = (j: JanelaDeTrabalho) =>
   /osone|electron/i.test(`${j.titulo} ${j.app}`);
 
 export const CoworkSection: React.FC<CoworkSectionProps> = ({
-  onBack, localAgentToken, ambiente, listarJanelas, janelaDeTrabalho, definirJanela,
+  onBack, localAgentToken, chaveGemini, modeloGemini, ambiente, listarJanelas, janelaDeTrabalho, definirJanela,
   onTrabalhar, relatoDoAgente, areaParalela, onConsultarArea, onLigarArea, onDesligarArea,
   onFotografarArea, motorParado, onParar, onRetomar, onNotification
 }) => {
@@ -178,6 +183,17 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
 
   // ====== O SOM ======
   const [comSom, setComSom] = useState(somLigado());
+  const [frameAtual, setFrameAtual] = useState<CapturaConfirmada | null>(null);
+  const ultimoSomDeCapturaRef = useRef(0);
+  const aoCapturar = (frame: CapturaConfirmada) => {
+    setFrameAtual(frame);
+    // A estabilização fotografa em sequência curta; um obturador por segundo informa sem virar
+    // uma metralhadora de bipes.
+    if (Date.now() - ultimoSomDeCapturaRef.current >= 900) {
+      tocar('captura');
+      ultimoSomDeCapturaRef.current = Date.now();
+    }
+  };
   const alternarSom = () => {
     const novo = !comSom;
     definirSom(novo);
@@ -259,7 +275,7 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
     // que não vêm de clique nenhum, já encontrem o caminho aberto.
     tocar('inicio');
     try {
-      const resultado = await onTrabalhar(alvo, janelaDeTrabalho);
+      const resultado = await onTrabalhar(alvo, janelaDeTrabalho, aoCapturar);
       setRelatorio(resultado);
 
       const deuErro = !!(resultado as any)?.error;
@@ -410,6 +426,14 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
             </p>
           </div>
 
+          <CoworkTeachingPanel
+            objetivo={objetivo}
+            bloqueado={trabalhando || disponibilidade === 'web'}
+            chaveGemini={chaveGemini}
+            modeloGemini={modeloGemini}
+            onNotification={onNotification}
+          />
+
           {/* ====== A TELA DELE, OU A SUA ====== */}
           <div className={cn(
             "rounded-3xl border p-5",
@@ -523,7 +547,7 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
               {historico.length > 0 && (
                 <button
                   onClick={() => { limparHistorico(); setHistorico([]); }}
-                  title="Limpar o histórico e o aprendizado de automações"
+                  title="Limpar o histórico e os aprendizados automáticos; treinamentos ensinados são apagados no card deles"
                   className="p-1.5 rounded-lg hover:bg-white/[0.05] text-her-muted"
                 >
                   <Trash2 size={14} />
@@ -603,6 +627,11 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
               {areaParalela?.ligada && (
                 <span className="flex items-center gap-1.5 text-[9px] uppercase tracking-widest text-emerald-400">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> ao vivo
+                </span>
+              )}
+              {frameAtual && !areaParalela?.ligada && (
+                <span className="text-[9px] text-emerald-400" title={frameAtual.captureId}>
+                  frame atual confirmado · {new Date(frameAtual.capturedAt).toLocaleTimeString('pt-BR')}
                 </span>
               )}
             </div>

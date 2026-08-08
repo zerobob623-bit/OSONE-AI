@@ -135,6 +135,12 @@ const instalarMundoFalso = async (pag) => {
     };
     // A janela muda quando alguém age nela, e fica parada quando ninguém age — como uma de verdade.
     const agiuNaJanela = () => { tom++; };
+    let numeroDaCaptura = 0;
+    const metadadosDaCaptura = (url) => ({
+      captureId: `captura-${++numeroDaCaptura}`,
+      requestId: new URL(url, location.href).searchParams.get('requestId'),
+      capturedAt: Date.now()
+    });
 
     const json = (corpo, ok = true) => Promise.resolve(new Response(JSON.stringify(corpo), {
       status: ok ? 200 : 500, headers: { 'Content-Type': 'application/json' }
@@ -178,7 +184,7 @@ const instalarMundoFalso = async (pag) => {
       }
       if (url.includes('/api/agent/desktop/capture')) {
         window.fotosDaArea = (window.fotosDaArea || 0) + 1;
-        return json({ image: fotoDaJanela(), mimeType: 'image/png', largura: 1600, altura: 900 });
+        return json({ image: fotoDaJanela(), mimeType: 'image/png', largura: 1600, altura: 900, ...metadadosDaCaptura(url) });
       }
       if (url.includes('/api/agent/screen-info')) return json({ ...tela, offsetX: 0, offsetY: 0 });
       if (url.includes('/api/agent/window/list')) {
@@ -188,7 +194,7 @@ const instalarMundoFalso = async (pag) => {
         const pedida = window.janelasAbertas.find(j => url.includes(encodeURIComponent(j.id))) || janela;
         window.janelasFotografadas = (window.janelasFotografadas || []);
         window.janelasFotografadas.push(pedida.id);
-        return json({ image: fotoDaJanela(), mimeType: 'image/png', janela: pedida });
+        return json({ image: fotoDaJanela(), mimeType: 'image/png', janela: pedida, ...metadadosDaCaptura(url) });
       }
       if (url.includes('/api/agent/window/focus')) return json({ success: true, geometria: janela });
       if (url.includes('/api/agent/mouse/move')) {

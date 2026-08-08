@@ -38,11 +38,28 @@ export interface MemoriaDeAutomacao {
   objetivo: string;
   atualizadoEm: number;
   sucessos: number;
+  origem?: 'execucao' | 'ensinamento';
+  treinamentoId?: string;
   /** Pistas sem coordenadas e sem o conteúdo digitado. Nunca são reproduzidas às cegas. */
   pistas: Array<{ acao: string; descricao: string }>;
 }
 
 const normalizarObjetivo = (texto: string) => texto.trim().toLocaleLowerCase('pt-BR').replace(/\s+/g, ' ');
+
+const PALAVRAS_VAZIAS = new Set(['a', 'ao', 'as', 'com', 'da', 'das', 'de', 'do', 'dos', 'e', 'em', 'me', 'meu', 'minha', 'no', 'na', 'o', 'os', 'para', 'por', 'um', 'uma']);
+const palavrasDoObjetivo = (texto: string) => new Set(normalizarObjetivo(texto)
+  .normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z0-9]+/)
+  .filter(p => p.length > 1 && !PALAVRAS_VAZIAS.has(p)));
+
+/** Permite reencontrar “ver meu último short” quando o ensino se chamava “olhar vídeo curto”. */
+export function semelhancaDeObjetivos(a: string, b: string): number {
+  const aa = palavrasDoObjetivo(a);
+  const bb = palavrasDoObjetivo(b);
+  if (!aa.size || !bb.size) return normalizarObjetivo(a) === normalizarObjetivo(b) ? 1 : 0;
+  let comuns = 0;
+  aa.forEach(p => { if (bb.has(p)) comuns++; });
+  return comuns / Math.max(aa.size, bb.size);
+}
 
 function lerAutomacoes(): MemoriaDeAutomacao[] {
   try {
@@ -99,21 +116,62 @@ export function aprenderAutomacao(objetivo: string, relatorio: RelatorioDoAgente
   const atuais = lerAutomacoes();
   const anterior = atuais.find(a => normalizarObjetivo(a.objetivo) === chave);
   const memoria: MemoriaDeAutomacao = {
-    objetivo: objetivo.trim(), atualizadoEm: Date.now(), sucessos: (anterior?.sucessos || 0) + 1, pistas
+    objetivo: objetivo.trim(), atualizadoEm: Date.now(), sucessos: (anterior?.sucessos || 0) + 1,
+    origem: anterior?.origem || 'execucao', treinamentoId: anterior?.treinamentoId,
+    // Uma execução futura confirma que o ensino funciona, mas não deve apagar “quando usar” e
+    // “como confirmar”, que são mais ricos do que o relatório resumido de cliques.
+    pistas: anterior?.origem === 'ensinamento' ? anterior.pistas : pistas
   };
   const nova = [memoria, ...atuais.filter(a => normalizarObjetivo(a.objetivo) !== chave)].slice(0, 20);
   try { localStorage.setItem(CHAVE_DAS_AUTOMACOES, JSON.stringify(nova)); } catch { return false; }
   return true;
 }
 
+export function guardarAutomacaoEnsinada(opcoes: {
+  objetivo: string;
+  treinamentoId: string;
+  passos: Array<{ acao: string; alvo: string; quandoUsar: string; comoConfirmar: string }>;
+}): boolean {
+  const pistas = opcoes.passos.map(p => ({
+    acao: p.acao || 'ensinado',
+    descricao: [
+      p.acao && `${p.acao}${p.alvo ? ` em ${p.alvo}` : ''}`,
+      p.quandoUsar && `quando vir: ${p.quandoUsar}`,
+      p.comoConfirmar && `confirme depois: ${p.comoConfirmar}`
+    ].filter(Boolean).join(' — ')
+  })).filter(p => p.descricao).slice(0, 24);
+  if (!pistas.length) return false;
+  const chave = normalizarObjetivo(opcoes.objetivo);
+  const atuais = lerAutomacoes();
+  const memoria: MemoriaDeAutomacao = {
+    objetivo: opcoes.objetivo.trim(), atualizadoEm: Date.now(), sucessos: 1,
+    origem: 'ensinamento', treinamentoId: opcoes.treinamentoId, pistas
+  };
+  const nova = [memoria, ...atuais.filter(a => normalizarObjetivo(a.objetivo) !== chave)].slice(0, 20);
+  try { localStorage.setItem(CHAVE_DAS_AUTOMACOES, JSON.stringify(nova)); } catch { return false; }
+  return true;
+}
+
+export function apagarAutomacaoEnsinada(treinamentoId: string): void {
+  try {
+    const nova = lerAutomacoes().filter(a => a.treinamentoId !== treinamentoId);
+    localStorage.setItem(CHAVE_DAS_AUTOMACOES, JSON.stringify(nova));
+  } catch { /* apagar conforto não pode derrubar a aba */ }
+}
+
 export function pistasDaAutomacao(objetivo: string): string {
   const chave = normalizarObjetivo(objetivo);
-  const memoria = lerAutomacoes().find(a => normalizarObjetivo(a.objetivo) === chave);
+  const memorias = lerAutomacoes();
+  const memoria = memorias.find(a => normalizarObjetivo(a.objetivo) === chave)
+    || memorias.map(a => ({ a, nota: semelhancaDeObjetivos(objetivo, a.objetivo) }))
+      .filter(x => x.nota >= 0.5).sort((x, y) => y.nota - x.nota)[0]?.a;
   if (!memoria?.pistas?.length) return '';
   return [
-    `MEMÓRIA DE UMA EXECUÇÃO BEM-SUCEDIDA DESTE OBJETIVO (${memoria.sucessos} vez(es)):`,
+    memoria.origem === 'ensinamento'
+      ? `PROCEDIMENTO ENSINADO PELA PESSOA PARA "${memoria.objetivo}":`
+      : `MEMÓRIA DE UMA EXECUÇÃO BEM-SUCEDIDA DESTE OBJETIVO (${memoria.sucessos} vez(es)):`,
     ...memoria.pistas.map((p, i) => `${i + 1}. ${p.descricao}`),
-    'Use isto apenas como pista. NÃO repita coordenadas nem ações cegamente: confira a foto atual, adapte o caminho e valide o resultado de cada passo.'
+    'Priorize este caminho. Mesmo assim, NÃO repita coordenadas nem ações cegamente: confira a foto ATUAL, adapte o alvo e valide o resultado de cada passo.'
   ].join('\n');
 }
 
@@ -148,6 +206,10 @@ export function guardarNoHistorico(item: TarefaDoHistorico): TarefaDoHistorico[]
 export function limparHistorico(): void {
   try {
     localStorage.removeItem(CHAVE_DO_HISTORICO);
-    localStorage.removeItem(CHAVE_DAS_AUTOMACOES);
+    // Aprendizado inferido de execuções acompanha o histórico. Um treinamento que a pessoa parou
+    // para ensinar e cujos quadros seguem no IndexedDB só sai pelo botão de apagar daquele card.
+    const ensinadas = lerAutomacoes().filter(a => a.origem === 'ensinamento');
+    if (ensinadas.length) localStorage.setItem(CHAVE_DAS_AUTOMACOES, JSON.stringify(ensinadas));
+    else localStorage.removeItem(CHAVE_DAS_AUTOMACOES);
   } catch { /* idem */ }
 }
