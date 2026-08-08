@@ -2325,8 +2325,8 @@ FORMATO OBRIGATÓRIO (JSON estrito):
       </AnimatePresence>
 
       {/* Top Header Navigation */}
-      <div className="h-14 border-b border-white/5 bg-[#0c0e14]/90 backdrop-blur-md px-4 flex items-center justify-between shrink-0 z-30">
-        <div className="flex items-center gap-3">
+      <div className="min-h-14 border-b border-white/5 bg-[#0c0e14]/90 backdrop-blur-md px-2 py-2 sm:px-4 flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 shrink-0 z-30">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <button 
             onClick={() => setShowRepoSidebar(!showRepoSidebar)}
             className={cn(
@@ -2342,9 +2342,9 @@ FORMATO OBRIGATÓRIO (JSON estrito):
 
           <div className="flex items-center gap-2">
             <Code2 size={18} className="text-cyan-400" />
-            <h2 className="text-sm font-semibold tracking-tight text-white font-mono flex items-center gap-2">
+            <h2 className="text-sm font-semibold tracking-tight text-white font-mono flex items-center gap-2 whitespace-nowrap">
               OSONE CODE
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-normal">
+              <span className="hidden min-[430px]:inline text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-normal">
                 {files.length} arquivo(s)
               </span>
             </h2>
@@ -2352,7 +2352,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
         </div>
 
         {/* View Mode Controls */}
-        <div className="flex items-center gap-1.5 bg-black/40 p-1 rounded-xl border border-white/5">
+        <div className="flex items-center gap-1 bg-black/40 p-1 rounded-xl border border-white/5 ml-auto">
           <button 
             onClick={() => setViewLayout('editor')}
             className={cn(
@@ -2394,7 +2394,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
         </div>
 
         {/* Action Controls + SWARM BUTTON & HUNTER BUTTON */}
-        <div className="flex items-center gap-2">
+        <div className="order-3 sm:order-none w-full sm:w-auto flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5 sm:pb-0">
           {/* BOTÃO ENXAME SWARM HARNESS */}
           <button 
             onClick={() => setIsSwarmModalOpen(true)}
@@ -2626,7 +2626,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
       </AnimatePresence>
 
       {/* Project Switcher Bar: "Em qual projeto você quer codar?" */}
-      <div className="bg-[#0b0d14] border-b border-white/10 px-4 py-2.5 flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0 z-20">
+      <div className="bg-[#0b0d14] border-b border-white/10 px-2 sm:px-4 py-2 flex flex-col md:flex-row md:items-center justify-between gap-2 md:gap-3 shrink-0 z-20">
         <div className="flex items-center gap-2">
           <div className="p-1.5 rounded-lg bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shrink-0">
             <FolderGit2 size={16} />
@@ -2709,7 +2709,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
               animate={{ width: 240, opacity: 1 }}
               exit={{ width: 0, opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="h-full bg-[#0a0c12] border-r border-white/5 flex flex-col shrink-0 overflow-hidden z-20"
+              className="absolute md:relative inset-y-0 left-0 h-full max-w-[86vw] bg-[#0a0c12] border-r border-white/5 flex flex-col shrink-0 overflow-hidden z-40 shadow-2xl md:shadow-none"
             >
               <div className="p-3 border-b border-white/5 flex items-center justify-between">
                 <span className="text-[10px] font-mono uppercase tracking-widest text-zinc-500 font-semibold flex items-center gap-1.5">
@@ -2807,13 +2807,13 @@ FORMATO OBRIGATÓRIO (JSON estrito):
         </AnimatePresence>
 
         {/* Content Workspace Grid */}
-        <div className="flex-1 flex min-h-0 w-full overflow-hidden">
+        <div className="flex-1 flex flex-col md:flex-row min-h-0 w-full overflow-hidden">
           
           {/* Code Editor Panel */}
           {(viewLayout === 'editor' || viewLayout === 'split') && activeFile && (
             <div className={cn(
               "flex flex-col min-h-0 bg-[#07080d] border-r border-white/5 transition-all overflow-hidden",
-              viewLayout === 'split' ? "w-1/2" : "w-full"
+              viewLayout === 'split' ? "w-full h-1/2 md:w-1/2 md:h-full" : "w-full h-full"
             )}>
               {/* Editor Sub-Header */}
               <div className="h-9 bg-[#0b0d13] border-b border-white/5 px-4 flex items-center justify-between shrink-0 font-mono text-xs text-zinc-400">
@@ -3043,7 +3043,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
           {(viewLayout === 'preview' || viewLayout === 'split') && (
             <div className={cn(
               "flex flex-col min-h-0 bg-black transition-all overflow-hidden relative",
-              viewLayout === 'split' ? "w-1/2" : "w-full"
+              viewLayout === 'split' ? "w-full h-1/2 md:w-1/2 md:h-full" : "w-full h-full"
             )}>
               {/* O preview recebe o PROJETO montado, não o arquivo aberto: é o que faz o
                   styles.css e o script.js existirem de verdade, e o que evita desenhar CSS

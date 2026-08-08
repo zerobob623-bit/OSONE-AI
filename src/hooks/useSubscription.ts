@@ -20,7 +20,12 @@ const FREE_SNAPSHOT: SubscriptionSnapshot = {
   billingEnabled: false
 };
 
-const baseUrl = String(import.meta.env.VITE_OSONE_BILLING_URL || '').replace(/\/$/, '');
+const baseUrlConfigurada = String(import.meta.env.VITE_OSONE_BILLING_URL || '').replace(/\/$/, '');
+const baseUrlOficial = 'https://osone-ai-six.vercel.app';
+
+function urlsDaCobranca(): string[] {
+  return [...new Set([baseUrlConfigurada, baseUrlOficial].filter(Boolean))];
+}
 
 async function firebaseToken(): Promise<string> {
   const firebaseUser = auth?.currentUser;
@@ -35,17 +40,28 @@ export function useSubscription(user: User | null) {
 
   const request = useCallback(async (path: string, init?: RequestInit) => {
     const token = await firebaseToken();
-    const response = await fetch(`${baseUrl}/api/billing${path}`, {
-      ...init,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        ...(init?.headers || {})
+    let ultimaFalhaDeRede: unknown;
+    for (const baseUrl of urlsDaCobranca()) {
+      try {
+        const response = await fetch(`${baseUrl}/api/billing${path}`, {
+          ...init,
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+            ...(init?.headers || {})
+          }
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || `Falha na cobrança (HTTP ${response.status}).`);
+        return data;
+      } catch (erro) {
+        // Só troca de servidor quando não houve resposta HTTP. Uma recusa real (token, plano ou
+        // pagamento) deve chegar à tela em vez de ser escondida por outra tentativa.
+        if (!(erro instanceof TypeError)) throw erro;
+        ultimaFalhaDeRede = erro;
       }
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `Falha na cobrança (HTTP ${response.status}).`);
-    return data;
+    }
+    throw ultimaFalhaDeRede || new Error('Não foi possível conectar ao serviço de cobrança.');
   }, []);
 
   const refresh = useCallback(async () => {

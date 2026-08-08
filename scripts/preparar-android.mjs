@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const manifestUrl = new URL('../android/twa-manifest.json', import.meta.url);
+const gradleUrl = new URL('../android/app/build.gradle', import.meta.url);
 const manifest = JSON.parse(readFileSync(manifestUrl, 'utf8'));
 const partes = String(packageJson.version).split('.').map(Number);
 
@@ -23,5 +24,16 @@ if (minor > 99 || patch > 99) {
 manifest.appVersion = packageJson.version;
 manifest.appVersionCode = major * 10000 + minor * 100 + patch;
 writeFileSync(manifestUrl, `${JSON.stringify(manifest, null, 2)}\n`);
+
+// O projeto agora contém serviços Android nativos. `bubblewrap update` recriaria o Manifest e
+// apagaria Acessibilidade/MediaProjection; por isso sincronizamos apenas os números de versão.
+const gradleAtual = readFileSync(gradleUrl, 'utf8');
+const gradleNovo = gradleAtual
+  .replace(/versionCode\s+\d+/, `versionCode ${manifest.appVersionCode}`)
+  .replace(/versionName\s+"[^"]+"/, `versionName "${manifest.appVersion}"`);
+if (gradleNovo === gradleAtual && !gradleAtual.includes(`versionName "${manifest.appVersion}"`)) {
+  throw new Error('Nao foi possivel sincronizar a versao em android/app/build.gradle.');
+}
+writeFileSync(gradleUrl, gradleNovo);
 
 console.log(`Android sincronizado: ${manifest.appVersion} (${manifest.appVersionCode}).`);
