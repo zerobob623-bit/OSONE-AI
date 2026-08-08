@@ -12,9 +12,21 @@ const PRICE_ENV: Record<Exclude<PlanId, 'free'>, Record<Interval, string>> = {
   pro: { month: 'STRIPE_PRICE_PRO_MONTHLY', year: 'STRIPE_PRICE_PRO_YEARLY' }
 };
 
+const EXPECTED_PRICE: Record<Exclude<PlanId, 'free'>, Record<Interval, number>> = {
+  plus: { month: 3990, year: 33990 },
+  pro: { month: 6990, year: 66990 }
+};
+
 let stripeClient: Stripe | null = null;
 let firebaseApp: FirebaseAdminApp | null = null;
 let firestore: Firestore | null = null;
+
+const BILLING_EVENTS = new Set([
+  'checkout.session.completed',
+  'customer.subscription.created',
+  'customer.subscription.updated',
+  'customer.subscription.deleted'
+]);
 
 function env(name: string): string { return String(process.env[name] || '').trim(); }
 
@@ -24,9 +36,38 @@ function billingConfiguration() {
     'STRIPE_PRICE_PLUS_YEARLY', 'STRIPE_PRICE_PRO_MONTHLY', 'STRIPE_PRICE_PRO_YEARLY',
     'OSONE_BILLING_RETURN_URL'
   ].filter(name => !env(name));
-  const firebaseConfigured = !!(env('FIREBASE_SERVICE_ACCOUNT_JSON') || env('GOOGLE_APPLICATION_CREDENTIALS'));
-  if (!firebaseConfigured) missing.push('FIREBASE_SERVICE_ACCOUNT_JSON ou GOOGLE_APPLICATION_CREDENTIALS');
-  return { enabled: missing.length === 0, missing };
+  const serviceAccountJson = env('FIREBASE_SERVICE_ACCOUNT_JSON');
+  const applicationCredentials = env('GOOGLE_APPLICATION_CREDENTIALS');
+  const firebaseConfigured = !!(serviceAccountJson || applicationCredentials);
+  if (!firebaseConfigured) {
+    missing.push('FIREBASE_SERVICE_ACCOUNT_JSON ou GOOGLE_APPLICATION_CREDENTIALS');
+  } else if (serviceAccountJson) {
+    try {
+      const parsed = JSON.parse(serviceAccountJson.replace(/^'|'$/g, ''));
+      if (!parsed?.project_id || !parsed?.client_email || !parsed?.private_key) {
+        missing.push('FIREBASE_SERVICE_ACCOUNT_JSON válido');
+      }
+    } catch {
+      missing.push('FIREBASE_SERVICE_ACCOUNT_JSON válido');
+    }
+  } else if (process.env.VERCEL === '1') {
+    // Um caminho como /home/usuario/Downloads/chave.json existe só no computador do dono. Na
+    // Vercel ele fazia a tela dizer "configurado" e falhar apenas depois do clique em assinar.
+    missing.push('FIREBASE_SERVICE_ACCOUNT_JSON (obrigatório na Vercel)');
+  }
+  const returnUrl = env('OSONE_BILLING_RETURN_URL');
+  let returnOrigin: string | null = null;
+  if (returnUrl) {
+    try {
+      const parsed = new URL(returnUrl);
+      returnOrigin = parsed.origin;
+      const localDevelopment = ['localhost', '127.0.0.1'].includes(parsed.hostname);
+      if (parsed.protocol !== 'https:' && !localDevelopment) missing.push('OSONE_BILLING_RETURN_URL HTTPS válida');
+    } catch {
+      missing.push('OSONE_BILLING_RETURN_URL HTTPS válida');
+    }
+  }
+  return { enabled: missing.length === 0, missing: [...new Set(missing)], returnOrigin };
 }
 
 function stripe(): Stripe {
@@ -63,6 +104,33 @@ function priceId(plan: Exclude<PlanId, 'free'>, interval: Interval): string {
   return env(PRICE_ENV[plan][interval]);
 }
 
+export function billingResultUrl(returnUrl: string, result: 'success' | 'canceled'): string {
+  const url = new URL(returnUrl);
+  url.searchParams.set('billing', result);
+  return url.toString();
+}
+
+/**
+ * O texto da tela não decide quanto será cobrado: quem decide é o Price ID da Stripe. Conferir
+ * moeda, valor e recorrência antes de criar cada Checkout impede que um ID colado no campo errado
+ * cobre, por exemplo, o anual como mensal ou um produto de outro valor.
+ */
+export function validateStripePrice(
+  price: Pick<Stripe.Price, 'active' | 'currency' | 'unit_amount' | 'type' | 'recurring'>,
+  plan: Exclude<PlanId, 'free'>,
+  interval: Interval
+) {
+  const expectedAmount = EXPECTED_PRICE[plan][interval];
+  const valid = price.active && price.currency.toLowerCase() === 'brl' &&
+    price.unit_amount === expectedAmount && price.type === 'recurring' &&
+    price.recurring?.interval === interval && price.recurring?.interval_count === 1;
+  if (!valid) {
+    throw Object.assign(new Error(
+      `O Price ID de ${plan.toUpperCase()} ${interval === 'month' ? 'mensal' : 'anual'} não corresponde ao valor, moeda ou período anunciado. O pagamento foi bloqueado para evitar cobrança incorreta.`
+    ), { status: 503 });
+  }
+}
+
 function planFromPrice(price: string | null | undefined): PlanId {
   if (!price) return 'free';
   if ([priceId('pro', 'month'), priceId('pro', 'year')].includes(price)) return 'pro';
@@ -79,6 +147,13 @@ async function customerFor(uid: string, email?: string, name?: string): Promise<
   const customer = await stripe().customers.create({ email, name, metadata: { firebaseUid: uid } });
   await ref.set({ stripeCustomerId: customer.id, createdAt: FieldValue.serverTimestamp() }, { merge: true });
   return customer.id;
+}
+
+async function activeSubscriptionFor(customer: string): Promise<Stripe.Subscription | undefined> {
+  const subscriptions = await stripe().subscriptions.list({ customer, status: 'all', limit: 20 });
+  return subscriptions.data.find(subscription =>
+    ['active', 'trialing', 'past_due', 'incomplete'].includes(subscription.status)
+  );
 }
 
 async function writeEntitlement(subscription: Stripe.Subscription) {
@@ -116,6 +191,9 @@ export function registerBillingWebhook(app: Express) {
       const signature = req.headers['stripe-signature'];
       if (!signature) return res.status(400).send('Assinatura Stripe ausente.');
       const event = stripe().webhooks.constructEvent(req.body, signature, env('STRIPE_WEBHOOK_SECRET'));
+      if (!BILLING_EVENTS.has(event.type)) {
+        return res.json({ received: true, ignored: true });
+      }
       const { db } = adminServices();
       const eventRef = db.collection('billingEvents').doc(event.id);
       if ((await eventRef.get()).exists) return res.json({ received: true, duplicate: true });
@@ -127,14 +205,26 @@ export function registerBillingWebhook(app: Express) {
           await writeEntitlement(subscription);
         }
       } else if (event.type === 'customer.subscription.created' || event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.deleted') {
-        await writeEntitlement(event.data.object as Stripe.Subscription);
+        // Eventos podem chegar fora de ordem. Reconsultar o objeto atual evita que um evento
+        // atrasado de "active" sobrescreva um cancelamento que já ocorreu.
+        const eventSubscription = event.data.object as Stripe.Subscription;
+        const currentSubscription = await stripe().subscriptions.retrieve(eventSubscription.id);
+        await writeEntitlement(currentSubscription);
       }
 
       await eventRef.set({ type: event.type, processedAt: FieldValue.serverTimestamp() });
       return res.json({ received: true });
     } catch (err: any) {
-      console.error('[Billing webhook]', err);
-      return res.status(400).send(`Webhook recusado: ${err?.message || 'evento inválido'}`);
+      if (err?.type === 'StripeSignatureVerificationError') {
+        // Não registre o objeto inteiro: ele contém o header de assinatura recebido. Basta saber
+        // que a autenticação falhou; o conteúdo não ajuda a corrigir e não deve ir para logs.
+        console.warn('[Billing webhook] Evento recusado por assinatura inválida.');
+        return res.status(400).send('Webhook recusado: assinatura inválida.');
+      }
+      // Falha de Stripe/Firebase durante um evento legítimo é temporária e precisa ser 5xx para
+      // a Stripe tentar entregar novamente; responder 400 perderia a atualização da assinatura.
+      console.error('[Billing webhook] Falha ao processar evento legítimo:', err?.message || err);
+      return res.status(500).send('Falha temporária ao processar o webhook.');
     }
   });
 }
@@ -144,7 +234,12 @@ export function registerBillingApi(app: Express) {
     const origin = String(req.headers.origin || '');
     const configuredOrigins = env('OSONE_BILLING_ALLOWED_ORIGINS').split(',').map(value => value.trim()).filter(Boolean);
     const loopbackDesktop = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-    const allowed = !origin || loopbackDesktop || configuredOrigins.includes(origin);
+    let sameHost = false;
+    try {
+      const requestHost = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+      sameHost = !!origin && new URL(origin).host === requestHost;
+    } catch { /* origem malformada continua recusada */ }
+    const allowed = !origin || loopbackDesktop || sameHost || configuredOrigins.includes(origin);
     if (!allowed) return res.status(403).json({ error: 'Origem não autorizada para cobrança.' });
     if (origin) res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
@@ -156,12 +251,20 @@ export function registerBillingApi(app: Express) {
 
   app.get('/api/billing/config', (_req, res) => {
     const config = billingConfiguration();
-    res.json({ enabled: config.enabled, plans: { plus: { monthly: 39.90, yearly: 339.90 }, pro: { monthly: 69.90, yearly: 669.90 } } });
+    res.json({
+      enabled: config.enabled,
+      missing: config.enabled ? [] : config.missing,
+      returnOrigin: config.returnOrigin,
+      plans: { plus: { monthly: 39.90, yearly: 339.90 }, pro: { monthly: 69.90, yearly: 669.90 } }
+    });
   });
 
   app.get('/api/billing/status', async (req, res) => {
     const config = billingConfiguration();
-    if (!config.enabled) return res.json({ plan: 'free', status: 'free', currentPeriodEnd: null, billingEnabled: false });
+    if (!config.enabled) return res.json({
+      plan: 'free', status: 'free', currentPeriodEnd: null, billingEnabled: false,
+      configurationMissing: config.missing
+    });
     try {
       const user = await authenticatedUser(req);
       const { db } = adminServices();
@@ -182,14 +285,22 @@ export function registerBillingApi(app: Express) {
         return res.status(400).json({ error: 'Plano ou período inválido.' });
       }
       const customer = await customerFor(user.uid, user.email, user.name);
+      const existingSubscription = await activeSubscriptionFor(customer);
+      if (existingSubscription) {
+        return res.status(409).json({
+          error: 'Esta conta já possui uma assinatura. Use “Gerenciar assinatura e cobrança” para trocar de plano ou período.'
+        });
+      }
       const returnUrl = env('OSONE_BILLING_RETURN_URL');
+      const configuredPrice = await stripe().prices.retrieve(priceId(plan, interval));
+      validateStripePrice(configuredPrice, plan, interval);
       const session = await stripe().checkout.sessions.create({
         mode: 'subscription',
         customer,
-        line_items: [{ price: priceId(plan, interval), quantity: 1 }],
+        line_items: [{ price: configuredPrice.id, quantity: 1 }],
         allow_promotion_codes: true,
-        success_url: `${returnUrl}${returnUrl.includes('?') ? '&' : '?'}billing=success`,
-        cancel_url: `${returnUrl}${returnUrl.includes('?') ? '&' : '?'}billing=canceled`,
+        success_url: billingResultUrl(returnUrl, 'success'),
+        cancel_url: billingResultUrl(returnUrl, 'canceled'),
         client_reference_id: user.uid,
         metadata: { firebaseUid: user.uid, plan, interval },
         subscription_data: { metadata: { firebaseUid: user.uid, plan, interval } }

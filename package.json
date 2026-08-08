@@ -5,6 +5,9 @@
   "description": "OSONE G5 - Sistema Operacional Neural",
   "author": "OSONE",
   "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
   "main": "electron/main.js",
   "repository": {
     "type": "git",
@@ -18,6 +21,8 @@
     "build:desktop": "npm run build && electron-builder --win --linux",
     "release": "npm run build && electron-builder --win --linux --publish always",
     "build:vercel": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=server-build/server.cjs",
+    "test:billing": "tsx scripts/conferir-billing.ts",
+    "test:stripe-config": "tsx scripts/conferir-stripe-config.ts",
     "android:prepare": "node scripts/preparar-android.mjs && cd android && npx bubblewrap update --manifest=twa-manifest.json --skipVersionUpgrade",
     "android:build": "cd android && npx bubblewrap build --manifest=twa-manifest.json --skipPwaValidation",
     "publicar": "node scripts/publicar.mjs",
@@ -95,7 +100,7 @@
     "ffmpeg-static": "^5.3.0",
     "file-saver": "^2.0.5",
     "firebase": "^12.15.0",
-    "firebase-admin": "^14.2.0",
+    "firebase-admin": "13.10.0",
     "framer-motion": "^11.18.2",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
