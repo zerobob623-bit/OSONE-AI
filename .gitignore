@@ -35,7 +35,11 @@ credenciais-osone.json
 # versoes Android, mas nunca pode entrar no repositorio.
 .secrets/
 
-# O projeto Gradle da TWA e regenerado pelo Bubblewrap no GitHub Actions. O manifesto e a unica
-# fonte Android versionada; manter milhares de arquivos gerados duplicaria configuracao.
-android/*
-!android/twa-manifest.json
+# O projeto Android passou a conter serviços nativos de Acessibilidade e MediaProjection e não
+# pode mais ser recriado pelo Bubblewrap (isso apagaria esses serviços). Versionamos o fonte e
+# ignoramos somente build, cache, configuração local e material privado de assinatura.
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/*.jks
