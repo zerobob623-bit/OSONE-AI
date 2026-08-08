@@ -2557,7 +2557,23 @@ const handleDesktopStop = (_req: Request, res: Response) => {
  * que interessa: fotografar a tela do usuário repetidamente disputa recursos com o que ele está
  * fazendo, fotografar uma tela na memória não disputa com nada.
  */
-const handleDesktopCapture = async (_req: Request, res: Response) => {
+function metadadosDeCaptura(req: Request) {
+  return {
+    captureId: crypto.randomUUID(),
+    requestId: String(req.query?.requestId || ''),
+    // Criado depois que o PNG foi lido: este horário descreve o frame entregue, não o começo de
+    // uma operação lenta de captura.
+    capturedAt: Date.now()
+  };
+}
+
+function impedirCacheDeCaptura(res: Response) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+}
+
+const handleDesktopCapture = async (req: Request, res: Response) => {
   if (!areaParalela) {
     return res.status(409).json({ error: 'A área paralela não está ligada.' });
   }
@@ -2569,11 +2585,13 @@ const handleDesktopCapture = async (_req: Request, res: Response) => {
     }
     const buffer = fs.readFileSync(tmpFile);
     fs.unlink(tmpFile, () => {});
+    impedirCacheDeCaptura(res);
     return res.status(200).json({
       image: `data:image/png;base64,${buffer.toString('base64')}`,
       mimeType: 'image/png',
       largura: areaParalela.largura,
-      altura: areaParalela.altura
+      altura: areaParalela.altura,
+      ...metadadosDeCaptura(req)
     });
   } catch (err: any) {
     fs.unlink(tmpFile, () => {});
@@ -2849,10 +2867,12 @@ const handleWindowCapture = async (req: Request, res: Response) => {
     const buffer = fs.readFileSync(tmpFile);
     fs.unlink(tmpFile, () => {});
 
+    impedirCacheDeCaptura(res);
     return res.status(200).json({
       image: `data:image/png;base64,${buffer.toString('base64')}`,
       mimeType: 'image/png',
       janela: geometria,
+      ...metadadosDeCaptura(req),
       /**
        * A régua vai junto da foto: quem olhar esta imagem vai apontar posições nela em 0–1000, e
        * essas posições precisam ser convertidas de volta para pixels da TELA na hora de clicar.

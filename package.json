@@ -25,6 +25,8 @@
     "test:stripe-config": "tsx scripts/conferir-stripe-config.ts",
     "test:legal": "node scripts/conferir-legal.mjs",
     "test:cowork-memory": "tsx scripts/conferir-memoria-cowork.ts",
+    "test:cowork-teaching": "tsx scripts/conferir-ensino-cowork.ts",
+    "test:cowork-teaching-ui": "node scripts/conferir-ensino-cowork-na-tela.mjs",
     "test:code-runtimes": "node scripts/conferir-runtimes-code.mjs",
     "android:prepare": "node scripts/preparar-android.mjs && cd android && npx bubblewrap update --manifest=twa-manifest.json --skipVersionUpgrade",
     "android:build": "cd android && npx bubblewrap build --manifest=twa-manifest.json --skipPwaValidation",

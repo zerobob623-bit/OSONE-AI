@@ -12601,10 +12601,11 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 listarJanelas={() => listarJanelas(apiKeys.localAgentToken)}
                 janelaDeTrabalho={janelaDeTrabalho}
                 definirJanela={definirJanela}
-                onTrabalhar={(objetivo, janela) => trabalharNoObjetivo(objetivo, {
+                onTrabalhar={(objetivo, janela, aoCapturar) => trabalharNoObjetivo(objetivo, {
                   localAgentToken: apiKeys.localAgentToken,
                   visao: { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.6-flash' },
-                  janela
+                  janela,
+                  aoCapturar
                 })}
                 relatoDoAgente={relatoDoAgente}
                 areaParalela={areaParalela}
