@@ -121,10 +121,12 @@ Este documento registra todas as funcionalidades, rotas e módulos ativos no eco
 ---
 
 ## 7. Planos e Assinaturas (`billingService.ts`, `PlansModal.tsx`, `useSubscription.ts`)
+- **Aceite legal obrigatório e versionado (`LegalConsentGate.tsx`)**: após o primeiro login, Termos de Uso e Aviso de Privacidade bloqueiam o acesso até dois aceites explícitos. Cada versão é registrada uma única vez em documento imutável do próprio usuário, com horário do servidor Firebase; mudança de versão exige novo aceite. O texto identifica o fornecedor, separa ferramentas próprias de APIs externas, esclarece cotas gratuitas, cobrança, automações, tratamento de dados e direitos do titular. Nome, CPF/CNPJ, endereço e contato entram somente por variáveis protegidas de build, nunca no repositório.
 - **Plano Grátis**: mantém chat de texto, conversa por voz, Hands-Free, OSONE CODE e Agente Local para controle do PC. O Agente Local não é confundido com COWORK e não recebe portão pago.
 - **Plano Plus**: R$ 39,90/mês ou R$ 339,90/ano; acrescenta OSONE HEAR e OSONE COWORK para cliques/escrita no navegador.
 - **Plano Pro**: R$ 69,90/mês ou R$ 669,90/ano; acrescenta OSONE ZAP a tudo do Plus.
 - **Stripe Checkout e Portal**: cobrança recorrente abre no navegador externo; o app não recebe nem manipula dados de cartão. O cliente pode gerenciar ou cancelar a assinatura pelo portal da Stripe.
+- **PIX pré-pago sem falsa recorrência**: Plus e Pro podem ser pagos por PIX no período mensal ou anual. A liberação só ocorre após confirmação assinada da Stripe, pelo valor BRL exato, e vale até o fim do período comprado; não existe renovação automática e o app pede novo pagamento apenas depois do vencimento. Cartão permanece como assinatura recorrente.
 - **Função serverless isolada (`api/billing.ts`)**: Checkout, status, Portal e webhook carregam apenas Stripe e Firebase Admin na Vercel; uma incompatibilidade dos módulos locais (WhatsApp, WebSocket, ffmpeg ou Agente Local) não derruba os pagamentos. `npm run test:billing` confere os quatro preços, o rewrite e o CORS do app instalado.
 - **Sem assinatura duplicada**: uma conta que já possui assinatura ativa, em teste ou com pagamento pendente troca plano/período pelo Portal; o backend também recusa um segundo Checkout, mesmo se a interface for contornada.
 - **Valor conferido antes de cobrar**: cada Checkout reconsulta o Price ID na Stripe e exige BRL, o valor anunciado, recorrência mensal/anual correta, intervalo unitário e preço ativo. Qualquer ID trocado bloqueia o pagamento antes de abrir a página.

@@ -8,6 +8,8 @@ export interface SubscriptionSnapshot {
   status: 'free' | 'active' | 'trialing' | 'past_due' | 'canceled' | 'unpaid' | 'incomplete' | 'incomplete_expired' | 'paused';
   currentPeriodEnd: string | null;
   billingEnabled: boolean;
+  billingMethod?: 'card' | 'pix' | null;
+  pixEnabled?: boolean;
   configurationMissing?: string[];
 }
 
@@ -71,13 +73,13 @@ export function useSubscription(user: User | null) {
     return () => window.removeEventListener('focus', onFocus);
   }, [refresh]);
 
-  const openCheckout = useCallback(async (plan: Exclude<OsonePlanId, 'free'>, interval: BillingInterval) => {
+  const openCheckout = useCallback(async (plan: Exclude<OsonePlanId, 'free'>, interval: BillingInterval, paymentMethod: 'card' | 'pix' = 'card') => {
     setLoading(true);
     setError('');
     try {
       const data = await request('/checkout', {
         method: 'POST',
-        body: JSON.stringify({ plan, interval })
+        body: JSON.stringify({ plan, interval, paymentMethod })
       });
       const popup = window.open(data.url, '_blank');
       if (!popup) throw new Error('O navegador bloqueou a página de pagamento. Libere pop-ups e tente novamente.');
