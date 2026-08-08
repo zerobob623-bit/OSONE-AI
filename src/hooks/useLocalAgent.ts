@@ -7,6 +7,7 @@ import { PassoDoPlano, RelatorioDoPlano, ResultadoDoPasso, executarPlano, valida
 import {
   INSTRUCAO_DO_AGENTE, RelatorioDoAgente, VoltaDoAgente, trabalharAteConcluir
 } from '../lib/agenteAutonomo';
+import { aprenderAutomacao, pistasDaAutomacao } from '../lib/historicoDoCowork';
 
 /** Chave e modelo usados quando o motor precisa OLHAR a tela para achar um alvo. */
 export interface VisaoDoMotor {
@@ -91,7 +92,8 @@ async function perguntarProximaAcao(
   janela: JanelaDeTrabalho | null,
   visao?: VisaoDoMotor,
   ambiente?: any,
-  area?: EstadoDaAreaParalela | null
+  area?: EstadoDaAreaParalela | null,
+  memoriaDaAutomacao?: string
 ): Promise<string> {
   const feito = historico.slice(-VOLTAS_NO_CONTEXTO).map((v, i) =>
     `${historico.length - Math.min(historico.length, VOLTAS_NO_CONTEXTO) + i + 1}. [${v.ok ? 'ok' : 'FALHOU'}] ${v.pensamento} → ${v.relato}`
@@ -99,6 +101,7 @@ async function perguntarProximaAcao(
 
   const contexto = [
     `OBJETIVO DO USUÁRIO: ${objetivo}`,
+    memoriaDaAutomacao,
     descreverOComputador(ambiente, area),
     janela ? `JANELA EM QUE VOCÊ ESTÁ: "${janela.titulo}" (${janela.app}), ${janela.width}x${janela.height}.` : '',
     foto ? 'A IMAGEM ACIMA é a foto ATUAL dessa janela. Olhe-a antes de decidir.' : 'ATENÇÃO: não foi possível fotografar a janela nesta rodada.',
@@ -1311,6 +1314,7 @@ export function useLocalAgent() {
 
     setRelatoDoAgente({ voltas: [], rodando: true });
     setAlvoMedido(null);
+    const memoriaDaAutomacao = pistasDaAutomacao(objetivo);
 
     const fotografar = async () => {
       const f = await fotografarJanelaDeTrabalho(localAgentToken);
@@ -1414,7 +1418,7 @@ export function useLocalAgent() {
       decidir: async (objetivoAtual, foto, historico) => {
         return await perguntarProximaAcao(
           objetivoAtual, foto, historico, janelaRef.current, visao,
-          await lerAmbienteDaMaquina(localAgentToken), areaRef.current
+          await lerAmbienteDaMaquina(localAgentToken), areaRef.current, memoriaDaAutomacao
         );
       },
 
@@ -1425,6 +1429,7 @@ export function useLocalAgent() {
     }, { historicoDeEsperas: historicoDeEsperasRef.current });
 
     historicoDeEsperasRef.current = relatorio.historico;
+    aprenderAutomacao(objetivo, relatorio);
     setRelatoDoAgente({ voltas: relatorio.voltas, rodando: false });
     return relatorio;
   };

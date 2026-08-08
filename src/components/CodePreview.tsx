@@ -12,6 +12,11 @@ function lerLinhaDoDocumento(documento: string, n?: number): string {
   return ((documento || '').split('\n')[n - 1] || '').trim();
 }
 
+/** JSON seguro para ficar dentro de uma tag script sem um `</script>` do código fechá-la cedo. */
+function codigoDentroDoScript(codigo: string): string {
+  return JSON.stringify(codigo || '').replace(/</g, '\\u003c');
+}
+
 export const CodePreview = ({ code, linguagem, aoDetectarProblema }: {
   code: string;
   linguagem?: string;
@@ -41,7 +46,7 @@ export const CodePreview = ({ code, linguagem, aoDetectarProblema }: {
   useEffect(() => {
     setRuntimeError(null);
     setLogs([]);
-  }, [code]);
+  }, [code, linguagem]);
 
   /**
    * A função de aviso fica numa referência para o ouvinte poder ser inscrito UMA vez.
@@ -194,7 +199,7 @@ export const CodePreview = ({ code, linguagem, aoDetectarProblema }: {
      * exatamente isso em vez de deixar a tela parada em "carregando" para sempre.
      */
     if (linguagem === 'python') {
-      const codigoEmJson = JSON.stringify(code);
+      const codigoEmJson = codigoDentroDoScript(code);
       return `
         <!DOCTYPE html>
         <html>
@@ -279,6 +284,44 @@ export const CodePreview = ({ code, linguagem, aoDetectarProblema }: {
           </body>
         </html>
       `;
+    }
+
+    /** TypeScript é compilado de verdade no navegador e só então executado no sandbox. */
+    if (linguagem === 'typescript') {
+      const codigoEmJson = codigoDentroDoScript(code);
+      return `
+        <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+          body{background:#09090b;color:#f4f4f5;font:13px/1.6 ui-monospace,Menlo,Consolas,monospace;padding:1.25rem;margin:0}.barra{color:#a1a1aa;font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;border-bottom:1px solid #27272a;padding-bottom:.5rem;margin-bottom:1rem}.err{color:#f87171}.ok{color:#34d399}pre{white-space:pre-wrap;word-break:break-word}
+        </style></head><body><div class="barra" id="estado">Compilando TypeScript...</div><pre id="saida"></pre><script>
+          const estado=document.getElementById('estado'),saida=document.getElementById('saida');
+          const escrever=(texto,tipo='log')=>{const l=document.createElement('div');l.className=tipo==='error'?'err':'';l.textContent=texto;saida.appendChild(l);parent.postMessage({type:'PREVIEW_LOG',log:{type:tipo,text:texto}},'*')};
+          const carregar=()=>new Promise((resolve,reject)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/typescript@5.8.2/lib/typescript.js';s.onload=resolve;s.onerror=()=>reject(new Error('rede'));document.head.appendChild(s)});
+          (async()=>{try{await carregar()}catch(e){estado.textContent='TypeScript indisponível';escrever('Não foi possível baixar o compilador TypeScript. Verifique a internet e rerode.','error');parent.postMessage({type:'PREVIEW_ERROR',error:{message:'TypeScript indisponível: compilador não carregou.'}},'*');return}
+            const fonte=${codigoEmJson};
+            const resultado=ts.transpileModule(fonte,{reportDiagnostics:true,compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.None,strict:true}});
+            const erros=(resultado.diagnostics||[]).filter(d=>d.category===ts.DiagnosticCategory.Error);
+            if(erros.length){estado.textContent='TypeScript com erro';for(const d of erros){const msg=ts.flattenDiagnosticMessageText(d.messageText,' ');escrever(msg,'error')}parent.postMessage({type:'PREVIEW_ERROR',error:{message:ts.flattenDiagnosticMessageText(erros[0].messageText,' ')}},'*');return}
+            estado.textContent='TypeScript compilado — executando';estado.className='barra ok';
+            const logOriginal=console.log,erroOriginal=console.error;console.log=(...a)=>escrever(a.map(String).join(' '));console.error=(...a)=>escrever(a.map(String).join(' '),'error');
+            try{new Function(resultado.outputText)()}catch(e){escrever(String(e?.message||e),'error');parent.postMessage({type:'PREVIEW_ERROR',error:{message:String(e?.message||e)}},'*')}finally{console.log=logOriginal;console.error=erroOriginal}
+          })();
+        </script></body></html>`;
+    }
+
+    /** SQL roda sobre um SQLite real compilado para WebAssembly, isolado dentro do iframe. */
+    if (linguagem === 'sql') {
+      const codigoEmJson = codigoDentroDoScript(code);
+      return `
+        <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+          body{background:#09090b;color:#f4f4f5;font:13px/1.5 ui-monospace,Menlo,Consolas,monospace;padding:1.25rem;margin:0}.barra{color:#a1a1aa;font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;border-bottom:1px solid #27272a;padding-bottom:.5rem;margin-bottom:1rem}.err{color:#f87171}table{border-collapse:collapse;margin:0 0 18px;width:100%}th,td{border:1px solid #3f3f46;padding:7px 9px;text-align:left}th{background:#18181b;color:#67e8f9}.vazio{color:#71717a}
+        </style></head><body><div class="barra" id="estado">Carregando SQLite...</div><div id="saida"></div><script>
+          const estado=document.getElementById('estado'),saida=document.getElementById('saida');
+          const avisar=(texto,tipo='log')=>parent.postMessage({type:'PREVIEW_LOG',log:{type:tipo,text:texto}},'*');
+          const carregar=()=>new Promise((resolve,reject)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/sql.js@1.13.0/dist/sql-wasm.js';s.onload=resolve;s.onerror=()=>reject(new Error('rede'));document.head.appendChild(s)});
+          (async()=>{try{await carregar();const SQL=await initSqlJs({locateFile:f=>'https://cdn.jsdelivr.net/npm/sql.js@1.13.0/dist/'+f});const db=new SQL.Database();const resultados=db.exec(${codigoEmJson});estado.textContent='SQLite — execução concluída';
+            if(!resultados.length){saida.innerHTML='<div class="vazio">Comandos executados. Nenhuma consulta retornou linhas.</div>';avisar('SQL executado sem linhas de resultado.')}else for(const r of resultados){const t=document.createElement('table'),h=document.createElement('tr');for(const c of r.columns){const th=document.createElement('th');th.textContent=c;h.appendChild(th)}t.appendChild(h);for(const linha of r.values){const tr=document.createElement('tr');for(const valor of linha){const td=document.createElement('td');td.textContent=valor===null?'NULL':String(valor);tr.appendChild(td)}t.appendChild(tr)}saida.appendChild(t);avisar(r.values.length+' linha(s): '+r.columns.join(', '))}db.close();
+          }catch(e){estado.textContent='SQLite indisponível ou SQL inválido';const d=document.createElement('div');d.className='err';d.textContent=String(e?.message||e);saida.appendChild(d);avisar(d.textContent,'error');parent.postMessage({type:'PREVIEW_ERROR',error:{message:d.textContent}},'*')}})();
+        </script></body></html>`;
     }
 
     const hasHtmlTags = /<html|<head|<body|<!doctype|<div|<p|<script|<style/i.test(code);
@@ -476,7 +519,7 @@ export const CodePreview = ({ code, linguagem, aoDetectarProblema }: {
         </body>
       </html>
     `;
-  }, [code]);
+  }, [code, linguagem]);
 
   srcDocRef.current = srcDocContent;
 

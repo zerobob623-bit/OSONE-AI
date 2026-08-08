@@ -130,7 +130,7 @@ import { HomeWorkspaceSection } from './components/HomeWorkspaceSection';
 import { OsoneHearPanel } from './components/OsoneHearPanel';
 import { PlansModal } from './components/PlansModal';
 import { useSubscription } from './hooks/useSubscription';
-import { PaidFeature } from './lib/planos';
+import { minimumPlanForFeature, paidFeatureForWorkspace, PaidFeature } from './lib/planos';
 
 // Safe helper to dynamically load PDF.js from cdnjs for client-side PDF text extraction
 const loadPdfJs = async (): Promise<any> => {
@@ -777,16 +777,10 @@ export default function App() {
   }, [aiDossierType]);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('home');
 
-  const paidFeatureForMode = (mode: WorkspaceMode): PaidFeature | null => {
-    if (mode === 'cowork') return 'cowork_browser';
-    if (mode === 'hear') return 'hear';
-    if (mode === 'whatsapp') return 'whatsapp';
-    return null;
-  };
-
   const paidFeatureLabel: Record<PaidFeature, string> = {
     cowork_browser: 'OSONE COWORK',
     hear: 'OSONE HEAR',
+    osone_code: 'OSONE CODE',
     whatsapp: 'OSONE ZAP'
   };
 
@@ -798,7 +792,7 @@ export default function App() {
   };
 
   const openWorkspaceMode = (mode: WorkspaceMode) => {
-    const feature = paidFeatureForMode(mode);
+    const feature = paidFeatureForWorkspace(mode);
     if (feature && !requestPaidFeature(feature)) return;
     setWorkspaceMode(mode);
   };
@@ -806,7 +800,7 @@ export default function App() {
   // Também cobre navegação pedida por voz/ferramenta, que altera workspaceMode sem passar
   // pelo menu lateral. A aba paga nunca chega a montar para uma conta sem entitlement.
   useEffect(() => {
-    const feature = paidFeatureForMode(workspaceMode);
+    const feature = paidFeatureForWorkspace(workspaceMode);
     if (feature && !subscription.loading && !subscription.hasFeature(feature)) {
       setWorkspaceMode('home');
       setRequestedPaidFeature(paidFeatureLabel[feature]);
@@ -8736,6 +8730,14 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
             }
           } else if (call.name === 'switch_workspace_mode') {
             const mode = (call.args as any).mode;
+            const feature = paidFeatureForWorkspace(mode);
+            if (feature && !requestPaidFeature(feature)) {
+              setChatHistory(prev => [...prev, {
+                id: Math.random().toString(36).substr(2, 9), role: 'assistant' as const,
+                content: `${paidFeatureLabel[feature]} faz parte do plano ${minimumPlanForFeature(feature) === 'pro' ? 'Pro' : 'Plus'}. Abri os planos para você.`
+              }]);
+              continue;
+            }
             setWorkspaceMode(mode);
             setChatHistory(prev => [...prev, { 
               id: Math.random().toString(36).substr(2, 9), 
@@ -8751,6 +8753,13 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
             }]);
           } else if (call.name === 'send_code_prompt') {
             const promptText = (call.args as any).prompt;
+            if (!requestPaidFeature('osone_code')) {
+              setChatHistory(prev => [...prev, {
+                id: Math.random().toString(36).substr(2, 9), role: 'assistant' as const,
+                content: 'O OSONE CODE faz parte do plano Plus. A aba de Escrita continua gratuita, inclusive para escrever código.'
+              }]);
+              continue;
+            }
             setWorkspaceMode('code');
             addNotification(`🚀 Pedido enviado para o OSONE CODE: "${promptText}"`, "success");
             handleCodeWorkspacePrompt(promptText);
@@ -10589,6 +10598,14 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     });
                   } else if (call.name === "switch_workspace_mode") {
                     const targetMode = call.args.mode as any;
+                    const feature = paidFeatureForWorkspace(targetMode);
+                    if (feature && !requestPaidFeature(feature)) {
+                      responses.push({
+                        name: call.name, id: call.id,
+                        response: { error: `${paidFeatureLabel[feature]} requer o plano ${minimumPlanForFeature(feature) === 'pro' ? 'Pro' : 'Plus'}. A tela de planos foi aberta.` }
+                      });
+                      continue;
+                    }
                     setWorkspaceMode(targetMode);
                     const friendlyName = targetMode === 'code' ? 'OSONE CODE' :
                                         targetMode === 'writing' ? 'Prosa e Escrita de Texto' :
@@ -10612,6 +10629,13 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     });
                   } else if (call.name === "send_code_prompt") {
                     const promptText = (call.args as any).prompt as string;
+                    if (!requestPaidFeature('osone_code')) {
+                      responses.push({
+                        name: call.name, id: call.id,
+                        response: { error: 'OSONE CODE requer o plano Plus. A aba de Escrita continua gratuita, inclusive para escrever código.' }
+                      });
+                      continue;
+                    }
                     setWorkspaceMode('code');
                     addNotification(`🚀 OSONE Live enviou pedido para o OSONE CODE: "${promptText}"`, "success");
                     handleCodeWorkspacePrompt(promptText);

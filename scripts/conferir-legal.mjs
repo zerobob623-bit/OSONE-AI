@@ -8,7 +8,7 @@ const workflow = ler('.github/workflows/release.yml');
 
 const testes = [
   ['porta legal envolve o app autenticado', app.includes('<LegalConsentGate user={user}')],
-  ['versão legal é explícita', gate.includes("LEGAL_VERSION = '2026-08-08'")],
+  ['versão legal é explícita', gate.includes("LEGAL_VERSION = '2026-08-08-v2'")],
   ['termos e privacidade exigem aceites separados', gate.includes('termosAceitos') && gate.includes('privacidadeAceita')],
   ['aceite usa horário do servidor', gate.includes('acceptedAt: serverTimestamp()')],
   ['cotas externas são explicadas', gate.includes('O fim de uma cota externa não significa')],
