@@ -27,6 +27,7 @@ import {
 } from "./src/tuyaService";
 import { agentRouter, OSONE_INSTALL_DIR } from "./src/localAgentService";
 import { NaoRepetir } from "./src/lib/naoRepetir";
+import { acompanharClienteDoStream } from "./src/lib/clienteDoStream";
 import {
   carregarCredenciaisSalvas,
   lerEstadoDasCredenciais,
@@ -405,7 +406,9 @@ Comentário de @${user}: "${text}"`;
       });
 
       // Dynamic import to support clean compilation
-      const { WebcastPushConnection } = await import("tiktok-live-connector");
+      // A linha 2.x atual mantém a API antiga em um adaptador oficial. Importá-lo explicitamente
+      // preserva o painel existente sem voltar à versão vulnerável do conector.
+      const { WebcastPushConnection } = await import("tiktok-live-connector/legacy");
       
       const configOpts: any = {
         enableExtendedGiftInfo: true,
@@ -4441,8 +4444,9 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
     };
 
     // Quem fechou a aba ou apertou cancelar não deve continuar consumindo cota do modelo.
-    let clienteFoiEmbora = false;
-    req.on("close", () => { clienteFoiEmbora = true; });
+    // O evento `close` da REQUISIÇÃO também dispara quando o navegador termina normalmente de
+    // enviar o POST. Observar a RESPOSTA evita encerrar o Gemini antes do primeiro pedaço.
+    const clienteDoStream = acompanharClienteDoStream(res);
 
     try {
       const ai = new GoogleGenAI({
@@ -4489,7 +4493,7 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
         let recebeuAlgo = false;
 
         for await (const pedaco of fluxo) {
-          if (clienteFoiEmbora) break;
+          if (clienteDoStream.foiEmbora) break;
           const parcial = pedaco.text || "";
           const razao = pedaco?.candidates?.[0]?.finishReason;
           if (razao) finishReason = razao;
@@ -4533,7 +4537,7 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
       delete configDaContinuacao.responseMimeType;
       delete configDaContinuacao.responseSchema;
 
-      while (finishReason === "MAX_TOKENS" && continuacoes < limiteDeContinuacoes && textoCompleto.trim() && !clienteFoiEmbora) {
+      while (finishReason === "MAX_TOKENS" && continuacoes < limiteDeContinuacoes && textoCompleto.trim() && !clienteDoStream.foiEmbora) {
         continuacoes++;
         console.warn(`[Fluxo] Resposta cortada por MAX_TOKENS. Continuação ${continuacoes}/${limiteDeContinuacoes}...`);
         enviar({ continuando: continuacoes });

@@ -163,7 +163,8 @@ const dizer = (pag, texto, definitivo = true) =>
 const transcricaoNaTela = (pag) => pag.evaluate(() => {
   const titulo = [...document.querySelectorAll('h3')].find(h => h.textContent.includes('Transcrição do discurso'));
   const caixa = titulo?.closest('.rounded-3xl');
-  return caixa?.querySelector('p.whitespace-pre-wrap')?.textContent || '';
+  const campo = caixa?.querySelector('textarea');
+  return campo?.value || caixa?.querySelector('p.whitespace-pre-wrap')?.textContent || '';
 });
 
 // 1) O DEFEITO QUE SÓ APARECE NA FALA LONGA: cada evento traz a lista acumulada de novo.
@@ -367,6 +368,19 @@ const transcricaoNaTela = (pag) => pag.evaluate(() => {
   registrar('microfone negado para a escuta e explica, em vez de religar num laço',
     reinicios === 1 && avisou > 0,
     `${reinicios} sessão(ões), aviso ${avisou > 0 ? 'na tela' : 'AUSENTE'}`);
+  await ctx.close();
+}
+
+// 14) Depois de parar, a transcrição aceita digitação, colagem e correção direta.
+{
+  const { pag, ctx } = await abrir();
+  const campo = pag.getByLabel('Transcrição editável do discurso');
+  await campo.fill('Texto digitado e corrigido diretamente pelo teclado.');
+  const texto = await transcricaoNaTela(pag);
+  const persistido = await pag.evaluate(() => localStorage.getItem('osone_hear_transcricao'));
+  registrar('a transcrição parada aceita digitação, colagem e correção pelo teclado',
+    texto === 'Texto digitado e corrigido diretamente pelo teclado.' && persistido === texto,
+    texto === persistido ? `"${texto}"` : `tela="${texto}", salvo="${persistido}"`);
   await ctx.close();
 }
 
