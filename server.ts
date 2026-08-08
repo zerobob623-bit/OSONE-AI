@@ -406,9 +406,9 @@ Comentário de @${user}: "${text}"`;
       });
 
       // Dynamic import to support clean compilation
-      // A linha 2.x atual mantém a API antiga em um adaptador oficial. Importá-lo explicitamente
-      // preserva o painel existente sem voltar à versão vulnerável do conector.
-      const { WebcastPushConnection } = await import("tiktok-live-connector/legacy");
+      // A versão instalada exporta WebcastPushConnection pelo módulo principal; não existe um
+      // subcaminho /legacy no pacote publicado, que quebraria tipagem e execução em produção.
+      const { WebcastPushConnection } = await import("tiktok-live-connector");
       
       const configOpts: any = {
         enableExtendedGiftInfo: true,
