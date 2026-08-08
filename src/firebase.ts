@@ -16,6 +16,7 @@ import {
   updateDoc as fbUpdateDoc,
   onSnapshot as fbOnSnapshot,
   collection as fbCollection,
+  serverTimestamp as fbServerTimestamp,
   type Firestore
 } from "firebase/firestore";
 
@@ -195,6 +196,8 @@ export const collection = (firestore: any, path: string, ...pathSegments: string
   if (!realDb) return {} as any;
   return fbCollection(firestore, path, ...pathSegments);
 };
+
+export const serverTimestamp = () => fbServerTimestamp();
 
 export enum OperationType {
   CREATE = 'create',

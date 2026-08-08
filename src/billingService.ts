@@ -6,6 +6,7 @@ import { FieldValue, getFirestore, type Firestore } from 'firebase-admin/firesto
 
 type PlanId = 'free' | 'plus' | 'pro';
 type Interval = 'month' | 'year';
+type PaymentMethod = 'card' | 'pix';
 
 const PRICE_ENV: Record<Exclude<PlanId, 'free'>, Record<Interval, string>> = {
   plus: { month: 'STRIPE_PRICE_PLUS_MONTHLY', year: 'STRIPE_PRICE_PLUS_YEARLY' },
@@ -20,9 +21,11 @@ const EXPECTED_PRICE: Record<Exclude<PlanId, 'free'>, Record<Interval, number>> 
 let stripeClient: Stripe | null = null;
 let firebaseApp: FirebaseAdminApp | null = null;
 let firestore: Firestore | null = null;
+let pixAvailabilityCache: { value: boolean; expiresAt: number } | null = null;
 
 const BILLING_EVENTS = new Set([
   'checkout.session.completed',
+  'checkout.session.async_payment_succeeded',
   'customer.subscription.created',
   'customer.subscription.updated',
   'customer.subscription.deleted'
@@ -73,6 +76,21 @@ function billingConfiguration() {
 function stripe(): Stripe {
   if (!stripeClient) stripeClient = new Stripe(env('STRIPE_SECRET_KEY'));
   return stripeClient;
+}
+
+async function pixAvailable(): Promise<boolean> {
+  if (pixAvailabilityCache && pixAvailabilityCache.expiresAt > Date.now()) return pixAvailabilityCache.value;
+  try {
+    const configurations = await stripe().paymentMethodConfigurations.list({ limit: 100 });
+    const active = configurations.data.find(configuration => configuration.active);
+    const pix = active?.pix;
+    const value = !!pix?.available && pix.display_preference?.value === 'on';
+    pixAvailabilityCache = { value, expiresAt: Date.now() + 5 * 60_000 };
+    return value;
+  } catch {
+    pixAvailabilityCache = { value: false, expiresAt: Date.now() + 60_000 };
+    return false;
+  }
 }
 
 function adminServices(): { app: FirebaseAdminApp; db: Firestore } {
@@ -138,6 +156,24 @@ function planFromPrice(price: string | null | undefined): PlanId {
   return 'free';
 }
 
+export function pixPeriodEnd(start: Date, interval: Interval): Date {
+  const end = new Date(start);
+  if (interval === 'month') end.setUTCMonth(end.getUTCMonth() + 1);
+  else end.setUTCFullYear(end.getUTCFullYear() + 1);
+  return end;
+}
+
+export function validatePixCheckout(
+  session: Pick<Stripe.Checkout.Session, 'mode' | 'payment_status' | 'currency' | 'amount_total'>,
+  plan: Exclude<PlanId, 'free'>,
+  interval: Interval
+) {
+  if (session.mode !== 'payment' || session.payment_status !== 'paid' ||
+      session.currency?.toLowerCase() !== 'brl' || session.amount_total !== EXPECTED_PRICE[plan][interval]) {
+    throw new Error('Pagamento PIX não confirmado ou com valor divergente; acesso não liberado.');
+  }
+}
+
 async function customerFor(uid: string, email?: string, name?: string): Promise<string> {
   const { db } = adminServices();
   const ref = db.collection('billingCustomers').doc(uid);
@@ -170,9 +206,44 @@ async function writeEntitlement(subscription: Stripe.Subscription) {
     currentPeriodEnd: periodEnd,
     stripeCustomerId: typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id,
     stripeSubscriptionId: subscription.id,
+    billingMethod: 'card',
     cancelAtPeriodEnd: subscription.cancel_at_period_end,
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
+}
+
+async function writePixEntitlement(session: Stripe.Checkout.Session) {
+  const uid = session.metadata?.firebaseUid;
+  const plan = session.metadata?.plan as Exclude<PlanId, 'free'>;
+  const interval = session.metadata?.interval as Interval;
+  if (!uid || !['plus', 'pro'].includes(plan) || !['month', 'year'].includes(interval) || session.metadata?.paymentMethod !== 'pix') {
+    throw new Error(`Checkout PIX ${session.id} sem metadados válidos.`);
+  }
+  validatePixCheckout(session, plan, interval);
+
+  const { db } = adminServices();
+  const purchaseRef = db.collection('billingPurchases').doc(session.id);
+  const entitlementRef = db.collection('entitlements').doc(uid);
+  await db.runTransaction(async transaction => {
+    if ((await transaction.get(purchaseRef)).exists) return;
+    const now = new Date();
+    const currentPeriodEnd = pixPeriodEnd(now, interval).toISOString();
+    transaction.set(entitlementRef, {
+      plan,
+      status: 'active',
+      billingMethod: 'pix',
+      currentPeriodEnd,
+      stripeCustomerId: typeof session.customer === 'string' ? session.customer : session.customer?.id || null,
+      stripeCheckoutSessionId: session.id,
+      stripeSubscriptionId: FieldValue.delete(),
+      cancelAtPeriodEnd: true,
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+    transaction.create(purchaseRef, {
+      uid, plan, interval, amount: session.amount_total, currency: session.currency,
+      currentPeriodEnd, processedAt: FieldValue.serverTimestamp()
+    });
+  });
 }
 
 function sendError(res: express.Response, err: any) {
@@ -203,7 +274,11 @@ export function registerBillingWebhook(app: Express) {
         if (session.subscription) {
           const subscription = await stripe().subscriptions.retrieve(String(session.subscription));
           await writeEntitlement(subscription);
+        } else if (session.mode === 'payment' && session.payment_status === 'paid') {
+          await writePixEntitlement(session);
         }
+      } else if (event.type === 'checkout.session.async_payment_succeeded') {
+        await writePixEntitlement(event.data.object as Stripe.Checkout.Session);
       } else if (event.type === 'customer.subscription.created' || event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.deleted') {
         // Eventos podem chegar fora de ordem. Reconsultar o objeto atual evita que um evento
         // atrasado de "active" sobrescreva um cancelamento que já ocorreu.
@@ -249,12 +324,13 @@ export function registerBillingApi(app: Express) {
     next();
   });
 
-  app.get('/api/billing/config', (_req, res) => {
+  app.get('/api/billing/config', async (_req, res) => {
     const config = billingConfiguration();
     res.json({
       enabled: config.enabled,
       missing: config.enabled ? [] : config.missing,
       returnOrigin: config.returnOrigin,
+      pixEnabled: config.enabled ? await pixAvailable() : false,
       plans: { plus: { monthly: 39.90, yearly: 339.90 }, pro: { monthly: 69.90, yearly: 669.90 } }
     });
   });
@@ -270,7 +346,15 @@ export function registerBillingApi(app: Express) {
       const { db } = adminServices();
       const snapshot = await db.collection('entitlements').doc(user.uid).get();
       const data = snapshot.data() || {};
-      return res.json({ plan: data.plan || 'free', status: data.status || 'free', currentPeriodEnd: data.currentPeriodEnd || null, billingEnabled: true });
+      const pixExpired = data.billingMethod === 'pix' && data.currentPeriodEnd && Date.parse(data.currentPeriodEnd) <= Date.now();
+      return res.json({
+        plan: pixExpired ? 'free' : data.plan || 'free',
+        status: pixExpired ? 'free' : data.status || 'free',
+        currentPeriodEnd: data.currentPeriodEnd || null,
+        billingMethod: pixExpired ? null : data.billingMethod || (data.stripeSubscriptionId ? 'card' : null),
+        pixEnabled: await pixAvailable(),
+        billingEnabled: true
+      });
     } catch (err) { return sendError(res, err); }
   });
 
@@ -281,8 +365,13 @@ export function registerBillingApi(app: Express) {
       const user = await authenticatedUser(req);
       const plan = req.body?.plan as Exclude<PlanId, 'free'>;
       const interval = req.body?.interval as Interval;
+      const paymentMethod = (req.body?.paymentMethod || 'card') as PaymentMethod;
       if (!['plus', 'pro'].includes(plan) || !['month', 'year'].includes(interval)) {
         return res.status(400).json({ error: 'Plano ou período inválido.' });
+      }
+      if (!['card', 'pix'].includes(paymentMethod)) return res.status(400).json({ error: 'Forma de pagamento inválida.' });
+      if (paymentMethod === 'pix' && !(await pixAvailable())) {
+        return res.status(503).json({ error: 'O PIX ainda não foi liberado pela Stripe para esta conta. Use cartão enquanto a ativação está pendente.' });
       }
       const customer = await customerFor(user.uid, user.email, user.name);
       const existingSubscription = await activeSubscriptionFor(customer);
@@ -291,18 +380,44 @@ export function registerBillingApi(app: Express) {
           error: 'Esta conta já possui uma assinatura. Use “Gerenciar assinatura e cobrança” para trocar de plano ou período.'
         });
       }
+      const { db } = adminServices();
+      const entitlement = (await db.collection('entitlements').doc(user.uid).get()).data() || {};
+      const hasActivePix = entitlement.billingMethod === 'pix' && entitlement.status === 'active' &&
+        entitlement.currentPeriodEnd && Date.parse(entitlement.currentPeriodEnd) > Date.now();
+      if (hasActivePix) {
+        return res.status(409).json({ error: `Seu acesso por PIX está pago até ${new Date(entitlement.currentPeriodEnd).toLocaleDateString('pt-BR')}. Faça um novo pagamento somente após o vencimento.` });
+      }
       const returnUrl = env('OSONE_BILLING_RETURN_URL');
       const configuredPrice = await stripe().prices.retrieve(priceId(plan, interval));
       validateStripePrice(configuredPrice, plan, interval);
+      if (paymentMethod === 'pix') {
+        const product = typeof configuredPrice.product === 'string' ? configuredPrice.product : configuredPrice.product.id;
+        const session = await stripe().checkout.sessions.create({
+          mode: 'payment',
+          payment_method_types: ['pix'],
+          customer,
+          line_items: [{
+            price_data: { currency: 'brl', unit_amount: EXPECTED_PRICE[plan][interval], product },
+            quantity: 1
+          }],
+          success_url: billingResultUrl(returnUrl, 'success'),
+          cancel_url: billingResultUrl(returnUrl, 'canceled'),
+          client_reference_id: user.uid,
+          metadata: { firebaseUid: user.uid, plan, interval, paymentMethod: 'pix' },
+          payment_intent_data: { metadata: { firebaseUid: user.uid, plan, interval, paymentMethod: 'pix' } }
+        });
+        return res.json({ url: session.url });
+      }
       const session = await stripe().checkout.sessions.create({
         mode: 'subscription',
+        payment_method_types: ['card'],
         customer,
         line_items: [{ price: configuredPrice.id, quantity: 1 }],
         allow_promotion_codes: true,
         success_url: billingResultUrl(returnUrl, 'success'),
         cancel_url: billingResultUrl(returnUrl, 'canceled'),
         client_reference_id: user.uid,
-        metadata: { firebaseUid: user.uid, plan, interval },
+        metadata: { firebaseUid: user.uid, plan, interval, paymentMethod: 'card' },
         subscription_data: { metadata: { firebaseUid: user.uid, plan, interval } }
       });
       return res.json({ url: session.url });

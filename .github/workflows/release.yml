@@ -72,6 +72,10 @@ jobs:
           VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
           VITE_FIREBASE_MEASUREMENT_ID: ${{ secrets.VITE_FIREBASE_MEASUREMENT_ID }}
           VITE_FIREBASE_FIRESTORE_DATABASE_ID: ${{ secrets.VITE_FIREBASE_FIRESTORE_DATABASE_ID }}
+          VITE_OSONE_LEGAL_PROVIDER_NAME: ${{ secrets.VITE_OSONE_LEGAL_PROVIDER_NAME }}
+          VITE_OSONE_LEGAL_PROVIDER_REGISTRATION: ${{ secrets.VITE_OSONE_LEGAL_PROVIDER_REGISTRATION }}
+          VITE_OSONE_LEGAL_PROVIDER_ADDRESS: ${{ secrets.VITE_OSONE_LEGAL_PROVIDER_ADDRESS }}
+          VITE_OSONE_LEGAL_CONTACT: ${{ secrets.VITE_OSONE_LEGAL_CONTACT }}
           # URL publica, nao secreta. O desktop continua local; somente assinatura/checkout usam
           # a API hospedada para que nenhuma chave Stripe viaje dentro do instalador.
           VITE_OSONE_BILLING_URL: https://osone-ai-six.vercel.app
@@ -92,6 +96,10 @@ jobs:
           STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
           SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
           APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+          LEGAL_NAME: ${{ secrets.VITE_OSONE_LEGAL_PROVIDER_NAME }}
+          LEGAL_REGISTRATION: ${{ secrets.VITE_OSONE_LEGAL_PROVIDER_REGISTRATION }}
+          LEGAL_ADDRESS: ${{ secrets.VITE_OSONE_LEGAL_PROVIDER_ADDRESS }}
+          LEGAL_CONTACT: ${{ secrets.VITE_OSONE_LEGAL_CONTACT }}
           # Nomes reais dos secrets, só para a mensagem de erro apontar o que cadastrar.
           NOMES: "VITE_FIREBASE_API_KEY VITE_FIREBASE_AUTH_DOMAIN VITE_FIREBASE_PROJECT_ID VITE_FIREBASE_STORAGE_BUCKET VITE_FIREBASE_MESSAGING_SENDER_ID VITE_FIREBASE_APP_ID"
         run: |
@@ -108,6 +116,19 @@ jobs:
             echo "Cadastre em Settings > Secrets and variables > Actions, conferindo a grafia exata."
             exit 1
           fi
+
+          for par in \
+            "VITE_OSONE_LEGAL_PROVIDER_NAME=$LEGAL_NAME" \
+            "VITE_OSONE_LEGAL_PROVIDER_REGISTRATION=$LEGAL_REGISTRATION" \
+            "VITE_OSONE_LEGAL_PROVIDER_ADDRESS=$LEGAL_ADDRESS" \
+            "VITE_OSONE_LEGAL_CONTACT=$LEGAL_CONTACT"; do
+            nome="${par%%=*}"
+            valor="${par#*=}"
+            if [ -z "$valor" ]; then
+              echo "ERRO: secret ausente: $nome. O instalador bloquearia o primeiro acesso sem identificar o fornecedor."
+              exit 1
+            fi
+          done
 
           # Aviso, não erro: o app já limpa espaços e quebras de linha ao ler estes valores. Mas
           # um secret sujo indica que a origem tem um caractere invisível colado, e vale
