@@ -1,5 +1,7 @@
 import express from 'express';
-import { registerBillingApi, registerBillingWebhook } from '../src/billingService';
+// A extensão `.js` é obrigatória no runtime ESM da Vercel/Node 24. O compilador resolve este
+// caminho para `billingService.ts` durante o build e publica o módulo como JavaScript.
+import { registerBillingApi, registerBillingWebhook } from '../src/billingService.js';
 
 /**
  * Função serverless pequena e exclusiva da cobrança.
