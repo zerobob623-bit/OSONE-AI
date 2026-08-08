@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import {
-  Ear, Mic, Square, Sparkles, Copy, Check, Trash2, AlertCircle, Loader2, FileText, Wand2
+  Ear, Mic, Square, Sparkles, Copy, Check, Trash2, AlertCircle, Loader2, FileText, Wand2, Keyboard
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import {
@@ -174,6 +174,13 @@ export const OsoneHearPanel: React.FC<{
     setSegundos(0);
   };
 
+  const editarTranscricao = (conteudo: string) => {
+    setEscuta({ finalizado: conteudo, parcial: '' });
+    // Um resultado elaborado antes da correção pertence ao texto antigo.
+    setResultado(null);
+    setErroDaElaboracao('');
+  };
+
   const copiar = (conteudo: string, qual: 'transcricao' | 'discurso') => {
     navigator.clipboard?.writeText(conteudo);
     setCopiado(qual);
@@ -311,6 +318,11 @@ export const OsoneHearPanel: React.FC<{
                   <span className="text-[10px] font-mono text-zinc-500 shrink-0">{palavras} palavra(s)</span>
                 )}
               </div>
+              {!ouvindo && (
+                <span className="hidden sm:flex items-center gap-1.5 text-[10px] font-mono text-violet-300/80 shrink-0">
+                  <Keyboard size={12} /> Clique abaixo para digitar ou corrigir
+                </span>
+              )}
               {texto && (
                 <div className="flex items-center gap-1.5 shrink-0">
                   <button
@@ -335,7 +347,7 @@ export const OsoneHearPanel: React.FC<{
               ref={areaDaTranscricaoRef}
               className="p-5 min-h-[220px] max-h-[420px] overflow-y-auto custom-scrollbar"
             >
-              {texto ? (
+              {ouvindo ? (
                 <p className="text-sm text-zinc-200 leading-relaxed whitespace-pre-wrap">
                   {escuta.finalizado}
                   {/* A cauda que ainda está sendo decidida aparece apagada: quem lê enxerga que
@@ -345,12 +357,14 @@ export const OsoneHearPanel: React.FC<{
                   )}
                 </p>
               ) : (
-                <div className="h-full min-h-[180px] flex items-center justify-center text-center">
-                  <p className="text-sm text-zinc-600 leading-relaxed max-w-sm">
-                    Nada transcrito ainda. Toque no microfone acima e comece a falar — o que for dito
-                    aparece aqui, palavra por palavra.
-                  </p>
-                </div>
+                <textarea
+                  value={escuta.finalizado}
+                  onChange={evento => editarTranscricao(evento.target.value)}
+                  className="block w-full min-h-[180px] resize-y bg-transparent text-sm text-zinc-200 leading-relaxed outline-none placeholder:text-zinc-600 caret-violet-400"
+                  placeholder="Nada transcrito ainda. Fale pelo microfone ou clique aqui para digitar, colar e corrigir o texto."
+                  aria-label="Transcrição editável do discurso"
+                  spellCheck
+                />
               )}
             </div>
 
