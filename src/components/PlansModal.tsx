@@ -52,6 +52,7 @@ export function PlansModal({
               {plans.map(plan => {
                 const paidPlan = plan.id !== 'free';
                 const active = current.plan === plan.id;
+                const alreadySubscribed = current.plan !== 'free';
                 const price = interval === 'month' ? plan.monthlyPrice : plan.yearlyPrice;
                 return (
                   <div key={plan.id} className={cn('rounded-3xl border p-6 flex flex-col min-h-[390px]', plan.id === 'pro' ? 'border-cyan-400/35 bg-cyan-400/[.06] shadow-[0_0_50px_rgba(34,211,238,.08)]' : 'border-white/10 bg-white/[.025]')}>
@@ -66,6 +67,10 @@ export function PlansModal({
                     </div>
                     {active ? (
                       <button disabled className="mt-6 w-full py-3 rounded-xl border border-emerald-400/25 bg-emerald-400/10 text-emerald-300 text-xs">Plano atual</button>
+                    ) : paidPlan && alreadySubscribed ? (
+                      <button disabled={loading} onClick={onPortal} className="mt-6 w-full py-3 rounded-xl bg-white text-black text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-cyan-100 transition">
+                        {loading ? <Loader2 size={15} className="animate-spin mx-auto" /> : `Alterar para ${plan.name} no portal`}
+                      </button>
                     ) : paidPlan ? (
                       <button disabled={loading || !loggedIn || !current.billingEnabled} onClick={() => onCheckout(plan.id as 'plus' | 'pro', interval)} className="mt-6 w-full py-3 rounded-xl bg-white text-black text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-cyan-100 transition">
                         {loading ? <Loader2 size={15} className="animate-spin mx-auto" /> : !loggedIn ? 'Entre com Google para assinar' : !current.billingEnabled ? 'Cobrança aguardando configuração' : `Assinar ${plan.name}`}
@@ -76,7 +81,13 @@ export function PlansModal({
               })}
             </div>
 
-            {(error || current.plan !== 'free') && <div className="px-6 md:px-10 pb-8 text-center">{error && <p className="text-xs text-rose-300 mb-4">{error}</p>}{current.plan !== 'free' && <button onClick={onPortal} disabled={loading} className="text-xs text-cyan-300 underline underline-offset-4">Gerenciar assinatura e cobrança</button>}</div>}
+            {(error || current.plan !== 'free' || (!current.billingEnabled && current.configurationMissing?.length)) && <div className="px-6 md:px-10 pb-8 text-center">
+              {error && <p className="text-xs text-rose-300 mb-4">{error}</p>}
+              {!current.billingEnabled && current.configurationMissing?.length ? (
+                <p className="text-[11px] text-amber-200/75 mb-4">Configuração pendente no servidor: {current.configurationMissing.join(', ')}.</p>
+              ) : null}
+              {current.plan !== 'free' && <button onClick={onPortal} disabled={loading} className="text-xs text-cyan-300 underline underline-offset-4">Gerenciar assinatura e cobrança</button>}
+            </div>}
           </motion.div>
         </motion.div>
       )}

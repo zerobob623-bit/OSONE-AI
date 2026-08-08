@@ -5,9 +5,10 @@ import type { User } from '../types';
 
 export interface SubscriptionSnapshot {
   plan: OsonePlanId;
-  status: 'free' | 'active' | 'trialing' | 'past_due' | 'canceled' | 'unpaid' | 'incomplete';
+  status: 'free' | 'active' | 'trialing' | 'past_due' | 'canceled' | 'unpaid' | 'incomplete' | 'incomplete_expired' | 'paused';
   currentPeriodEnd: string | null;
   billingEnabled: boolean;
+  configurationMissing?: string[];
 }
 
 const FREE_SNAPSHOT: SubscriptionSnapshot = {
