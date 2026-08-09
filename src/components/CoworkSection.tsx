@@ -47,6 +47,13 @@ interface CoworkSectionProps {
   localAgentToken: string;
   chaveGemini: string;
   modeloGemini: string;
+  elevenLabsApiKey?: string;
+  elevenLabsVoiceId?: string;
+  elevenLabsStability?: number;
+  elevenLabsSimilarityBoost?: number;
+  elevenLabsStyle?: number;
+  elevenLabsSpeakerBoost?: boolean;
+  elevenLabsModel?: string;
   ambiente?: any;
   listarJanelas: () => Promise<JanelaDeTrabalho[]>;
   janelaDeTrabalho: JanelaDeTrabalho | null;
@@ -72,8 +79,7 @@ interface CoworkSectionProps {
 const CAIXA = "rounded-3xl border border-white/[0.06] bg-white/[0.02]";
 const CHAVE_DA_NARRACAO = 'osone_cowork_narracao';
 const CHAVE_DO_MOTOR_NARRACAO = 'osone_cowork_motor_narracao';
-const CHAVE_DA_VOZ_NARRACAO = 'osone_cowork_voz_narracao';
-type MotorNarracaoCowork = 'piper' | 'navegador';
+type MotorNarracaoCowork = 'piper' | 'elevenlabs';
 
 /** Janelas do próprio OSONE não servem de alvo: ele trabalharia dentro de si mesmo. */
 const ehJanelaDoOsone = (j: JanelaDeTrabalho) =>
@@ -90,53 +96,12 @@ const definirNarracao = (ligada: boolean): void => {
 const lerMotorNarracao = (): MotorNarracaoCowork => {
   try {
     const valor = localStorage.getItem(CHAVE_DO_MOTOR_NARRACAO);
-    return valor === 'navegador' ? 'navegador' : 'piper';
+    return valor === 'elevenlabs' ? 'elevenlabs' : 'piper';
   } catch { return 'piper'; }
 };
 
 const salvarMotorNarracao = (motor: MotorNarracaoCowork): void => {
   try { localStorage.setItem(CHAVE_DO_MOTOR_NARRACAO, motor); } catch { /* preferência local apenas */ }
-};
-
-const lerVozPreferida = (): string => {
-  try { return localStorage.getItem(CHAVE_DA_VOZ_NARRACAO) || 'auto'; } catch { return 'auto'; }
-};
-
-const salvarVozPreferida = (voz: string): void => {
-  try { localStorage.setItem(CHAVE_DA_VOZ_NARRACAO, voz || 'auto'); } catch { /* preferência local apenas */ }
-};
-
-const pontuarVozCowork = (voz: SpeechSynthesisVoice): number => {
-  const nome = `${voz.name} ${voz.voiceURI} ${voz.lang}`.toLowerCase();
-  let pontos = 0;
-
-  // Primeiro critério: falar português direito. Sem isso a voz até pode ser bonita, mas tropeça.
-  if (voz.lang === 'pt-BR') pontos += 120;
-  else if (voz.lang?.toLowerCase().startsWith('pt-br')) pontos += 110;
-  else if (voz.lang?.toLowerCase().startsWith('pt')) pontos += 75;
-  else if (/portugu[eê]s|brazil|brasil/.test(nome)) pontos += 55;
-
-  // Segundo critério: vozes neurais/naturais costumam soar menos “robô de aeroporto”.
-  if (/natural|neural|online|premium|enhanced/.test(nome)) pontos += 35;
-  if (/maria|francisca|heloisa|hel[oó]isa|luciana|fernanda|female|mulher/.test(nome)) pontos += 18;
-  if (/microsoft|apple|samantha|joana|yara|leticia|vit[oó]ria/.test(nome)) pontos += 12;
-
-  // O relato foi justamente que a voz do Google soou robótica. Não banimos — em Linux/Chrome às
-  // vezes ela é a única pt-BR —, mas se houver alternativa boa ela perde a preferência.
-  if (/google/.test(nome)) pontos -= 18;
-  if (/espeak|festival|pico|default/.test(nome)) pontos -= 25;
-  if (voz.localService) pontos += 4;
-
-  return pontos;
-};
-
-const escolherVozCowork = (vozes: SpeechSynthesisVoice[], preferida: string): SpeechSynthesisVoice | null => {
-  if (!vozes.length) return null;
-  const porNome = preferida && preferida !== 'auto'
-    ? vozes.find(v => v.name === preferida || `${v.name} (${v.lang})` === preferida)
-    : null;
-  if (porNome) return porNome;
-  return [...vozes].sort((a, b) => pontuarVozCowork(b) - pontuarVozCowork(a))[0] || null;
 };
 
 const limparTextoParaVoz = (texto: string): string =>
@@ -161,7 +126,10 @@ const fraseDaVolta = (v: VoltaDoAgente): string => {
 };
 
 export const CoworkSection: React.FC<CoworkSectionProps> = ({
-  onBack, localAgentToken, chaveGemini, modeloGemini, ambiente, listarJanelas, janelaDeTrabalho, definirJanela,
+  onBack, localAgentToken, chaveGemini, modeloGemini,
+  elevenLabsApiKey, elevenLabsVoiceId, elevenLabsStability, elevenLabsSimilarityBoost,
+  elevenLabsStyle, elevenLabsSpeakerBoost, elevenLabsModel,
+  ambiente, listarJanelas, janelaDeTrabalho, definirJanela,
   onTrabalhar, relatoDoAgente, areaParalela, onConsultarArea, onLigarArea, onDesligarArea,
   onFotografarArea, motorParado, onParar, onRetomar, onNotification
 }) => {
@@ -270,34 +238,32 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
   const [comSom, setComSom] = useState(somLigado());
   const [comNarracao, setComNarracao] = useState(narracaoLigada());
   const [motorNarracao, setMotorNarracao] = useState<MotorNarracaoCowork>(lerMotorNarracao());
-  const [vozNarracao, setVozNarracao] = useState(lerVozPreferida());
-  const [vozesDisponiveis, setVozesDisponiveis] = useState<SpeechSynthesisVoice[]>([]);
   const [frameAtual, setFrameAtual] = useState<CapturaConfirmada | null>(null);
   const ultimoSomDeCapturaRef = useRef(0);
   const ultimaNarracaoRef = useRef(0);
   const audioNarracaoRef = useRef<HTMLAudioElement | null>(null);
   const urlAudioNarracaoRef = useRef<string | null>(null);
   const piperIndisponivelRef = useRef(false);
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-    const carregarVozes = () => {
-      const todas = window.speechSynthesis.getVoices();
-      const portugues = todas.filter(v => /^pt/i.test(v.lang) || /portugu[eê]s|brazil|brasil/i.test(v.name));
-      setVozesDisponiveis(portugues.length ? portugues : todas);
-    };
-    carregarVozes();
-    window.speechSynthesis.addEventListener?.('voiceschanged', carregarVozes);
-    return () => window.speechSynthesis.removeEventListener?.('voiceschanged', carregarVozes);
-  }, []);
+  const elevenLabsIndisponivelRef = useRef(false);
 
   useEffect(() => {
     return () => {
       audioNarracaoRef.current?.pause();
       if (urlAudioNarracaoRef.current) URL.revokeObjectURL(urlAudioNarracaoRef.current);
-      try { window.speechSynthesis?.cancel(); } catch { /* sem suporte */ }
     };
   }, []);
+
+  useEffect(() => {
+    elevenLabsIndisponivelRef.current = false;
+  }, [
+    elevenLabsApiKey,
+    elevenLabsVoiceId,
+    elevenLabsStability,
+    elevenLabsSimilarityBoost,
+    elevenLabsStyle,
+    elevenLabsSpeakerBoost,
+    elevenLabsModel
+  ]);
 
   const aoCapturar = (frame: CapturaConfirmada) => {
     setFrameAtual(frame);
@@ -324,44 +290,13 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
         URL.revokeObjectURL(urlAudioNarracaoRef.current);
         urlAudioNarracaoRef.current = null;
       }
-      window.speechSynthesis?.cancel();
     } catch { /* áudio acessório */ }
   };
 
-  const narrarNoNavegador = (frase: string, prioridade = false, vozPreferida = vozNarracao) => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-    try {
-      if (prioridade) pararNarracaoAtual();
-      const fala = new SpeechSynthesisUtterance(frase);
-      const voz = escolherVozCowork(vozesDisponiveis.length ? vozesDisponiveis : window.speechSynthesis.getVoices(), vozPreferida);
-      if (voz) {
-        fala.voice = voz;
-        fala.lang = voz.lang || 'pt-BR';
-      } else {
-        fala.lang = 'pt-BR';
-      }
-      fala.rate = 0.92;
-      fala.pitch = 1.04;
-      fala.volume = 0.9;
-      window.speechSynthesis.speak(fala);
-    } catch { /* narração é acessória; o relatório visual continua valendo */ }
-  };
-
-  const narrarComPiper = async (frase: string, prioridade = false) => {
+  const tocarAudioDaNarracao = async (blob: Blob, prioridade = false) => {
     if (typeof window === 'undefined') return;
     if (prioridade) pararNarracaoAtual();
-
-    const resposta = await fetch('/api/tts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: frase, engine: 'local' })
-    });
-    if (!resposta.ok) {
-      const erro = await resposta.json().catch(() => null);
-      throw new Error(erro?.error || `Piper retornou HTTP ${resposta.status}`);
-    }
-    const blob = await resposta.blob();
-    if (!blob.size) throw new Error('Piper gerou áudio vazio.');
+    if (!blob.size) throw new Error('O motor de voz gerou áudio vazio.');
 
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
@@ -378,11 +313,62 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
     await audio.play();
   };
 
+  const narrarComPiper = async (frase: string, prioridade = false) => {
+    const resposta = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: frase, engine: 'local' })
+    });
+    if (!resposta.ok) {
+      const erro = await resposta.json().catch(() => null);
+      throw new Error(erro?.error || `Piper retornou HTTP ${resposta.status}`);
+    }
+    const blob = await resposta.blob();
+    await tocarAudioDaNarracao(blob, prioridade);
+  };
+
+  const narrarComElevenLabs = async (frase: string, prioridade = false) => {
+    const resposta = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: frase,
+        engine: 'elevenlabs',
+        elevenLabsApiKey: elevenLabsApiKey || '',
+        elevenLabsVoiceId: elevenLabsVoiceId || '',
+        elevenLabsStability,
+        elevenLabsSimilarityBoost,
+        elevenLabsStyle,
+        elevenLabsSpeakerBoost,
+        elevenLabsModel
+      })
+    });
+    if (!resposta.ok) {
+      const erro = await resposta.json().catch(() => null);
+      throw new Error(erro?.error || `ElevenLabs retornou HTTP ${resposta.status}`);
+    }
+    const blob = await resposta.blob();
+    await tocarAudioDaNarracao(blob, prioridade);
+  };
+
+  const nomeDoMotorNarracao = (motor: MotorNarracaoCowork) =>
+    motor === 'piper' ? 'Piper' : 'ElevenLabs';
+
+  const motorIndisponivel = (motor: MotorNarracaoCowork) =>
+    motor === 'piper' ? piperIndisponivelRef.current : elevenLabsIndisponivelRef.current;
+
+  const marcarMotorIndisponivel = (motor: MotorNarracaoCowork) => {
+    if (motor === 'piper') piperIndisponivelRef.current = true;
+    else elevenLabsIndisponivelRef.current = true;
+  };
+
+  const narrarComMotor = (motor: MotorNarracaoCowork, frase: string, prioridade = false) =>
+    motor === 'piper' ? narrarComPiper(frase, prioridade) : narrarComElevenLabs(frase, prioridade);
+
   const narrar = (
     texto: string,
     prioridade = false,
     forcar = false,
-    vozPreferida = vozNarracao,
     motorPreferido: MotorNarracaoCowork = motorNarracao
   ) => {
     if (!forcar && !comNarracao) return;
@@ -391,39 +377,47 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
     if (!prioridade && Date.now() - ultimaNarracaoRef.current < 2200) return;
     ultimaNarracaoRef.current = Date.now();
 
-    if (motorPreferido === 'piper' && !piperIndisponivelRef.current) {
-      void narrarComPiper(frase, prioridade).catch((erro) => {
-        piperIndisponivelRef.current = true;
-        console.warn('[COWORK] Piper indisponível, caindo para voz do navegador:', erro);
-        onNotification("Piper não respondeu; usei a voz do navegador como reserva. Rode 'npm run baixar-voz' se precisar reinstalar.", 'error');
-        narrarNoNavegador(frase, prioridade, vozPreferida);
-      });
-      return;
-    }
+    const motorReserva: MotorNarracaoCowork = motorPreferido === 'piper' ? 'elevenlabs' : 'piper';
+    const motores = [motorPreferido, motorReserva].filter(
+      (motor): motor is MotorNarracaoCowork => !motorIndisponivel(motor)
+    );
 
-    narrarNoNavegador(frase, prioridade, vozPreferida);
+    if (!motores.length) return;
+
+    void (async () => {
+      let ultimoErro: unknown = null;
+      for (const motor of motores) {
+        try {
+          await narrarComMotor(motor, frase, prioridade);
+          return;
+        } catch (erro) {
+          ultimoErro = erro;
+          marcarMotorIndisponivel(motor);
+          console.warn(`[COWORK] ${nomeDoMotorNarracao(motor)} indisponível para narração:`, erro);
+        }
+      }
+      onNotification(
+        `Narração do COWORK sem áudio: Piper e ElevenLabs não responderam (${ultimoErro instanceof Error ? ultimoErro.message : 'erro desconhecido'}).`,
+        'error'
+      );
+    })();
   };
 
   const trocarMotorNarracao = (motor: MotorNarracaoCowork) => {
     salvarMotorNarracao(motor);
     setMotorNarracao(motor);
     if (motor === 'piper') piperIndisponivelRef.current = false;
+    if (motor === 'elevenlabs') elevenLabsIndisponivelRef.current = false;
     narrar(
       motor === 'piper'
         ? 'Vou usar a voz local Piper enquanto trabalho no COWORK.'
-        : 'Vou usar a voz do navegador como reserva.',
+        : 'Vou usar ElevenLabs para narrar o guia do COWORK.',
       true,
       true,
-      vozNarracao,
       motor
     );
   };
 
-  const trocarVozNarracao = (voz: string) => {
-    salvarVozPreferida(voz);
-    setVozNarracao(voz);
-    narrar('Essa é a voz do navegador que vou usar se o Piper não estiver disponível.', true, true, voz, 'navegador');
-  };
   const testarNarracao = () => {
     narrar('Pronto. Este é o teste da narração do COWORK usando o motor de voz selecionado.', true, true);
   };
@@ -564,7 +558,6 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
         ? 'O Agente Local não respondeu. Abra o OSONE instalado no computador e confira o Token do Agente Local nas Configurações.'
         : '';
 
-  const vozAutomatica = escolherVozCowork(vozesDisponiveis, 'auto');
   const respostaFinal = relatorio && !(relatorio as any).error ? String((relatorio as any).resumo || '') : '';
   const concluiu = relatorio && (relatorio as any).motivo === 'concluido';
 
@@ -613,25 +606,8 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
             className="max-w-[190px] h-9 rounded-full border border-cyan-500/20 bg-cyan-500/[0.06] px-3 text-[11px] text-cyan-100 outline-none hover:bg-cyan-500/10 focus:border-cyan-500/40"
           >
             <option value="piper">Piper local</option>
-            <option value="navegador">Navegador reserva</option>
+            <option value="elevenlabs">ElevenLabs</option>
           </select>
-          {motorNarracao === 'navegador' && (
-            <select
-              value={vozNarracao}
-              onChange={e => trocarVozNarracao(e.target.value)}
-              title="Escolher a voz do navegador usada como reserva"
-              className="max-w-[210px] h-9 rounded-full border border-white/10 bg-black/20 px-3 text-[11px] text-her-muted outline-none hover:bg-white/[0.04] focus:border-cyan-500/30"
-            >
-              <option value="auto">
-                Automática{vozAutomatica ? ` · ${vozAutomatica.name}` : ''}
-              </option>
-              {vozesDisponiveis.map(v => (
-                <option key={`${v.name}-${v.lang}-${v.voiceURI}`} value={v.name}>
-                  {v.name} · {v.lang}
-                </option>
-              ))}
-            </select>
-          )}
           <button
             onClick={testarNarracao}
             className="h-9 px-3 rounded-full border border-white/10 text-[10px] uppercase tracking-[0.16em] text-her-muted hover:bg-white/[0.04] hover:text-cyan-200"

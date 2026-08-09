@@ -541,6 +541,16 @@ const getFriendlyModeName = (mode: WorkspaceMode): string => {
   }
 };
 
+const ELEVENLABS_DEFAULT_VOICE_ID = '21m00Tcm4TlvDq8ikWAM';
+
+const modeloElevenLabsParaStream = (modelo?: string): string => {
+  // O WebSocket da ElevenLabs é para baixa latência; o próprio guia recomenda flash v2.5.
+  // Mantemos o modelo escolhido no REST, mas no live evitamos mandar modelos mais lentos/menos
+  // previsíveis para o streaming, que foi onde o usuário viu erros e silêncio.
+  if (!modelo || modelo === 'eleven_multilingual_v2') return 'eleven_flash_v2_5';
+  return modelo;
+};
+
 // Queue player for handling dynamic chunk-by-chunk playback of base64 audio chunks from ElevenLabs
 class ElevenLabsQueuePlayer {
   private audioCtx: AudioContext | null = null;
@@ -1753,9 +1763,10 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
 
   const getActiveElevenLabsVoiceId = (): string => {
     const active = apiKeys.elevenLabsActiveVoice || 'voice1';
-    if (active === 'voice2') return apiKeys.elevenLabsVoiceId2 || apiKeys.elevenLabsVoiceId || '';
-    if (active === 'voice3') return apiKeys.elevenLabsVoiceId3 || apiKeys.elevenLabsVoiceId || '';
-    return apiKeys.elevenLabsVoiceId || '';
+    const principal = (apiKeys.elevenLabsVoiceId || '').trim();
+    if (active === 'voice2') return (apiKeys.elevenLabsVoiceId2 || principal || ELEVENLABS_DEFAULT_VOICE_ID).trim();
+    if (active === 'voice3') return (apiKeys.elevenLabsVoiceId3 || principal || ELEVENLABS_DEFAULT_VOICE_ID).trim();
+    return principal || ELEVENLABS_DEFAULT_VOICE_ID;
   };
 
   useEffect(() => {
@@ -5621,13 +5632,13 @@ ${isBad
    */
   const openElevenLabsRealtimeSocket = (onReady: () => void): WebSocket => {
     const voiceId = getActiveElevenLabsVoiceId();
-    const modelId = apiKeys.elevenLabsModel || 'eleven_flash_v2_5';
+    const modelId = modeloElevenLabsParaStream(apiKeys.elevenLabsModel);
     const stability = apiKeys.elevenLabsStability ?? 0.5;
     const similarityBoost = apiKeys.elevenLabsSimilarityBoost ?? 0.75;
     const clientKey = (apiKeys.elevenLabsApiKey || '').trim();
 
     if (clientKey) {
-      const ws = new WebSocket(`wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?model_id=${modelId}&output_format=pcm_24000`);
+      const ws = new WebSocket(`wss://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream-input?model_id=${encodeURIComponent(modelId)}&output_format=pcm_24000`);
       ws.addEventListener('open', () => {
         ws.send(JSON.stringify({
           text: " ",
@@ -5641,7 +5652,7 @@ ${isBad
     }
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${protocol}//${window.location.host}/api/elevenlabs-ws?voiceId=${voiceId}&modelId=${modelId}&stability=${stability}&similarityBoost=${similarityBoost}`);
+    const ws = new WebSocket(`${protocol}//${window.location.host}/api/elevenlabs-ws?voiceId=${encodeURIComponent(voiceId)}&modelId=${encodeURIComponent(modelId)}&stability=${encodeURIComponent(String(stability))}&similarityBoost=${encodeURIComponent(String(similarityBoost))}`);
     ws.addEventListener('open', () => onReady(), { once: true });
     return ws;
   };
@@ -5729,6 +5740,15 @@ ${isBad
     }
 
     try {
+      let recebeuAudio = false;
+      let fallbackDisparado = false;
+      const dispararFallbackRest = (motivo: string) => {
+        if (fallbackDisparado || recebeuAudio || !isElevenLabsLiveActiveRef.current) return;
+        fallbackDisparado = true;
+        console.warn(`ElevenLabs WS falhou antes de gerar áudio (${motivo}). Usando REST TTS.`);
+        try { ws?.close(); } catch (_) {}
+        playElevenLabsRestFallback(text);
+      };
       const ws = openElevenLabsRealtimeSocket(() => {
         console.log("ElevenLabs WS connected for single-play text speech");
         if (elevenLabsQueuePlayerRef.current) {
@@ -5746,11 +5766,13 @@ ${isBad
           const errMsg = parsed.error || parsed.message || (typeof parsed.detail === 'string' ? parsed.detail : undefined);
           if (errMsg) {
             console.error("ElevenLabs WS error:", errMsg);
-            addNotification(`Erro ElevenLabs: ${errMsg}`, "error");
+            addNotification(`Erro ElevenLabs: ${errMsg}. Vou tentar a rota REST.`, "error");
+            dispararFallbackRest('mensagem de erro da ElevenLabs');
             return;
           }
 
           if (parsed.audio) {
+            recebeuAudio = true;
             // Add chunk to player queue
             elevenLabsQueuePlayerRef.current?.addChunk(parsed.audio);
           }
@@ -5764,11 +5786,16 @@ ${isBad
 
       ws.onerror = (err) => {
         console.error("ElevenLabs WS error during speech playback:", err);
+        dispararFallbackRest('erro de WebSocket');
       };
 
       ws.onclose = () => {
         console.log("ElevenLabs WS closed for single-play text speech");
-        elevenLabsQueuePlayerRef.current?.markStreamFinished();
+        if (!recebeuAudio) {
+          setTimeout(() => dispararFallbackRest('fechou sem áudio'), 150);
+        } else {
+          elevenLabsQueuePlayerRef.current?.markStreamFinished();
+        }
       };
 
       // Set up the drainage handler to transition state back when speaking finishes
@@ -5998,6 +6025,8 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
       // 1. Establish the ElevenLabs realtime socket (direto se houver chave própria nas
       // Configurações, senão via proxy do backend usando a chave global do servidor)
       let hasReceivedAudio = false;
+      let elevenWsErroNotificado = false;
+      let elevenWsFechouSemAudio = false;
       const wsSendQueue: string[] = [];
 
       const safeSendToWs = (payload: object) => {
@@ -6047,7 +6076,12 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
           const errMsg = parsed.error || parsed.message || (typeof parsed.detail === 'string' ? parsed.detail : undefined);
           if (errMsg) {
             console.error("ElevenLabs WS response error:", errMsg);
-            addNotification(`Erro ElevenLabs: ${errMsg}`, "error");
+            if (!elevenWsErroNotificado) {
+              elevenWsErroNotificado = true;
+              addNotification(`Erro ElevenLabs: ${errMsg}. Vou tentar a rota REST.`, "error");
+            }
+            elevenWsFechouSemAudio = !hasReceivedAudio;
+            try { elWs?.close(); } catch (_) {}
             return;
           }
           if (parsed.audio) {
@@ -6064,11 +6098,16 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
 
       elWs.onerror = (err) => {
         console.error("ElevenLabs WS client error:", err);
+        elevenWsFechouSemAudio = !hasReceivedAudio;
       };
 
       elWs.onclose = () => {
         console.log("ElevenLabs WS client closed.");
-        elevenLabsQueuePlayerRef.current?.markStreamFinished();
+        if (hasReceivedAudio) {
+          elevenLabsQueuePlayerRef.current?.markStreamFinished();
+        } else {
+          elevenWsFechouSemAudio = true;
+        }
       };
 
       // Start the heartbeat/keep-alive to send " " every 10 seconds
@@ -6161,7 +6200,7 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
       // não outra tentativa via WebSocket — chamar playElevenLabsSpeech aqui apenas repetiria o
       // mesmo caminho que acabou de falhar (mesma voz/conta), duplicando o erro sem nenhum ganho real.
       setTimeout(() => {
-        if (!hasReceivedAudio && accumulatedReply && isElevenLabsLiveActiveRef.current) {
+        if ((!hasReceivedAudio || elevenWsFechouSemAudio) && accumulatedReply && isElevenLabsLiveActiveRef.current) {
           console.warn("ElevenLabs WS não gerou chunks de áudio. Executando fallback via REST TTS...");
           playElevenLabsRestFallback(accumulatedReply);
         }
@@ -8776,7 +8815,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
             if (!requestPaidFeature('osone_code')) {
               setChatHistory(prev => [...prev, {
                 id: Math.random().toString(36).substr(2, 9), role: 'assistant' as const,
-                content: 'O OSONE CODE faz parte do plano Plus. A aba de Escrita continua gratuita, inclusive para escrever código.'
+                content: 'O OSONE CODE faz parte do plano Pro. A aba de Escrita continua gratuita, inclusive para escrever código.'
               }]);
               continue;
             }
@@ -10652,7 +10691,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     if (!requestPaidFeature('osone_code')) {
                       responses.push({
                         name: call.name, id: call.id,
-                        response: { error: 'OSONE CODE requer o plano Plus. A aba de Escrita continua gratuita, inclusive para escrever código.' }
+                        response: { error: 'OSONE CODE requer o plano Pro. A aba de Escrita continua gratuita, inclusive para escrever código.' }
                       });
                       continue;
                     }
@@ -12618,6 +12657,13 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 localAgentToken={apiKeys.localAgentToken || ''}
                 chaveGemini={apiKeys.gemini || ''}
                 modeloGemini={apiKeys.geminiModel || 'gemini-3.6-flash'}
+                elevenLabsApiKey={apiKeys.elevenLabsApiKey || ''}
+                elevenLabsVoiceId={getActiveElevenLabsVoiceId()}
+                elevenLabsStability={apiKeys.elevenLabsStability}
+                elevenLabsSimilarityBoost={apiKeys.elevenLabsSimilarityBoost}
+                elevenLabsStyle={apiKeys.elevenLabsStyle}
+                elevenLabsSpeakerBoost={apiKeys.elevenLabsSpeakerBoost}
+                elevenLabsModel={apiKeys.elevenLabsModel}
                 ambiente={localAgentEnvironment}
                 listarJanelas={() => listarJanelas(apiKeys.localAgentToken)}
                 janelaDeTrabalho={janelaDeTrabalho}

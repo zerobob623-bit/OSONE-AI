@@ -1,4 +1,10 @@
 import { CodeRepositoryFile } from '../types';
+import {
+  chaveDeCaminho,
+  ehEnderecoExternoDoCode,
+  nomeBaseDoCaminho,
+  resolverCaminhoRelativo
+} from './caminhosDoCode';
 
 /**
  * MONTA A PÁGINA DO PREVIEW A PARTIR DO PROJETO INTEIRO.
@@ -20,15 +26,11 @@ import { CodeRepositoryFile } from '../types';
 
 /** O nome do arquivo dentro de um caminho, sem pasta, sem query e sem âncora. */
 function nomeDoCaminho(caminho: string): string {
-  return (caminho || '')
-    .split(/[?#]/)[0]
-    .split('/')
-    .filter(Boolean)
-    .pop() || '';
+  return nomeBaseDoCaminho(caminho, '');
 }
 
 function ehEndereçoExterno(caminho: string): boolean {
-  return /^(https?:)?\/\//i.test(caminho) || /^data:/i.test(caminho);
+  return ehEnderecoExternoDoCode(caminho);
 }
 
 /**
@@ -91,22 +93,23 @@ function paraDataUrl(codigo: string): string {
  */
 export function resolverImports(
   codigo: string,
-  achar: (caminho: string) => CodeRepositoryFile | undefined,
+  achar: (caminho: string, origem?: CodeRepositoryFile) => CodeRepositoryFile | undefined,
   visitados: string[] = [],
-  profundidade = 0
+  profundidade = 0,
+  origem?: CodeRepositoryFile
 ): string {
   if (profundidade > PROFUNDIDADE_MAXIMA) return codigo;
 
   return (codigo || '').replace(RE_ESPECIFICADOR, (inteiro, prefixo, aspas, spec) => {
     if (!ehEspecificadorDeProjeto(spec)) return inteiro;
-    const arquivo = achar(spec);
+    const arquivo = achar(spec, origem);
     if (!arquivo) return inteiro;
 
     // Ciclo: A importa B que importa A. Deixar o especificador cru faz o navegador falhar com uma
     // mensagem clara, o que é melhor do que montar um preview que trava o computador.
     if (visitados.includes(arquivo.id)) return inteiro;
 
-    const resolvido = resolverImports(arquivo.content || '', achar, [...visitados, arquivo.id], profundidade + 1);
+    const resolvido = resolverImports(arquivo.content || '', achar, [...visitados, arquivo.id], profundidade + 1, arquivo);
     return `${prefixo}${aspas}${paraDataUrl(resolvido)}${aspas}`;
   });
 }
@@ -117,8 +120,13 @@ export function paginaPrincipal(arquivos: CodeRepositoryFile[]): CodeRepositoryF
     /\.html?$/i.test(f.name || '') || f.language === 'html'
   );
   if (html.length === 0) return null;
+  const porCaminho = (nome: string) => html.find(f => chaveDeCaminho(f.name || '') === chaveDeCaminho(nome));
   return html.find(f => f.isMain)
-    || html.find(f => (f.name || '').toLowerCase() === 'index.html')
+    || porCaminho('index.html')
+    || porCaminho('frontend/index.html')
+    || porCaminho('public/index.html')
+    || porCaminho('src/index.html')
+    || html.find(f => nomeDoCaminho(f.name || '').toLowerCase() === 'index.html')
     || html[0];
 }
 
@@ -140,10 +148,22 @@ export function montarPreview(
 
   // O conteúdo do arquivo ABERTO tem prioridade sobre a cópia guardada na lista: durante a
   // digitação a lista pode estar um instante atrás, e o preview ficaria mostrando o texto anterior.
-  const conteudoDe = (nome: string): CodeRepositoryFile | undefined => {
-    const alvo = nomeDoCaminho(nome).toLowerCase();
-    if (!alvo) return undefined;
-    const achado = lista.find(f => (f.name || '').toLowerCase() === alvo);
+  const conteudoDe = (nome: string, origem?: CodeRepositoryFile): CodeRepositoryFile | undefined => {
+    const origemReal = origem || pagina;
+    const alvoRelativo = resolverCaminhoRelativo(origemReal.name || '', nome);
+    const candidatos = [
+      alvoRelativo,
+      nome,
+      nomeDoCaminho(nome)
+    ].map(c => chaveDeCaminho(c)).filter(Boolean);
+
+    let achado = lista.find(f => candidatos.includes(chaveDeCaminho(f.name || '')));
+    // Compatibilidade com projetos antigos: um HTML que aponta para ./css/styles.css ainda encontra
+    // styles.css solto se não houver arquivo dentro de css/.
+    if (!achado) {
+      const base = nomeDoCaminho(nome).toLowerCase();
+      achado = lista.find(f => nomeDoCaminho(f.name || '').toLowerCase() === base);
+    }
     if (achado && arquivoAberto && achado.id === arquivoAberto.id) return arquivoAberto;
     return achado;
   };
@@ -154,14 +174,14 @@ export function montarPreview(
     if (!/rel\s*=\s*["']?stylesheet/i.test(tagInteira)) return tagInteira;
     const href = tagInteira.match(/href\s*=\s*["']([^"']+)["']/i)?.[1] || '';
     if (!href || ehEndereçoExterno(href)) return tagInteira;
-    const arquivo = conteudoDe(href);
+    const arquivo = conteudoDe(href, pagina);
     if (!arquivo) return tagInteira;
     return `<style data-osone-origem="${arquivo.name}">\n${protegerFechamento(arquivo.content, 'style')}\n</style>`;
   });
 
   html = html.replace(RE_SCRIPT_SRC, (tagInteira, antes, src, depois) => {
     if (!src || ehEndereçoExterno(src)) return tagInteira;
-    const arquivo = conteudoDe(src);
+    const arquivo = conteudoDe(src, pagina);
     if (!arquivo) return tagInteira;
     // 'type' é preservado (module, importmap): trocá-lo mudaria como o navegador executa o script.
     const tipo = `${antes || ''} ${depois || ''}`.match(/type\s*=\s*["']([^"']+)["']/i)?.[1];
@@ -169,7 +189,7 @@ export function montarPreview(
     // Só módulo tem import; num script clássico o mesmo texto seria erro de sintaxe, e reescrever
     // ali estragaria código que por acaso contivesse a palavra 'from' entre aspas.
     const corpo = /module/i.test(tipo || '')
-      ? resolverImports(arquivo.content || '', conteudoDe, [arquivo.id])
+      ? resolverImports(arquivo.content || '', conteudoDe, [arquivo.id], 0, arquivo)
       : (arquivo.content || '');
     return `<script${atributoTipo} data-osone-origem="${arquivo.name}">\n${protegerFechamento(corpo, 'script')}\n</script>`;
   });

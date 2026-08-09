@@ -109,6 +109,11 @@ async function startServer() {
     return "";
   };
 
+  const modeloElevenLabsParaStream = (modelo?: string | null): string => {
+    if (!modelo || modelo === "eleven_multilingual_v2") return "eleven_flash_v2_5";
+    return modelo;
+  };
+
   // Helper to sanitize any occurrence of sensitive API keys from messages returned to the client
   const sanitizeMessageOfKeys = (message: string): string => {
     if (!message) return "";
@@ -6789,7 +6794,7 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
     const searchParams = new URLSearchParams(queryString);
     
     const voiceId = searchParams.get("voiceId") || "21m00Tcm4TlvDq8ikWAM"; // default Rachel
-    const modelId = searchParams.get("modelId") || "eleven_flash_v2_5";
+    const modelId = modeloElevenLabsParaStream(searchParams.get("modelId"));
     const clientElApiKeyFromUrl = searchParams.get("apiKey") || "";
     const stability = parseFloat(searchParams.get("stability") || "0.5");
     const similarityBoost = parseFloat(searchParams.get("similarityBoost") || "0.75");

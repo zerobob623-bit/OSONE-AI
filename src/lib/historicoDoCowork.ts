@@ -38,7 +38,7 @@ export interface MemoriaDeAutomacao {
   objetivo: string;
   atualizadoEm: number;
   sucessos: number;
-  origem?: 'execucao' | 'ensinamento';
+  origem?: 'execucao' | 'ensinamento' | 'skill';
   treinamentoId?: string;
   /** Pistas sem coordenadas e sem o conteúdo digitado. Nunca são reproduzidas às cegas. */
   pistas: Array<{ acao: string; descricao: string }>;
@@ -47,9 +47,15 @@ export interface MemoriaDeAutomacao {
 const normalizarObjetivo = (texto: string) => texto.trim().toLocaleLowerCase('pt-BR').replace(/\s+/g, ' ');
 
 const PALAVRAS_VAZIAS = new Set(['a', 'ao', 'as', 'com', 'da', 'das', 'de', 'do', 'dos', 'e', 'em', 'me', 'meu', 'minha', 'no', 'na', 'o', 'os', 'para', 'por', 'um', 'uma']);
+const normalizarPalavraDoObjetivo = (palavra: string) => {
+  if (palavra === 'short' || palavra === 'shorts') return 'curto';
+  if (palavra === 'video' || palavra === 'videos') return 'video';
+  return palavra;
+};
 const palavrasDoObjetivo = (texto: string) => new Set(normalizarObjetivo(texto)
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z0-9]+/)
-  .filter(p => p.length > 1 && !PALAVRAS_VAZIAS.has(p)));
+  .filter(p => p.length > 1 && !PALAVRAS_VAZIAS.has(p))
+  .map(normalizarPalavraDoObjetivo));
 
 /** Permite reencontrar “ver meu último short” quando o ensino se chamava “olhar vídeo curto”. */
 export function semelhancaDeObjetivos(a: string, b: string): number {
@@ -156,6 +162,113 @@ export function guardarAutomacaoEnsinada(opcoes: {
   return true;
 }
 
+const limparCercaDaSkill = (texto: string) => texto.trim()
+  .replace(/^```(?:json|md|markdown|txt)?\s*/i, '').replace(/\s*```$/, '').trim();
+
+const limparLinhaDaSkill = (texto: string): string => {
+  let t = String(texto || '').trim()
+    .replace(/^\s*(?:[-*•]|\d+[.)]|passo\s+\d+\s*[:.)-]?)\s*/i, '')
+    .replace(/\b(?:x|left)\s*[:=]\s*-?\d+(?:\.\d+)?\b/gi, '')
+    .replace(/\b(?:y|top)\s*[:=]\s*-?\d+(?:\.\d+)?\b/gi, '')
+    .replace(/\(\s*-?\d{1,5}\s*,\s*-?\d{1,5}\s*\)/g, '')
+    .replace(/\b-?\d{1,5}\s*,\s*-?\d{1,5}\b/g, '')
+    .replace(/\b\d+(?:\.\d+)?px\b/gi, '')
+    .replace(/\b(sk-[a-z0-9_-]{8,}|whsec_[a-z0-9_-]{8,}|AIza[a-z0-9_-]{8,})\b/gi, '[segredo omitido]')
+    .replace(/\b(senha|password|token|chave|secret)\s*[:=]\s*[^\s,;]+/gi, '$1=[omitido]')
+    .replace(/\s+/g, ' ')
+    .trim();
+  try {
+    const url = new URL(t);
+    url.search = ''; url.hash = '';
+    t = url.toString();
+  } catch { /* não era uma URL isolada */ }
+  return t;
+};
+
+const acaoProvavelDaSkill = (linha: string): string => {
+  const t = linha.toLocaleLowerCase('pt-BR');
+  if (/\b(clique direito|bot[aã]o direito|menu contextual)\b/.test(t)) return 'clique_direito';
+  if (/\b(clicar|clique|toque|selecionar|selecione|bot[aã]o|menu|tr[eê]s pontos|download|baixar|salvar)\b/.test(t)) return 'clicar';
+  if (/\b(abrir|abra|acesse|entrar em|v[aá] para|navegue)\b/.test(t)) return 'abrir';
+  if (/\b(digitar|digite|escrever|escreva|preencher|preencha|colar|cole)\b/.test(t)) return 'digitar';
+  if (/\b(rolar|role|scroll|descer|subir)\b/.test(t)) return 'rolar';
+  if (/\b(enter|tab|escape|esc|ctrl|atalho|pressionar|pressione)\b/.test(t)) return 'tecla';
+  if (/\b(aguardar|aguarde|esperar|espere|carregar)\b/.test(t)) return 'esperar';
+  return 'seguir';
+};
+
+function passosDeJsonDaSkill(conteudo: string): Array<{ acao: string; alvo: string; quandoUsar: string; comoConfirmar: string }> {
+  try {
+    const bruto = JSON.parse(limparCercaDaSkill(conteudo));
+    const lista = Array.isArray(bruto) ? bruto : (Array.isArray(bruto?.passos) ? bruto.passos : (Array.isArray(bruto?.steps) ? bruto.steps : []));
+    return lista.map((p: any) => {
+      if (typeof p === 'string') {
+        const alvo = limparLinhaDaSkill(p);
+        return { acao: acaoProvavelDaSkill(alvo), alvo, quandoUsar: '', comoConfirmar: '' };
+      }
+      const alvo = limparLinhaDaSkill(p?.alvo ?? p?.target ?? p?.descricao ?? p?.description ?? p?.texto ?? '');
+      const quandoUsar = limparLinhaDaSkill(p?.quandoUsar ?? p?.when ?? p?.contexto ?? p?.context ?? '');
+      const comoConfirmar = limparLinhaDaSkill(p?.comoConfirmar ?? p?.confirm ?? p?.resultado ?? p?.success ?? '');
+      const acao = limparLinhaDaSkill(p?.acao ?? p?.action ?? p?.tipo ?? '') || acaoProvavelDaSkill(`${alvo} ${quandoUsar}`);
+      return { acao, alvo, quandoUsar, comoConfirmar };
+    }).filter(p => p.alvo || p.quandoUsar || p.comoConfirmar).slice(0, 24);
+  } catch {
+    return [];
+  }
+}
+
+export function passosDaSkillTextualDoCowork(conteudo: string): Array<{ acao: string; alvo: string; quandoUsar: string; comoConfirmar: string }> {
+  const porJson = passosDeJsonDaSkill(conteudo);
+  if (porJson.length) return porJson;
+
+  const linhas = limparCercaDaSkill(conteudo)
+    .split(/\r?\n+/)
+    .map(limparLinhaDaSkill)
+    .filter(l => l.length >= 4 && !/^#+\s*$/.test(l))
+    .slice(0, 24);
+
+  const base = linhas.length ? linhas : limparLinhaDaSkill(conteudo)
+    .split(/(?<=[.!?])\s+/)
+    .map(limparLinhaDaSkill)
+    .filter(l => l.length >= 8)
+    .slice(0, 24);
+
+  return base.map(linha => ({
+    acao: acaoProvavelDaSkill(linha),
+    alvo: linha.length > 180 ? `${linha.slice(0, 177)}...` : linha,
+    quandoUsar: '',
+    comoConfirmar: ''
+  }));
+}
+
+export function guardarSkillTextualDoCowork(opcoes: {
+  objetivo: string;
+  skillId: string;
+  conteudo: string;
+  nome?: string;
+}): boolean {
+  const passos = passosDaSkillTextualDoCowork(opcoes.conteudo);
+  const pistas = passos.map(p => ({
+    acao: p.acao || 'skill',
+    descricao: [
+      opcoes.nome && `skill "${limparLinhaDaSkill(opcoes.nome)}"`,
+      `${p.acao || 'seguir'}${p.alvo ? `: ${p.alvo}` : ''}`,
+      p.quandoUsar && `quando vir: ${p.quandoUsar}`,
+      p.comoConfirmar && `confirme depois: ${p.comoConfirmar}`
+    ].filter(Boolean).join(' — ')
+  })).filter(p => p.descricao).slice(0, 24);
+  if (!pistas.length) return false;
+  const chave = normalizarObjetivo(opcoes.objetivo);
+  const atuais = lerAutomacoes();
+  const memoria: MemoriaDeAutomacao = {
+    objetivo: opcoes.objetivo.trim(), atualizadoEm: Date.now(), sucessos: 1,
+    origem: 'skill', treinamentoId: opcoes.skillId, pistas
+  };
+  const nova = [memoria, ...atuais.filter(a => normalizarObjetivo(a.objetivo) !== chave)].slice(0, 20);
+  try { localStorage.setItem(CHAVE_DAS_AUTOMACOES, JSON.stringify(nova)); } catch { return false; }
+  return true;
+}
+
 export function apagarAutomacaoEnsinada(treinamentoId: string): void {
   try {
     const nova = lerAutomacoes().filter(a => a.treinamentoId !== treinamentoId);
@@ -173,7 +286,9 @@ export function pistasDaAutomacao(objetivo: string): string {
   return [
     memoria.origem === 'ensinamento'
       ? `PROCEDIMENTO ENSINADO PELA PESSOA PARA "${memoria.objetivo}":`
-      : `MEMÓRIA DE UMA EXECUÇÃO BEM-SUCEDIDA DESTE OBJETIVO (${memoria.sucessos} vez(es)):`,
+      : memoria.origem === 'skill'
+        ? `SKILL IMPORTADA PELA PESSOA PARA "${memoria.objetivo}":`
+        : `MEMÓRIA DE UMA EXECUÇÃO BEM-SUCEDIDA DESTE OBJETIVO (${memoria.sucessos} vez(es)):`,
     ...memoria.pistas.map((p, i) => `${i + 1}. ${p.descricao}`),
     'Priorize este caminho. Mesmo assim, NÃO repita coordenadas nem ações cegamente: confira a foto ATUAL, adapte o alvo e valide o resultado de cada passo.'
   ].join('\n');
@@ -210,10 +325,10 @@ export function guardarNoHistorico(item: TarefaDoHistorico): TarefaDoHistorico[]
 export function limparHistorico(): void {
   try {
     localStorage.removeItem(CHAVE_DO_HISTORICO);
-    // Aprendizado inferido de execuções acompanha o histórico. Um treinamento que a pessoa parou
-    // para ensinar e cujos quadros seguem no IndexedDB só sai pelo botão de apagar daquele card.
-    const ensinadas = lerAutomacoes().filter(a => a.origem === 'ensinamento');
-    if (ensinadas.length) localStorage.setItem(CHAVE_DAS_AUTOMACOES, JSON.stringify(ensinadas));
+    // Aprendizado inferido de execuções acompanha o histórico. Ensino demonstrado e skill
+    // importada são conhecimento manual da pessoa; só saem pelo botão de apagar daquele card.
+    const manuais = lerAutomacoes().filter(a => a.origem === 'ensinamento' || a.origem === 'skill');
+    if (manuais.length) localStorage.setItem(CHAVE_DAS_AUTOMACOES, JSON.stringify(manuais));
     else localStorage.removeItem(CHAVE_DAS_AUTOMACOES);
   } catch { /* idem */ }
 }
