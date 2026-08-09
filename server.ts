@@ -114,6 +114,15 @@ async function startServer() {
     return modelo;
   };
 
+  const ELEVENLABS_API_KEY_ID_MESSAGE = "A chave da ElevenLabs parece ser o ID da chave, não a API Key secreta. Gere ou rotacione a chave na ElevenLabs e use a chave completa que começa com sk_.";
+
+  const validarChaveElevenLabsParaUso = (apiKey?: string | null): { ok: boolean; key: string; message?: string } => {
+    const key = String(apiKey || "").trim();
+    if (!key) return { ok: true, key: "" };
+    if (!key.startsWith("sk_")) return { ok: false, key, message: ELEVENLABS_API_KEY_ID_MESSAGE };
+    return { ok: true, key };
+  };
+
   // Helper to sanitize any occurrence of sensitive API keys from messages returned to the client
   const sanitizeMessageOfKeys = (message: string): string => {
     if (!message) return "";
@@ -1289,6 +1298,11 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     if (opts.engine === "elevenlabs") {
       const elApiKey = opts.elevenLabsApiKey || process.env.ELEVENLABS_API_KEY;
       if (!elApiKey) return null;
+      const validacaoChave = validarChaveElevenLabsParaUso(elApiKey);
+      if (!validacaoChave.ok) {
+        ultimoErroTts = validacaoChave.message;
+        return null;
+      }
       const cleanTextForEleven = stripVocalTags(cleanText);
       const voiceId = opts.elevenLabsVoiceId || process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
 
@@ -1296,7 +1310,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       try {
         response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
           method: "POST",
-          headers: { "xi-api-key": elApiKey, "Content-Type": "application/json", "accept": "audio/mpeg" },
+          headers: { "xi-api-key": validacaoChave.key, "Content-Type": "application/json", "accept": "audio/mpeg" },
           body: JSON.stringify({
             text: cleanTextForEleven,
             model_id: "eleven_turbo_v2_5",
@@ -1309,7 +1323,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
         try {
           response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
             method: "POST",
-            headers: { "xi-api-key": elApiKey, "Content-Type": "application/json", "accept": "audio/mpeg" },
+            headers: { "xi-api-key": validacaoChave.key, "Content-Type": "application/json", "accept": "audio/mpeg" },
             body: JSON.stringify({
               text: cleanTextForEleven,
               model_id: "eleven_multilingual_v2",
@@ -3542,12 +3556,16 @@ Retorne SOMENTE o objeto JSON conforme o esquema.
 	      }
 
 	      // ELEVENLABS ENGINE ROUTE
-	      if (engine === 'elevenlabs') {
+      if (engine === 'elevenlabs') {
         const elApiKey = elevenLabsApiKey || process.env.ELEVENLABS_API_KEY;
         if (!elApiKey) {
           return res.status(400).json({ 
             error: "A chave API da ElevenLabs não foi configurada. Por favor, especifique uma na aba 'Chaves' das Configurações." 
           });
+        }
+        const validacaoChave = validarChaveElevenLabsParaUso(elApiKey);
+        if (!validacaoChave.ok) {
+          return res.status(400).json({ error: validacaoChave.message });
         }
 
         const cleanTextForEleven = stripVocalTags(cleanText);
@@ -3567,7 +3585,7 @@ Retorne SOMENTE o objeto JSON conforme o esquema.
           response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
             method: "POST",
             headers: {
-              "xi-api-key": elApiKey,
+              "xi-api-key": validacaoChave.key,
               "Content-Type": "application/json",
               "accept": "audio/mpeg"
             },
@@ -3593,7 +3611,7 @@ Retorne SOMENTE o objeto JSON conforme o esquema.
             response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
               method: "POST",
               headers: {
-                "xi-api-key": elApiKey,
+                "xi-api-key": validacaoChave.key,
                 "Content-Type": "application/json",
                 "accept": "audio/mpeg"
               },
@@ -6430,12 +6448,16 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
       }
 
       const trimApiKey = elevenLabsApiKey.trim();
+      const validacaoChave = validarChaveElevenLabsParaUso(trimApiKey);
+      if (!validacaoChave.ok) {
+        return res.status(400).json({ success: false, message: validacaoChave.message });
+      }
 
       // Validate Api Key via ElevenLabs User Info Endpoint
       const userRes = await fetch("https://api.elevenlabs.io/v1/user", {
         method: "GET",
         headers: {
-          "xi-api-key": trimApiKey
+          "xi-api-key": validacaoChave.key
         }
       });
 
@@ -6467,7 +6489,7 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
         const voiceRes = await fetch(`https://api.elevenlabs.io/v1/voices/${trimVoiceId}`, {
           method: "GET",
           headers: {
-            "xi-api-key": trimApiKey
+            "xi-api-key": validacaoChave.key
           }
         });
 
@@ -6874,7 +6896,13 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
     };
 
     if (elApiKey) {
-      initOutboundWs(elApiKey);
+      const validacaoChave = validarChaveElevenLabsParaUso(elApiKey);
+      if (!validacaoChave.ok) {
+        clientWs.send(JSON.stringify({ error: validacaoChave.message }));
+        clientWs.close();
+        return;
+      }
+      initOutboundWs(validacaoChave.key);
     }
 
     clientWs.on("message", (msg) => {
@@ -6888,7 +6916,13 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
         // Try to extract key from message payload
         const keyFromMsg = parsed?.apiKey || parsed?.xi_api_key;
         if (keyFromMsg) {
-          elApiKey = keyFromMsg;
+          const validacaoChave = validarChaveElevenLabsParaUso(keyFromMsg);
+          if (!validacaoChave.ok) {
+            clientWs.send(JSON.stringify({ error: validacaoChave.message }));
+            clientWs.close();
+            return;
+          }
+          elApiKey = validacaoChave.key;
           initOutboundWs(elApiKey);
         } else {
           console.error("ElevenLabs API Key not provided in query URL or message payload.");
