@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { BookOpen, Camera, Loader2, Mic, Square, Trash2 } from 'lucide-react';
+import { BookOpen, Camera, FileText, Loader2, Mic, Square, Trash2, Upload } from 'lucide-react';
 import { cn } from '../lib/utils';
 import {
   ESCUTA_VAZIA, EstadoDaEscuta, aplicarResultado, criarReconhecedor,
@@ -9,7 +9,10 @@ import {
   QuadroDoEnsino, TreinamentoDoCowork, apagarTreinamentoDoCowork,
   assimilarEnsinamento, lerTreinamentosDoCowork, salvarTreinamentoDoCowork
 } from '../lib/ensinoDoCowork';
-import { apagarAutomacaoEnsinada, guardarAutomacaoEnsinada } from '../lib/historicoDoCowork';
+import {
+  apagarAutomacaoEnsinada, guardarAutomacaoEnsinada,
+  guardarSkillTextualDoCowork, passosDaSkillTextualDoCowork
+} from '../lib/historicoDoCowork';
 import { tocar } from '../lib/somDoCowork';
 
 interface Props {
@@ -35,6 +38,9 @@ export const CoworkTeachingPanel: React.FC<Props> = ({
   const [quadros, setQuadros] = useState<QuadroDoEnsino[]>([]);
   const [aviso, setAviso] = useState('');
   const [treinamentos, setTreinamentos] = useState<TreinamentoDoCowork[]>([]);
+  const [skillNome, setSkillNome] = useState('');
+  const [skillTexto, setSkillTexto] = useState('');
+  const [importandoSkill, setImportandoSkill] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -223,6 +229,60 @@ export const CoworkTeachingPanel: React.FC<Props> = ({
     setTreinamentos(await apagarTreinamentoDoCowork(id));
   };
 
+  const importarArquivoDeSkill = async (arquivo?: File | null) => {
+    if (!arquivo) return;
+    if (arquivo.size > 260_000) {
+      onNotification('Use um arquivo de skill menor que 260 KB. Skill grande demais deixa o COWORK lento e confuso.', 'error');
+      return;
+    }
+    try {
+      const texto = await arquivo.text();
+      setSkillNome(arquivo.name.replace(/\.(txt|md|markdown|json|yaml|yml)$/i, '').trim());
+      setSkillTexto(texto);
+      onNotification(`Skill "${arquivo.name}" carregada. Confira e clique em Importar skill.`, 'info');
+    } catch {
+      onNotification('Não consegui ler esse arquivo de skill.', 'error');
+    }
+  };
+
+  const importarSkill = async () => {
+    const alvo = objetivo.trim();
+    const conteudo = skillTexto.trim();
+    if (!alvo) {
+      onNotification('Escreva primeiro a tarefa/objetivo que esta skill ensina.', 'error');
+      return;
+    }
+    if (!conteudo) {
+      onNotification('Cole uma skill ou carregue um arquivo antes de importar.', 'error');
+      return;
+    }
+    const passos = passosDaSkillTextualDoCowork(conteudo);
+    if (!passos.length) {
+      onNotification('Não encontrei passos úteis nessa skill. Use linhas numeradas ou JSON com "passos".', 'error');
+      return;
+    }
+    setImportandoSkill(true);
+    try {
+      const id = `skill-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      const nome = skillNome.trim() || 'Skill textual';
+      const ok = guardarSkillTextualDoCowork({ objetivo: alvo, skillId: id, conteudo, nome });
+      if (!ok) throw new Error('A skill não gerou pistas seguras.');
+      const treinamento: TreinamentoDoCowork = {
+        id, objetivo: alvo, transcricao: conteudo, criadoEm: Date.now(), quadros: [],
+        resumo: `Skill importada: ${nome}`, passos
+      };
+      setTreinamentos(await salvarTreinamentoDoCowork(treinamento));
+      setSkillTexto(''); setSkillNome('');
+      tocar('ensinando');
+      onNotification(`Skill importada com ${passos.length} pista(s). O COWORK vai usar isso como guia, sempre olhando a tela atual.`, 'success');
+    } catch (err: any) {
+      onNotification(err?.message || 'Não foi possível importar a skill.', 'error');
+      tocar('falha');
+    } finally {
+      setImportandoSkill(false);
+    }
+  };
+
   const gravando = estado === 'gravando';
   return (
     <div className="rounded-3xl border border-violet-500/20 bg-violet-500/[0.035] p-5">
@@ -269,15 +329,58 @@ export const CoworkTeachingPanel: React.FC<Props> = ({
       )}
       {aviso && <p className="mt-2 text-[10px] text-amber-300/90 leading-relaxed">{aviso}</p>}
 
+      <div className="mt-4 rounded-2xl border border-white/[0.06] bg-black/15 p-3">
+        <div className="flex items-center gap-2">
+          <FileText size={13} className="text-cyan-200" />
+          <p className="text-[10px] uppercase tracking-widest text-cyan-100/80 flex-1">Importar skill de texto ou arquivo</p>
+        </div>
+        <p className="mt-1.5 text-[10px] text-her-muted/75 leading-relaxed">
+          Cole um passo-a-passo pronto ou carregue `.txt`, `.md` ou `.json`. Ele vira pistas semânticas; o COWORK não executa coordenadas cegas.
+        </p>
+        <input
+          value={skillNome}
+          onChange={(e) => setSkillNome(e.target.value)}
+          placeholder="Nome opcional da skill, ex: YouTube Shorts"
+          className="mt-3 w-full rounded-xl border border-white/[0.07] bg-black/25 px-3 py-2 text-xs text-her-ink/85 outline-none focus:border-cyan-400/40"
+        />
+        <textarea
+          value={skillTexto}
+          onChange={(e) => setSkillTexto(e.target.value)}
+          placeholder={'Exemplo:\\n1. Abra o YouTube Studio.\\n2. Clique em Conteúdo.\\n3. Filtre por Shorts.\\n4. Abra o vídeo mais recente e confira a data.'}
+          className="mt-2 min-h-24 w-full resize-y rounded-xl border border-white/[0.07] bg-black/25 px-3 py-2 text-xs text-her-ink/85 outline-none focus:border-cyan-400/40 custom-scrollbar"
+        />
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <label className="py-2.5 rounded-xl border border-white/10 text-xs text-her-ink/80 hover:bg-white/[0.04] flex items-center justify-center gap-2 cursor-pointer">
+            <Upload size={13} /> Carregar arquivo
+            <input
+              type="file"
+              accept=".txt,.md,.markdown,.json,.yaml,.yml,text/plain,application/json,text/markdown"
+              className="hidden"
+              onChange={(e) => { importarArquivoDeSkill(e.target.files?.[0]); e.currentTarget.value = ''; }}
+            />
+          </label>
+          <button
+            onClick={importarSkill}
+            disabled={bloqueado || importandoSkill || !objetivo.trim() || !skillTexto.trim()}
+            className="py-2.5 rounded-xl border border-cyan-500/25 bg-cyan-500/10 text-xs text-cyan-100 hover:bg-cyan-500/15 disabled:opacity-40 flex items-center justify-center gap-2"
+          >
+            {importandoSkill ? <><Loader2 size={13} className="animate-spin" /> Importando...</> : <><BookOpen size={13} /> Importar skill</>}
+          </button>
+        </div>
+      </div>
+
       {treinamentos.length > 0 && (
         <div className="mt-4 space-y-2">
-          <p className="text-[10px] uppercase tracking-widest text-her-muted">Treinamentos salvos neste aparelho</p>
+          <p className="text-[10px] uppercase tracking-widest text-her-muted">Treinamentos e skills salvos neste aparelho</p>
           {treinamentos.slice(0, 5).map(t => (
             <div key={t.id} className="flex items-center gap-2 rounded-xl border border-white/[0.05] p-2">
               {t.quadros[0]?.imagem && <img src={t.quadros[0].imagem} className="w-14 h-9 rounded object-cover border border-white/10" alt="Primeiro quadro do treinamento" />}
+              {!t.quadros[0]?.imagem && <span className="w-14 h-9 rounded border border-cyan-400/15 bg-cyan-400/5 text-cyan-200 flex items-center justify-center"><FileText size={15} /></span>}
               <div className="min-w-0 flex-1">
                 <p className="text-xs text-her-ink/80 truncate">{t.objetivo}</p>
-                <p className="text-[9px] text-her-muted">{t.passos.length} passos · {t.quadros.length} quadros locais</p>
+                <p className="text-[9px] text-her-muted">
+                  {t.passos.length} passos · {t.quadros.length ? `${t.quadros.length} quadros locais` : 'skill textual local'}
+                </p>
               </div>
               <button onClick={() => excluir(t.id)} title="Apagar este treinamento e seus quadros" className={cn('p-1.5 rounded-lg text-her-muted hover:text-red-300 hover:bg-red-500/10')}><Trash2 size={13} /></button>
             </div>

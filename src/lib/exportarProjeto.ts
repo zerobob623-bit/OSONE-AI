@@ -1,5 +1,6 @@
 import JSZip from 'jszip';
 import { CodeRepositoryFile } from '../types';
+import { normalizarCaminhoDoCode, nomeBaseDoCaminho, chaveDeCaminho } from './caminhosDoCode';
 
 /**
  * Empacota o projeto num .zip que abre e roda fora do OSONE.
@@ -15,9 +16,6 @@ import { CodeRepositoryFile } from '../types';
  * extrai no Windows. Sanear aqui é o que faz o pacote ser seguro de abrir.
  */
 
-/** Caracteres proibidos em nome de arquivo no Windows, mais os separadores de caminho. */
-const PROIBIDOS = /[<>:"/\\|?*\x00-\x1f]/g;
-
 /**
  * Deixa um nome seguro para virar arquivo no disco de quem abrir o pacote.
  *
@@ -26,14 +24,12 @@ const PROIBIDOS = /[<>:"/\\|?*\x00-\x1f]/g;
  * onde foi mandado encostar.
  */
 export function nomeSeguroDeArquivo(nome: string, reserva = 'arquivo.txt'): string {
-  const limpo = (nome || '')
-    .split(/[/\\]/).pop()!          // fica só o nome, sem caminho
-    .replace(PROIBIDOS, '-')
-    .replace(/^\.+/, '')            // nada de nomes que começam com ponto-ponto
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 120);
-  return limpo || reserva;
+  return nomeBaseDoCaminho(nome, reserva);
+}
+
+/** O caminho completo dentro do pacote, preservando pastas seguras do projeto. */
+export function caminhoSeguroNoPacote(caminho: string, reserva = 'arquivo.txt'): string {
+  return normalizarCaminhoDoCode(caminho, reserva);
 }
 
 /** O nome do .zip, a partir do nome do projeto. */
@@ -63,16 +59,21 @@ export function prepararEntradas(arquivos: CodeRepositoryFile[]): EntradaDoPacot
   const entradas: EntradaDoPacote[] = [];
 
   for (const arquivo of arquivos || []) {
-    let caminho = nomeSeguroDeArquivo(arquivo.name);
-    if (usados.has(caminho.toLowerCase())) {
-      const ponto = caminho.lastIndexOf('.');
-      const base = ponto === -1 ? caminho : caminho.slice(0, ponto);
-      const ext = ponto === -1 ? '' : caminho.slice(ponto);
+    let caminho = caminhoSeguroNoPacote(arquivo.name);
+    let chave = chaveDeCaminho(caminho);
+    if (usados.has(chave)) {
+      const partes = caminho.split('/');
+      const nome = partes.pop() || 'arquivo.txt';
+      const pasta = partes.length ? `${partes.join('/')}/` : '';
+      const ponto = nome.lastIndexOf('.');
+      const base = ponto === -1 ? nome : nome.slice(0, ponto);
+      const ext = ponto === -1 ? '' : nome.slice(ponto);
       let n = 2;
-      while (usados.has(`${base}-${n}${ext}`.toLowerCase())) n++;
-      caminho = `${base}-${n}${ext}`;
+      while (usados.has(chaveDeCaminho(`${pasta}${base}-${n}${ext}`))) n++;
+      caminho = `${pasta}${base}-${n}${ext}`;
+      chave = chaveDeCaminho(caminho);
     }
-    usados.add(caminho.toLowerCase());
+    usados.add(chave);
     entradas.push({ caminho, conteudo: arquivo.content ?? '' });
   }
   return entradas;

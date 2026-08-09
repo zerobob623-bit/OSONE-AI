@@ -5,7 +5,7 @@ import path from 'node:path';
 import Stripe from 'stripe';
 import handler from '../api/billing';
 import { billingResultUrl, pixPeriodEnd, validatePixCheckout, validateStripePrice } from '../src/billingService';
-import { OSONE_PLANS, paidFeatureForWorkspace, planHasFeature } from '../src/lib/planos';
+import { minimumPlanForFeature, OSONE_PLANS, paidFeatureForWorkspace, planHasFeature } from '../src/lib/planos';
 
 const PROJECT_ROOT = path.resolve(import.meta.dirname, '..');
 
@@ -166,11 +166,12 @@ try {
   assert.equal(planHasFeature('plus', 'hear'), true);
   assert.equal(planHasFeature('plus', 'cowork_browser'), true);
   assert.equal(planHasFeature('plus', 'whatsapp'), false);
-  assert.equal(planHasFeature('plus', 'osone_code'), true);
+  assert.equal(planHasFeature('plus', 'osone_code'), false);
   assert.equal(planHasFeature('pro', 'hear'), true);
   assert.equal(planHasFeature('pro', 'cowork_browser'), true);
   assert.equal(planHasFeature('pro', 'whatsapp'), true);
   assert.equal(planHasFeature('pro', 'osone_code'), true);
+  assert.equal(minimumPlanForFeature('osone_code'), 'pro');
   assert.equal(paidFeatureForWorkspace('code'), 'osone_code');
   assert.equal(paidFeatureForWorkspace('writing'), null);
   console.log('  ok  matriz de recursos Grátis, Plus e Pro corresponde ao combinado');

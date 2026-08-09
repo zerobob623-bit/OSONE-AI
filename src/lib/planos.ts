@@ -33,12 +33,11 @@ export const OSONE_PLANS: Record<OsonePlanId, OsonePlan> = {
     tagline: 'Escuta e automação avançada.',
     monthlyPrice: 39.90,
     yearlyPrice: 339.90,
-    features: ['cowork_browser', 'hear', 'osone_code'],
+    features: ['cowork_browser', 'hear'],
     highlights: [
       'Tudo do plano Grátis',
       'OSONE HEAR completo',
       'OSONE COWORK: cliques e escrita no navegador',
-      'OSONE CODE: Enxame, Hunter e runtimes de código',
       'Economize no plano anual'
     ]
   },
@@ -51,6 +50,7 @@ export const OSONE_PLANS: Record<OsonePlanId, OsonePlan> = {
     features: ['cowork_browser', 'hear', 'osone_code', 'whatsapp'],
     highlights: [
       'Tudo do plano Plus',
+      'OSONE CODE: Enxame, Hunter, GitHub e runtimes de código',
       'OSONE ZAP completo',
       'Automação de atendimento e base de conhecimento',
       'Economize no plano anual'
@@ -64,7 +64,7 @@ export const planHasFeature = (plan: OsonePlanId, feature: PaidFeature): boolean
   OSONE_PLANS[plan].features.includes(feature);
 
 export const minimumPlanForFeature = (feature: PaidFeature): OsonePlanId =>
-  feature === 'whatsapp' ? 'pro' : 'plus';
+  feature === 'whatsapp' || feature === 'osone_code' ? 'pro' : 'plus';
 
 /** Um único mapa para menu, comandos de voz e ferramentas não divergirem sobre o que é pago. */
 export const paidFeatureForWorkspace = (mode: string): PaidFeature | null => {

@@ -214,6 +214,26 @@ if (chromium) {
     'preview montado sem travar');
 }
 
+// 14) Projeto fullstack com pastas: index dentro de frontend resolve ./app.js, e app.js resolve
+// ../shared/config.js. Aqui é onde "pastas separadas" deixavam de funcionar de verdade.
+{
+  const pagina = {
+    id: 'p-full', name: 'frontend/index.html', language: 'html', isMain: true,
+    content: '<div id="saida"></div><link rel="stylesheet" href="./styles.css"><script type="module" src="./app.js"></script>'
+  };
+  const html = montarPreview([
+    pagina,
+    { id: 'css-full', name: 'frontend/styles.css', language: 'css', content: 'body { color: rgb(1, 2, 3); }' },
+    modulo('frontend/app.js', "import { nome } from '../shared/config.js';\ndocument.getElementById('saida').textContent = nome;"),
+    modulo('shared/config.js', "export const nome = 'OSONE FULLSTACK';")
+  ], pagina);
+  registrar('fullstack com frontend/ e shared/ resolve caminhos relativos reais',
+    html.includes('body { color: rgb(1, 2, 3); }')
+      && html.includes('OSONE%20FULLSTACK')
+      && !html.includes('src="./app.js"'),
+    'CSS e import aninhado resolvidos por pasta');
+}
+
 
 fs.rmSync(pastaTemp, { recursive: true, force: true });
 

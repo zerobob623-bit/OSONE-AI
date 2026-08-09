@@ -13,9 +13,9 @@
  *  - "../../.bashrc" faz alguns extratores gravarem FORA da pasta escolhida. Quem baixa um
  *    pacote espera que ele encoste só onde foi mandado encostar.
  *  - ':' e '?' são proibidos em nome de arquivo no Windows — o pacote simplesmente não extrai.
- *  - E sanear pode COLIDIR: "a/b.js" e "a\\b.js" viram o mesmo "b.js", e o segundo apagaria o
- *    primeiro dentro do zip, em silêncio. Perder um arquivo na exportação é o tipo de falha que
- *    só se descobre depois, ao abrir o pacote e achar que o trabalho sumiu.
+ *  - E sanear pode COLIDIR: dois caminhos equivalentes, como "src/app.js" e "src\\app.js", não
+ *    podem apagar um ao outro dentro do zip em silêncio. Perder um arquivo na exportação é o tipo
+ *    de falha que só se descobre depois, ao abrir o pacote e achar que o trabalho sumiu.
  *
  * Por isso cada caso aqui abre o zip gerado e lê o que tem dentro, em vez de conferir só o que a
  * função devolveu — o que importa é o pacote, não a intenção dele.
@@ -37,7 +37,7 @@ await build({
   bundle: true, format: 'esm', outfile: saida, platform: 'browser',
   nodePaths: [path.join(RAIZ, 'node_modules')], absWorkingDir: RAIZ, logLevel: 'silent'
 });
-const { montarPacote, prepararEntradas, nomeSeguroDeArquivo, nomeDoPacote } =
+const { montarPacote, prepararEntradas, nomeSeguroDeArquivo, nomeDoPacote, caminhoSeguroNoPacote } =
   await import('file://' + saida);
 
 const JSZip = (await import(path.join(RAIZ, 'node_modules/jszip/lib/index.js'))).default;
@@ -115,8 +115,8 @@ const PROJETO = [
 // ====== 3) SANEAR PODE COLIDIR — E COLISÃO APAGARIA UM ARQUIVO ======
 {
   const colidem = [
-    arq('pasta/util.js', 'PRIMEIRO'),
-    arq('outra\\util.js', 'SEGUNDO'),
+    arq('src/util.js', 'PRIMEIRO'),
+    arq('src\\util.js', 'SEGUNDO'),
     arq('util.js', 'TERCEIRO')
   ];
   const pacote = await montarPacote('Projeto', colidem);
@@ -166,6 +166,13 @@ const PROJETO = [
 }
 
 {
+  registrar('pastas úteis são preservadas dentro do pacote fullstack',
+    caminhoSeguroNoPacote('frontend/index.html') === 'frontend/index.html'
+      && caminhoSeguroNoPacote('server/api.js') === 'server/api.js',
+    `${caminhoSeguroNoPacote('frontend/index.html')} + ${caminhoSeguroNoPacote('server/api.js')}`);
+}
+
+{
   const enorme = 'a'.repeat(300) + '.js';
   registrar('nome absurdamente longo é encurtado, para não estourar limite de sistema de arquivos',
     nomeSeguroDeArquivo(enorme).length <= 120, `${nomeSeguroDeArquivo(enorme).length} caracteres`);
@@ -177,9 +184,9 @@ const PROJETO = [
 }
 
 {
-  const entradas = prepararEntradas([arq('a.js', '1'), arq('b.js', '2')]);
-  registrar('a preparação não mexe em nomes que já são seguros',
-    entradas[0].caminho === 'a.js' && entradas[1].caminho === 'b.js',
+  const entradas = prepararEntradas([arq('a.js', '1'), arq('frontend/b.js', '2')]);
+  registrar('a preparação não mexe em nomes e pastas que já são seguros',
+    entradas[0].caminho === 'a.js' && entradas[1].caminho === 'frontend/b.js',
     entradas.map(e => e.caminho).join(' + '));
 }
 

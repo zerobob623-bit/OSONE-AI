@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { buscarNoProjeto, substituirNoProjeto, OcorrenciaNaBusca } from '../lib/buscarNoProjeto';
 import { realcar, linguagemDoArquivo } from '../lib/realce';
@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { CodePreview } from './CodePreview';
+import { CodeGithubPanel } from './CodeGithubPanel';
 import { ApiKeys, CodeRepositoryFile } from '../types';
 import { buildCodeEditSystemInstruction, applyModelCodeResponse, parseSections, pareceDocumentoIncompleto } from '../lib/codeEdits';
 import { montarPreview } from '../lib/montarPreview';
@@ -19,6 +20,8 @@ import { ProblemaDoPreview, juntarProblemas, montarPedidoDeCorrecao } from '../l
 import { separarProjeto } from '../lib/separarArquivos';
 import { montarPacote } from '../lib/exportarProjeto';
 import { compararProjeto, apenasOsTrechosQueMudaram, ComparacaoDeArquivo } from '../lib/compararCodigo';
+import { caminhoDisponivel, chaveDeCaminho, nomeBaseDoCaminho, normalizarCaminhoDoCode, pastaDoCaminho } from '../lib/caminhosDoCode';
+import { GithubImportResult } from '../lib/githubDoCode';
 
 // Geração/edição de código (Hunter e Enxame/Swarm) sempre usa o melhor modelo GRATUITO
 // disponível para código (gemini-3.6-flash: mais recente, líder em benchmarks de código como
@@ -111,6 +114,171 @@ export function linguagemPelaExtensao(nomeDoArquivo: string): string {
   if (ext === 'sql') return 'sql';
   return 'javascript';
 }
+
+function caminhoExisteNoProjeto(caminho: string, arquivos: CodeRepositoryFile[], ignorarId?: string): boolean {
+  const chave = chaveDeCaminho(caminho);
+  return arquivos.some(f => f.id !== ignorarId && chaveDeCaminho(f.name || '') === chave);
+}
+
+function prepararNomeDeArquivoDigitado(valor: string): string | null {
+  const normalizado = normalizarCaminhoDoCode(valor || '');
+  return normalizado.trim() ? normalizado : null;
+}
+
+interface GrupoDeArquivosDoCode {
+  pasta: string;
+  arquivos: CodeRepositoryFile[];
+}
+
+function agruparArquivosPorPasta(arquivos: CodeRepositoryFile[]): GrupoDeArquivosDoCode[] {
+  const grupos = new Map<string, CodeRepositoryFile[]>();
+  for (const arquivo of arquivos || []) {
+    const pasta = pastaDoCaminho(arquivo.name || '');
+    const chave = pasta || '';
+    const atuais = grupos.get(chave) || [];
+    atuais.push(arquivo);
+    grupos.set(chave, atuais);
+  }
+
+  return Array.from(grupos.entries())
+    .sort(([a], [b]) => {
+      if (a === '') return -1;
+      if (b === '') return 1;
+      return a.localeCompare(b, 'pt-BR');
+    })
+    .map(([pasta, lista]) => ({
+      pasta,
+      arquivos: [...lista].sort((a, b) => nomeBaseDoCaminho(a.name).localeCompare(nomeBaseDoCaminho(b.name), 'pt-BR'))
+    }));
+}
+
+const TEMPLATE_FULLSTACK_OSONE: Array<{ name: string; language: string; content: string; isMain?: boolean }> = [
+  {
+    name: 'frontend/index.html',
+    language: 'html',
+    isMain: true,
+    content: `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OSONE Fullstack</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="app">
+    <p class="badge">frontend + server + shared</p>
+    <h1>Projeto fullstack OSONE</h1>
+    <p id="status">Carregando dados...</p>
+    <button id="refresh">Consultar API</button>
+  </main>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>`
+  },
+  {
+    name: 'frontend/styles.css',
+    language: 'css',
+    content: `body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at top, #0e7490 0, #090a0f 48%, #020617 100%);
+  color: #f8fafc;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.app {
+  width: min(560px, calc(100vw - 32px));
+  padding: 32px;
+  border-radius: 28px;
+  background: rgba(2, 6, 23, 0.72);
+  border: 1px solid rgba(34, 211, 238, 0.25);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+}
+
+.badge {
+  color: #22d3ee;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  font-size: 12px;
+}
+
+button {
+  border: 0;
+  border-radius: 14px;
+  padding: 12px 18px;
+  background: #22d3ee;
+  color: #031018;
+  font-weight: 800;
+  cursor: pointer;
+}`
+  },
+  {
+    name: 'frontend/app.js',
+    language: 'javascript',
+    content: `import { nomeDoProduto } from '../shared/config.js';
+
+const status = document.getElementById('status');
+const botao = document.getElementById('refresh');
+
+async function consultarApi() {
+  status.textContent = 'Consultando API...';
+  try {
+    const resposta = await fetch('/api/status');
+    const dados = await resposta.json();
+    status.textContent = dados.message;
+  } catch {
+    // No preview do OSONE CODE não existe servidor Express rodando; este fallback deixa o
+    // frontend testável enquanto o server/api.js fica pronto para deploy real.
+    status.textContent = nomeDoProduto + ' pronto no preview. Rode server/api.js no backend real.';
+  }
+}
+
+botao.addEventListener('click', consultarApi);
+consultarApi();`
+  },
+  {
+    name: 'shared/config.js',
+    language: 'javascript',
+    content: `export const nomeDoProduto = 'OSONE Fullstack';
+export const versaoApi = 'v1';`
+  },
+  {
+    name: 'server/api.js',
+    language: 'javascript',
+    content: `import express from 'express';
+import { nomeDoProduto, versaoApi } from '../shared/config.js';
+
+const app = express();
+const PORT = process.env.PORT || 3001;
+
+app.get('/api/status', (_req, res) => {
+  res.json({
+    ok: true,
+    message: nomeDoProduto + ' API ' + versaoApi + ' online.'
+  });
+});
+
+app.listen(PORT, () => {
+  console.log('API rodando em http://localhost:' + PORT);
+});`
+  },
+  {
+    name: 'README.md',
+    language: 'markdown',
+    content: `# Projeto Fullstack OSONE
+
+Estrutura sugerida:
+
+- \`frontend/\`: interface que aparece no preview vivo.
+- \`server/\`: API/servidor para rodar fora do preview.
+- \`shared/\`: código compartilhado entre frontend e backend.
+
+O preview do OSONE CODE executa o frontend diretamente e resolve imports entre pastas. Para rodar o backend real, exporte o projeto ou publique no GitHub.`
+  }
+];
 
 /**
  * Uma cópia nova dos arquivos padrão, a cada chamada.
@@ -464,6 +632,7 @@ export const CodeWorkspace: React.FC<{
     if (Array.isArray(doProjeto) && doProjeto.length > 0) return doProjeto;
     return arquivosPadraoNovos();
   });
+  const arquivosAgrupados = useMemo(() => agruparArquivosPorPasta(files), [files]);
 
   const [activeFileId, setActiveFileId] = useState<string>(() => {
     const projetoAtivo = projects.find(p => p.id === activeProjectId) || projects[0];
@@ -605,6 +774,7 @@ export const CodeWorkspace: React.FC<{
   // HUNTER AGENT STATE
   const [isHunterModalOpen, setIsHunterModalOpen] = useState<boolean>(false);
   const [isCodeApiSettingsOpen, setIsCodeApiSettingsOpen] = useState<boolean>(false);
+  const [isGithubPanelOpen, setIsGithubPanelOpen] = useState<boolean>(false);
   const [hunterPrompt, setHunterPrompt] = useState<string>('');
   const [hunterStatus, setHunterStatus] = useState<'idle' | 'analyzing' | 'doubt' | 'success' | 'error'>('idle');
   const [hunterReport, setHunterReport] = useState<string | null>(null);
@@ -630,6 +800,7 @@ export const CodeWorkspace: React.FC<{
   const [activeArtifactTab, setActiveArtifactTab] = useState<'pm' | 'architect' | 'qa' | 'logs'>('logs');
 
   const activeFile = files.find(f => f.id === activeFileId) || files[0];
+  const activeProjectName = projects.find(p => p.id === activeProjectId)?.name || 'Projeto OSONE CODE';
 
   /**
    * A lista de arquivos sempre atual, para quem grava fora do ciclo de renderização.
@@ -1002,7 +1173,9 @@ export const CodeWorkspace: React.FC<{
   const arquivoPrincipalId = (): string => {
     const atuais = filesRef.current;
     const principal = atuais.find(f => f.isMain)
-      || atuais.find(f => f.name.toLowerCase() === 'index.html')
+      || atuais.find(f => chaveDeCaminho(f.name || '') === 'index.html')
+      || atuais.find(f => chaveDeCaminho(f.name || '') === 'frontend/index.html')
+      || atuais.find(f => nomeBaseDoCaminho(f.name || '').toLowerCase() === 'index.html')
       || atuais.find(f => /\.html?$/i.test(f.name));
     return principal?.id || 'index.html';
   };
@@ -1012,7 +1185,9 @@ export const CodeWorkspace: React.FC<{
     pushHistory(atuais);
 
     const alvo = (targetFileIdOrName || activeFileId || '').trim();
-    const idx = atuais.findIndex(f => f.id === alvo || f.name.toLowerCase() === alvo.toLowerCase());
+    const idx = atuais.findIndex(f =>
+      f.id === alvo || chaveDeCaminho(f.name || '') === chaveDeCaminho(alvo)
+    );
 
     let updatedFiles: CodeRepositoryFile[];
     let idDoAlvo: string;
@@ -1023,13 +1198,12 @@ export const CodeWorkspace: React.FC<{
     } else {
       // Nome pedido não existe no projeto: cria, em vez de derrubar um arquivo alheio.
       const pareceNomeDeArquivo = /\.[a-z0-9]{1,8}$/i.test(alvo);
-      const nome = pareceNomeDeArquivo ? alvo : 'index.html';
-      const ext = nome.split('.').pop()?.toLowerCase() || 'html';
+      const nome = prepararNomeDeArquivoDigitado(pareceNomeDeArquivo ? alvo : 'index.html') || 'index.html';
       const novo: CodeRepositoryFile = {
         id: 'file-' + Date.now(),
         name: nome,
-        language: ext === 'html' || ext === 'htm' ? 'html' : ext === 'css' ? 'css' : ext === 'py' ? 'python' : 'javascript',
-        ...(nome.toLowerCase() === 'index.html' ? { isMain: true } : {}),
+        language: linguagemPelaExtensao(nome),
+        ...(nomeBaseDoCaminho(nome).toLowerCase() === 'index.html' ? { isMain: true } : {}),
         updatedAt: Date.now(),
         content: newContent
       };
@@ -1228,11 +1402,17 @@ export const CodeWorkspace: React.FC<{
   };
 
   const handleCreateNewFile = () => {
-    const fileName = window.prompt('Nome do novo arquivo (ex: index.html, script.ts, app.py, consulta.sql):');
+    const fileName = window.prompt('Nome/caminho do novo arquivo (ex: index.html, frontend/app.js, server/api.js, src/app.ts, consulta.sql):');
     if (!fileName || !fileName.trim()) return;
 
+    const trimmed = prepararNomeDeArquivoDigitado(fileName);
+    if (!trimmed) return;
+    if (caminhoExisteNoProjeto(trimmed, files)) {
+      setNotificationBanner({ message: `Já existe um arquivo em "${trimmed}".`, type: 'error' });
+      return;
+    }
+
     pushHistory(files);
-    const trimmed = fileName.trim();
     const lang = linguagemPelaExtensao(trimmed);
     const conteudoInicial = lang === 'html'
       ? `<!DOCTYPE html>\n<html>\n<head>\n  <title>${trimmed}</title>\n</head>\n<body>\n  <h1>${trimmed}</h1>\n</body>\n</html>`
@@ -1250,6 +1430,39 @@ export const CodeWorkspace: React.FC<{
 
     setFiles(prev => [...prev, newFile]);
     setActiveFileId(newFile.id);
+  };
+
+  const criarEstruturaFullstack = () => {
+    const confirmar = window.confirm(
+      'Criar uma estrutura fullstack com frontend/, server/ e shared/? Arquivos existentes não serão sobrescritos.'
+    );
+    if (!confirmar) return;
+
+    const atuais = filesRef.current;
+    const ocupados = new Set(atuais.map(f => f.name));
+    const agora = Date.now();
+    const novos = TEMPLATE_FULLSTACK_OSONE.map((arquivo, i) => {
+      const name = caminhoDisponivel(arquivo.name, ocupados);
+      ocupados.add(name);
+      return {
+        id: `fullstack-${agora}-${i}`,
+        name,
+        language: arquivo.language,
+        content: arquivo.content,
+        updatedAt: agora,
+        ...(arquivo.isMain ? { isMain: true } : {})
+      } as CodeRepositoryFile;
+    });
+
+    pushHistory(atuais);
+    const atualizados = atuais.map(f => f.isMain ? { ...f, isMain: false } : f).concat(novos);
+    setFiles(atualizados);
+    const principal = novos.find(f => f.isMain) || novos[0];
+    if (principal) setActiveFileId(principal.id);
+    setNotificationBanner({
+      message: `Estrutura fullstack criada com ${novos.length} arquivos em frontend/, server/ e shared/.`,
+      type: 'success'
+    });
   };
 
   const handleDeleteFile = (id: string, name: string) => {
@@ -1273,8 +1486,13 @@ export const CodeWorkspace: React.FC<{
   };
 
   const handleRenameFileSubmit = (id: string) => {
-    const novoNome = editingFileNameText.trim();
+    const novoNome = prepararNomeDeArquivoDigitado(editingFileNameText);
     if (!novoNome) return;
+    if (caminhoExisteNoProjeto(novoNome, files, id)) {
+      setNotificationBanner({ message: `Já existe um arquivo em "${novoNome}".`, type: 'error' });
+      setEditingFileNameId(null);
+      return;
+    }
     // Renomear é uma alteração como outra qualquer: entra no histórico, e o Ctrl+Z desfaz.
     pushHistory(files);
     setFiles(prev => prev.map(f => f.id === id
@@ -1306,7 +1524,7 @@ export const CodeWorkspace: React.FC<{
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = activeFile.name;
+    a.download = nomeBaseDoCaminho(activeFile.name);
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -1323,11 +1541,12 @@ export const CodeWorkspace: React.FC<{
         // depois de importar desfazia a edição ANTERIOR à importação, deixando o arquivo
         // importado na lista e revertendo algo que a pessoa não pediu para reverter.
         pushHistory(filesRef.current);
+        const nome = caminhoDisponivel(uploaded.name, filesRef.current.map(f => f.name));
         const newFile: CodeRepositoryFile = {
           id: 'file-' + Date.now(),
-          name: uploaded.name,
+          name: nome,
           // Mesma regra da criação e da renomeação: .py, .json e .md deixavam de ser reconhecidos.
-          language: linguagemPelaExtensao(uploaded.name),
+          language: linguagemPelaExtensao(nome),
           content: text,
           updatedAt: Date.now()
         };
@@ -1510,15 +1729,29 @@ Responda APENAS um array JSON de 4 strings. Exemplo do formato:
 
     pushHistory(atuais);
     const agora = Date.now();
-    const criados: CodeRepositoryFile[] = r.novos.map((a, i) => ({
-      id: `file-${agora}-${i}`,
-      name: a.nome,
-      language: a.linguagem,
-      content: a.conteudo,
-      updatedAt: agora
-    }));
+    const pastaAtiva = pastaDoCaminho(activeFile.name);
+    const ocupados = new Set(atuais.map(f => f.name));
+    let htmlSeparado = r.html;
+    const criados: CodeRepositoryFile[] = r.novos.map((a, i) => {
+      const desejado = pastaAtiva ? `${pastaAtiva}/${a.nome}` : a.nome;
+      const nomeFinal = caminhoDisponivel(desejado, ocupados);
+      ocupados.add(nomeFinal);
+      const referenciaFinal = pastaAtiva ? nomeBaseDoCaminho(nomeFinal) : nomeFinal;
+      if (referenciaFinal !== a.nome) {
+        htmlSeparado = htmlSeparado
+          .replaceAll(`href="${a.nome}"`, `href="${referenciaFinal}"`)
+          .replaceAll(`src="${a.nome}"`, `src="${referenciaFinal}"`);
+      }
+      return {
+        id: `file-${agora}-${i}`,
+        name: nomeFinal,
+        language: a.linguagem,
+        content: a.conteudo,
+        updatedAt: agora
+      };
+    });
     const atualizados = atuais
-      .map(f => (f.id === activeFile.id ? { ...f, content: r.html, updatedAt: agora } : f))
+      .map(f => (f.id === activeFile.id ? { ...f, content: htmlSeparado, updatedAt: agora } : f))
       .concat(criados);
 
     setFiles(atualizados);
@@ -1564,8 +1797,10 @@ Responda APENAS um array JSON de 4 strings. Exemplo do formato:
       // da aba até ela ser fechada, e num projeto grande isso é megabytes parados à toa.
       setTimeout(() => URL.revokeObjectURL(url), 2000);
 
+      const entradaHtml = pacote.entradas.find(e => nomeBaseDoCaminho(e.caminho).toLowerCase() === 'index.html')
+        || pacote.entradas.find(e => /\.html?$/i.test(e.caminho));
       setNotificationBanner({
-        message: `${pacote.nome} baixado com ${pacote.entradas.length} arquivo(s). Descompacte e abra o index.html no navegador.`,
+        message: `${pacote.nome} baixado com ${pacote.entradas.length} arquivo(s). Descompacte e abra ${entradaHtml?.caminho || 'o HTML principal'} no navegador.`,
         type: 'success'
       });
     } catch (e: any) {
@@ -1574,6 +1809,33 @@ Responda APENAS um array JSON de 4 strings. Exemplo do formato:
     } finally {
       setEmpacotando(false);
     }
+  };
+
+  const importarArquivosDoGithubParaCode = (arquivosImportados: CodeRepositoryFile[], resultado: GithubImportResult) => {
+    if (!arquivosImportados.length) return;
+    const atuais = filesRef.current;
+    pushHistory(atuais);
+    const agora = Date.now();
+    const comPrincipalUnico = arquivosImportados.map((arquivo, i) => ({
+      ...arquivo,
+      id: arquivo.id || `github-import-${agora}-${i}`,
+      updatedAt: agora,
+      isMain: i === arquivosImportados.findIndex(f => f.isMain) || (arquivosImportados.every(f => !f.isMain) && i === 0)
+    }));
+    setFiles(comPrincipalUnico);
+    setActiveFileId((comPrincipalUnico.find(f => f.isMain) || comPrincipalUnico[0]).id);
+    setShowRepoSidebar(true);
+    setIsSaved(false);
+    setProjects(prev => prev.map(proj => proj.id === activeProjectId
+      ? {
+          ...proj,
+          name: `${resultado.owner}/${resultado.repo}`,
+          files: comPrincipalUnico,
+          activeFileId: (comPrincipalUnico.find(f => f.isMain) || comPrincipalUnico[0]).id,
+          updatedAt: agora
+        }
+      : proj
+    ));
   };
 
   /**
@@ -2477,9 +2739,22 @@ FORMATO OBRIGATÓRIO (JSON estrito):
         )}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {isGithubPanelOpen && (
+          <CodeGithubPanel
+            files={files}
+            projectName={activeProjectName}
+            onClose={() => setIsGithubPanelOpen(false)}
+            onNotify={(message, type) => setNotificationBanner({ message, type })}
+            onImportFiles={importarArquivosDoGithubParaCode}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Top Header Navigation */}
-      <div className="min-h-14 border-b border-white/5 bg-[#0c0e14]/90 backdrop-blur-md px-2 py-2 sm:px-4 flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 shrink-0 z-30">
-        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+      <div className="border-b border-white/5 bg-[#0c0e14]/90 backdrop-blur-md px-2 py-2 sm:px-4 flex flex-col gap-2 shrink-0 z-30 overflow-hidden">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2 min-w-0">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
           <button 
             onClick={() => setShowRepoSidebar(!showRepoSidebar)}
             className={cn(
@@ -2505,11 +2780,11 @@ FORMATO OBRIGATÓRIO (JSON estrito):
         </div>
 
         {/* View Mode Controls */}
-        <div className="flex items-center gap-1 bg-black/40 p-1 rounded-xl border border-white/5 ml-auto">
+        <div className="w-full lg:w-auto flex items-center gap-1 bg-black/40 p-1 rounded-xl border border-white/5 overflow-x-auto no-scrollbar shrink-0">
           <button 
             onClick={() => setViewLayout('editor')}
             className={cn(
-              "px-3 py-1.5 rounded-lg text-xs font-mono flex items-center gap-1.5 transition-all font-medium",
+              "px-3 py-1.5 rounded-lg text-xs font-mono flex items-center gap-1.5 transition-all font-medium shrink-0",
               viewLayout === 'editor' 
                 ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" 
                 : "text-zinc-400 hover:text-white"
@@ -2522,7 +2797,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
           <button 
             onClick={() => setViewLayout('split')}
             className={cn(
-              "px-3 py-1.5 rounded-lg text-xs font-mono flex items-center gap-1.5 transition-all font-medium",
+              "px-3 py-1.5 rounded-lg text-xs font-mono flex items-center gap-1.5 transition-all font-medium shrink-0",
               viewLayout === 'split' 
                 ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" 
                 : "text-zinc-400 hover:text-white"
@@ -2535,7 +2810,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
           <button 
             onClick={() => setViewLayout('preview')}
             className={cn(
-              "px-3 py-1.5 rounded-lg text-xs font-mono flex items-center gap-1.5 transition-all font-medium",
+              "px-3 py-1.5 rounded-lg text-xs font-mono flex items-center gap-1.5 transition-all font-medium shrink-0",
               viewLayout === 'preview' 
                 ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" 
                 : "text-zinc-400 hover:text-white"
@@ -2546,12 +2821,14 @@ FORMATO OBRIGATÓRIO (JSON estrito):
           </button>
         </div>
 
+        </div>
+
         {/* Action Controls + SWARM BUTTON & HUNTER BUTTON */}
-        <div className="order-3 sm:order-none w-full sm:w-auto flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5 sm:pb-0">
+        <div className="w-full flex items-center gap-1.5 overflow-x-auto no-scrollbar rounded-2xl border border-white/5 bg-black/20 p-1.5">
           {/* BOTÃO ENXAME SWARM HARNESS */}
           <button 
             onClick={() => setIsSwarmModalOpen(true)}
-            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-600 via-cyan-600 to-emerald-600 hover:from-purple-500 hover:to-emerald-500 text-white font-mono font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-purple-950/60 active:scale-95 cursor-pointer border border-purple-400/40 transition-all"
+            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-600 via-cyan-600 to-emerald-600 hover:from-purple-500 hover:to-emerald-500 text-white font-mono font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-purple-950/60 active:scale-95 cursor-pointer border border-purple-400/40 transition-all shrink-0"
             title="Enxame OSONE CODE: 4 Agentes Especializados + Harness Engineering em Loop Autônomo!"
           >
             <Bot size={16} className="text-purple-200 animate-pulse" />
@@ -2561,7 +2838,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
           {/* BOTÃO HUNTER NOVO */}
           <button 
             onClick={() => setIsHunterModalOpen(true)}
-            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white font-mono font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-950/60 active:scale-95 cursor-pointer border border-emerald-400/40 transition-all"
+            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white font-mono font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-950/60 active:scale-95 cursor-pointer border border-emerald-400/40 transition-all shrink-0"
             title="Hunter: Examinador Agêntico. Examina o código, aponta o que falta e implementa automaticamente!"
           >
             <BowAndArrowIcon size={15} className="text-emerald-100 animate-pulse" />
@@ -2581,6 +2858,15 @@ FORMATO OBRIGATÓRIO (JSON estrito):
             <KeyRound size={15} />
             <span className="hidden sm:inline">API do Code</span>
             <span className="sm:hidden">{provedorDoCode === 'gemini' ? 'Gemini' : 'API'}</span>
+          </button>
+
+          <button
+            onClick={() => setIsGithubPanelOpen(true)}
+            className="px-3 py-2 rounded-xl text-xs font-mono font-bold flex items-center gap-1.5 transition-all border shrink-0 cursor-pointer active:scale-95 bg-slate-500/10 text-slate-200 border-slate-400/30 hover:bg-slate-500/20"
+            title="GitHub: publicar o projeto, criar Pull Request e fazer merge com confirmação"
+          >
+            <FolderGit2 size={15} />
+            <span className="hidden sm:inline">GitHub</span>
           </button>
 
           {/*
@@ -2650,7 +2936,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
 
           <button
             onClick={handleCopyCode}
-            className="p-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] text-zinc-300 border border-white/5 transition-all"
+            className="p-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] text-zinc-300 border border-white/5 transition-all shrink-0"
             title="Copiar Código do Arquivo Ativo"
           >
             {copied ? <Check size={16} className="text-emerald-400" /> : <Copy size={16} />}
@@ -2663,7 +2949,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
           {historyStack.length > 0 && (
             <button
               onClick={() => setComparacaoAberta(true)}
-              className="p-2 rounded-xl bg-violet-500/10 hover:bg-violet-500/20 text-violet-300 border border-violet-500/25 transition-all cursor-pointer"
+              className="p-2 rounded-xl bg-violet-500/10 hover:bg-violet-500/20 text-violet-300 border border-violet-500/25 transition-all cursor-pointer shrink-0"
               title="Ver o que mudou na última alteração"
             >
               <Columns size={16} />
@@ -2672,7 +2958,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
 
           <button
             onClick={handleDownloadFile}
-            className="p-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] text-zinc-300 border border-white/5 transition-all"
+            className="p-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] text-zinc-300 border border-white/5 transition-all shrink-0"
             title="Baixar apenas o arquivo aberto"
           >
             <Download size={16} />
@@ -2682,7 +2968,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
           <button
             onClick={exportarProjetoEmZip}
             disabled={empacotando}
-            className="p-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/25 transition-all disabled:opacity-40 cursor-pointer"
+            className="p-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/25 transition-all disabled:opacity-40 cursor-pointer shrink-0"
             title={`Baixar o projeto inteiro (${files.length} arquivo(s)) em .zip`}
           >
             {empacotando ? <Loader2 size={16} className="animate-spin" /> : <FolderGit2 size={16} />}
@@ -2794,23 +3080,23 @@ FORMATO OBRIGATÓRIO (JSON estrito):
       </AnimatePresence>
 
       {/* Project Switcher Bar: "Em qual projeto você quer codar?" */}
-      <div className="bg-[#0b0d14] border-b border-white/10 px-2 sm:px-4 py-2 flex flex-col md:flex-row md:items-center justify-between gap-2 md:gap-3 shrink-0 z-20">
-        <div className="flex items-center gap-2">
+      <div className="bg-[#0b0d14] border-b border-white/10 px-2 sm:px-4 py-2 flex flex-col md:flex-row md:items-center justify-between gap-2 md:gap-3 shrink-0 z-20 overflow-hidden">
+        <div className="flex items-center gap-2 min-w-0">
           <div className="p-1.5 rounded-lg bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shrink-0">
             <FolderGit2 size={16} />
           </div>
-          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 min-w-0">
             <span className="text-xs font-bold text-white font-mono flex items-center gap-2">
               Em qual projeto você quer codar?
             </span>
-            <span className="text-[11px] text-cyan-400/80 font-mono">
+            <span className="text-[11px] text-cyan-400/80 font-mono truncate">
               (Isolado: alterações afetam apenas o projeto ativo)
             </span>
           </div>
         </div>
 
         {/* 5 Project Buttons */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0 custom-scrollbar">
+        <div className="w-full md:w-auto max-w-full flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0 custom-scrollbar">
           {projects.map((proj) => {
             const isCurrent = proj.id === activeProjectId;
             const isEditingThis = editingProjectNameId === proj.id;
@@ -2890,6 +3176,14 @@ FORMATO OBRIGATÓRIO (JSON estrito):
                     <Upload size={13} />
                     <input type="file" onChange={handleImportFileDisk} className="hidden" accept=".html,.css,.js,.jsx,.ts,.tsx,.py,.sql,.json,.txt,.md" />
                   </label>
+
+                  <button 
+                    onClick={criarEstruturaFullstack}
+                    className="p-1 rounded bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/25 transition-colors"
+                    title="Criar estrutura fullstack"
+                  >
+                    <Layers size={13} />
+                  </button>
                   
                   <button 
                     onClick={handleCreateNewFile}
@@ -2903,66 +3197,82 @@ FORMATO OBRIGATÓRIO (JSON estrito):
 
               {/* File List */}
               <div className="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
-                {files.map(file => {
-                  const isActive = file.id === activeFileId;
-                  const isEditingName = editingFileNameId === file.id;
-
-                  return (
-                    <div 
-                      key={file.id}
-                      onClick={() => setActiveFileId(file.id)}
-                      className={cn(
-                        "group w-full px-3 py-2 rounded-xl text-xs font-mono flex items-center justify-between cursor-pointer transition-all border",
-                        isActive 
-                          ? "bg-cyan-500/10 text-cyan-300 border-cyan-500/30 shadow-[0_0_10px_rgba(6,182,212,0.1)]" 
-                          : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.03] border-transparent"
-                      )}
-                    >
-                      <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
-                        <FileCode size={14} className={isActive ? "text-cyan-400" : "text-zinc-500"} />
-                        
-                        {isEditingName ? (
-                          <input 
-                            type="text" 
-                            value={editingFileNameText}
-                            onChange={(e) => setEditingFileNameText(e.target.value)}
-                            onBlur={() => handleRenameFileSubmit(file.id)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleRenameFileSubmit(file.id)}
-                            autoFocus
-                            className="bg-black/60 border border-cyan-500/50 rounded px-1.5 py-0.5 text-xs text-cyan-200 outline-none w-full"
-                          />
-                        ) : (
-                          <span className="truncate">{file.name}</span>
-                        )}
+                {arquivosAgrupados.map(grupo => (
+                  <div key={grupo.pasta || 'raiz'} className="space-y-1">
+                    {grupo.pasta && (
+                      <div className="px-2 pt-2 pb-1 text-[9px] font-mono uppercase tracking-[0.18em] text-zinc-600 flex items-center gap-1.5">
+                        <FolderGit2 size={10} className="text-zinc-500" />
+                        <span className="truncate">{grupo.pasta}</span>
                       </div>
+                    )}
 
-                      <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 transition-opacity">
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setEditingFileNameId(file.id);
-                            setEditingFileNameText(file.name);
-                          }}
-                          className="p-1 hover:text-cyan-300 transition-colors"
-                          title="Renomear"
-                        >
-                          <Edit3 size={11} />
-                        </button>
+                    {grupo.arquivos.map(file => {
+                      const isActive = file.id === activeFileId;
+                      const isEditingName = editingFileNameId === file.id;
+                      const pasta = pastaDoCaminho(file.name);
+                      const base = nomeBaseDoCaminho(file.name);
 
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteFile(file.id, file.name);
-                          }}
-                          className="p-1 hover:text-red-400 transition-colors"
-                          title="Excluir"
+                      return (
+                        <div 
+                          key={file.id}
+                          onClick={() => setActiveFileId(file.id)}
+                          className={cn(
+                            "group w-full px-3 py-2 rounded-xl text-xs font-mono flex items-center justify-between cursor-pointer transition-all border",
+                            isActive 
+                              ? "bg-cyan-500/10 text-cyan-300 border-cyan-500/30 shadow-[0_0_10px_rgba(6,182,212,0.1)]" 
+                              : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.03] border-transparent"
+                          )}
                         >
-                          <Trash2 size={11} />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
+                          <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
+                            <FileCode size={14} className={isActive ? "text-cyan-400" : "text-zinc-500"} />
+                            
+                            {isEditingName ? (
+                              <input 
+                                type="text" 
+                                value={editingFileNameText}
+                                onChange={(e) => setEditingFileNameText(e.target.value)}
+                                onBlur={() => handleRenameFileSubmit(file.id)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleRenameFileSubmit(file.id)}
+                                autoFocus
+                                className="bg-black/60 border border-cyan-500/50 rounded px-1.5 py-0.5 text-xs text-cyan-200 outline-none w-full"
+                              />
+                            ) : (
+                              <div className="min-w-0">
+                                <div className="truncate">{base}</div>
+                                {pasta && <div className="truncate text-[9px] text-zinc-600">{pasta}/</div>}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 transition-opacity">
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditingFileNameId(file.id);
+                                setEditingFileNameText(file.name);
+                              }}
+                              className="p-1 hover:text-cyan-300 transition-colors"
+                              title="Renomear"
+                            >
+                              <Edit3 size={11} />
+                            </button>
+
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteFile(file.id, file.name);
+                              }}
+                              className="p-1 hover:text-red-400 transition-colors"
+                              title="Excluir"
+                            >
+                              <Trash2 size={11} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
               </div>
 
               {/* Footer status */}
@@ -3229,8 +3539,8 @@ FORMATO OBRIGATÓRIO (JSON estrito):
       </div>
 
       {/* AI Code Assistant Footer Prompt Box */}
-      <div className="border-t border-white/5 bg-[#090b10] p-3 shrink-0">
-        <div className="max-w-5xl mx-auto space-y-2">
+      <div className="border-t border-white/5 bg-[#090b10] p-2 sm:p-3 shrink-0 overflow-hidden">
+        <div className="w-full max-w-6xl mx-auto space-y-2 min-w-0">
           
           {/* AI Quick Prompts */}
           {/*
@@ -3250,7 +3560,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
             mensagem exata e o texto da linha que falhou.
           */}
           {quantosErros > 0 && (
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-red-500/[0.08] border border-red-500/30 text-[11px] font-mono text-red-200">
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-red-500/[0.08] border border-red-500/30 text-[11px] font-mono text-red-200 overflow-x-auto no-scrollbar">
               <AlertTriangle size={12} className="shrink-0" />
               <span className="shrink-0 font-semibold">
                 {quantosErros === 1 ? 'O código quebrou ao rodar' : `${quantosErros} erros ao rodar o código`}
@@ -3280,7 +3590,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
           )}
 
           {selecaoDoEditor && (
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/[0.08] border border-amber-500/25 text-[11px] font-mono text-amber-200">
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/[0.08] border border-amber-500/25 text-[11px] font-mono text-amber-200 overflow-x-auto no-scrollbar">
               <Code2 size={12} className="shrink-0" />
               <span className="shrink-0 font-semibold">
                 Editando só o trecho marcado
@@ -3298,7 +3608,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
             </div>
           )}
 
-          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+          <div className="w-full flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
             <span className="text-[10px] font-mono text-cyan-400/80 uppercase tracking-wider flex items-center gap-1 shrink-0">
               <Sparkles size={11} /> OSONE CODE IA:
             </span>
@@ -3370,7 +3680,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
 
           {/* Miniaturas das imagens de referência anexadas */}
           {attachedImages.length > 0 && (
-            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+            <div className="w-full flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
               {attachedImages.map(img => (
                 <div key={img.id} className="relative shrink-0 group">
                   <img
@@ -3391,7 +3701,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
           )}
 
           {/* Prompt Input Line */}
-          <div className="flex items-center gap-2 bg-black/50 border border-white/10 rounded-2xl p-1.5 focus-within:border-cyan-500/40 transition-all">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 bg-black/50 border border-white/10 rounded-2xl p-1.5 focus-within:border-cyan-500/40 transition-all min-w-0">
             <input
               ref={imageInputRef}
               type="file"
@@ -3436,13 +3746,13 @@ FORMATO OBRIGATÓRIO (JSON estrito):
                 ? `Descreva o que fazer com as ${selecaoDoEditor.texto.split('\n').length} linha(s) marcadas...`
                 : "Descreva a alteração ou o app que você quer criar neste arquivo de código..."}
               disabled={isGenerating}
-              className="flex-1 bg-transparent px-3 py-1.5 text-xs text-white placeholder-zinc-500 outline-none font-mono"
+              className="w-full min-w-0 flex-1 bg-transparent px-3 py-1.5 text-xs text-white placeholder-zinc-500 outline-none font-mono"
             />
 
             <button
               onClick={() => handleSendAIPrompt()}
               disabled={!promptInput.trim() || isGenerating}
-              className="px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 disabled:bg-zinc-800 text-black font-semibold text-xs font-mono transition-all flex items-center gap-1.5 shrink-0"
+              className="w-full sm:w-auto px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 disabled:bg-zinc-800 text-black font-semibold text-xs font-mono transition-all flex items-center justify-center gap-1.5 shrink-0"
             >
               {isGenerating ? (
                 <>
