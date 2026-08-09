@@ -129,6 +129,7 @@ Este documento registra todas as funcionalidades, rotas e módulos ativos no eco
 
 ## 6. Aplicativo Desktop Electron (`electron/main.js`)
 - **Empacotamento Multiplataforma (Electron + electron-builder)**: Arquitetura Desktop que carrega a interface OSONE G5 e executa o servidor backend Express (`dist/server.cjs`) como um processo interno na máquina do usuário, sem necessidade de inicialização manual via terminal.
+- **Inicialização resiliente do servidor local (`electron/main.js`)**: o desktop mostra uma tela própria de preparação enquanto aguarda `127.0.0.1`, reconecta até 20 vezes se o Chromium receber `ERR_CONNECTION_REFUSED`, e grava `logs/main.log` na pasta de dados do app para diagnosticar firewall, porta bloqueada ou falha do servidor interno. A janela não fica mais presa na página cinza nativa do navegador sem explicação.
 - **Gerador de Instaladores Nativos (`npm run build:desktop`)**: Configuração para geração automatizada de instaladores .exe (NSIS para Windows) e .AppImage (Linux) no diretório `dist-desktop/` utilizando o ícone customizado (`build/icon.png`).
 - **Persistência Segura no Disco do Sistema (`app.getPath('userData')`)**: Redirecionamento dinâmico do diretório de dados em ambiente empacotado para a pasta de dados do aplicativo no SO (AppData / Application Support), garantindo que arquivos como `knowledge-base.json`, `contacts.json`, `favorites.json`, sessões do WhatsApp (`.wwebjs_auth`) e mídias geradas (`generated-content/`) continuem funcionando normalmente sem restrições de permissão.
 

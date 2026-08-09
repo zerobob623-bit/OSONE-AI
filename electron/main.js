@@ -20,6 +20,7 @@ const require = createRequire(import.meta.url);
 
 let mainWindow = null;
 const DEFAULT_PORT = Number(process.env.PORT) || 3000;
+let logStream = null;
 
 /**
  * O QUE ACONTECEU COM A JANELA DE LOGIN — o dado que faltava para sair do escuro.
@@ -39,6 +40,41 @@ function registrarEventoDeLogin(oQue, url) {
   eventosDoLogin.unshift({ quando: new Date().toISOString(), oQue, url: String(url || '').slice(0, 300) });
   if (eventosDoLogin.length > 12) eventosDoLogin.pop();
   console.log(`[Login] ${oQue}${url ? ' — ' + url : ''}`);
+}
+
+function escaparHtml(valor) {
+  return String(valor || '').replace(/[<>&]/g, '');
+}
+
+function setupFileLogging() {
+  try {
+    const logsDir = path.join(app.getPath('userData'), 'logs');
+    fs.mkdirSync(logsDir, { recursive: true });
+    logStream = fs.createWriteStream(path.join(logsDir, 'main.log'), { flags: 'a' });
+
+    const escrever = (nivel, args) => {
+      const linha = `[${new Date().toISOString()}] [${nivel}] ${args.map((arg) => {
+        if (arg instanceof Error) return arg.stack || arg.message;
+        if (typeof arg === 'string') return arg;
+        try { return JSON.stringify(arg); } catch { return String(arg); }
+      }).join(' ')}\n`;
+      logStream.write(linha);
+    };
+
+    for (const nivel of ['log', 'warn', 'error']) {
+      const original = console[nivel].bind(console);
+      console[nivel] = (...args) => {
+        escrever(nivel, args);
+        original(...args);
+      };
+    }
+
+    process.on('exit', () => {
+      try { logStream?.end(); } catch {}
+    });
+  } catch (err) {
+    console.error('[Startup] Não foi possível ativar log em arquivo:', err);
+  }
 }
 
 /**
@@ -229,7 +265,7 @@ function showErrorPage(reason) {
 <body style="margin:0;background:#0d0c0b;color:#e8e3dd;font-family:system-ui,-apple-system,Segoe UI,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh">
   <div style="max-width:640px;padding:40px;line-height:1.6">
     <h1 style="font-weight:300;font-size:22px;color:#ff6b35;margin:0 0 18px">O OSONE não conseguiu iniciar</h1>
-    <p style="color:#b8b0a8;font-size:14px;margin:0 0 18px">${String(reason).replace(/[<>&]/g, '')}</p>
+    <p style="color:#b8b0a8;font-size:14px;margin:0 0 18px">${escaparHtml(reason)}</p>
     <p style="color:#8a827a;font-size:13px;margin:0 0 8px">O que costuma resolver:</p>
     <ul style="color:#8a827a;font-size:13px;margin:0 0 22px;padding-left:20px">
       <li>Fechar o OSONE completamente (inclusive na bandeja do sistema) e abrir de novo.</li>
@@ -241,6 +277,53 @@ function showErrorPage(reason) {
 </body></html>`;
   mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
   if (!mainWindow.isVisible()) mainWindow.show();
+}
+
+function showStartupPage(message = 'Iniciando servidor local...', detail = '') {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const html = `<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><title>OSONE G5 — Iniciando</title></head>
+<body style="margin:0;background:#0d0c0b;color:#e8e3dd;font-family:system-ui,-apple-system,Segoe UI,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh">
+  <div style="max-width:520px;padding:40px;text-align:center;line-height:1.6">
+    <div style="width:48px;height:48px;border-radius:50%;border:2px solid rgba(255,107,53,.18);border-top-color:#ff6b35;margin:0 auto 22px;animation:girar 1s linear infinite"></div>
+    <h1 style="font-weight:300;font-size:22px;color:#ff8a4c;margin:0 0 10px">Preparando o OSONE</h1>
+    <p style="color:#b8b0a8;font-size:14px;margin:0 0 8px">${escaparHtml(message)}</p>
+    <p style="color:#756d65;font-size:12px;margin:0">${escaparHtml(detail)}</p>
+  </div>
+  <style>@keyframes girar{to{transform:rotate(360deg)}}</style>
+</body></html>`;
+  mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+  if (!mainWindow.isVisible()) mainWindow.show();
+}
+
+async function loadOsoneInterface(reason = 'initial') {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  if (startupError) {
+    showErrorPage(startupError);
+    return false;
+  }
+
+  showStartupPage(
+    'Conectando ao servidor interno...',
+    `Aguardando http://${LOOPBACK_HOST}:${activePort} (${reason}).`
+  );
+
+  const readyPort = await waitForServer(30000);
+  if (readyPort === null) {
+    showErrorPage(
+      `O servidor interno do OSONE não respondeu na porta ${activePort} dentro do tempo esperado. ` +
+      `Feche o app completamente e abra de novo; se continuar, libere o OSONE no firewall/antivírus.`
+    );
+    return false;
+  }
+
+  try {
+    await mainWindow.loadURL(`http://${LOOPBACK_HOST}:${readyPort}`);
+    return true;
+  } catch (err) {
+    console.error(`[Janela] loadURL falhou em http://${LOOPBACK_HOST}:${readyPort}:`, err);
+    return false;
+  }
 }
 
 function createWindow() {
@@ -308,14 +391,11 @@ function createWindow() {
     registrarEventoDeLogin('console do OSONE: ' + String(texto).slice(0, 200), '');
   });
 
-  if (startupError) {
-    // A janela precisa existir antes de conseguirmos mostrar qualquer coisa, então a tela de
-    // erro é carregada aqui, e não abortamos a criação da janela.
-    mainWindow.show();
-    showErrorPage(startupError);
-  } else {
-    mainWindow.loadURL(`http://${LOOPBACK_HOST}:${activePort}`);
-  }
+  // A janela nunca aponta direto para 127.0.0.1 antes de uma nova prova de vida. Sem essa
+  // etapa, qualquer oscilação curta entre o health check e o carregamento desenha a página
+  // cinza nativa do Chromium ("ERR_CONNECTION_REFUSED"), que parece app quebrado e não explica
+  // nada. A tela própria fica no ar enquanto o servidor responde de verdade.
+  void loadOsoneInterface('abertura da janela');
 
   // Rede local/servidor podem demorar um instante a mais que o esperado para aceitar conexões;
   // em vez de deixar a janela preta para sempre, tentamos recarregar algumas vezes e só então
@@ -323,14 +403,16 @@ function createWindow() {
   let reloadAttempts = 0;
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
     if (!isMainFrame || validatedURL.startsWith('data:')) return;
-    if (reloadAttempts < 5) {
+    if (reloadAttempts < 20) {
       reloadAttempts++;
-      console.warn(`[Janela] Falha ao carregar (${errorCode} ${errorDescription}). Tentativa ${reloadAttempts}/5...`);
+      console.warn(`[Janela] Falha ao carregar (${errorCode} ${errorDescription}). Tentativa ${reloadAttempts}/20...`);
+      showStartupPage(
+        'Reconectando ao servidor interno...',
+        `${errorDescription || 'conexão recusada'} — tentativa ${reloadAttempts}/20.`
+      );
       setTimeout(() => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.loadURL(`http://${LOOPBACK_HOST}:${activePort}`);
-        }
-      }, 1000);
+        void loadOsoneInterface(`reconexão ${reloadAttempts}/20`);
+      }, Math.min(1000 + reloadAttempts * 250, 4000));
       return;
     }
     showErrorPage(
@@ -640,6 +722,7 @@ if (!gotSingleInstanceLock) {
 }
 
 app.whenReady().then(async () => {
+  setupFileLogging();
   setupScreenSharing();
   // O controle vai para o ar ANTES do servidor: é ele que o servidor procura ao responder as
   // rotas de atualização, e um servidor que suba primeiro não encontraria nada.
