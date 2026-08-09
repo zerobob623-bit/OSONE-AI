@@ -71,39 +71,20 @@ import html2canvas from 'html2canvas';
 import { AIProfile, SkeletonPlan, ApiKeys, WorkspaceMode, Message, LiveState, FileSystemItem, VirtualFile, VirtualFolder, OrbStyle, AppTheme, VoiceModulation, RagFile, WritingProject, ChatSession } from './types';
 import { AudioProcessor, AudioPlayer } from './lib/audio';
 import { connectToLiveBridge } from './lib/live-bridge';
-import { FileTreeItem } from './components/FileTreeItem';
 import { InfinityLogo } from './components/InfinityLogo';
-import { SettingsModal } from './components/SettingsModal';
 import { MotorDeAcoes } from './components/MotorDeAcoes';
 import { Sidebar } from './components/Sidebar';
 import { ProfileModal } from './components/ProfileModal';
 import { IntimateMissionModal } from './components/IntimateMissionModal';
 import { AiDossierModal } from './components/AiDossierModal';
-import { CodePreview } from './components/CodePreview';
-import { CodeWorkspace } from './components/CodeWorkspace';
 import { VoiceSwitcher } from './components/VoiceSwitcher';
-import { SoundLibrary } from './components/SoundLibrary';
-import { WellnessCenter } from './components/WellnessCenter';
-import { AuralSense } from './components/AuralSense';
-import { TikTokLivePanel } from './components/TikTokLivePanel';
-import { InteractiveCanvas } from './components/InteractiveCanvas';
-import { RAGConnector, loadRagFilesFromDB, saveRagFileToDB } from './components/RAGConnector';
-import { ContentCreator } from './components/ContentCreator';
-import { SmartHomeConnect } from './components/SmartHomeConnect';
-
-import { WhatsAppIntegration } from './components/WhatsAppIntegration';
-import { OSONEMap } from './components/OSONEMap';
-import { TeacherWhiteboard } from './components/TeacherWhiteboard';
+import { loadRagFilesFromDB, saveRagFileToDB } from './lib/ragDb';
 
 import { SkeletonBrainPopup } from './components/SkeletonBrainPopup';
 import { LocalAgentConfirmModal } from './components/LocalAgentConfirmModal';
 import { TuyaConfirmModal } from './components/TuyaConfirmModal';
-import { SensusEvolutionPanel } from './components/SensusEvolutionPanel';
 import { PERSONAS, Persona } from './components/PersonaSwitcher';
 import { NotificationToast, NotificationType } from './components/NotificationToast';
-import { MemoryBookPanel } from './components/MemoryBookPanel';
-import { VisionControlPanel } from './components/VisionControlPanel';
-import { CoworkSection } from './components/CoworkSection';
 import { MemoryBookEntry } from './types';
 import osoneOrbImage from './assets/images/osone_constellation_orb_1782154846239.jpg';
 import { SoundEffect, DrawingObject, User } from './types';
@@ -124,15 +105,75 @@ import { auth, googleProvider, signInWithPopup, signOut, onAuthStateChanged, db,
 import { TelaDeEntrada } from './components/TelaDeEntrada';
 import { LegalConsentGate } from './components/LegalConsentGate';
 
-import { WritingStudioSection } from './components/WritingStudioSection';
-import { CodeWorkspaceSection } from './components/CodeWorkspaceSection';
 import { HomeWorkspaceSection } from './components/HomeWorkspaceSection';
-import { OsoneHearPanel } from './components/OsoneHearPanel';
-import { PlansModal } from './components/PlansModal';
 import { useSubscription } from './hooks/useSubscription';
 import { minimumPlanForFeature, paidFeatureForWorkspace, PaidFeature } from './lib/planos';
 
 const OSONE_CODE_BEST_MODEL = "gemini-3.6-flash";
+
+const WritingStudioSection = React.lazy(() =>
+  import('./components/WritingStudioSection').then(module => ({ default: module.WritingStudioSection }))
+);
+const CodeWorkspace = React.lazy(() =>
+  import('./components/CodeWorkspace').then(module => ({ default: module.CodeWorkspace }))
+);
+const InteractiveCanvas = React.lazy(() =>
+  import('./components/InteractiveCanvas').then(module => ({ default: module.InteractiveCanvas }))
+);
+const WellnessCenter = React.lazy(() =>
+  import('./components/WellnessCenter').then(module => ({ default: module.WellnessCenter }))
+);
+const SoundLibrary = React.lazy(() =>
+  import('./components/SoundLibrary').then(module => ({ default: module.SoundLibrary }))
+);
+const WhatsAppIntegration = React.lazy(() =>
+  import('./components/WhatsAppIntegration').then(module => ({ default: module.WhatsAppIntegration }))
+);
+const OSONEMap = React.lazy(() =>
+  import('./components/OSONEMap').then(module => ({ default: module.OSONEMap }))
+);
+const RAGConnector = React.lazy(() =>
+  import('./components/RAGConnector').then(module => ({ default: module.RAGConnector }))
+);
+const ContentCreator = React.lazy(() =>
+  import('./components/ContentCreator').then(module => ({ default: module.ContentCreator }))
+);
+const TikTokLivePanel = React.lazy(() =>
+  import('./components/TikTokLivePanel').then(module => ({ default: module.TikTokLivePanel }))
+);
+const SensusEvolutionPanel = React.lazy(() =>
+  import('./components/SensusEvolutionPanel').then(module => ({ default: module.SensusEvolutionPanel }))
+);
+const SmartHomeConnect = React.lazy(() =>
+  import('./components/SmartHomeConnect').then(module => ({ default: module.SmartHomeConnect }))
+);
+const OsoneHearPanel = React.lazy(() =>
+  import('./components/OsoneHearPanel').then(module => ({ default: module.OsoneHearPanel }))
+);
+const MemoryBookPanel = React.lazy(() =>
+  import('./components/MemoryBookPanel').then(module => ({ default: module.MemoryBookPanel }))
+);
+const VisionControlPanel = React.lazy(() =>
+  import('./components/VisionControlPanel').then(module => ({ default: module.VisionControlPanel }))
+);
+const CoworkSection = React.lazy(() =>
+  import('./components/CoworkSection').then(module => ({ default: module.CoworkSection }))
+);
+const TeacherWhiteboard = React.lazy(() =>
+  import('./components/TeacherWhiteboard').then(module => ({ default: module.TeacherWhiteboard }))
+);
+const PlansModal = React.lazy(() =>
+  import('./components/PlansModal').then(module => ({ default: module.PlansModal }))
+);
+const SettingsModal = React.lazy(() =>
+  import('./components/SettingsModal').then(module => ({ default: module.SettingsModal }))
+);
+
+const LazyPanelFallback = () => (
+  <div className="w-full h-full flex items-center justify-center text-[10px] font-mono uppercase tracking-[0.28em] text-cyan-300/70">
+    Carregando modulo...
+  </div>
+);
 
 // Safe helper to dynamically load PDF.js from cdnjs for client-side PDF text extraction
 const loadPdfJs = async (): Promise<any> => {
@@ -551,6 +592,17 @@ const modeloElevenLabsParaStream = (modelo?: string): string => {
   return modelo;
 };
 
+const ELEVENLABS_API_KEY_ID_MESSAGE = "A chave da ElevenLabs salva parece ser o ID da chave, não a API Key secreta. Abra a ElevenLabs, gere ou rotacione a chave e cole a chave completa que começa com sk_.";
+
+const validarChaveElevenLabsParaUso = (apiKey?: string): { ok: boolean; key: string; message?: string } => {
+  const key = (apiKey || '').trim();
+  if (!key) return { ok: true, key: '' };
+  if (!key.startsWith('sk_')) return { ok: false, key, message: ELEVENLABS_API_KEY_ID_MESSAGE };
+  return { ok: true, key };
+};
+
+type LiveAudioOutputEngine = 'gemini' | 'elevenlabs';
+
 // Queue player for handling dynamic chunk-by-chunk playback of base64 audio chunks from ElevenLabs
 class ElevenLabsQueuePlayer {
   private audioCtx: AudioContext | null = null;
@@ -561,6 +613,7 @@ class ElevenLabsQueuePlayer {
   private activeSources: any[] = [];
   public onQueueDrained: (() => void) | null = null;
   public isStreamFinished: boolean = false;
+  private drainNotified: boolean = false;
 
   constructor(onStateChange: (speaking: boolean) => void) {
     this.onStateChange = onStateChange;
@@ -568,6 +621,7 @@ class ElevenLabsQueuePlayer {
 
   public resetStreamState() {
     this.isStreamFinished = false;
+    this.drainNotified = false;
   }
 
   public markStreamFinished() {
@@ -575,11 +629,17 @@ class ElevenLabsQueuePlayer {
     if (!this.isPlaying && this.activeSources.length === 0 && this.queue.length === 0) {
       setTimeout(() => {
         if (!this.isPlaying && this.activeSources.length === 0 && this.queue.length === 0) {
-          if (this.onQueueDrained) {
-            this.onQueueDrained();
-          }
+          this.notifyQueueDrained();
         }
       }, 350);
+    }
+  }
+
+  private notifyQueueDrained() {
+    if (this.drainNotified) return;
+    this.drainNotified = true;
+    if (this.onQueueDrained) {
+      this.onQueueDrained();
     }
   }
 
@@ -594,14 +654,14 @@ class ElevenLabsQueuePlayer {
     }
   }
 
-  public async addChunk(base64Data: string) {
+  public async addChunk(base64Data: string): Promise<boolean> {
     await this.initAudio();
-    if (!this.audioCtx) return;
+    if (!this.audioCtx) return false;
 
     try {
       const binaryString = window.atob(base64Data);
       const len = binaryString.length;
-      if (len === 0) return;
+      if (len === 0) return false;
 
       const bytes = new Uint8Array(len);
       for (let i = 0; i < len; i++) {
@@ -633,10 +693,12 @@ class ElevenLabsQueuePlayer {
       if (audioBuffer) {
         this.queue.push(audioBuffer);
         this.processQueue();
+        return true;
       }
     } catch (e) {
       console.warn("Soft warning: failed to decode an individual audio chunk:", e);
     }
+    return false;
   }
 
   private processQueue() {
@@ -669,7 +731,7 @@ class ElevenLabsQueuePlayer {
               this.isPlaying = false;
               this.onStateChange(false);
               if (this.isStreamFinished && this.onQueueDrained) {
-                this.onQueueDrained();
+                this.notifyQueueDrained();
               }
             }
           }, 350);
@@ -682,6 +744,7 @@ class ElevenLabsQueuePlayer {
     this.queue = [];
     this.isPlaying = false;
     this.isStreamFinished = false;
+    this.drainNotified = false;
     this.nextPlayTime = 0;
     
     this.activeSources.forEach(s => {
@@ -5222,6 +5285,7 @@ ${isBad
   const audioProcessorRef = useRef<AudioProcessor | null>(null);
   const audioPlayerRef = useRef<AudioPlayer | null>(null);
   const liveSessionRef = useRef<any>(null);
+  const liveAudioOutputEngineRef = useRef<LiveAudioOutputEngine>('gemini');
   const screenStreamRef = useRef<MediaStream | null>(null);
   const screenIntervalRef = useRef<any>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -5235,9 +5299,24 @@ ${isBad
   const elevenLabsLiveAudioRef = useRef<HTMLAudioElement | null>(null);
   const elevenLabsQueuePlayerRef = useRef<ElevenLabsQueuePlayer | null>(null);
   const elevenLabsWsRef = useRef<WebSocket | null>(null);
+  const elevenLabsWsReadyRef = useRef(false);
+  const elevenLabsWsReceivedAudioRef = useRef(false);
+  const elevenLabsWsFlushedRef = useRef(false);
+  const elevenLabsWsFlushSentRef = useRef(false);
+  const elevenLabsPendingTextChunksRef = useRef<string[]>([]);
+  const elevenLabsStreamedTextRef = useRef('');
   const elevenLabsSilenceTimeoutRef = useRef<any>(null);
+  const elevenLabsUtteranceTimeoutRef = useRef<any>(null);
+  const elevenLabsResumeWatchdogRef = useRef<any>(null);
   const accumulatedTranscriptRef = useRef<string>("");
   const lastProcessedResultIndexRef = useRef<number>(0);
+  // Quando uma fala do ElevenLabs é roteada pelo mesmo orquestrador do chat, o chat não
+  // deve disparar uma segunda leitura automática. A resposta volta para o player premium
+  // desta sessão depois que as ferramentas terminarem.
+  const suppressChatAutoSpeakRef = useRef(false);
+
+  const isElevenLabsLiveOutput = () =>
+    isElevenLabsLiveActiveRef.current && liveAudioOutputEngineRef.current === 'elevenlabs';
 
   useEffect(() => {
     elevenLabsQueuePlayerRef.current = new ElevenLabsQueuePlayer((speaking) => {
@@ -5247,6 +5326,10 @@ ${isBad
       elevenLabsQueuePlayerRef.current?.stop();
       if (elevenLabsWsRef.current) {
         try { elevenLabsWsRef.current.close(); } catch (_) {}
+      }
+      if (elevenLabsResumeWatchdogRef.current) {
+        clearTimeout(elevenLabsResumeWatchdogRef.current);
+        elevenLabsResumeWatchdogRef.current = null;
       }
     };
   }, []);
@@ -5554,15 +5637,38 @@ ${isBad
     };
   }, [isWaitingForWakeWord, isListening, isTranscribing, isElevenLabsLiveActive, liveState.status, chosenInitSoundUrl, voiceEngine]);
 
-  const stopElevenLabsLiveSession = (rearmHandsFree = true) => {
+  const stopElevenLabsLiveSession = (rearmHandsFree = true, closeLiveBridge = true) => {
     setIsElevenLabsLiveActive(false);
     isElevenLabsLiveActiveRef.current = false;
     elevenLabsStateRef.current = 'idle';
-    setLiveState({ status: 'idle' });
+    if (closeLiveBridge || liveAudioOutputEngineRef.current === 'elevenlabs') {
+      liveAudioOutputEngineRef.current = 'gemini';
+    }
+    if (closeLiveBridge) {
+      if (transcriptThrottleRef.current) {
+        clearTimeout(transcriptThrottleRef.current);
+        transcriptThrottleRef.current = null;
+      }
+      voiceTranscriptRef.current = '';
+      try { liveSessionRef.current?.close?.(); } catch (_) {}
+      liveSessionRef.current = null;
+      audioProcessorRef.current?.stopRecording?.();
+      audioPlayerRef.current?.stop?.();
+      stopScreenSharing();
+      setLiveState({ status: 'idle' });
+    }
     
     if (elevenLabsSilenceTimeoutRef.current) {
       clearTimeout(elevenLabsSilenceTimeoutRef.current);
       elevenLabsSilenceTimeoutRef.current = null;
+    }
+    if (elevenLabsUtteranceTimeoutRef.current) {
+      clearTimeout(elevenLabsUtteranceTimeoutRef.current);
+      elevenLabsUtteranceTimeoutRef.current = null;
+    }
+    if (elevenLabsResumeWatchdogRef.current) {
+      clearTimeout(elevenLabsResumeWatchdogRef.current);
+      elevenLabsResumeWatchdogRef.current = null;
     }
     accumulatedTranscriptRef.current = "";
     lastProcessedResultIndexRef.current = 0;
@@ -5593,33 +5699,86 @@ ${isBad
       try { elevenLabsWsRef.current.close(); } catch(_) {}
       elevenLabsWsRef.current = null;
     }
+    elevenLabsWsReadyRef.current = false;
+    elevenLabsWsReceivedAudioRef.current = false;
+    elevenLabsWsFlushedRef.current = false;
+    elevenLabsWsFlushSentRef.current = false;
+    elevenLabsPendingTextChunksRef.current = [];
+    elevenLabsStreamedTextRef.current = '';
     
     setIsListening(false);
     setIsSpeaking(false);
     setIsTranscribing(false);
     setIsGenerating(false);
+    setVoiceTranscript('');
     if (rearmHandsFree) scheduleHandsFreeRearm();
+  };
+
+  const limparWatchdogElevenLabs = () => {
+    if (elevenLabsResumeWatchdogRef.current) {
+      clearTimeout(elevenLabsResumeWatchdogRef.current);
+      elevenLabsResumeWatchdogRef.current = null;
+    }
+  };
+
+  const retomarEscutaElevenLabs = (motivo = 'fim do ciclo') => {
+    if (!isElevenLabsLiveActiveRef.current) return;
+    limparWatchdogElevenLabs();
+    if (elevenLabsSilenceTimeoutRef.current) {
+      clearTimeout(elevenLabsSilenceTimeoutRef.current);
+      elevenLabsSilenceTimeoutRef.current = null;
+    }
+    if (elevenLabsUtteranceTimeoutRef.current) {
+      clearTimeout(elevenLabsUtteranceTimeoutRef.current);
+      elevenLabsUtteranceTimeoutRef.current = null;
+    }
+    setIsGenerating(false);
+    setIsSpeaking(false);
+    setIsListening(false);
+    setIsTranscribing(false);
+    setVoiceTranscript('');
+    elevenLabsStateRef.current = 'listening';
+    window.setTimeout(() => {
+      if (isElevenLabsLiveActiveRef.current && elevenLabsStateRef.current === 'listening') {
+        console.log(`[ElevenLabs] Retomando escuta após ${motivo}.`);
+        if (isElevenLabsLiveOutput() && liveSessionRef.current) {
+          setIsListening(true);
+          return;
+        }
+        startListeningElevenLabs();
+      }
+    }, 220);
+  };
+
+  const armarWatchdogRetornoElevenLabs = (motivo: string, timeoutMs = 45000) => {
+    limparWatchdogElevenLabs();
+    elevenLabsResumeWatchdogRef.current = window.setTimeout(() => {
+      if (!isElevenLabsLiveActiveRef.current || elevenLabsStateRef.current === 'listening') return;
+      console.warn(`[ElevenLabs] Watchdog destravou o retorno para escuta: ${motivo}`);
+      try { elevenLabsQueuePlayerRef.current?.stop(); } catch (_) {}
+      if (elevenLabsWsRef.current) {
+        try { elevenLabsWsRef.current.close(); } catch (_) {}
+        elevenLabsWsRef.current = null;
+      }
+      retomarEscutaElevenLabs(`watchdog: ${motivo}`);
+    }, timeoutMs);
   };
 
   const startElevenLabsLiveSession = async () => {
     pauseHandsFreeDetection();
-    // Para APENAS o Gemini Live, não reseta liveState ainda
     if (liveSessionRef.current) {
       try { liveSessionRef.current?.close?.(); } catch(_) {}
       liveSessionRef.current = null;
     }
     audioProcessorRef.current?.stopRecording?.();
     audioPlayerRef.current?.stop?.();
-    
-    // Permitimos tentar iniciar usando as credenciais e chaves do ambiente do servidor
-    setLiveState({ status: 'connected' }); // ← seta DEPOIS de limpar
+
+    liveAudioOutputEngineRef.current = 'elevenlabs';
     setIsElevenLabsLiveActive(true);
     isElevenLabsLiveActiveRef.current = true;
-    
-    addNotification("Sessão Voz Premium ElevenLabs Iniciada!", "success");
-    
-    elevenLabsStateRef.current = 'listening';
-    startListeningElevenLabs();
+
+    addNotification("Voz ElevenLabs conectando no modo Live do OSONE.", "success");
+    await startLiveSession(isCameraActive, 'elevenlabs');
   };
 
   /**
@@ -5630,19 +5789,23 @@ ${isBad
    * cai no proxy do backend usando a chave global do servidor (só funciona em hospedagem com
    * servidor persistente, ex: local/Electron/self-host).
    */
-  const openElevenLabsRealtimeSocket = (onReady: () => void): WebSocket => {
-    const voiceId = getActiveElevenLabsVoiceId();
-    const modelId = modeloElevenLabsParaStream(apiKeys.elevenLabsModel);
+	  const openElevenLabsRealtimeSocket = (onReady: () => void): WebSocket => {
+	    const voiceId = getActiveElevenLabsVoiceId();
+	    const modelId = modeloElevenLabsParaStream(apiKeys.elevenLabsModel);
     const stability = apiKeys.elevenLabsStability ?? 0.5;
     const similarityBoost = apiKeys.elevenLabsSimilarityBoost ?? 0.75;
     const clientKey = (apiKeys.elevenLabsApiKey || '').trim();
 
     if (clientKey) {
+      const validacaoChave = validarChaveElevenLabsParaUso(clientKey);
+      if (!validacaoChave.ok) {
+        throw new Error(validacaoChave.message);
+      }
       const ws = new WebSocket(`wss://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream-input?model_id=${encodeURIComponent(modelId)}&output_format=pcm_24000`);
       ws.addEventListener('open', () => {
         ws.send(JSON.stringify({
           text: " ",
-          xi_api_key: clientKey,
+          xi_api_key: validacaoChave.key,
           voice_settings: { stability, similarity_boost: similarityBoost },
           generation_config: { chunk_length_schedule: [120, 160, 250, 290] }
         }));
@@ -5653,15 +5816,210 @@ ${isBad
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(`${protocol}//${window.location.host}/api/elevenlabs-ws?voiceId=${encodeURIComponent(voiceId)}&modelId=${encodeURIComponent(modelId)}&stability=${encodeURIComponent(String(stability))}&similarityBoost=${encodeURIComponent(String(similarityBoost))}`);
-    ws.addEventListener('open', () => onReady(), { once: true });
-    return ws;
+	    ws.addEventListener('open', () => onReady(), { once: true });
+	    return ws;
+	  };
+
+  const limparEstadoSocketElevenLabs = (fecharSocket = true) => {
+    if (fecharSocket && elevenLabsWsRef.current) {
+      try { elevenLabsWsRef.current.close(); } catch (_) {}
+    }
+    elevenLabsWsRef.current = null;
+    elevenLabsWsReadyRef.current = false;
+    elevenLabsWsReceivedAudioRef.current = false;
+    elevenLabsWsFlushedRef.current = false;
+    elevenLabsWsFlushSentRef.current = false;
+    elevenLabsPendingTextChunksRef.current = [];
+    elevenLabsStreamedTextRef.current = '';
+  };
+
+  const interromperSaidaElevenLabs = (motivo: string, rearmarEscuta = false) => {
+    limparWatchdogElevenLabs();
+    try { elevenLabsQueuePlayerRef.current?.stop(); } catch (_) {}
+    limparEstadoSocketElevenLabs(true);
+    if (elevenLabsLiveAudioRef.current) {
+      try {
+        elevenLabsLiveAudioRef.current.onended = null;
+        elevenLabsLiveAudioRef.current.onerror = null;
+        elevenLabsLiveAudioRef.current.pause();
+      } catch (_) {}
+      elevenLabsLiveAudioRef.current = null;
+    }
+    setIsSpeaking(false);
+    setIsTranscribing(false);
+    if (rearmarEscuta) {
+      retomarEscutaElevenLabs(motivo);
+    }
+  };
+
+  const textoParaStreamElevenLabs = (texto: string) => {
+    const limpo = texto.replace(/\s+/g, ' ');
+    if (!limpo.trim()) return '';
+    return /\s$/.test(limpo) ? limpo : `${limpo} `;
+  };
+
+  const enviarPendenciasElevenLabs = () => {
+    const ws = elevenLabsWsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN || !elevenLabsWsReadyRef.current) return;
+
+    while (elevenLabsPendingTextChunksRef.current.length > 0) {
+      const chunk = elevenLabsPendingTextChunksRef.current.shift() || '';
+      const texto = textoParaStreamElevenLabs(chunk);
+      if (texto) {
+        ws.send(JSON.stringify({ text: texto }));
+      }
+    }
+
+    if (elevenLabsWsFlushedRef.current && !elevenLabsWsFlushSentRef.current) {
+      elevenLabsWsFlushSentRef.current = true;
+      ws.send(JSON.stringify({ text: "", flush: true }));
+    }
+  };
+
+  const iniciarStreamElevenLabsSePreciso = () => {
+    if (elevenLabsWsRef.current) return;
+
+    setIsListening(true);
+    setIsTranscribing(false);
+    armarWatchdogRetornoElevenLabs('stream incremental ElevenLabs', 90000);
+
+    if (elevenLabsQueuePlayerRef.current) {
+      elevenLabsQueuePlayerRef.current.stop();
+      elevenLabsQueuePlayerRef.current.resetStreamState();
+      elevenLabsQueuePlayerRef.current.onQueueDrained = () => {
+        limparEstadoSocketElevenLabs(true);
+        retomarEscutaElevenLabs('fila de áudio drenada');
+      };
+    }
+
+    elevenLabsStateRef.current = 'speaking';
+    setIsSpeaking(true);
+
+    try {
+      const ws = openElevenLabsRealtimeSocket(() => {
+        elevenLabsWsReadyRef.current = true;
+        enviarPendenciasElevenLabs();
+      });
+      elevenLabsWsRef.current = ws;
+
+      ws.onmessage = async (event) => {
+        try {
+          const parsed = JSON.parse(event.data);
+          const errMsg = parsed.error || parsed.message || (typeof parsed.detail === 'string' ? parsed.detail : undefined);
+          if (errMsg) {
+            console.warn("ElevenLabs WS stream warning:", errMsg);
+            if (elevenLabsWsReceivedAudioRef.current) {
+              elevenLabsQueuePlayerRef.current?.markStreamFinished();
+              limparEstadoSocketElevenLabs(true);
+              return;
+            }
+            const textoReserva = elevenLabsStreamedTextRef.current.trim();
+            limparEstadoSocketElevenLabs(true);
+            if (textoReserva) {
+              await playElevenLabsRestFallback(textoReserva);
+            } else {
+              retomarEscutaElevenLabs('stream ElevenLabs sem áudio');
+            }
+            return;
+          }
+
+          if (parsed.audio) {
+            const audioOk = await elevenLabsQueuePlayerRef.current?.addChunk(parsed.audio);
+            elevenLabsWsReceivedAudioRef.current = elevenLabsWsReceivedAudioRef.current || audioOk === true;
+          }
+          if (parsed.isFinal || parsed.is_final) {
+            elevenLabsQueuePlayerRef.current?.markStreamFinished();
+            limparEstadoSocketElevenLabs(true);
+          }
+        } catch (e) {
+          console.error("Error processing ElevenLabs stream message:", e);
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error("ElevenLabs WS stream error:", err);
+        if (elevenLabsWsReceivedAudioRef.current) {
+          elevenLabsQueuePlayerRef.current?.markStreamFinished();
+          limparEstadoSocketElevenLabs(true);
+          return;
+        }
+        const textoReserva = elevenLabsStreamedTextRef.current.trim();
+        limparEstadoSocketElevenLabs(true);
+        if (textoReserva) {
+          playElevenLabsRestFallback(textoReserva);
+        } else {
+          retomarEscutaElevenLabs('erro de stream sem texto');
+        }
+      };
+
+      ws.onclose = () => {
+        if (elevenLabsWsRef.current === ws) {
+          const recebeuAudio = elevenLabsWsReceivedAudioRef.current;
+          limparEstadoSocketElevenLabs(false);
+          if (recebeuAudio) {
+            elevenLabsQueuePlayerRef.current?.markStreamFinished();
+          }
+        }
+      };
+    } catch (e) {
+      console.error("Falha ao abrir stream incremental ElevenLabs:", e);
+      const textoReserva = elevenLabsStreamedTextRef.current.trim();
+      limparEstadoSocketElevenLabs(true);
+      if (textoReserva) {
+        playElevenLabsRestFallback(textoReserva);
+      } else {
+        addNotification(e instanceof Error ? e.message : "ElevenLabs não conseguiu iniciar o stream.", "error");
+        retomarEscutaElevenLabs('falha ao abrir stream');
+      }
+    }
+  };
+
+  const enviarTextoLiveParaElevenLabs = (texto: string) => {
+    if (!isElevenLabsLiveOutput() || isVoiceOutputPausedRef.current) return;
+    const limpo = texto.replace(/\s+/g, ' ');
+    if (!limpo.trim()) return;
+    elevenLabsStreamedTextRef.current += limpo;
+    elevenLabsPendingTextChunksRef.current.push(limpo);
+    iniciarStreamElevenLabsSePreciso();
+    enviarPendenciasElevenLabs();
+  };
+
+  const finalizarStreamLiveElevenLabs = (textoFinal: string) => {
+    if (!isElevenLabsLiveOutput()) return false;
+    if (!elevenLabsWsRef.current && !elevenLabsStreamedTextRef.current.trim()) return false;
+    if (!elevenLabsWsRef.current && textoFinal.trim()) {
+      enviarTextoLiveParaElevenLabs(textoFinal);
+    }
+    elevenLabsWsFlushedRef.current = true;
+    enviarPendenciasElevenLabs();
+    return true;
+  };
+
+	  const tocarBlobElevenLabsLive = async (blob: Blob, motivo: string) => {
+    if (!isElevenLabsLiveActiveRef.current) return;
+    const audioUrl = URL.createObjectURL(blob);
+    const audio = new Audio(audioUrl);
+    elevenLabsLiveAudioRef.current = audio;
+    armarWatchdogRetornoElevenLabs(`${motivo} sem evento ended`, 60000);
+    const finalizar = () => {
+      if (elevenLabsLiveAudioRef.current === audio) {
+        elevenLabsLiveAudioRef.current = null;
+      }
+      URL.revokeObjectURL(audioUrl);
+      retomarEscutaElevenLabs(motivo);
+    };
+    audio.onended = finalizar;
+    audio.onerror = () => {
+      addNotification(`Erro ao reproduzir o áudio (${motivo}).`, "error");
+      finalizar();
+    };
+    await audio.play();
   };
 
   /**
-   * Fallback de verdade quando o streaming via WebSocket da ElevenLabs não produz áudio: uma
-   * chamada REST comum (POST /api/tts, não-streaming) para o mesmo texto. Diferente de tentar
-   * abrir outro WebSocket (que repetiria exatamente a mesma falha, já que usa a mesma
-   * voz/conta), esta é uma rota de código genuinamente diferente no servidor.
+   * Fallback de verdade quando o streaming via WebSocket da ElevenLabs não produz áudio: tenta
+   * REST da ElevenLabs e, se a conta/chave/rede falhar, cai para Piper local. O ciclo sempre
+   * termina no mesmo rearme de escuta para não deixar o Live preso em speaking/thinking.
    */
   const playElevenLabsRestFallback = async (text: string) => {
     if (!isElevenLabsLiveActiveRef.current) return;
@@ -5669,19 +6027,40 @@ ${isBad
     elevenLabsStateRef.current = 'speaking';
     setIsSpeaking(true);
     setIsListening(false);
-    setIsTranscribing(true);
+    setIsTranscribing(false);
     setVoiceTranscript(text);
+    armarWatchdogRetornoElevenLabs('fallback REST/Piper', 60000);
 
-    const finishAndResumeListening = () => {
-      setIsSpeaking(false);
-      setVoiceTranscript('');
-      if (isElevenLabsLiveActiveRef.current) {
-        elevenLabsStateRef.current = 'listening';
-        startListeningElevenLabs();
+    const tentarPiperLocal = async (motivo: string) => {
+      try {
+        const localResponse = await fetch("/api/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, engine: 'local' })
+        });
+        if (!localResponse.ok) {
+          const erroLocal = await localResponse.json().catch(() => ({}));
+          addNotification(`ElevenLabs falhou e Piper também não respondeu: ${erroLocal.error || motivo}.`, "error");
+          retomarEscutaElevenLabs('fallback sem áudio');
+          return;
+        }
+        const localBlob = await localResponse.blob();
+        await tocarBlobElevenLabsLive(localBlob, 'Piper local após falha ElevenLabs');
+      } catch (erroLocal: any) {
+        console.error("Erro no fallback Piper do Live ElevenLabs:", erroLocal);
+        addNotification(`ElevenLabs falhou e Piper local também não respondeu: ${erroLocal?.message || motivo}.`, "error");
+        retomarEscutaElevenLabs('fallback Piper falhou');
       }
     };
 
     try {
+      const validacaoChave = validarChaveElevenLabsParaUso(apiKeys.elevenLabsApiKey);
+      if (!validacaoChave.ok) {
+        addNotification(validacaoChave.message, "error");
+        await tentarPiperLocal('chave ElevenLabs inválida');
+        return;
+      }
+
       const response = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -5700,24 +6079,18 @@ ${isBad
 
       if (!response.ok) {
         const errJson = await response.json().catch(() => ({}));
-        addNotification(`Erro ElevenLabs (REST): ${errJson.error || `HTTP ${response.status}`}`, "error");
-        finishAndResumeListening();
+        const motivo = errJson.error || `HTTP ${response.status}`;
+        addNotification(`Erro ElevenLabs (REST): ${motivo}. Vou tentar Piper local.`, "error");
+        await tentarPiperLocal(motivo);
         return;
       }
 
       const blob = await response.blob();
-      const audioUrl = URL.createObjectURL(blob);
-      const audio = new Audio(audioUrl);
-      audio.onended = finishAndResumeListening;
-      audio.onerror = () => {
-        addNotification("Erro ao reproduzir o áudio de fallback da ElevenLabs.", "error");
-        finishAndResumeListening();
-      };
-      await audio.play();
+      await tocarBlobElevenLabsLive(blob, 'fallback REST ElevenLabs');
     } catch (err: any) {
       console.error("Erro no fallback REST da ElevenLabs:", err);
-      addNotification(`Erro ElevenLabs (REST): ${err?.message || "Falha de conexão"}`, "error");
-      finishAndResumeListening();
+      addNotification(`Erro ElevenLabs (REST): ${err?.message || "Falha de conexão"}. Vou tentar Piper local.`, "error");
+      await tentarPiperLocal(err?.message || "Falha de conexão");
     }
   };
 
@@ -5727,8 +6100,9 @@ ${isBad
     elevenLabsStateRef.current = 'speaking';
     setIsSpeaking(true);
     setIsListening(false);
-    setIsTranscribing(true);
+    setIsTranscribing(false);
     setVoiceTranscript(text);
+    armarWatchdogRetornoElevenLabs('fala direta ElevenLabs', 60000);
 
     // Stop previous audio playback
     if (elevenLabsQueuePlayerRef.current) {
@@ -5738,6 +6112,12 @@ ${isBad
       try { elevenLabsWsRef.current.close(); } catch (_) {}
       elevenLabsWsRef.current = null;
     }
+    elevenLabsWsReadyRef.current = false;
+    elevenLabsWsReceivedAudioRef.current = false;
+    elevenLabsWsFlushedRef.current = false;
+    elevenLabsWsFlushSentRef.current = false;
+    elevenLabsPendingTextChunksRef.current = [];
+    elevenLabsStreamedTextRef.current = '';
 
     try {
       let recebeuAudio = false;
@@ -5772,9 +6152,8 @@ ${isBad
           }
 
           if (parsed.audio) {
-            recebeuAudio = true;
-            // Add chunk to player queue
-            elevenLabsQueuePlayerRef.current?.addChunk(parsed.audio);
+            const audioOk = await elevenLabsQueuePlayerRef.current?.addChunk(parsed.audio);
+            recebeuAudio = recebeuAudio || audioOk === true;
           }
           if (parsed.isFinal || parsed.is_final) {
             elevenLabsQueuePlayerRef.current?.markStreamFinished();
@@ -5801,12 +6180,7 @@ ${isBad
       // Set up the drainage handler to transition state back when speaking finishes
       if (elevenLabsQueuePlayerRef.current) {
         elevenLabsQueuePlayerRef.current.onQueueDrained = () => {
-          setIsSpeaking(false);
-          setVoiceTranscript('');
-          if (isElevenLabsLiveActiveRef.current) {
-            elevenLabsStateRef.current = 'listening';
-            startListeningElevenLabs();
-          }
+          retomarEscutaElevenLabs('fila de áudio drenada');
           if (elevenLabsWsRef.current) {
             try { elevenLabsWsRef.current.close(); } catch (_) {}
             elevenLabsWsRef.current = null;
@@ -5815,29 +6189,9 @@ ${isBad
       }
 
     } catch (e) {
-      console.error("WS ElevenLabs speech failed, falling back to Web Speech Synthesis", e);
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'pt-BR';
-      utterance.onstart = () => {
-        setVoiceTranscript(text);
-      };
-      utterance.onend = () => {
-        setIsSpeaking(false);
-        setVoiceTranscript('');
-        if (isElevenLabsLiveActiveRef.current) {
-          elevenLabsStateRef.current = 'listening';
-          startListeningElevenLabs();
-        }
-      };
-      utterance.onerror = () => {
-        setIsSpeaking(false);
-        setVoiceTranscript('');
-        if (isElevenLabsLiveActiveRef.current) {
-          elevenLabsStateRef.current = 'listening';
-          startListeningElevenLabs();
-        }
-      };
-      window.speechSynthesis.speak(utterance);
+      console.error("WS ElevenLabs speech failed without Google voice fallback:", e);
+      addNotification(e instanceof Error ? e.message : "ElevenLabs não conseguiu gerar áudio agora.", "error");
+      await playElevenLabsRestFallback(text);
     }
   };
 
@@ -5865,6 +6219,10 @@ ${isBad
       clearTimeout(elevenLabsSilenceTimeoutRef.current);
       elevenLabsSilenceTimeoutRef.current = null;
     }
+    if (elevenLabsUtteranceTimeoutRef.current) {
+      clearTimeout(elevenLabsUtteranceTimeoutRef.current);
+      elevenLabsUtteranceTimeoutRef.current = null;
+    }
     
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -5874,7 +6232,11 @@ ${isBad
     
     const rec = new SpeechRecognition();
     rec.lang = 'pt-BR';
-    rec.continuous = true;
+    // Cada instância representa UMA fala. O Chrome mantém `continuous=true` emitindo hipóteses
+    // intermediárias indefinidamente em ambientes com ruído; o temporizador nunca fechava e a
+    // tela ficava apenas girando. Ao terminar a fala, a resposta é processada e uma instância
+    // nova é criada para o próximo turno.
+    rec.continuous = false;
     rec.interimResults = true;
     
     rec.onstart = () => {
@@ -5889,12 +6251,16 @@ ${isBad
         return;
       }
       
-      let fullTranscript = "";
+      const finais: string[] = [];
+      const provisoria: string[] = [];
       for (let i = 0; i < event.results.length; ++i) {
-        fullTranscript += event.results[i][0].transcript;
+        const trecho = String(event.results[i][0]?.transcript || '').trim();
+        if (!trecho) continue;
+        if (event.results[i].isFinal) finais.push(trecho);
+        else provisoria.push(trecho);
       }
       
-      const currentText = fullTranscript.trim();
+      const currentText = [...finais, ...provisoria].join(' ').replace(/\s+/g, ' ').trim();
       if (currentText) {
         accumulatedTranscriptRef.current = currentText;
         setVoiceTranscript(currentText);
@@ -5904,39 +6270,70 @@ ${isBad
           clearTimeout(elevenLabsSilenceTimeoutRef.current);
         }
         
+        // Resultado final fecha mais rápido; hipótese intermediária ganha um pequeno intervalo
+        // para não cortar a última palavra.
         elevenLabsSilenceTimeoutRef.current = setTimeout(() => {
           triggerElevenLabsTurn();
-        }, 1000);
+        }, finais.length > 0 ? 280 : 750);
+
+        // Rede de segurança absoluta: ruído ambiente não pode manter a mesma fala aberta para
+        // sempre. Cinco segundos depois da primeira palavra, o melhor texto disponível segue.
+        if (!elevenLabsUtteranceTimeoutRef.current) {
+          elevenLabsUtteranceTimeoutRef.current = setTimeout(() => {
+            triggerElevenLabsTurn();
+          }, 5000);
+        }
       }
     };
     
     rec.onerror = (event: any) => {
-      if (event.error !== 'aborted') {
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        addNotification('Permissão do microfone negada para a conversa ElevenLabs.', 'error');
+        disableHandsFreeForMicrophonePermission();
+        stopElevenLabsLiveSession(false);
+        return;
+      }
+      if (event.error !== 'aborted' && event.error !== 'no-speech') {
         console.warn("ElevenLabs Web Speech API Error:", event.error);
       }
     };
     
     rec.onend = () => {
       setIsListening(false);
+      if (elevenLabsRecognitionRef.current === rec) {
+        elevenLabsRecognitionRef.current = null;
+      }
       setTimeout(() => {
-        // Se a sessão de voz continuar ativa e o estado for listening, mas o navegador derrubou por silêncio prolongado, reiniciamos
-        if (isElevenLabsLiveActiveRef.current && elevenLabsStateRef.current === 'listening') {
-          elevenLabsRecognitionRef.current = null;
-          startListeningElevenLabs();
-        }
-      }, 300);
+        if (!isElevenLabsLiveActiveRef.current || elevenLabsStateRef.current !== 'listening') return;
+        // O próprio fim do reconhecimento é um sinal de fim de fala. Se já existe texto, envia
+        // agora; se não existe, rearma silenciosamente para continuar aguardando o usuário.
+        if (accumulatedTranscriptRef.current.trim()) triggerElevenLabsTurn();
+        else startListeningElevenLabs();
+      }, accumulatedTranscriptRef.current.trim() ? 80 : 280);
     };
     
     elevenLabsRecognitionRef.current = rec;
     try {
       rec.start();
-    } catch(_) {}
+    } catch (erro) {
+      console.warn('[ElevenLabs] Não foi possível iniciar o reconhecimento:', erro);
+      elevenLabsRecognitionRef.current = null;
+      window.setTimeout(() => {
+        if (isElevenLabsLiveActiveRef.current && elevenLabsStateRef.current === 'listening') {
+          startListeningElevenLabs();
+        }
+      }, 500);
+    }
   };
  
   const triggerElevenLabsTurn = async () => {
     if (elevenLabsSilenceTimeoutRef.current) {
       clearTimeout(elevenLabsSilenceTimeoutRef.current);
       elevenLabsSilenceTimeoutRef.current = null;
+    }
+    if (elevenLabsUtteranceTimeoutRef.current) {
+      clearTimeout(elevenLabsUtteranceTimeoutRef.current);
+      elevenLabsUtteranceTimeoutRef.current = null;
     }
 
     if (elevenLabsStateRef.current !== 'listening') {
@@ -5968,272 +6365,69 @@ ${isBad
     await handleElevenLabsUserTurn(finalText);
   };
 
+  const esperarRespostaDoChatParaElevenLabs = async (idsAntes: Set<string>, timeoutMs = 90000): Promise<string> => {
+    const limite = Date.now() + timeoutMs;
+    while (Date.now() < limite && isElevenLabsLiveActiveRef.current) {
+      const novasRespostas = chatHistoryRef.current.filter((msg) =>
+        msg.role === 'assistant' && msg.content.trim() && !idsAntes.has(msg.id)
+      );
+      if (novasRespostas.length > 0) {
+        return novasRespostas[novasRespostas.length - 1].content.trim();
+      }
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
+    }
+    return '';
+  };
+
   const handleElevenLabsUserTurn = async (userText: string) => {
+    if (!isElevenLabsLiveActiveRef.current || !userText.trim()) return;
+
     elevenLabsStateRef.current = 'thinking';
     setIsGenerating(true);
+    setIsListening(false);
+    setIsTranscribing(true);
+    setVoiceTranscript(userText);
 
-    // Evolução Emocional Sensus (Filme Her)
-    triggerSensusEvolution(userText);
-    
-    // Captura histórico ANTES de adicionar nova mensagem (evita duplicação)
-    const historyContents = chatHistoryRef.current.slice(-100).map(msg => ({
-      role: msg.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: msg.content }]
-    }));
-    historyContents.push({
-      role: 'user',
-      parts: [{ text: userText }]
-    });
-
-    addMessage({ role: 'user', content: userText }); // Só agora adiciona ao chat
-    
-    // Stop any previous audio playback
-    if (elevenLabsQueuePlayerRef.current) {
-      elevenLabsQueuePlayerRef.current.stop();
-    }
-    if (elevenLabsWsRef.current) {
-      try { elevenLabsWsRef.current.close(); } catch (_) {}
-      elevenLabsWsRef.current = null;
-    }
-
-    let heartbeat: any = null;
-    let elWs: WebSocket | null = null;
-    let assistantMsgId = "";
+    // O mesmo pipeline do chat é o que conhece todas as ferramentas do OSONE: Agente Local,
+    // COWORK, abas, WhatsApp, casa, memórias, pesquisa e arquivos. Antes o ElevenLabs usava
+    // apenas /api/chat-intel-stream, uma rota de texto sem function declarations, por isso
+    // respondia mas não executava comandos.
+    const idsAntes = new Set(chatHistoryRef.current.map((msg) => msg.id));
+    suppressChatAutoSpeakRef.current = true;
 
     try {
-      const adaptive = getAdaptivePersonalityMetadata(chatHistoryRef.current);
-      let systemInstruction = `${profileInstruction}
-      PERSONALIDADE ATUAL: ${selectedPersona.instructions}`;
-
-      if (selectedPersona.id === 'osone') {
-        systemInstruction += `\n\n[SISTEMA DE EVOLUÇÃO NEURO-ADAPTATIVA DO OSONE ATIVO]:
-Seu alinhamento comportamental atual está na seguinte escala de afinidade evolutiva com o usuário:
-- Estágio de Afinidade: ${adaptive.description}
-- Foco de Interesse Mapeado: ${adaptive.focusProfile} (tom a adequar: ${adaptive.vibeAdjustment})
-- Total de Interações: ${adaptive.totalMsgs} mensagens
-
-Diretriz adaptativa atual do OSONE para o diálogo:
-${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory) + getCounterfactualReasoningDirective(sensusMood, sensusAllostaticLoad) + getSalienceEmpathyDirective() + getPersonaRevisionDirective();
+      await handleHomeChat(userText);
+      const resposta = await esperarRespostaDoChatParaElevenLabs(idsAntes);
+      if (!resposta) {
+        throw new Error('O orquestrador terminou sem uma resposta textual para narrar.');
       }
-
-      systemInstruction += `\n\nDIRETRIZ DE DIÁLOGO POR VOZ NATURAL E DINÂMICO (WhatsApp / Conversa Humana):
-      - Responda com um parágrafo completo, fluido e rico (elaborando a resposta de forma contínua com pelo menos 3 a 5 frases completas e calorosas).
-      - Evite respostas curtas de uma única frase ou termos secos de poucas palavras. Seja acolhedor, desenvolva o raciocínio e elabore um parágrafo rico de fácil conversação.
-      - Nunca faça listas, tópicos estruturados, tópicos com hífens ou qualquer numeração por voz.
-      - Conduza a conversa de forma estimulante, mantendo o diálogo profundo, natural e contínuo.`;
-
-      // 1. Establish the ElevenLabs realtime socket (direto se houver chave própria nas
-      // Configurações, senão via proxy do backend usando a chave global do servidor)
-      let hasReceivedAudio = false;
-      let elevenWsErroNotificado = false;
-      let elevenWsFechouSemAudio = false;
-      const wsSendQueue: string[] = [];
-
-      const safeSendToWs = (payload: object) => {
-        const str = JSON.stringify(payload);
-        if (elWs && elWs.readyState === WebSocket.OPEN) {
-          elWs.send(str);
-        } else if (elWs && (elWs.readyState === WebSocket.CONNECTING || !elWs.readyState)) {
-          wsSendQueue.push(str);
-        }
-      };
-
-      elWs = openElevenLabsRealtimeSocket(() => {
-        console.log("ElevenLabs WS connected. Flushing queued chunks:", wsSendQueue.length);
-        while (wsSendQueue.length > 0) {
-          const item = wsSendQueue.shift();
-          if (item && elWs && elWs.readyState === WebSocket.OPEN) {
-            elWs.send(item);
-          }
-        }
-      });
-      elevenLabsWsRef.current = elWs;
-
-      // Set up the queue player
-      if (!elevenLabsQueuePlayerRef.current) {
-        elevenLabsQueuePlayerRef.current = new ElevenLabsQueuePlayer((speaking) => {
-          setIsSpeaking(speaking);
-        });
-      }
-      elevenLabsQueuePlayerRef.current.resetStreamState();
-
-      elevenLabsQueuePlayerRef.current.onQueueDrained = () => {
-        setIsSpeaking(false);
-        setVoiceTranscript('');
-        if (isElevenLabsLiveActiveRef.current) {
-          elevenLabsStateRef.current = 'listening';
-          startListeningElevenLabs();
-        }
-        if (elevenLabsWsRef.current) {
-          try { elevenLabsWsRef.current.close(); } catch (_) {}
-          elevenLabsWsRef.current = null;
-        }
-      };
-
-      elWs.onmessage = (event) => {
-        try {
-          const parsed = JSON.parse(event.data);
-          const errMsg = parsed.error || parsed.message || (typeof parsed.detail === 'string' ? parsed.detail : undefined);
-          if (errMsg) {
-            console.error("ElevenLabs WS response error:", errMsg);
-            if (!elevenWsErroNotificado) {
-              elevenWsErroNotificado = true;
-              addNotification(`Erro ElevenLabs: ${errMsg}. Vou tentar a rota REST.`, "error");
-            }
-            elevenWsFechouSemAudio = !hasReceivedAudio;
-            try { elWs?.close(); } catch (_) {}
-            return;
-          }
-          if (parsed.audio) {
-            hasReceivedAudio = true;
-            elevenLabsQueuePlayerRef.current?.addChunk(parsed.audio);
-          }
-          if (parsed.isFinal || parsed.is_final) {
-            elevenLabsQueuePlayerRef.current?.markStreamFinished();
-          }
-        } catch (e) {
-          console.error("Error reading streaming audio chunk:", e);
-        }
-      };
-
-      elWs.onerror = (err) => {
-        console.error("ElevenLabs WS client error:", err);
-        elevenWsFechouSemAudio = !hasReceivedAudio;
-      };
-
-      elWs.onclose = () => {
-        console.log("ElevenLabs WS client closed.");
-        if (hasReceivedAudio) {
-          elevenLabsQueuePlayerRef.current?.markStreamFinished();
-        } else {
-          elevenWsFechouSemAudio = true;
-        }
-      };
-
-      // Start the heartbeat/keep-alive to send " " every 10 seconds
-      heartbeat = setInterval(() => {
-        safeSendToWs({ text: " " });
-      }, 10000);
-
-      // Create empty assistant message container
-      assistantMsgId = addMessage({ role: 'assistant', content: '' });
-
-      // 2. Fetch the streaming Gemini response
-      const response = await fetch("/api/chat-intel-stream", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          historyContents,
-          systemInstruction,
-          clientApiKey: apiKeys.gemini || ''
-        })
-      });
-
-      if (!response.ok || !response.body) {
-        throw new Error("Erro de resposta do servidor de inteligência stream");
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder("utf-8");
-      let finished = false;
-      let buffer = "";
-      let accumulatedReply = "";
-
-      // Change states to speaking/transcribing
-      elevenLabsStateRef.current = 'speaking';
-      setIsGenerating(false);
-      setIsTranscribing(false);
-
-      while (!finished) {
-        const { value, done } = await reader.read();
-        finished = done;
-        if (value) {
-          buffer += decoder.decode(value, { stream: !finished });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-
-          for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              const dataStr = line.slice(6).trim();
-              if (dataStr === "[DONE]") {
-                finished = true;
-                break;
-              }
-              try {
-                const parsed = JSON.parse(dataStr);
-                if (parsed.error) {
-                  throw new Error(parsed.error);
-                }
-                if (parsed.text) {
-                  const chunkText = parsed.text;
-                  accumulatedReply += chunkText;
-
-                  // Update UI message content in real-time!
-                  setChatHistory(prev => prev.map(m => m.id === assistantMsgId ? { ...m, content: accumulatedReply } : m));
-
-                  // Update subtitle/voice transcript
-                  setVoiceTranscript(accumulatedReply);
-
-                  // Stream text chunk into ElevenLabs WebSocket proxy safely!
-                  safeSendToWs({ text: chunkText });
-                }
-              } catch (e) {
-                console.error("Error parsing SSE line:", e);
-              }
-            }
-          }
-        }
-      }
-
-      // Cleanup heartbeat
-      if (heartbeat) {
-        clearInterval(heartbeat);
-      }
-
-      // 3. Send final flush chunk to ElevenLabs to complete audio synthesis
-      safeSendToWs({ text: "", flush: true });
-
-      // Fallback check: Se o WebSocket da ElevenLabs não enviou nenhum áudio e a resposta já terminou, toca via REST TTS.
-      // Importante: isto tem que ser uma chamada REST de verdade (endpoint /api/tts, não-streaming),
-      // não outra tentativa via WebSocket — chamar playElevenLabsSpeech aqui apenas repetiria o
-      // mesmo caminho que acabou de falhar (mesma voz/conta), duplicando o erro sem nenhum ganho real.
-      setTimeout(() => {
-        if ((!hasReceivedAudio || elevenWsFechouSemAudio) && accumulatedReply && isElevenLabsLiveActiveRef.current) {
-          console.warn("ElevenLabs WS não gerou chunks de áudio. Executando fallback via REST TTS...");
-          playElevenLabsRestFallback(accumulatedReply);
-        }
-      }, 1200);
-
-    } catch (err) {
-      console.error("Erro no processamento Gemini ElevenLabs Live Stream:", err);
-      if (heartbeat) {
-        clearInterval(heartbeat);
-      }
-      setIsGenerating(false);
-      setIsTranscribing(false);
-
-      // Fallback message
-      const errorText = "Desculpe, tive um atraso na conexão cerebral agora.";
-      if (assistantMsgId) {
-        setChatHistory(prev => prev.map(m => m.id === assistantMsgId ? { ...m, content: errorText } : m));
-      } else {
-        addMessage({ role: 'assistant', content: errorText });
-      }
-
       if (isElevenLabsLiveActiveRef.current) {
-        await playElevenLabsSpeech(errorText);
+        await playElevenLabsSpeech(resposta);
       }
+    } catch (err: any) {
+      console.error('[ElevenLabs] Falha no turno com ferramentas:', err);
+      const mensagem = err?.message || 'Não consegui concluir este comando agora.';
+      addNotification(`ElevenLabs: ${mensagem}`, 'error');
+      if (isElevenLabsLiveActiveRef.current) {
+        await playElevenLabsSpeech('Tive um problema ao concluir esse comando, mas a escuta continua ativa. Pode tentar novamente.');
+      }
+    } finally {
+      suppressChatAutoSpeakRef.current = false;
+      setIsGenerating(false);
     }
   };
 
   useEffect(() => {
     // Mudança de voz em tempo real: Reinicia a sessão se estiver conectado para aplicar a nova voz
     if (liveSessionRef.current && liveState.status === 'connected') {
+      const outputEngine = liveAudioOutputEngineRef.current;
       stopLiveSession();
       setTimeout(() => {
-        startLiveSession();
+        if (outputEngine === 'elevenlabs') {
+          startElevenLabsLiveSession();
+        } else {
+          startLiveSession();
+        }
       }, 300);
     }
   }, [selectedVoice]);
@@ -6359,6 +6553,7 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
     stopScreenSharing();
     liveSessionRef.current?.close?.();
     liveSessionRef.current = null;
+    liveAudioOutputEngineRef.current = 'gemini';
     setIsListening(false);
     setIsSpeaking(false);
     if (!keepError) {
@@ -6368,7 +6563,7 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
 
   const stopLiveSession = (keepError = false, rearmHandsFree = true) => {
     stopLiveSessionInternal(keepError);
-    stopElevenLabsLiveSession(false);
+    stopElevenLabsLiveSession(false, false);
     if (rearmHandsFree) scheduleHandsFreeRearm();
   };
 
@@ -9130,7 +9325,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
             processGroundingToPopups(grounding, userMessage);
           }
           const newMsgId = addMessage({ role: 'assistant' as const, content: contentWithSources });
-          if (isChatAutoSpeakActive) {
+          if (isChatAutoSpeakActive && !suppressChatAutoSpeakRef.current) {
             setTimeout(() => {
               handleSpeakChatMessage(contentWithSources, newMsgId);
             }, 600);
@@ -9242,11 +9437,25 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
     setAttachedFiles([]);
   };
 
-  const startLiveSession = async (initiallyCameraActive = isCameraActive) => {
+  const startLiveSession = async (
+    initiallyCameraActive = isCameraActive,
+    audioOutputEngine: LiveAudioOutputEngine = 'gemini'
+  ) => {
     const apiKey = apiKeys.gemini || '';
+    const useElevenLabsOutput = audioOutputEngine === 'elevenlabs';
 
     pauseHandsFreeDetection();
     setIsVoiceOutputPaused(false);
+    liveAudioOutputEngineRef.current = audioOutputEngine;
+    if (useElevenLabsOutput) {
+      setIsElevenLabsLiveActive(true);
+      isElevenLabsLiveActiveRef.current = true;
+      elevenLabsStateRef.current = 'listening';
+    } else {
+      setIsElevenLabsLiveActive(false);
+      isElevenLabsLiveActiveRef.current = false;
+      elevenLabsStateRef.current = 'idle';
+    }
     setLiveState({ status: 'connecting' });
     
     try {
@@ -10115,6 +10324,9 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
               liveSessionRef.current = session;
               setLiveState({ status: 'connected' });
               setIsListening(true);
+              if (useElevenLabsOutput) {
+                elevenLabsStateRef.current = 'listening';
+              }
               
               // Trigger proactive greeting
               const greetingText = "O sistema OSONE está online. Seja breve, direto e pare de enrolar com introduções longas. Apenas diga que está pronto e pergunte o que faremos agora.";
@@ -10129,6 +10341,14 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     // Evitar eco/retorno: se o OSONE ou os Professores estiverem falando, só enviamos áudio se detectarmos um volume que indique que o usuário está interrompendo de fato.
                     // Se o usuário falar ativamente, o RMS passará de um limite de voz (ex: 0.007).
                     // Isso permite interrupção (barge-in) real por voz se o usuário falar com volume normal, enquanto filtra o próprio eco do assistente vindo da caixa de som!
+                    if (isElevenLabsLiveOutput() && elevenLabsStateRef.current === 'speaking') {
+                      if (rms < 0.018) {
+                        return;
+                      }
+                      interromperSaidaElevenLabs('interrupção por voz', false);
+                      elevenLabsStateRef.current = 'listening';
+                      setIsListening(true);
+                    }
                     if (isSpeakingRef.current) {
                       // Se o assistente estiver falando, enviamos o áudio somente se houver um sinal sonoro de voz real (RMS >= 0.012).
                       // Isso evita que ruídos ambientes fracos ou o próprio som das caixas de som interrompam o assistente.
@@ -10323,26 +10543,53 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 }
               }
 
+              if (!message.serverContent?.modelTurn?.parts) {
+                const outputTranscriptionText = String(
+                  rawServerContent?.outputTranscription?.text ||
+                  rawServerContent?.output_transcription?.text ||
+                  ''
+                );
+                if (outputTranscriptionText.trim()) {
+                  voiceTranscriptRef.current += outputTranscriptionText;
+                  enviarTextoLiveParaElevenLabs(outputTranscriptionText);
+                  if (!transcriptThrottleRef.current) {
+                    transcriptThrottleRef.current = setTimeout(() => {
+                      setVoiceTranscript(voiceTranscriptRef.current);
+                      transcriptThrottleRef.current = null;
+                    }, 70);
+                  }
+                }
+              }
+
               if (message.serverContent?.modelTurn?.parts) {
                 const audioPart = message.serverContent.modelTurn.parts.find(p => p.inlineData);
                 const textPart = message.serverContent.modelTurn.parts.find(p => p.text);
+                const outputTranscriptionText = String(
+                  (message.serverContent as any)?.outputTranscription?.text ||
+                  (message.serverContent as any)?.output_transcription?.text ||
+                  ''
+                );
                 
                 // Clear any leftover user subtitles before appending model speech
-                if (audioPart || textPart) {
+                if (audioPart || textPart || outputTranscriptionText) {
                   if (!voiceTranscriptRef.current) {
                     setVoiceTranscript("");
                   }
                 }
                 
-                // Use Gemini Audio
+                // Em modo ElevenLabs, o Gemini Live continua sendo o cérebro/escuta/ferramentas.
+                // O áudio nativo dele é silenciado e a transcrição final é narrada pela ElevenLabs.
                 if (audioPart?.inlineData?.data) {
-                  if (!isVoiceOutputPausedRef.current) {
+                  if (!isVoiceOutputPausedRef.current && !isElevenLabsLiveOutput()) {
                     audioPlayerRef.current?.playChunk(audioPart.inlineData.data);
                   }
                 }
                 
-                if (textPart?.text) {
-                  voiceTranscriptRef.current += textPart.text;
+                const transcriptChunk = outputTranscriptionText || textPart?.text || '';
+
+                if (transcriptChunk) {
+                  voiceTranscriptRef.current += transcriptChunk;
+                  enviarTextoLiveParaElevenLabs(transcriptChunk);
                   if (!transcriptThrottleRef.current) {
                     transcriptThrottleRef.current = setTimeout(() => {
                       setVoiceTranscript(voiceTranscriptRef.current);
@@ -10381,9 +10628,23 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       .trim();
                   }
 
-                  setChatHistory(prev => [...prev, { id: Math.random().toString(36).substr(2, 9), role: 'assistant', content: cleanedText }]);
+                  if (cleanedText) {
+                    setChatHistory(prev => [...prev, { id: Math.random().toString(36).substr(2, 9), role: 'assistant', content: cleanedText }]);
+                  }
 
                   voiceTranscriptRef.current = '';
+
+                  if (isElevenLabsLiveOutput()) {
+                    if (isVoiceOutputPausedRef.current) {
+                      interromperSaidaElevenLabs('voz pausada', true);
+                    } else if (!finalizarStreamLiveElevenLabs(cleanedText)) {
+                      if (cleanedText) {
+                        await playElevenLabsSpeech(cleanedText);
+                      } else {
+                        retomarEscutaElevenLabs('turno sem fala');
+                      }
+                    }
+                  }
                 }
                 // O muting agora é feito pelo AudioPlayer (onActivityChange) sincronizado com o áudio real.
               }
@@ -11538,6 +11799,14 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
 
               if (message.serverContent?.interrupted && !isMutedRef.current) {
                 audioPlayerRef.current?.stop();
+                if (isElevenLabsLiveOutput()) {
+                  try { elevenLabsQueuePlayerRef.current?.stop(); } catch (_) {}
+                  if (elevenLabsWsRef.current) {
+                    try { elevenLabsWsRef.current.close(); } catch (_) {}
+                    elevenLabsWsRef.current = null;
+                  }
+                  elevenLabsStateRef.current = 'listening';
+                }
                 if (typeof window !== 'undefined' && window.speechSynthesis) {
                   window.speechSynthesis.cancel();
                 }
@@ -11549,7 +11818,9 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 }
               }
               if (message.serverContent?.turnComplete) {
-                setIsSpeaking(false);
+                if (!isElevenLabsLiveOutput()) {
+                  setIsSpeaking(false);
+                }
               }
             });
           },
@@ -11581,6 +11852,12 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
     } catch (error) {
       console.error("Failed to start Live session:", error);
       setLiveState({ status: 'error', error: "Falha ao iniciar sessão de voz." });
+      if (useElevenLabsOutput) {
+        setIsElevenLabsLiveActive(false);
+        isElevenLabsLiveActiveRef.current = false;
+        elevenLabsStateRef.current = 'idle';
+        liveAudioOutputEngineRef.current = 'gemini';
+      }
       setIsListening(false);
       scheduleHandsFreeRearm();
     }
@@ -12247,6 +12524,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
       
       {/* Main Content Area */}
       <main className="main-content flex-1 relative z-20 flex flex-col w-full min-h-0 overflow-hidden p-0 pb-0 md:pb-0">
+        <React.Suspense fallback={<LazyPanelFallback />}>
         <AnimatePresence mode="wait">
           {workspaceMode === 'writing' ? (
             <WritingStudioSection
@@ -12775,6 +13053,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
             </>
           )}
         </AnimatePresence>
+        </React.Suspense>
       </main>
 
       {/* Mobile Bottom Navigation */}
@@ -13287,13 +13566,15 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
               </button>
 
               <div className="w-full h-full rounded-2xl overflow-hidden shadow-2xl">
-                <TeacherWhiteboard 
-                  text={whiteboardText}
-                  onChangeText={setWhiteboardText}
-                  isWriting={isSpeaking || isGenerating || isAnalyzingCode}
-                  speakerName={customSkill ? `Estudo: ${customSkill.name}` : null}
-                  onClear={() => setWhiteboardText('')}
-                />
+                <React.Suspense fallback={<LazyPanelFallback />}>
+                  <TeacherWhiteboard
+                    text={whiteboardText}
+                    onChangeText={setWhiteboardText}
+                    isWriting={isSpeaking || isGenerating || isAnalyzingCode}
+                    speakerName={customSkill ? `Estudo: ${customSkill.name}` : null}
+                    onClear={() => setWhiteboardText('')}
+                  />
+                </React.Suspense>
               </div>
             </motion.div>
           </div>
@@ -13364,17 +13645,21 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenPlans={() => { setRequestedPaidFeature(undefined); setIsPlansOpen(true); }}
       />
-      <PlansModal
-        open={isPlansOpen}
-        onClose={() => { setIsPlansOpen(false); setRequestedPaidFeature(undefined); }}
-        current={subscription.subscription}
-        loading={subscription.loading}
-        error={subscription.error}
-        loggedIn={!!user && !user.isLocal}
-        requestedFeature={requestedPaidFeature}
-        onCheckout={(plan, interval, paymentMethod) => subscription.openCheckout(plan, interval, paymentMethod).catch(() => {})}
-        onPortal={() => subscription.openPortal().catch(() => {})}
-      />
+      {isPlansOpen && (
+        <React.Suspense fallback={null}>
+          <PlansModal
+            open={isPlansOpen}
+            onClose={() => { setIsPlansOpen(false); setRequestedPaidFeature(undefined); }}
+            current={subscription.subscription}
+            loading={subscription.loading}
+            error={subscription.error}
+            loggedIn={!!user && !user.isLocal}
+            requestedFeature={requestedPaidFeature}
+            onCheckout={(plan, interval, paymentMethod) => subscription.openCheckout(plan, interval, paymentMethod).catch(() => {})}
+            onPortal={() => subscription.openPortal().catch(() => {})}
+          />
+        </React.Suspense>
+      )}
       <MotorDeAcoes
         acoes={acoesDoMotor}
         parado={motorParado}
@@ -13383,39 +13668,43 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         onLimpar={limparAcoesDoMotor}
       />
 
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => { setIsSettingsOpen(false); setAbaDasConfiguracoes(undefined); }}
-        abaInicial={abaDasConfiguracoes}
-        keys={apiKeys}
-        setKeys={setApiKeys}
-        selectedVoice={selectedVoice}
-        setSelectedVoice={setSelectedVoice}
-        voiceEngine={voiceEngine}
-        setVoiceEngine={setVoiceEngine}
-        isChatAutoSpeakActive={isChatAutoSpeakActive}
-        setIsChatAutoSpeakActive={setIsChatAutoSpeakActive}
-        voiceModulation={voiceModulation}
-        setVoiceModulation={setVoiceModulation}
-        orbStyle={orbStyle}
-        setOrbStyle={setOrbStyle}
-        orbSize={orbSize}
-        setOrbSize={setOrbSize}
-        orbCenterMode={orbCenterMode}
-        setOrbCenterMode={setOrbCenterMode}
-        appTheme={appTheme}
-        setAppTheme={setAppTheme}
-        aiProfile={aiProfile}
-        setAiProfile={handleUpdateProfile}
-        onAddNotification={addNotification}
-        vocalProfileEscarlate={vocalProfileEscarlate}
-        setVocalProfileEscarlate={setVocalProfileEscarlate}
-        selectedPersona={selectedPersona}
-        onPersonaChange={handlePersonaChange}
-        onOpenIdentityDossier={() => setIsIntimateMissionOpen(true)}
-        intimateAnswersCount={Object.keys(intimateAnswers).length}
-        onOpenAiDossier={() => setIsAiDossierOpen(true)}
-      />
+      {isSettingsOpen && (
+        <React.Suspense fallback={null}>
+          <SettingsModal
+            isOpen={isSettingsOpen}
+            onClose={() => { setIsSettingsOpen(false); setAbaDasConfiguracoes(undefined); }}
+            abaInicial={abaDasConfiguracoes}
+            keys={apiKeys}
+            setKeys={setApiKeys}
+            selectedVoice={selectedVoice}
+            setSelectedVoice={setSelectedVoice}
+            voiceEngine={voiceEngine}
+            setVoiceEngine={setVoiceEngine}
+            isChatAutoSpeakActive={isChatAutoSpeakActive}
+            setIsChatAutoSpeakActive={setIsChatAutoSpeakActive}
+            voiceModulation={voiceModulation}
+            setVoiceModulation={setVoiceModulation}
+            orbStyle={orbStyle}
+            setOrbStyle={setOrbStyle}
+            orbSize={orbSize}
+            setOrbSize={setOrbSize}
+            orbCenterMode={orbCenterMode}
+            setOrbCenterMode={setOrbCenterMode}
+            appTheme={appTheme}
+            setAppTheme={setAppTheme}
+            aiProfile={aiProfile}
+            setAiProfile={handleUpdateProfile}
+            onAddNotification={addNotification}
+            vocalProfileEscarlate={vocalProfileEscarlate}
+            setVocalProfileEscarlate={setVocalProfileEscarlate}
+            selectedPersona={selectedPersona}
+            onPersonaChange={handlePersonaChange}
+            onOpenIdentityDossier={() => setIsIntimateMissionOpen(true)}
+            intimateAnswersCount={Object.keys(intimateAnswers).length}
+            onOpenAiDossier={() => setIsAiDossierOpen(true)}
+          />
+        </React.Suspense>
+      )}
 
       <IntimateMissionModal 
         isOpen={isIntimateMissionOpen}

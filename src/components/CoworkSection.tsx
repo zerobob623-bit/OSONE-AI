@@ -81,6 +81,15 @@ const CHAVE_DA_NARRACAO = 'osone_cowork_narracao';
 const CHAVE_DO_MOTOR_NARRACAO = 'osone_cowork_motor_narracao';
 type MotorNarracaoCowork = 'piper' | 'elevenlabs';
 
+const ELEVENLABS_API_KEY_ID_MESSAGE = "A chave da ElevenLabs salva parece ser o ID da chave, não a API Key secreta. Gere ou rotacione a chave e cole a chave completa que começa com sk_.";
+
+const validarChaveElevenLabsParaUso = (apiKey?: string): { ok: boolean; key: string; message?: string } => {
+  const key = (apiKey || '').trim();
+  if (!key) return { ok: true, key: '' };
+  if (!key.startsWith('sk_')) return { ok: false, key, message: ELEVENLABS_API_KEY_ID_MESSAGE };
+  return { ok: true, key };
+};
+
 /** Janelas do próprio OSONE não servem de alvo: ele trabalharia dentro de si mesmo. */
 const ehJanelaDoOsone = (j: JanelaDeTrabalho) =>
   /osone|electron/i.test(`${j.titulo} ${j.app}`);
@@ -328,13 +337,17 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
   };
 
   const narrarComElevenLabs = async (frase: string, prioridade = false) => {
+    const validacaoChave = validarChaveElevenLabsParaUso(elevenLabsApiKey);
+    if (!validacaoChave.ok) {
+      throw new Error(validacaoChave.message);
+    }
     const resposta = await fetch('/api/tts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text: frase,
         engine: 'elevenlabs',
-        elevenLabsApiKey: elevenLabsApiKey || '',
+        elevenLabsApiKey: validacaoChave.key,
         elevenLabsVoiceId: elevenLabsVoiceId || '',
         elevenLabsStability,
         elevenLabsSimilarityBoost,
