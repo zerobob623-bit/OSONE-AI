@@ -70,10 +70,95 @@ interface CoworkSectionProps {
 }
 
 const CAIXA = "rounded-3xl border border-white/[0.06] bg-white/[0.02]";
+const CHAVE_DA_NARRACAO = 'osone_cowork_narracao';
+const CHAVE_DO_MOTOR_NARRACAO = 'osone_cowork_motor_narracao';
+const CHAVE_DA_VOZ_NARRACAO = 'osone_cowork_voz_narracao';
+type MotorNarracaoCowork = 'piper' | 'navegador';
 
 /** Janelas do próprio OSONE não servem de alvo: ele trabalharia dentro de si mesmo. */
 const ehJanelaDoOsone = (j: JanelaDeTrabalho) =>
   /osone|electron/i.test(`${j.titulo} ${j.app}`);
+
+const narracaoLigada = (): boolean => {
+  try { return localStorage.getItem(CHAVE_DA_NARRACAO) !== 'nao'; } catch { return true; }
+};
+
+const definirNarracao = (ligada: boolean): void => {
+  try { localStorage.setItem(CHAVE_DA_NARRACAO, ligada ? 'sim' : 'nao'); } catch { /* preferência local apenas */ }
+};
+
+const lerMotorNarracao = (): MotorNarracaoCowork => {
+  try {
+    const valor = localStorage.getItem(CHAVE_DO_MOTOR_NARRACAO);
+    return valor === 'navegador' ? 'navegador' : 'piper';
+  } catch { return 'piper'; }
+};
+
+const salvarMotorNarracao = (motor: MotorNarracaoCowork): void => {
+  try { localStorage.setItem(CHAVE_DO_MOTOR_NARRACAO, motor); } catch { /* preferência local apenas */ }
+};
+
+const lerVozPreferida = (): string => {
+  try { return localStorage.getItem(CHAVE_DA_VOZ_NARRACAO) || 'auto'; } catch { return 'auto'; }
+};
+
+const salvarVozPreferida = (voz: string): void => {
+  try { localStorage.setItem(CHAVE_DA_VOZ_NARRACAO, voz || 'auto'); } catch { /* preferência local apenas */ }
+};
+
+const pontuarVozCowork = (voz: SpeechSynthesisVoice): number => {
+  const nome = `${voz.name} ${voz.voiceURI} ${voz.lang}`.toLowerCase();
+  let pontos = 0;
+
+  // Primeiro critério: falar português direito. Sem isso a voz até pode ser bonita, mas tropeça.
+  if (voz.lang === 'pt-BR') pontos += 120;
+  else if (voz.lang?.toLowerCase().startsWith('pt-br')) pontos += 110;
+  else if (voz.lang?.toLowerCase().startsWith('pt')) pontos += 75;
+  else if (/portugu[eê]s|brazil|brasil/.test(nome)) pontos += 55;
+
+  // Segundo critério: vozes neurais/naturais costumam soar menos “robô de aeroporto”.
+  if (/natural|neural|online|premium|enhanced/.test(nome)) pontos += 35;
+  if (/maria|francisca|heloisa|hel[oó]isa|luciana|fernanda|female|mulher/.test(nome)) pontos += 18;
+  if (/microsoft|apple|samantha|joana|yara|leticia|vit[oó]ria/.test(nome)) pontos += 12;
+
+  // O relato foi justamente que a voz do Google soou robótica. Não banimos — em Linux/Chrome às
+  // vezes ela é a única pt-BR —, mas se houver alternativa boa ela perde a preferência.
+  if (/google/.test(nome)) pontos -= 18;
+  if (/espeak|festival|pico|default/.test(nome)) pontos -= 25;
+  if (voz.localService) pontos += 4;
+
+  return pontos;
+};
+
+const escolherVozCowork = (vozes: SpeechSynthesisVoice[], preferida: string): SpeechSynthesisVoice | null => {
+  if (!vozes.length) return null;
+  const porNome = preferida && preferida !== 'auto'
+    ? vozes.find(v => v.name === preferida || `${v.name} (${v.lang})` === preferida)
+    : null;
+  if (porNome) return porNome;
+  return [...vozes].sort((a, b) => pontuarVozCowork(b) - pontuarVozCowork(a))[0] || null;
+};
+
+const limparTextoParaVoz = (texto: string): string =>
+  texto
+    .replace(/https?:\/\/\S+/g, 'um endereço')
+    .replace(/[{}[\]_"`<>]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const fraseDaVolta = (v: VoltaDoAgente): string => {
+  if (!v.ok) return `Tive um problema: ${v.relato}`;
+  if (v.acao === 'clicar') return `Cliquei. ${v.pensamento}`;
+  if (v.acao === 'clique_direito') return `Abri o menu contextual. ${v.pensamento}`;
+  if (v.acao === 'digitar') return `Digitei no campo em foco.`;
+  if (v.acao === 'rolar') return `Rolei a tela para procurar mais opções.`;
+  if (v.acao === 'abrir') return `Abri o destino e estou olhando a janela.`;
+  if (v.acao === 'trocar_janela') return `Troquei para a janela certa.`;
+  if (v.acao === 'esperar') return `Estou esperando a tela carregar.`;
+  if (v.acao === 'concluir') return `Concluí. ${v.relato}`;
+  if (v.acao === 'desistir') return `Parei. ${v.relato}`;
+  return v.pensamento || v.relato;
+};
 
 export const CoworkSection: React.FC<CoworkSectionProps> = ({
   onBack, localAgentToken, chaveGemini, modeloGemini, ambiente, listarJanelas, janelaDeTrabalho, definirJanela,
@@ -183,8 +268,37 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
 
   // ====== O SOM ======
   const [comSom, setComSom] = useState(somLigado());
+  const [comNarracao, setComNarracao] = useState(narracaoLigada());
+  const [motorNarracao, setMotorNarracao] = useState<MotorNarracaoCowork>(lerMotorNarracao());
+  const [vozNarracao, setVozNarracao] = useState(lerVozPreferida());
+  const [vozesDisponiveis, setVozesDisponiveis] = useState<SpeechSynthesisVoice[]>([]);
   const [frameAtual, setFrameAtual] = useState<CapturaConfirmada | null>(null);
   const ultimoSomDeCapturaRef = useRef(0);
+  const ultimaNarracaoRef = useRef(0);
+  const audioNarracaoRef = useRef<HTMLAudioElement | null>(null);
+  const urlAudioNarracaoRef = useRef<string | null>(null);
+  const piperIndisponivelRef = useRef(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    const carregarVozes = () => {
+      const todas = window.speechSynthesis.getVoices();
+      const portugues = todas.filter(v => /^pt/i.test(v.lang) || /portugu[eê]s|brazil|brasil/i.test(v.name));
+      setVozesDisponiveis(portugues.length ? portugues : todas);
+    };
+    carregarVozes();
+    window.speechSynthesis.addEventListener?.('voiceschanged', carregarVozes);
+    return () => window.speechSynthesis.removeEventListener?.('voiceschanged', carregarVozes);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      audioNarracaoRef.current?.pause();
+      if (urlAudioNarracaoRef.current) URL.revokeObjectURL(urlAudioNarracaoRef.current);
+      try { window.speechSynthesis?.cancel(); } catch { /* sem suporte */ }
+    };
+  }, []);
+
   const aoCapturar = (frame: CapturaConfirmada) => {
     setFrameAtual(frame);
     // A estabilização fotografa em sequência curta; um obturador por segundo informa sem virar
@@ -201,6 +315,127 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
     // Tocar ao LIGAR é o que prova que funciona: um botão de som que não faz som ao ser ligado
     // deixa a pessoa sem saber se está mudo por escolha dela ou por defeito.
     if (novo) tocar('inicio');
+  };
+  const pararNarracaoAtual = () => {
+    try {
+      audioNarracaoRef.current?.pause();
+      audioNarracaoRef.current = null;
+      if (urlAudioNarracaoRef.current) {
+        URL.revokeObjectURL(urlAudioNarracaoRef.current);
+        urlAudioNarracaoRef.current = null;
+      }
+      window.speechSynthesis?.cancel();
+    } catch { /* áudio acessório */ }
+  };
+
+  const narrarNoNavegador = (frase: string, prioridade = false, vozPreferida = vozNarracao) => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    try {
+      if (prioridade) pararNarracaoAtual();
+      const fala = new SpeechSynthesisUtterance(frase);
+      const voz = escolherVozCowork(vozesDisponiveis.length ? vozesDisponiveis : window.speechSynthesis.getVoices(), vozPreferida);
+      if (voz) {
+        fala.voice = voz;
+        fala.lang = voz.lang || 'pt-BR';
+      } else {
+        fala.lang = 'pt-BR';
+      }
+      fala.rate = 0.92;
+      fala.pitch = 1.04;
+      fala.volume = 0.9;
+      window.speechSynthesis.speak(fala);
+    } catch { /* narração é acessória; o relatório visual continua valendo */ }
+  };
+
+  const narrarComPiper = async (frase: string, prioridade = false) => {
+    if (typeof window === 'undefined') return;
+    if (prioridade) pararNarracaoAtual();
+
+    const resposta = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: frase, engine: 'local' })
+    });
+    if (!resposta.ok) {
+      const erro = await resposta.json().catch(() => null);
+      throw new Error(erro?.error || `Piper retornou HTTP ${resposta.status}`);
+    }
+    const blob = await resposta.blob();
+    if (!blob.size) throw new Error('Piper gerou áudio vazio.');
+
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.volume = 0.92;
+    audioNarracaoRef.current = audio;
+    urlAudioNarracaoRef.current = url;
+    audio.onended = () => {
+      if (audioNarracaoRef.current === audio) audioNarracaoRef.current = null;
+      if (urlAudioNarracaoRef.current === url) {
+        URL.revokeObjectURL(url);
+        urlAudioNarracaoRef.current = null;
+      }
+    };
+    await audio.play();
+  };
+
+  const narrar = (
+    texto: string,
+    prioridade = false,
+    forcar = false,
+    vozPreferida = vozNarracao,
+    motorPreferido: MotorNarracaoCowork = motorNarracao
+  ) => {
+    if (!forcar && !comNarracao) return;
+    const frase = limparTextoParaVoz(texto).slice(0, 190).replace(/([^.!?…])$/, '$1.');
+    if (!frase) return;
+    if (!prioridade && Date.now() - ultimaNarracaoRef.current < 2200) return;
+    ultimaNarracaoRef.current = Date.now();
+
+    if (motorPreferido === 'piper' && !piperIndisponivelRef.current) {
+      void narrarComPiper(frase, prioridade).catch((erro) => {
+        piperIndisponivelRef.current = true;
+        console.warn('[COWORK] Piper indisponível, caindo para voz do navegador:', erro);
+        onNotification("Piper não respondeu; usei a voz do navegador como reserva. Rode 'npm run baixar-voz' se precisar reinstalar.", 'error');
+        narrarNoNavegador(frase, prioridade, vozPreferida);
+      });
+      return;
+    }
+
+    narrarNoNavegador(frase, prioridade, vozPreferida);
+  };
+
+  const trocarMotorNarracao = (motor: MotorNarracaoCowork) => {
+    salvarMotorNarracao(motor);
+    setMotorNarracao(motor);
+    if (motor === 'piper') piperIndisponivelRef.current = false;
+    narrar(
+      motor === 'piper'
+        ? 'Vou usar a voz local Piper enquanto trabalho no COWORK.'
+        : 'Vou usar a voz do navegador como reserva.',
+      true,
+      true,
+      vozNarracao,
+      motor
+    );
+  };
+
+  const trocarVozNarracao = (voz: string) => {
+    salvarVozPreferida(voz);
+    setVozNarracao(voz);
+    narrar('Essa é a voz do navegador que vou usar se o Piper não estiver disponível.', true, true, voz, 'navegador');
+  };
+  const testarNarracao = () => {
+    narrar('Pronto. Este é o teste da narração do COWORK usando o motor de voz selecionado.', true, true);
+  };
+  const alternarNarracao = () => {
+    const novo = !comNarracao;
+    definirNarracao(novo);
+    setComNarracao(novo);
+    if (!novo) {
+      pararNarracaoAtual();
+    } else {
+      narrar('Narração do COWORK ativada.', true, true);
+    }
   };
 
   // ====== O RELATÓRIO AO VIVO ======
@@ -228,9 +463,10 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
       const v = voltas[i];
       if (v.acao === 'concluir' || v.acao === 'desistir') continue; // o fim tem som próprio
       tocar(v.ok ? notaDaAcao(v.acao) : 'falha');
+      narrar(fraseDaVolta(v));
     }
     voltasJaSoadasRef.current = voltas.length;
-  }, [voltas.length]);
+  }, [voltas.length, comNarracao]);
 
   /**
    * Enquanto ele trabalha, um toque baixinho de tempos em tempos.
@@ -274,6 +510,7 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
     // um gesto da pessoa, e este clique é o gesto. Tocar aqui garante que os bipes seguintes,
     // que não vêm de clique nenhum, já encontrem o caminho aberto.
     tocar('inicio');
+    narrar(`COWORK iniciado. Vou olhar a tela e agir passo a passo.`, true);
     try {
       const resultado = await onTrabalhar(alvo, janelaDeTrabalho, aoCapturar);
       setRelatorio(resultado);
@@ -290,7 +527,7 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
         detalhe: texto,
         voltas: (resultado as any)?.voltas?.length,
         janela: janelaDeTrabalho?.titulo || (areaParalela?.ligada ? 'Tela do agente' : undefined),
-        aprendida: desfecho === 'concluida' && Array.isArray((resultado as any)?.voltas) && (resultado as any).voltas.some((v: any) => v.ok && ['abrir', 'clicar', 'digitar', 'tecla', 'rolar', 'trocar_janela'].includes(v.acao))
+        aprendida: desfecho === 'concluida' && Array.isArray((resultado as any)?.voltas) && (resultado as any).voltas.some((v: any) => v.ok && ['abrir', 'clicar', 'clique_direito', 'digitar', 'tecla', 'rolar', 'trocar_janela'].includes(v.acao))
       }));
 
       /**
@@ -306,6 +543,7 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
           : desfecho === 'parada' ? 'parado'
           : 'falha'
       );
+      narrar(texto || 'Tarefa finalizada.', true);
       onNotification(texto || 'Tarefa finalizada.',
         desfecho === 'concluida' ? 'success' : desfecho === 'parada' ? 'info' : 'error');
     } finally {
@@ -326,6 +564,7 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
         ? 'O Agente Local não respondeu. Abra o OSONE instalado no computador e confira o Token do Agente Local nas Configurações.'
         : '';
 
+  const vozAutomatica = escolherVozCowork(vozesDisponiveis, 'auto');
   const respostaFinal = relatorio && !(relatorio as any).error ? String((relatorio as any).resumo || '') : '';
   const concluiu = relatorio && (relatorio as any).motivo === 'concluido';
 
@@ -355,6 +594,52 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
         >
           {comSom ? <Volume2 size={15} /> : <VolumeX size={15} />}
         </button>
+        <button
+          onClick={alternarNarracao}
+          title={comNarracao ? 'Desligar a narração por voz do COWORK' : 'Ligar a narração por voz do COWORK'}
+          className={cn(
+            "px-3 py-2.5 rounded-full border shrink-0 transition-colors text-[10px] uppercase tracking-[0.18em]",
+            comNarracao ? "border-cyan-500/25 text-cyan-200 bg-cyan-500/[0.06] hover:bg-cyan-500/10"
+                        : "border-white/10 text-her-muted hover:bg-white/[0.04]"
+          )}
+        >
+          Voz {comNarracao ? 'on' : 'off'}
+        </button>
+        <div className="hidden xl:flex items-center gap-2 shrink-0">
+          <select
+            value={motorNarracao}
+            onChange={e => trocarMotorNarracao(e.target.value as MotorNarracaoCowork)}
+            title="Escolher o motor da narração do COWORK"
+            className="max-w-[190px] h-9 rounded-full border border-cyan-500/20 bg-cyan-500/[0.06] px-3 text-[11px] text-cyan-100 outline-none hover:bg-cyan-500/10 focus:border-cyan-500/40"
+          >
+            <option value="piper">Piper local</option>
+            <option value="navegador">Navegador reserva</option>
+          </select>
+          {motorNarracao === 'navegador' && (
+            <select
+              value={vozNarracao}
+              onChange={e => trocarVozNarracao(e.target.value)}
+              title="Escolher a voz do navegador usada como reserva"
+              className="max-w-[210px] h-9 rounded-full border border-white/10 bg-black/20 px-3 text-[11px] text-her-muted outline-none hover:bg-white/[0.04] focus:border-cyan-500/30"
+            >
+              <option value="auto">
+                Automática{vozAutomatica ? ` · ${vozAutomatica.name}` : ''}
+              </option>
+              {vozesDisponiveis.map(v => (
+                <option key={`${v.name}-${v.lang}-${v.voiceURI}`} value={v.name}>
+                  {v.name} · {v.lang}
+                </option>
+              ))}
+            </select>
+          )}
+          <button
+            onClick={testarNarracao}
+            className="h-9 px-3 rounded-full border border-white/10 text-[10px] uppercase tracking-[0.16em] text-her-muted hover:bg-white/[0.04] hover:text-cyan-200"
+            title="Ouvir um teste curto da narração"
+          >
+            Testar
+          </button>
+        </div>
         <span className={cn(
           "text-[10px] uppercase tracking-[0.2em] px-3 py-1.5 rounded-full border shrink-0",
           disponibilidade === 'ok' ? "border-emerald-500/25 text-emerald-400 bg-emerald-500/[0.06]"
