@@ -82,6 +82,10 @@ function pistaSegura(volta: VoltaDoAgente): { acao: string; descricao: string } 
       const alvo = String(args.alvo || '').trim();
       return alvo ? { acao: 'clicar', descricao: `clicar em ${alvo}` } : null;
     }
+    case 'clique_direito': {
+      const alvo = String(args.alvo || '').trim();
+      return alvo ? { acao: 'clique_direito', descricao: `abrir menu contextual de ${alvo}` } : null;
+    }
     case 'abrir': {
       let caminho = String(args.caminho || '').trim();
       try {

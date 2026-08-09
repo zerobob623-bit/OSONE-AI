@@ -47,7 +47,7 @@ import {
 
 /** O que o agente pode fazer. Deliberadamente pequeno: cada verbo a mais é uma escolha a errar. */
 export const ACOES_DO_AGENTE = [
-  'abrir', 'clicar', 'digitar', 'tecla', 'rolar', 'esperar', 'trocar_janela', 'concluir', 'desistir'
+  'abrir', 'clicar', 'clique_direito', 'digitar', 'tecla', 'rolar', 'esperar', 'trocar_janela', 'concluir', 'desistir'
 ] as const;
 export type AcaoDoAgente = typeof ACOES_DO_AGENTE[number];
 
@@ -122,8 +122,9 @@ RESPONDA APENAS UM OBJETO JSON, nada mais:
 { "pensamento": "o que estou vendo e por que esta ação agora", "acao": "clicar", "args": { "alvo": "o botão Análises no menu da esquerda" }, "esperaDaTela": "mudar" }
 
 AÇÕES:
-- "abrir" { "caminho": "..." } — abre um programa, arquivo, pasta ou ENDEREÇO DE SITE. É assim que você chega onde precisa: prefira abrir o endereço direto (ex: "https://studio.youtube.com") a navegar clicando de tela em tela. ABRA CADA COISA UMA VEZ SÓ: depois de abrir, você JÁ PASSA A OLHAR a janela que nasceu, automaticamente. Se a foto seguinte ainda parecer a tela anterior, a página está carregando — use "esperar", NUNCA mande abrir de novo. Abrir duas vezes cria uma segunda aba com o mesmo conteúdo e atrapalha a tarefa.
+- "abrir" { "caminho": "..." } — abre um programa instalado, arquivo, pasta ou ENDEREÇO DE SITE pelo Agente Local interno. Para app, passe o nome humano ("Chrome", "VS Code", "Calculadora", "Spotify"); para pasta, passe "downloads", "documentos" ou caminho real; para site, passe URL. NÃO procure app em navegador/arquivos: abrir resolve PATH, atalhos do Windows, .desktop do Linux e fallbacks. É assim que você chega onde precisa: prefira abrir o endereço direto (ex: "https://studio.youtube.com") a navegar clicando de tela em tela. ABRA CADA COISA UMA VEZ SÓ: depois de abrir, você JÁ PASSA A OLHAR a janela que nasceu, automaticamente. Se a foto seguinte ainda parecer a tela anterior, a página está carregando — use "esperar", NUNCA mande abrir de novo. Abrir duas vezes cria uma segunda aba com o mesmo conteúdo e atrapalha a tarefa.
 - "clicar" { "alvo": "descrição do que clicar" } — NUNCA passe x/y. Descreva o alvo como você o vê na foto ("o botão azul Entrar", "a aba Análises"); a posição é medida na hora.
+- "clique_direito" { "alvo": "descrição do item/imagem/card" } — abre menu contextual no alvo. Use quando a opção buscada costuma estar escondida no clique direito, como baixar imagem, salvar mídia, copiar link, abrir em nova guia, inspecionar opções de arquivo ou menu de item.
 - "digitar" { "texto": "..." } — digita no campo que está em foco. Clique no campo antes.
 - "tecla" { "tecla": "enter" } — teclas nomeadas: enter, tab, escape, backspace, delete, arrowup/down/left/right, home, end, pageup, pagedown. Aceita "modificadores": ["ctrl"].
 - "rolar" { "direcao": "down", "quantidade": 3 } — rola a página.
@@ -137,6 +138,9 @@ REGRAS:
 - "pensamento" é obrigatório e em português: diga o que você ESTÁ VENDO na foto e por que age assim. É o que o usuário lê enquanto você trabalha.
 - OLHE A FOTO ANTES DE DECIDIR. Não repita a ação anterior se a tela não mudou — se não mudou, o que você tentou não funcionou; tente outro caminho.
 - Se aparecer algo que não estava previsto (aviso de cookies, login, pop-up, atualização), RESOLVA e siga. É para isso que você decide olhando.
+- Quando a opção exata NÃO estiver visível, NÃO fique clicando no mesmo alvo nem olhando parado. Faça exploração segura, como uma pessoa faria: procure campo de busca, menu de três pontos/⋮/More/Mais, botão de download, compartilhar/exportar, menu de perfil/engrenagem, abas laterais, rolagem curta, tecla Escape para fechar pop-up, ou "clique_direito" sobre a imagem/card/item. Cada exploração precisa ter um motivo no "pensamento" e deve ser reversível/baixo risco.
+- Para baixar imagem/arquivo/mídia: antes de insistir no botão "Salvar" da página, tente nesta ordem quando fizer sentido na foto: botão/ícone de download visível; menu de três pontos do item; "clique_direito" no item/imagem para abrir opções; rolar ou abrir a imagem em tamanho real; só então procurar "Salvar imagem como", "Download", "Baixar" ou equivalente no menu. Não clique repetidamente na própria imagem se isso não abriu opções.
+- Se você notar confusão ("não vejo", "não achei", opção escondida, tela igual, clique sem efeito), transforme a dúvida em hipótese testável: "vou abrir o menu de três pontos porque downloads costumam ficar ali". Não peça ajuda ao usuário para descobrir onde clicar; investigue com ações seguras.
 - Se a tarefa era descobrir/analisar algo, você só termina depois de LER na tela o que foi pedido. Concluir sem a informação é não ter feito a tarefa.
 - "esperaDaTela": "mudar" no caso normal, "qualquer" quando não dá para prever.
 - NÃO existem ações de arquivo nem de terminal aqui (apagar, mover, renomear, escrever_arquivo, terminal): elas exigem confirmação uma a uma e não entram em laço automático.
@@ -182,6 +186,9 @@ export function lerDecisao(respostaDoModelo: string): LeituraDaDecisao {
 
   const acao = String(bruto.acao || '').trim();
   if (!acao) return { problema: 'O modelo não disse qual ação executar.' };
+  if (!ACOES_VALIDAS_DO_LACO.has(acao)) {
+    return { problema: `O modelo pediu a ação '${acao}', mas o COWORK só aceita: ${ACOES_DO_AGENTE.join(', ')}.` };
+  }
 
   const pensamento = String(bruto.pensamento || '').trim();
   if (!pensamento) {
@@ -232,6 +239,8 @@ const jaAbriu = (voltas: VoltaDoAgente[], caminho: string): boolean =>
 const ACOES_QUE_ENCERRAM = new Set(['concluir', 'desistir']);
 /** Ações que não tocam no computador — não passam pela validação de dinheiro/arquivo. */
 const ACOES_INTERNAS = new Set(['esperar', 'trocar_janela', 'concluir', 'desistir']);
+/** Ações aceitas pelo laço, inclusive as que são traduzidas antes de chegar ao agente local. */
+const ACOES_VALIDAS_DO_LACO = new Set<string>(ACOES_DO_AGENTE);
 
 /**
  * A decisão vira um passo no vocabulário do motor, para ser validada pelas MESMAS regras.
@@ -485,6 +494,7 @@ export async function trabalharAteConcluir(
 function resumirResultado(decisao: DecisaoDoAgente, resposta: any, naoMudou: boolean): string {
   const detalhe = (() => {
     if (decisao.acao === 'clicar') return `Cliquei em "${decisao.args?.alvo || 'onde estava mirando'}".`;
+    if (decisao.acao === 'clique_direito') return `Cliquei com o botão direito em "${decisao.args?.alvo || 'onde estava mirando'}".`;
     if (decisao.acao === 'digitar') return `Digitei "${String(decisao.args?.texto || '').slice(0, 60)}".`;
     if (decisao.acao === 'abrir') return `Abri "${decisao.args?.caminho || ''}".`;
     if (decisao.acao === 'tecla') return `Apertei ${decisao.args?.tecla}.`;
