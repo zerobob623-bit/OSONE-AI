@@ -353,7 +353,7 @@ jobs:
           BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
-          npm run android:build -- \
+          printf 'y\n' | npm run android:build -- \
             --config="$RUNNER_TEMP/bubblewrap-config.json" \
             --signingKeyPath="$RUNNER_TEMP/osone-android.jks" \
             --signingKeyAlias="$KEY_ALIAS"

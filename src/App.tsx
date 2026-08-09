@@ -132,6 +132,8 @@ import { PlansModal } from './components/PlansModal';
 import { useSubscription } from './hooks/useSubscription';
 import { minimumPlanForFeature, paidFeatureForWorkspace, PaidFeature } from './lib/planos';
 
+const OSONE_CODE_BEST_MODEL = "gemini-3.6-flash";
+
 // Safe helper to dynamically load PDF.js from cdnjs for client-side PDF text extraction
 const loadPdfJs = async (): Promise<any> => {
   if (typeof window === 'undefined') return null;
@@ -1725,6 +1727,11 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
       elevenLabsModel: 'eleven_multilingual_v2',
       geminiModel: 'gemini-3.6-flash',
       localAgentToken: '',
+      osoneCodeProvider: 'gemini',
+      osoneCodeOpenAiApiKey: '',
+      osoneCodeOpenAiModel: 'gpt-5.5',
+      osoneCodeAnthropicApiKey: '',
+      osoneCodeAnthropicModel: 'claude-sonnet-5',
     };
     try {
       const saved = localStorage.getItem('osone_api_keys');
@@ -6206,7 +6213,14 @@ ${adaptive.directions}` + getSensusSystemInstructionPrompt(activeUserIdForMemory
     localStorage.setItem('osone_api_keys', JSON.stringify(apiKeys));
 
     if (!user || !isCloudSyncReady.current) return;
-    const aguardar = setTimeout(() => { syncUserDataToCloud(user, { apiKeys }); }, 1500);
+    const {
+      osoneCodeOpenAiApiKey,
+      osoneCodeAnthropicApiKey,
+      ...apiKeysSemChavesPagasDoCode
+    } = apiKeys;
+    const aguardar = setTimeout(() => {
+      syncUserDataToCloud(user, { apiKeys: apiKeysSemChavesPagasDoCode });
+    }, 1500);
     return () => clearTimeout(aguardar);
   }, [apiKeys, user]);
 
@@ -6643,9 +6657,7 @@ ${promptText}${maxEffort ? '\n\nESFORÇO MÁXIMO: capriche nos detalhes e nos ca
       : conteudoDoPedido;
 
     const corpoDoPedido = {
-      clientApiKey: apiKeys.gemini || '',
-      model: "gemini-3.6-flash",
-      modeloDeReserva: apiKeys.geminiModel || '',
+      ...montarConfigDaApiDoOsoneCode(),
       prompt: promptPayload,
       systemInstruction,
       maxEffort: !!maxEffort,
@@ -6701,6 +6713,30 @@ ${promptText}${maxEffort ? '\n\nESFORÇO MÁXIMO: capriche nos detalhes e nos ca
     };
   };
 
+  const montarConfigDaApiDoOsoneCode = (): Record<string, unknown> => {
+    const provedor = apiKeys.osoneCodeProvider || 'gemini';
+    if (provedor === 'openai') {
+      return {
+        codeAiProvider: 'openai',
+        openAiApiKey: apiKeys.osoneCodeOpenAiApiKey || '',
+        model: apiKeys.osoneCodeOpenAiModel || 'gpt-5.5'
+      };
+    }
+    if (provedor === 'anthropic') {
+      return {
+        codeAiProvider: 'anthropic',
+        anthropicApiKey: apiKeys.osoneCodeAnthropicApiKey || '',
+        model: apiKeys.osoneCodeAnthropicModel || 'claude-sonnet-5'
+      };
+    }
+    return {
+      codeAiProvider: 'gemini',
+      clientApiKey: apiKeys.gemini || '',
+      model: OSONE_CODE_BEST_MODEL,
+      modeloDeReserva: apiKeys.geminiModel || ''
+    };
+  };
+
   const handleCodeWorkspacePrompt = async (
     promptText: string,
     referenceImages?: Array<{ mimeType: string; data: string }>,
@@ -6717,7 +6753,6 @@ ${promptText}${maxEffort ? '\n\nESFORÇO MÁXIMO: capriche nos detalhes e nos ca
     /** Abandona a geração pela metade quando o usuário desiste, sem esperar o modelo terminar. */
     sinal?: AbortSignal
   ): Promise<{ conteudo: string; resumo: string } | null> => {
-    const effectiveApiKey = apiKeys.gemini || '';
     if (!promptText.trim()) return null;
 
     setIsGenerating(true);
@@ -6761,23 +6796,7 @@ ${promptText}${maxEffort ? '\n\nESFORÇO MÁXIMO: capriche nos detalhes e nos ca
         : contentsText;
 
       const corpoDoPedido = {
-        clientApiKey: effectiveApiKey,
-        // Geração de código sempre usa o melhor modelo GRATUITO disponível para código
-        // (gemini-3.6-flash: mais recente, líder em benchmarks de código como SWE-Bench Pro
-        // entre os modelos gratuitos), independente do modelo configurado nos Ajustes para o
-        // chat geral — qualidade de código não pode ficar refém de um modelo lite mais fraco.
-        model: "gemini-3.6-flash",
-        /**
-         * O modelo dos Ajustes entra como reserva — é o único que se SABE que funciona.
-         *
-         * A aba de escrita usa o modelo configurado pelo usuário e gera normalmente; o OSONE
-         * CODE ignorava os Ajustes e insistia num modelo fixo. Quando esse modelo fixo não está
-         * disponível para a chave da pessoa, o resultado é uma aba escrevendo e a outra não —
-         * com a diferença invisível, porque nada na tela dizia que eram modelos diferentes.
-         * A preferência pelo modelo forte continua; o dos Ajustes é a última reserva, e a tela
-         * avisa quando foi ele quem respondeu.
-         */
-        modeloDeReserva: apiKeys.geminiModel || '',
+        ...montarConfigDaApiDoOsoneCode(),
         prompt: promptPayload,
         systemInstruction,
         maxEffort: !!maxEffort,
@@ -12278,6 +12297,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 onGenerateCodeRequest={handleCodeWorkspacePrompt}
                 onStartLiveVoice={() => startLiveSession()}
                 apiKeys={apiKeys}
+                onUpdateApiKeys={(patch) => setApiKeys(prev => ({ ...prev, ...patch }))}
                 isGenerating={isGenerating}
               />
             </motion.div>

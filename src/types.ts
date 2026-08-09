@@ -36,6 +36,11 @@ export interface ApiKeys {
   googleCustomSearchCx?: string;
   tavilyApiKey?: string;
   localAgentToken?: string;
+  osoneCodeProvider?: 'gemini' | 'openai' | 'anthropic';
+  osoneCodeOpenAiApiKey?: string;
+  osoneCodeOpenAiModel?: string;
+  osoneCodeAnthropicApiKey?: string;
+  osoneCodeAnthropicModel?: string;
 }
 
 export type OrbStyle = 'classic' | 'superintelligence' | 'neural' | 'shadow' | 'wave' | 'jarvis' | 'smoke';
@@ -198,6 +203,5 @@ export interface ChatSession {
   createdAt: number;
   messages: Message[];
 }
-
 
 
