@@ -3511,17 +3511,33 @@ Retorne SOMENTE o objeto JSON conforme o esquema.
         vocalProfileEscarlate
       } = req.body;
 
-      if (!text || typeof text !== "string") {
-        return res.status(400).json({ error: "O texto é obrigatório para conversão de áudio." });
-      }
+	      if (!text || typeof text !== "string") {
+	        return res.status(400).json({ error: "O texto é obrigatório para conversão de áudio." });
+	      }
 
       const cleanText = text.trim();
-      if (!cleanText) {
-        return res.status(400).json({ error: "O texto está vazio." });
-      }
+	      if (!cleanText) {
+	        return res.status(400).json({ error: "O texto está vazio." });
+	      }
 
-      // ELEVENLABS ENGINE ROUTE
-      if (engine === 'elevenlabs') {
+	      // VOZ LOCAL (PIPER) — usada pela narração operacional do COWORK e como opção sem cota.
+	      // Precisa vir antes do Gemini: se cair no fluxo padrão, uma chamada local acabaria exigindo
+	      // chave de API e poderia voltar para Google Translate, exatamente a voz robótica que queremos evitar.
+	      if (engine === "local" || engine === "piper") {
+	        const wavLocal = await sintetizarComVozLocal(stripVocalTags(cleanText));
+	        if (!wavLocal) {
+	          return res.status(503).json({
+	            error: "A voz local Piper não está disponível. Rode 'npm run baixar-voz' no projeto ou confira se vendor/piper foi incluído no instalador."
+	          });
+	        }
+	        res.setHeader("Content-Type", "audio/wav");
+	        res.setHeader("Content-Disposition", "inline; filename=osone-piper.wav");
+	        res.setHeader("X-TTS-Mode", "local");
+	        return res.send(wavLocal);
+	      }
+
+	      // ELEVENLABS ENGINE ROUTE
+	      if (engine === 'elevenlabs') {
         const elApiKey = elevenLabsApiKey || process.env.ELEVENLABS_API_KEY;
         if (!elApiKey) {
           return res.status(400).json({ 

@@ -115,6 +115,9 @@ async function perguntarProximaAcao(
         `confirmado há ${Math.max(0, frameAtual?.idadeMs || 0)}ms. Olhe-a antes de decidir.`
       : 'ATENÇÃO: não foi possível fotografar a janela nesta rodada.',
     historico.length ? `O QUE VOCÊ JÁ FEZ:\n${feito}` : 'Você ainda não fez nada. Esta é a primeira ação.',
+    historico.some(v => !v.ok || /não mudou|nao mudou|não achei|nao achei|não consegui|nao consegui/i.test(`${v.relato} ${v.erro || ''}`))
+      ? 'SINAL DE EMPACAMENTO: algo recente falhou, não mudou a tela ou não foi encontrado. NÃO repita a mesma ação. Formule uma hipótese nova e teste uma alternativa segura: menu de três pontos, clique_direito no item, rolagem curta, campo de busca, botão Mais/More, Escape para fechar pop-up, ou abrir endereço direto.'
+      : '',
     'Qual é a PRÓXIMA ação? Responda só o JSON.'
   ].filter(Boolean).join('\n\n');
 
@@ -140,9 +143,9 @@ async function perguntarProximaAcao(
         contents: [{ role: 'user', parts: partes }],
         config: {
           systemInstruction: INSTRUCAO_DO_AGENTE,
-          // Baixa, mas não zero: decidir o passo seguinte tem mais de um caminho certo, e temperatura
-          // zero faz o modelo insistir na mesma decisão errada quando a primeira não funciona.
-          temperature: 0.2,
+          // Baixa, mas não zero: decidir o passo seguinte tem mais de um caminho certo, e um pouco
+          // de variação ajuda quando o botão está escondido em menus/alternativas seguras.
+          temperature: 0.28,
           responseMimeType: 'application/json'
         }
       })
@@ -1287,7 +1290,8 @@ export function useLocalAgent() {
     alvoDescrito: string,
     localAgentToken?: string,
     visao?: VisaoDoMotor,
-    aoCapturar?: (frame: CapturaConfirmada) => void
+    aoCapturar?: (frame: CapturaConfirmada) => void,
+    opcoes: { botao?: 'left' | 'right'; duplo?: boolean } = {}
   ): Promise<any> => {
     const foto = await fotografarJanelaDeTrabalho(localAgentToken, aoCapturar);
     if (!foto) return { error: 'Não consegui fotografar a janela para localizar o alvo.' };
@@ -1330,7 +1334,13 @@ export function useLocalAgent() {
     setAlvoMedido({ x: escala0a1000.x, y: escala0a1000.y, rotulo: alvoDescrito, quando: Date.now() });
 
     return await executeLocalAgentCall(
-      'controlar_pc', { acao: 'clicar', x: escala0a1000.x, y: escala0a1000.y },
+      'controlar_pc', {
+        acao: 'clicar',
+        x: escala0a1000.x,
+        y: escala0a1000.y,
+        botao: opcoes.botao || 'left',
+        duplo: opcoes.duplo === true
+      },
       localAgentToken, false, visao
     );
   };
@@ -1437,7 +1447,15 @@ export function useLocalAgent() {
         if (acao === 'clicar') {
           const alvo = String(args?.alvo || '').trim();
           if (!alvo) return { error: 'Para clicar é preciso descrever o alvo.' };
-          return await clicarNaJanela(alvo, localAgentToken, visao, opcoes.aoCapturar);
+          return await clicarNaJanela(alvo, localAgentToken, visao, opcoes.aoCapturar, {
+            botao: args?.botao === 'right' ? 'right' : 'left',
+            duplo: args?.duplo === true
+          });
+        }
+        if (acao === 'clique_direito') {
+          const alvo = String(args?.alvo || '').trim();
+          if (!alvo) return { error: 'Para clicar com o botão direito é preciso descrever o alvo.' };
+          return await clicarNaJanela(alvo, localAgentToken, visao, opcoes.aoCapturar, { botao: 'right' });
         }
 
         /**

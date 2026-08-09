@@ -399,6 +399,8 @@ const handleStatus = (req: Request, res: Response) => {
       return out;
     })(),
     availableApps: Object.keys(CONFIG.apps || {}),
+    installedApps: listarAppsInstalados().slice(0, 120),
+    openStrategy: 'Use /api/agent/open-any para app, pasta, arquivo ou URL. A abertura roda a partir da pasta do usuário, nunca da pasta OSONE-AI, e tenta fallbacks por plataforma.',
     allowedFolders: Object.keys(CONFIG.allowedFolders || {}),
     // Em qual tela o agente está trabalhando agora — a sua ou a dele. Vai no status porque quem
     // abre a aba precisa saber disso antes de mandar qualquer coisa, e não depois.
@@ -409,7 +411,7 @@ const handleStatus = (req: Request, res: Response) => {
 /**
  * POST /open-app
  */
-const handleOpenApp = (req: Request, res: Response) => {
+const handleOpenApp = async (req: Request, res: Response) => {
   const { appName } = req.body || {};
 
   if (!appName || typeof appName !== 'string') {
@@ -421,11 +423,21 @@ const handleOpenApp = (req: Request, res: Response) => {
 
   const appEntry = CONFIG.apps[appName];
   if (!appEntry) {
-    logAudit('WARN', 'APP_OPEN_REJECTED', `Aplicativo '${appName}' não está na allowlist`, { appName });
-    return res.status(400).json({
-      error: `Aplicativo '${appName}' não existe na allowlist do config.json.`,
-      availableApps: Object.keys(CONFIG.apps || {})
-    });
+    // Compatibilidade para quem ainda chama a rota antiga /open-app: se não está na allowlist,
+    // não empurramos o modelo para "procurar nos arquivos" ou "abrir no navegador". Usamos o
+    // resolvedor universal, que consulta PATH/atalhos/apps instalados e abre pelo sistema.
+    try {
+      const r = await abrirAlvoUniversal(appName, req.body?.path);
+      logAudit('INFO', 'APP_OPEN_SUCCESS_FALLBACK', `Aplicativo '${appName}' aberto fora da allowlist`, r);
+      return res.status(200).json({ ...r, appName, via: 'resolvedor-universal' });
+    } catch (err: any) {
+      logAudit('WARN', 'APP_OPEN_REJECTED', `Aplicativo '${appName}' não está na allowlist e não foi resolvido`, { appName, erro: err?.message });
+      return res.status(400).json({
+        error: `Não encontrei '${appName}' na allowlist nem nos aplicativos detectáveis desta máquina: ${err?.message || err}`,
+        availableApps: Object.keys(CONFIG.apps || {}),
+        installedApps: listarAppsInstalados().slice(0, 80)
+      });
+    }
   }
 
   const platformKey = process.platform === 'win32' ? 'win32' : 'linux';
@@ -438,20 +450,33 @@ const handleOpenApp = (req: Request, res: Response) => {
     });
   }
 
-  // Executa o comando em processo filho isolado
-  exec(command, (error, stdout, stderr) => {
-    if (error) {
-      logAudit('ERROR', 'APP_OPEN_FAILED', `Falha ao abrir app '${appName}': ${error.message}`, { command });
-    } else {
-      logAudit('INFO', 'APP_OPEN_SUCCESS', `Aplicativo '${appName}' aberto com sucesso`, { command });
+  try {
+    await runShell(command, 4000, USER_HOME_DIR, ambienteGrafico());
+    logAudit('INFO', 'APP_OPEN_SUCCESS', `Aplicativo '${appName}' aberto com sucesso`, { command });
+    return res.status(200).json({
+      message: `Comando enviado para abrir '${appName}'.`,
+      appName,
+      platform: platformKey,
+      command
+    });
+  } catch (err: any) {
+    // A allowlist é só o primeiro caminho. Se ela envelheceu, tenta o resolvedor novo antes de
+    // devolver erro — especialmente importante em Windows, onde um app pode existir como atalho,
+    // App Execution Alias, instalação da Microsoft Store ou .exe em Program Files.
+    try {
+      const r = await abrirAlvoUniversal(appName, req.body?.path);
+      logAudit('WARN', 'APP_OPEN_FALLBACK_SUCCESS', `Comando configurado falhou; fallback abriu '${appName}'`, { command, fallback: r });
+      return res.status(200).json({ ...r, appName, via: 'fallback-da-allowlist', comandoOriginal: command });
+    } catch (fallbackErr: any) {
+      logAudit('ERROR', 'APP_OPEN_FAILED', `Falha ao abrir app '${appName}': ${err.message}`, { command, fallback: fallbackErr?.message });
+      return res.status(500).json({
+        error: `Falha ao abrir '${appName}' pelo comando configurado e pelo fallback: ${fallbackErr?.message || fallbackErr}`,
+        command,
+        availableApps: Object.keys(CONFIG.apps || {}),
+        installedApps: listarAppsInstalados().slice(0, 80)
+      });
     }
-  });
-
-  return res.status(200).json({
-    message: `Comando enviado para abrir '${appName}'.`,
-    appName,
-    platform: platformKey
-  });
+  }
 };
 
 /**
@@ -929,12 +954,25 @@ const APP_CONCEPT_ALIASES: Record<string, { win32: string; darwin: string; linux
   notepad: { win32: 'notepad', darwin: 'open -e', linux: ['gedit', 'gnome-text-editor', 'kate', 'xed', 'mousepad', 'leafpad'] },
   texteditor: { win32: 'notepad', darwin: 'open -e', linux: ['gedit', 'gnome-text-editor', 'kate', 'xed', 'mousepad', 'leafpad'] },
   bloco_de_notas: { win32: 'notepad', darwin: 'open -e', linux: ['gedit', 'gnome-text-editor', 'kate', 'xed', 'mousepad', 'leafpad'] },
+  notas: { win32: 'notepad', darwin: 'open -e', linux: ['gedit', 'gnome-text-editor', 'kate', 'xed', 'mousepad', 'leafpad'] },
   explorer: { win32: 'explorer', darwin: 'open', linux: ['nautilus', 'dolphin', 'pcmanfm', 'thunar', 'nemo', 'xdg-open'] },
   filemanager: { win32: 'explorer', darwin: 'open', linux: ['nautilus', 'dolphin', 'pcmanfm', 'thunar', 'nemo', 'xdg-open'] },
   gerenciador_de_arquivos: { win32: 'explorer', darwin: 'open', linux: ['nautilus', 'dolphin', 'pcmanfm', 'thunar', 'nemo', 'xdg-open'] },
   calculator: { win32: 'calc', darwin: 'open -a Calculator', linux: ['gnome-calculator', 'kcalc', 'qalculate-gtk', 'xcalc'] },
   calculadora: { win32: 'calc', darwin: 'open -a Calculator', linux: ['gnome-calculator', 'kcalc', 'qalculate-gtk', 'xcalc'] },
   terminal: { win32: 'start cmd', darwin: 'open -a Terminal', linux: ['gnome-terminal', 'konsole', 'xfce4-terminal', 'xterm'] },
+  chrome: { win32: 'chrome', darwin: 'open -a "Google Chrome"', linux: ['google-chrome-stable', 'google-chrome', 'chromium', 'chromium-browser'] },
+  google_chrome: { win32: 'chrome', darwin: 'open -a "Google Chrome"', linux: ['google-chrome-stable', 'google-chrome', 'chromium', 'chromium-browser'] },
+  navegador: { win32: 'https://google.com', darwin: 'open https://google.com', linux: ['xdg-open https://google.com', 'google-chrome-stable https://google.com', 'firefox https://google.com'] },
+  browser: { win32: 'https://google.com', darwin: 'open https://google.com', linux: ['xdg-open https://google.com', 'google-chrome-stable https://google.com', 'firefox https://google.com'] },
+  edge: { win32: 'msedge', darwin: 'open -a "Microsoft Edge"', linux: ['microsoft-edge', 'microsoft-edge-stable'] },
+  firefox: { win32: 'firefox', darwin: 'open -a Firefox', linux: ['firefox'] },
+  vscode: { win32: 'code', darwin: 'code', linux: ['code', 'codium'] },
+  vs_code: { win32: 'code', darwin: 'code', linux: ['code', 'codium'] },
+  code: { win32: 'code', darwin: 'code', linux: ['code', 'codium'] },
+  visual_studio_code: { win32: 'code', darwin: 'code', linux: ['code', 'codium'] },
+  whatsapp: { win32: 'WhatsApp', darwin: 'open -a WhatsApp', linux: ['whatsapp-for-linux', 'xdg-open https://web.whatsapp.com'] },
+  spotify: { win32: 'spotify:', darwin: 'open -a Spotify', linux: ['spotify'] },
 };
 
 /**
@@ -945,10 +983,161 @@ const APP_CONCEPT_ALIASES: Record<string, { win32: string; darwin: string; linux
  */
 const LOCATION_ALIASES = new Set(['explorer', 'filemanager', 'gerenciador_de_arquivos', 'terminal']);
 
+type AppDetectado = { nome: string; origem: string; caminho?: string; comando?: string };
+
+function normalizarNomeDeApp(nome: string): string {
+  return String(nome || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\.(lnk|url|desktop|exe|appimage)$/i, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function caminhoExiste(caminho: string): boolean {
+  try { return fs.existsSync(caminho); } catch { return false; }
+}
+
+function listarRecursivoLimitado(
+  raiz: string,
+  aceitar: (arquivo: string) => boolean,
+  limite = 500,
+  profundidadeMaxima = 5
+): string[] {
+  const achados: string[] = [];
+  const visitar = (dir: string, profundidade: number) => {
+    if (achados.length >= limite || profundidade > profundidadeMaxima || !caminhoExiste(dir)) return;
+    let itens: fs.Dirent[] = [];
+    try { itens = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const item of itens) {
+      if (achados.length >= limite) break;
+      const caminho = path.join(dir, item.name);
+      if (item.isDirectory()) visitar(caminho, profundidade + 1);
+      else if (item.isFile() && aceitar(caminho)) achados.push(caminho);
+    }
+  };
+  visitar(raiz, 0);
+  return achados;
+}
+
+function pastasDoStartMenuWindows(): string[] {
+  return [
+    process.env.ProgramData ? path.join(process.env.ProgramData, 'Microsoft', 'Windows', 'Start Menu', 'Programs') : '',
+    process.env.APPDATA ? path.join(process.env.APPDATA, 'Microsoft', 'Windows', 'Start Menu', 'Programs') : '',
+  ].filter(Boolean);
+}
+
+function atalhosWindows(): AppDetectado[] {
+  if (process.platform !== 'win32') return [];
+  const out: AppDetectado[] = [];
+  for (const pasta of pastasDoStartMenuWindows()) {
+    for (const arquivo of listarRecursivoLimitado(pasta, p => /\.(lnk|url)$/i.test(p), 700, 8)) {
+      out.push({ nome: path.basename(arquivo).replace(/\.(lnk|url)$/i, ''), origem: 'start-menu', caminho: arquivo });
+    }
+  }
+  return out;
+}
+
+function executaveisWindowsBasicos(): AppDetectado[] {
+  if (process.platform !== 'win32') return [];
+  const raizes = [
+    process.env.ProgramFiles || '',
+    process.env['ProgramFiles(x86)'] || '',
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Programs') : '',
+  ].filter(Boolean);
+  const out: AppDetectado[] = [];
+  for (const raiz of raizes) {
+    for (const arquivo of listarRecursivoLimitado(raiz, p => /\.exe$/i.test(p), 900, 4)) {
+      const base = path.basename(arquivo, '.exe');
+      // Evita poluir o contexto com helpers/uninstallers que o usuário não chama como app.
+      if (/^(unins|uninstall|setup|update|crash|helper|elevate|service|broker)/i.test(base)) continue;
+      out.push({ nome: base, origem: 'program-files', caminho: arquivo });
+    }
+  }
+  return out;
+}
+
+function appsDesktopLinux(): AppDetectado[] {
+  if (process.platform !== 'linux') return [];
+  const pastas = [
+    '/usr/share/applications',
+    '/var/lib/flatpak/exports/share/applications',
+    path.join(USER_HOME_DIR, '.local/share/applications'),
+    path.join(USER_HOME_DIR, '.local/share/flatpak/exports/share/applications'),
+  ];
+  const out: AppDetectado[] = [];
+  for (const pasta of pastas) {
+    for (const arquivo of listarRecursivoLimitado(pasta, p => /\.desktop$/i.test(p), 700, 2)) {
+      try {
+        const texto = fs.readFileSync(arquivo, 'utf8');
+        const nome = texto.match(/^Name(?:\[pt_BR\]|\[pt\])?=(.+)$/m)?.[1]
+          || texto.match(/^Name=(.+)$/m)?.[1]
+          || path.basename(arquivo, '.desktop');
+        const execLinha = texto.match(/^Exec=(.+)$/m)?.[1]?.replace(/%[fFuUdDnNickvm]/g, '').trim();
+        out.push({ nome, origem: 'desktop-entry', caminho: arquivo, comando: execLinha });
+      } catch { /* ignora entrada quebrada */ }
+    }
+  }
+  return out;
+}
+
+let cacheAppsInstalados: { quando: number; platform: NodeJS.Platform; apps: AppDetectado[] } | null = null;
+
+function listarAppsInstalados(): AppDetectado[] {
+  if (cacheAppsInstalados && cacheAppsInstalados.platform === process.platform && Date.now() - cacheAppsInstalados.quando < 60_000) {
+    return cacheAppsInstalados.apps;
+  }
+  const configurados: AppDetectado[] = Object.keys(CONFIG.apps || {}).map(nome => ({ nome, origem: 'config' }));
+  const aliases: AppDetectado[] = Object.keys(APP_CONCEPT_ALIASES).map(nome => ({ nome: nome.replace(/_/g, ' '), origem: 'alias' }));
+  const detectados = process.platform === 'win32'
+    ? [...atalhosWindows(), ...executaveisWindowsBasicos()]
+    : process.platform === 'linux'
+      ? appsDesktopLinux()
+      : [];
+  const vistos = new Set<string>();
+  const apps = [...configurados, ...aliases, ...detectados].filter(app => {
+    const chave = `${normalizarNomeDeApp(app.nome)}|${app.origem}|${app.caminho || app.comando || ''}`;
+    if (!normalizarNomeDeApp(app.nome) || vistos.has(chave)) return false;
+    vistos.add(chave);
+    return true;
+  });
+  cacheAppsInstalados = { quando: Date.now(), platform: process.platform, apps };
+  return apps;
+}
+
+function encontrarAppDetectado(alvo: string): AppDetectado | null {
+  const procurado = normalizarNomeDeApp(alvo);
+  if (!procurado) return null;
+  const apps = listarAppsInstalados();
+  return apps.find(a => normalizarNomeDeApp(a.nome) === procurado)
+    || apps.find(a => normalizarNomeDeApp(a.nome).includes(procurado))
+    || apps.find(a => procurado.includes(normalizarNomeDeApp(a.nome)));
+}
+
+function limparNomeExecutavel(alvo: string): string {
+  return String(alvo || '').trim().replace(/[&|<>^"`;$]/g, '').split(/\s+/)[0];
+}
+
+function quoteCmdArg(valor: string): string {
+  return `"${String(valor).replace(/"/g, '""')}"`;
+}
+
+function quotePosixArg(valor: string): string {
+  return `'${String(valor).replace(/'/g, `'\\''`)}'`;
+}
+
 /** Verifica rapidamente (comando que sempre retorna na hora) se um binário existe no PATH. */
 function binaryExists(binary: string): Promise<boolean> {
+  const clean = limparNomeExecutavel(binary);
+  if (!clean) return Promise.resolve(false);
+  if (process.platform === 'win32') {
+    return new Promise((resolve) => {
+      execFile('where.exe', [clean], { timeout: 2000, windowsHide: true }, (error) => resolve(!error));
+    });
+  }
   return new Promise((resolve) => {
-    exec(`command -v ${binary}`, { timeout: 2000 }, (error) => resolve(!error));
+    exec(`command -v ${quotePosixArg(clean)}`, { timeout: 2000 }, (error) => resolve(!error));
   });
 }
 
@@ -1006,6 +1195,154 @@ async function tryCommandsInOrder(commands: string[], cwd: string = USER_HOME_DI
   throw new Error(`Nenhum dos programas testados está instalado (${commands.join(', ')}).`);
 }
 
+async function rodarPrimeiroQueFuncionar(commands: string[], cwd: string = USER_HOME_DIR): Promise<{ command: string; tentativas: string[] }> {
+  const tentativas: string[] = [];
+  let ultimoErro = '';
+  for (const command of commands.filter(Boolean)) {
+    tentativas.push(command);
+    try {
+      await runShell(command, 5000, cwd, ambienteGrafico());
+      return { command, tentativas };
+    } catch (err: any) {
+      ultimoErro = err?.message || String(err);
+    }
+  }
+  throw new Error(`Nenhuma forma de abertura funcionou. Tentativas: ${tentativas.join(' | ')}${ultimoErro ? `. Último erro: ${ultimoErro}` : ''}`);
+}
+
+async function abrirAppDetectado(app: AppDetectado, alvo: string): Promise<{ command: string; appDetectado: AppDetectado; tentativas: string[] }> {
+  const platform = process.platform;
+  if (platform === 'win32') {
+    if (app.caminho) {
+      const command = `start "" ${quoteCmdArg(app.caminho)}`;
+      const r = await rodarPrimeiroQueFuncionar([command], USER_HOME_DIR);
+      return { ...r, appDetectado: app };
+    }
+  } else if (platform === 'linux') {
+    if (app.caminho?.endsWith('.desktop')) {
+      const id = path.basename(app.caminho);
+      const tentativas = [];
+      if (await binaryExists('gtk-launch')) tentativas.push(`gtk-launch ${quotePosixArg(id.replace(/\.desktop$/i, ''))}`);
+      if (app.comando) tentativas.push(app.comando.replace(/[;&|`$<>]/g, '').trim());
+      const r = await rodarPrimeiroQueFuncionar(tentativas, USER_HOME_DIR);
+      return { ...r, appDetectado: app };
+    }
+    if (app.comando) {
+      const r = await rodarPrimeiroQueFuncionar([app.comando.replace(/[;&|`$<>]/g, '').trim()], USER_HOME_DIR);
+      return { ...r, appDetectado: app };
+    }
+  }
+  throw new Error(`Encontrei '${app.nome}' (${app.origem}), mas não consegui montar um comando seguro para abrir.`);
+}
+
+async function abrirAlvoUniversal(targetRaw: string, pathRaw?: string): Promise<any> {
+  const target = String(targetRaw || '').trim();
+  if (!target) throw new Error("Parâmetro 'target' é obrigatório (nome de app, caminho de arquivo/pasta ou URL).");
+
+  const platform = process.platform;
+  const conceptKey = target.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '_');
+  const alias = APP_CONCEPT_ALIASES[conceptKey];
+
+  const requestedPath = pathRaw ? resolverCaminhoDetalhado(String(pathRaw)) : null;
+  const openAtDir = requestedPath?.existe ? requestedPath.caminho : USER_HOME_DIR;
+
+  if (areaParalela && ehEndereco(target)) {
+    const r = await abrirEnderecoNaAreaDoAgente(target);
+    if ('error' in r) throw new Error(r.error);
+    logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto na área do agente via ${r.navegador}`, { target, navegador: r.navegador });
+    return {
+      message: `'${target}' aberto na tela do agente (${r.navegador}).`,
+      target,
+      navegador: r.navegador,
+      resumo: `Abri "${target}" numa janela própria do ${r.navegador}, na sua tela. Ela pode levar alguns segundos para aparecer.`
+    };
+  }
+
+  if (alias) {
+    const isLocationAlias = LOCATION_ALIASES.has(conceptKey);
+    if (platform === 'linux') {
+      const candidates = (conceptKey === 'terminal' || !isLocationAlias)
+        ? alias.linux
+        : alias.linux.map(bin => `${bin} ${quotePosixArg(openAtDir)}`);
+      const { command } = await tryCommandsInOrder(candidates, openAtDir);
+      logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto com sucesso via alias`, { target, command, cwd: openAtDir });
+      return { message: `'${target}' aberto com sucesso.`, target, path: isLocationAlias ? openAtDir : undefined, command };
+    }
+
+    const command = platform === 'win32'
+      ? conceptKey === 'terminal'
+        ? `start "" cmd /K "cd /d ${quoteCmdArg(openAtDir)}"`
+        : isLocationAlias
+          ? `start "" ${alias.win32} ${quoteCmdArg(openAtDir)}`
+          : `start "" ${alias.win32}`
+      : isLocationAlias ? `${alias.darwin} ${quoteCmdArg(openAtDir)}` : `${alias.darwin}`;
+    await runShell(command, 4000, USER_HOME_DIR, ambienteGrafico());
+    logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto com sucesso via alias`, { target, command, cwd: openAtDir });
+    return { message: `'${target}' aberto com sucesso.`, target, path: isLocationAlias ? openAtDir : undefined, command };
+  }
+
+  const resolvido = resolverCaminhoDetalhado(target);
+  const expandedTarget = resolvido.existe ? resolvido.caminho : expandHomePath(target);
+
+  if (resolvido.existe || ehEndereco(target)) {
+    const command = platform === 'win32'
+      ? `start "" ${quoteCmdArg(expandedTarget)}`
+      : platform === 'darwin'
+        ? `open ${quotePosixArg(expandedTarget)}`
+        : `xdg-open ${quotePosixArg(expandedTarget)}`;
+    await runShell(command, 4000, USER_HOME_DIR, ambienteGrafico());
+    logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto com sucesso`, { target, command, resolvido: expandedTarget });
+    return {
+      message: `'${target}' aberto com sucesso.`,
+      target,
+      caminhoUsado: expandedTarget,
+      command,
+      resumo: resolvido.comoResolveu ? `${resolvido.comoResolveu} Abri "${expandedTarget}".` : undefined
+    };
+  }
+
+  const detectado = encontrarAppDetectado(target);
+  if (detectado && detectado.origem !== 'alias' && detectado.origem !== 'config') {
+    const r = await abrirAppDetectado(detectado, target);
+    logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto como app detectado`, { target, detectado, command: r.command });
+    return {
+      message: `'${target}' aberto como aplicativo instalado.`,
+      target,
+      command: r.command,
+      tentativas: r.tentativas,
+      appDetectado: detectado
+    };
+  }
+
+  const nomeDeBinario = limparNomeExecutavel(target);
+  const tentativas: string[] = [];
+  if (nomeDeBinario && pareceNomeDePrograma(target)) {
+    if (platform === 'win32') {
+      if (await binaryExists(nomeDeBinario)) tentativas.push(`start "" ${quoteCmdArg(nomeDeBinario)}`);
+      if (!nomeDeBinario.toLowerCase().endsWith('.exe') && await binaryExists(`${nomeDeBinario}.exe`)) {
+        tentativas.push(`start "" ${quoteCmdArg(`${nomeDeBinario}.exe`)}`);
+      }
+      // App Execution Alias / protocolo / Store apps: mesmo sem aparecer no PATH, o shell do
+      // Windows pode resolver. Fica por último porque "start" às vezes abre uma busca se o nome
+      // estiver errado; primeiro tentamos PATH/atalhos/Program Files.
+      tentativas.push(`start "" ${quoteCmdArg(nomeDeBinario)}`);
+    } else if (platform === 'linux') {
+      if (await binaryExists(nomeDeBinario)) tentativas.push(`${nomeDeBinario}`);
+    } else {
+      tentativas.push(`open -a ${quoteCmdArg(target)}`);
+    }
+  }
+
+  if (tentativas.length) {
+    const r = await rodarPrimeiroQueFuncionar(tentativas, USER_HOME_DIR);
+    logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto como programa por fallback`, { target, command: r.command });
+    return { message: `'${target}' aberto como aplicativo.`, target, command: r.command, tentativas: r.tentativas };
+  }
+
+  const amostra = listarAppsInstalados().slice(0, 60).map(a => a.nome);
+  throw new Error(`Não reconheci '${target}' como URL, caminho, pasta ou aplicativo instalado. Apps detectados: ${amostra.join(', ') || 'nenhum'}`);
+}
+
 /**
  * POST /open-any - Abre QUALQUER app instalado, arquivo, pasta ou URL pelo nome/caminho,
  * sem precisar estar pré-cadastrado em config.json (diferente de /open-app, que só abre
@@ -1013,132 +1350,16 @@ async function tryCommandsInOrder(commands: string[], cwd: string = USER_HOME_DI
  * nomes-conceito de app (ex: 'notepad', 'explorer') para o equivalente real da plataforma.
  */
 const handleOpenAny = async (req: Request, res: Response) => {
-  const target = (req.body?.target || '').toString().trim();
-  if (!target) {
-    return res.status(400).json({ error: "Parâmetro 'target' é obrigatório (nome de app, caminho de arquivo/pasta ou URL)." });
-  }
-
-  const platform = process.platform;
-  const conceptKey = target.toLowerCase().replace(/\s+/g, '_');
-  const alias = APP_CONCEPT_ALIASES[conceptKey];
-
-  // Para terminal/gerenciador de arquivos, o local a abrir é o caminho pedido (ou a casa do
-  // usuário) — nunca o diretório do próprio OSONE.
-  const requestedPath = req.body?.path ? expandHomePath(String(req.body.path)) : USER_HOME_DIR;
-  const openAtDir = fs.existsSync(requestedPath) ? requestedPath : USER_HOME_DIR;
-
   try {
-    /**
-     * ENDEREÇO NA TELA DO AGENTE: instância própria, sempre.
-     *
-     * Vem antes de tudo porque é o caminho que estava quebrado em silêncio — devolvendo "sucesso"
-     * enquanto a aba nascia na tela do usuário. Com a tela do agente desligada, nada disso se
-     * aplica: entregar o endereço ao navegador que a pessoa já tem aberto é exatamente o certo.
-     */
-    if (areaParalela && ehEndereco(target)) {
-      const r = await abrirEnderecoNaAreaDoAgente(target);
-      if ('error' in r) {
-        logAudit('ERROR', 'OPEN_ANY_FAILED', `Falha ao abrir '${target}' na área do agente: ${r.error}`, { target });
-        return res.status(500).json({ error: r.error });
-      }
-      logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto na área do agente via ${r.navegador}`, { target, navegador: r.navegador });
-      return res.status(200).json({
-        message: `'${target}' aberto na tela do agente (${r.navegador}).`,
-        target,
-        // O navegador leva alguns segundos para desenhar a primeira janela; dizer isso evita a
-        // conclusão errada de "não abriu" enquanto ele ainda está subindo.
-        resumo: `Abri "${target}" numa janela própria do ${r.navegador}, na sua tela. Ela pode levar alguns segundos para aparecer.`
-      });
-    }
-
-    if (alias) {
-      const isLocationAlias = LOCATION_ALIASES.has(conceptKey);
-
-      if (platform === 'linux') {
-        // Gerenciadores de arquivo recebem a pasta como argumento; terminais são lançados
-        // já com o diretório de trabalho correto (cwd), que é como eles herdam o local.
-        const candidates = (conceptKey === 'terminal' || !isLocationAlias)
-          ? alias.linux
-          : alias.linux.map(bin => `${bin} "${openAtDir}"`);
-        const { command } = await tryCommandsInOrder(candidates, openAtDir);
-        logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto com sucesso via alias`, { target, command, cwd: openAtDir });
-        return res.status(200).json({ message: `'${target}' aberto com sucesso.`, target, path: isLocationAlias ? openAtDir : undefined });
-      }
-
-      let command: string;
-      if (platform === 'win32') {
-        command = conceptKey === 'terminal'
-          ? `start "" cmd /K "cd /d ""${openAtDir}"""`
-          : isLocationAlias
-            ? `start "" ${alias.win32} "${openAtDir}"`
-            : `start "" ${alias.win32}`;
-      } else {
-        command = isLocationAlias ? `${alias.darwin} "${openAtDir}"` : `${alias.darwin}`;
-      }
-      await runShell(command, 4000, USER_HOME_DIR, ambienteGrafico());
-      logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto com sucesso via alias`, { target, command, cwd: openAtDir });
-      return res.status(200).json({ message: `'${target}' aberto com sucesso.`, target, path: isLocationAlias ? openAtDir : undefined });
-    }
-
-    /**
-     * O CAMINHO É RESOLVIDO NO DISCO, não apenas expandido como texto.
-     *
-     * Era aqui que "home/usuario/downloads" saía errado: 'expandHomePath' só troca o '~' e devolve
-     * o resto como veio, então um caminho sem a barra inicial chegava relativo ao comando — e
-     * relativo ao lugar onde o programa roda é a pasta do próprio OSONE. Daí o nome do app
-     * aparecer no meio de um caminho que ninguém escreveu assim.
-     *
-     * A resolução também conserta maiúsculas ('downloads' → 'Downloads', que no Linux são pastas
-     * diferentes) e reconhece caminho de outro sistema operacional.
-     */
-    const resolvido = resolverCaminhoDetalhado(target);
-    const expandedTarget = resolvido.existe ? resolvido.caminho : expandHomePath(target);
-
-    /**
-     * NOME DE PROGRAMA É PROGRAMA, NÃO CAMINHO DE ARQUIVO.
-     *
-     * Sem isto, pedir "google-chrome" virava `xdg-open google-chrome`, que interpreta o texto como
-     * caminho relativo e responde `gio: file:///home/usuario/google-chrome: arquivo não
-     * encontrado` — uma mensagem que aponta para o lugar errado e faz parecer que o programa não
-     * está instalado, quando ele está no PATH. Foi exatamente o que apareceu em uso.
-     */
-    if (platform !== 'win32' && !ehEndereco(target) && !fs.existsSync(expandedTarget)) {
-      const nomeDeBinario = target.trim().split(/\s+/)[0];
-      if (pareceNomeDePrograma(target) && await binaryExists(nomeDeBinario)) {
-        launchDetached(target.replace(/[;&|`$<>]/g, ''), USER_HOME_DIR);
-        logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto como programa`, { target });
-        return res.status(200).json({ message: `'${target}' aberto com sucesso.`, target });
-      }
-    }
-
-    const safeTarget = expandedTarget.replace(/"/g, '\\"');
-    const command = platform === 'win32'
-      ? `start "" "${safeTarget}"`
-      : platform === 'darwin'
-        ? `open "${safeTarget}"`
-        : `xdg-open "${safeTarget}"`;
-    // cwd na casa do usuário para que caminhos relativos nunca resolvam para a pasta do app.
-    // O ambiente gráfico decide em QUAL tela a janela vai nascer — a do agente, quando ligada.
-    await runShell(command, 4000, USER_HOME_DIR, ambienteGrafico());
-    logAudit('INFO', 'OPEN_ANY_SUCCESS', `'${target}' aberto com sucesso`, { target, command, resolvido: expandedTarget });
-    return res.status(200).json({
-      message: `'${target}' aberto com sucesso.`,
-      target,
-      caminhoUsado: expandedTarget,
-      /**
-       * Dizer O QUE FOI ABERTO, quando não é exatamente o que foi pedido.
-       *
-       * Um ajuste silencioso de caminho é pior do que o erro que ele evita: o agente segue
-       * achando que está numa pasta e está noutra. Com o ajuste no relatório, quem acompanha vê
-       * "você pediu X, abri Y" e pode corrigir o rumo.
-       */
-      resumo: resolvido.comoResolveu
-        ? `${resolvido.comoResolveu} Abri "${expandedTarget}".`
-        : undefined
-    });
+    const r = await abrirAlvoUniversal(req.body?.target, req.body?.path);
+    return res.status(200).json(r);
   } catch (error: any) {
+    const target = (req.body?.target || '').toString().trim();
     logAudit('ERROR', 'OPEN_ANY_FAILED', `Falha ao abrir '${target}': ${error.message}`, { target });
-    return res.status(500).json({ error: `Não foi possível abrir '${target}': ${error.message}` });
+    return res.status(500).json({
+      error: `Não foi possível abrir '${target}': ${error.message}`,
+      installedApps: listarAppsInstalados().slice(0, 80)
+    });
   }
 };
 
