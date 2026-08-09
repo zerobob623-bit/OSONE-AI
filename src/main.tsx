@@ -88,6 +88,10 @@ const customFetch = async function (input: RequestInfo | URL, init?: RequestInit
           } catch (_) {}
         }
 
+        if (reqBody.codeAiProvider && reqBody.codeAiProvider !== "gemini") {
+          return originalFetch(input, init);
+        }
+
         if (clientApiKey) {
           console.log("[Vercel-OSONE Fallback] Intercepting fetch and making direct client-side call to Google Gemini API...");
           

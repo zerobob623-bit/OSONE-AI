@@ -8,11 +8,11 @@ import {
   Upload, X, Mic, Loader2, MessageSquare, AlertCircle,
   Bot, Layers, ShieldCheck, Terminal, Cpu, Zap, RotateCw, CheckCircle2,
   AlertTriangle, ChevronDown, ChevronUp, PlayCircle, Gamepad2,
-  Undo, Redo, RotateCcw, Paperclip, Flame, Search, Replace
+  Undo, Redo, RotateCcw, Paperclip, Flame, Search, Replace, KeyRound
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { CodePreview } from './CodePreview';
-import { CodeRepositoryFile } from '../types';
+import { ApiKeys, CodeRepositoryFile } from '../types';
 import { buildCodeEditSystemInstruction, applyModelCodeResponse, parseSections, pareceDocumentoIncompleto } from '../lib/codeEdits';
 import { montarPreview } from '../lib/montarPreview';
 import { ProblemaDoPreview, juntarProblemas, montarPedidoDeCorrecao } from '../lib/errosDoPreview';
@@ -376,9 +376,10 @@ export const CodeWorkspace: React.FC<{
     sinal?: AbortSignal
   ) => Promise<{ conteudo: string; resumo: string } | null>;
   onStartLiveVoice?: () => void;
-  apiKeys?: any;
+  apiKeys?: ApiKeys;
+  onUpdateApiKeys?: (patch: Partial<ApiKeys>) => void;
   isGenerating?: boolean;
-}> = ({ onClose, onGenerateCodeRequest, onStartLiveVoice, apiKeys, isGenerating }) => {
+}> = ({ onClose, onGenerateCodeRequest, onStartLiveVoice, apiKeys, onUpdateApiKeys, isGenerating }) => {
   // 5 PROJECTS MANAGEMENT
   const [projects, setProjects] = useState<OSONEProject[]>(() => {
     try {
@@ -603,6 +604,7 @@ export const CodeWorkspace: React.FC<{
 
   // HUNTER AGENT STATE
   const [isHunterModalOpen, setIsHunterModalOpen] = useState<boolean>(false);
+  const [isCodeApiSettingsOpen, setIsCodeApiSettingsOpen] = useState<boolean>(false);
   const [hunterPrompt, setHunterPrompt] = useState<string>('');
   const [hunterStatus, setHunterStatus] = useState<'idle' | 'analyzing' | 'doubt' | 'success' | 'error'>('idle');
   const [hunterReport, setHunterReport] = useState<string | null>(null);
@@ -1361,9 +1363,7 @@ export const CodeWorkspace: React.FC<{
 
     try {
       const resultado = await generateWithRetry({
-        clientApiKey: apiKeys?.gemini || '',
-        model: OSONE_CODE_BEST_MODEL,
-        modeloDeReserva: apiKeys?.geminiModel || '',
+        ...montarConfigDaApiDoCode(true),
         // Sugestão é resposta curta: os ajustes pesados da geração de código só encareceriam e
         // atrasariam algo que precisa ser barato para poder acontecer com frequência.
         unrestricted: false,
@@ -1429,6 +1429,41 @@ Responda APENAS um array JSON de 4 strings. Exemplo do formato:
   const codigoQueRoda = ['python', 'typescript', 'sql'].includes(linguagemAtiva)
     ? (activeFile?.content || '')
     : montarPreview(files, activeFile);
+
+  const provedorDoCode = apiKeys?.osoneCodeProvider || 'gemini';
+  const nomeDoProvedorDoCode = provedorDoCode === 'openai'
+    ? 'ChatGPT/OpenAI'
+    : provedorDoCode === 'anthropic'
+      ? 'Claude'
+      : 'Gemini padrão';
+  const modeloDoProvedorDoCode = provedorDoCode === 'openai'
+    ? (apiKeys?.osoneCodeOpenAiModel || 'gpt-5.5')
+    : provedorDoCode === 'anthropic'
+      ? (apiKeys?.osoneCodeAnthropicModel || 'claude-sonnet-5')
+      : OSONE_CODE_BEST_MODEL;
+
+  const montarConfigDaApiDoCode = (forcarLeve = false): Record<string, unknown> => {
+    if (provedorDoCode === 'openai') {
+      return {
+        codeAiProvider: 'openai',
+        openAiApiKey: apiKeys?.osoneCodeOpenAiApiKey || '',
+        model: apiKeys?.osoneCodeOpenAiModel || 'gpt-5.5'
+      };
+    }
+    if (provedorDoCode === 'anthropic') {
+      return {
+        codeAiProvider: 'anthropic',
+        anthropicApiKey: apiKeys?.osoneCodeAnthropicApiKey || '',
+        model: apiKeys?.osoneCodeAnthropicModel || 'claude-sonnet-5'
+      };
+    }
+    return {
+      codeAiProvider: 'gemini',
+      clientApiKey: apiKeys?.gemini || '',
+      model: forcarLeve ? (apiKeys?.geminiModel || OSONE_CODE_BEST_MODEL) : OSONE_CODE_BEST_MODEL,
+      modeloDeReserva: apiKeys?.geminiModel || ''
+    };
+  };
 
   /**
    * Guarda um problema vindo do preview.
@@ -1698,7 +1733,6 @@ Responda APENAS um array JSON de 4 strings. Exemplo do formato:
 
     try {
       setHunterProgress(50);
-      const effectiveApiKey = apiKeys?.gemini || '';
       const currentCode = activeFile ? activeFile.content : '';
 
       const systemInstruction = `Você é o HUNTER, o Caçador e Examinador Agêntico de Código do OSONE Studio.
@@ -1741,11 +1775,9 @@ ${currentCode}`;
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          clientApiKey: effectiveApiKey,
-          model: OSONE_CODE_BEST_MODEL,
+          ...montarConfigDaApiDoCode(),
           // Mesma reserva do Enxame: sem ela, uma chave que não sirva os dois modelos preferidos
           // faz o Hunter falhar sempre, mesmo com o chat funcionando.
-          modeloDeReserva: apiKeys?.geminiModel || '',
           prompt: userContentPayload,
           systemInstruction,
           unrestricted: true
@@ -1881,17 +1913,7 @@ ${currentCode}`;
       setSwarmLogs(prev => [...prev, { agent, message, timestamp: timeStr, type }]);
     };
 
-    const effectiveApiKey = apiKeys?.gemini || '';
-    const currentModel = OSONE_CODE_BEST_MODEL;
-    /**
-     * O modelo dos Ajustes é a ÚLTIMA reserva — é o único que se sabe que funciona com a chave
-     * desta pessoa. Sem ele, a lista de candidatos do Enxame se resume aos dois modelos preferidos,
-     * e uma chave que não os sirva faz o Enxame falhar SEMPRE, enquanto o chat segue funcionando
-     * normalmente com o modelo configurado. Esta reserva já existia na caixa de gerar código
-     * (App.tsx); o Enxame e o Hunter tinham ficado de fora.
-     */
-    const modeloDeReserva = apiKeys?.geminiModel || '';
-
+    const configDaApiDoCode = montarConfigDaApiDoCode();
     const controle = new AbortController();
     cancelamentoDoEnxameRef.current?.abort();
     cancelamentoDoEnxameRef.current = controle;
@@ -1919,10 +1941,8 @@ FORMATO OBRIGATÓRIO (JSON estrito):
 
       const pmFallback = { gdd: swarmPrompt, mechanics: ["Controles Responsivos", "Pontuação"], requirements: ["HTML5 Canvas", "CSS3 / Tailwind"] };
       const pmResult = await generateWithRetry({
-        clientApiKey: effectiveApiKey,
-        model: currentModel,
+        ...configDaApiDoCode,
         prompt: `CONCEITO SOLICITADO PELO USUÁRIO:\n"${swarmPrompt}"`,
-        modeloDeReserva,
         systemInstruction: pmSystemInstruction,
         responseMimeType: "application/json"
       }, 2, controle.signal);
@@ -1959,10 +1979,8 @@ FORMATO OBRIGATÓRIO (JSON estrito):
 
       const archFallback = { fileStructure: "index.html", gameLoopStrategy: "requestAnimationFrame loop", librariesUsed: ["Tailwind CSS", "Lucide"] };
       const archResult = await generateWithRetry({
-        clientApiKey: effectiveApiKey,
-        model: currentModel,
+        ...configDaApiDoCode,
         prompt: `GDD DO PRODUCT MANAGER:\n${JSON.stringify(pmParsed, null, 2)}`,
-        modeloDeReserva,
         systemInstruction: architectSystemInstruction,
         responseMimeType: "application/json"
       }, 2, controle.signal);
@@ -2029,10 +2047,8 @@ O código DEVE conter:
           : `Não há código existente ainda. Crie do zero.\n\nESPECIFICAÇÕES:\n- Pedido do Usuário: "${swarmPrompt}"\n- GDD do Produto: ${JSON.stringify(pmParsed)}\n- Arquitetura: ${JSON.stringify(archParsed)}`;
 
         const coderResult = await generateWithRetry({
-          clientApiKey: effectiveApiKey,
-          model: currentModel,
+          ...configDaApiDoCode,
           prompt: coderPrompt,
-          modeloDeReserva,
           systemInstruction: coderSystemInstruction
         }, 2, controle.signal);
 
@@ -2150,13 +2166,11 @@ FORMATO OBRIGATÓRIO (JSON estrito):
 }`;
 
         const qaResult = await generateWithRetry({
-          clientApiKey: effectiveApiKey,
-          model: currentModel,
+          ...configDaApiDoCode,
           // Sem cortar o código: o Gemini suporta contexto grande, e um corte fixo (antes 15000
           // chars) deixava o final do arquivo — telas de Game Over, efeitos sonoros, fechamento
           // de tags — fora da revisão do QA justamente nos projetos maiores/melhores.
           prompt: `CÓDIGO GERADO PELO ENGENHEIRO:\n\n${lastCode}`,
-          modeloDeReserva,
           systemInstruction: qaSystemInstruction,
           responseMimeType: "application/json"
         }, 2, controle.signal);
@@ -2324,6 +2338,145 @@ FORMATO OBRIGATÓRIO (JSON estrito):
         )}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {isCodeApiSettingsOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.96, y: 16 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.96, y: 16 }}
+              className="w-full max-w-2xl rounded-3xl border border-cyan-500/20 bg-[#0b1018] shadow-2xl shadow-cyan-950/50 overflow-hidden"
+            >
+              <div className="p-5 border-b border-white/10 flex items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2 text-cyan-300 text-[11px] font-mono uppercase tracking-[0.22em]">
+                    <KeyRound size={14} /> API do OSONE CODE
+                  </div>
+                  <h3 className="text-xl font-semibold text-white mt-2">Escolha o motor de código</h3>
+                  <p className="text-sm text-zinc-400 mt-1">
+                    Gemini segue como padrão. OpenAI/ChatGPT e Claude usam a chave paga da própria pessoa.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setIsCodeApiSettingsOpen(false)}
+                  className="p-2 rounded-xl bg-white/5 text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
+                  title="Fechar configurações da API do Code"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="p-5 space-y-5">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {[
+                    { id: 'gemini', label: 'Gemini padrão', desc: 'Usa a chave Gemini do OSONE/usuário' },
+                    { id: 'openai', label: 'ChatGPT/OpenAI', desc: 'Cobra na conta OpenAI da chave informada' },
+                    { id: 'anthropic', label: 'Claude', desc: 'Cobra na conta Anthropic da chave informada' }
+                  ].map((opcao) => (
+                    <button
+                      key={opcao.id}
+                      onClick={() => onUpdateApiKeys?.({ osoneCodeProvider: opcao.id as ApiKeys['osoneCodeProvider'] })}
+                      className={cn(
+                        "text-left rounded-2xl border p-3 transition-all",
+                        provedorDoCode === opcao.id
+                          ? "bg-cyan-500/15 border-cyan-400/50 text-white shadow-lg shadow-cyan-950/40"
+                          : "bg-white/[0.03] border-white/10 text-zinc-300 hover:bg-white/[0.06]"
+                      )}
+                    >
+                      <div className="flex items-center gap-2 text-sm font-semibold">
+                        {provedorDoCode === opcao.id ? <Check size={14} className="text-emerald-300" /> : <Cpu size={14} className="text-zinc-500" />}
+                        {opcao.label}
+                      </div>
+                      <p className="text-[11px] text-zinc-500 mt-1 leading-relaxed">{opcao.desc}</p>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="rounded-2xl border border-amber-500/25 bg-amber-500/10 p-3 text-xs text-amber-100 leading-relaxed">
+                  <strong>Aviso de cobrança:</strong> ao selecionar ChatGPT/OpenAI ou Claude, as chamadas do OSONE CODE
+                  são enviadas para a API escolhida e os custos são cobrados diretamente da conta dona da chave. O OSONE
+                  não controla cota, saldo, limites nem reembolsos dessas APIs externas.
+                </div>
+
+                {provedorDoCode === 'openai' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <label className="space-y-1.5">
+                      <span className="text-[11px] uppercase tracking-[0.18em] text-zinc-500 font-mono">Chave OpenAI</span>
+                      <input
+                        type="password"
+                        value={apiKeys?.osoneCodeOpenAiApiKey || ''}
+                        onChange={(e) => onUpdateApiKeys?.({ osoneCodeOpenAiApiKey: e.target.value })}
+                        placeholder="sk-..."
+                        className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-cyan-400/60"
+                      />
+                    </label>
+                    <label className="space-y-1.5">
+                      <span className="text-[11px] uppercase tracking-[0.18em] text-zinc-500 font-mono">Modelo OpenAI</span>
+                      <input
+                        value={apiKeys?.osoneCodeOpenAiModel || 'gpt-5.5'}
+                        onChange={(e) => onUpdateApiKeys?.({ osoneCodeOpenAiModel: e.target.value })}
+                        placeholder="gpt-5.5"
+                        className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-cyan-400/60"
+                      />
+                    </label>
+                  </div>
+                )}
+
+                {provedorDoCode === 'anthropic' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <label className="space-y-1.5">
+                      <span className="text-[11px] uppercase tracking-[0.18em] text-zinc-500 font-mono">Chave Anthropic</span>
+                      <input
+                        type="password"
+                        value={apiKeys?.osoneCodeAnthropicApiKey || ''}
+                        onChange={(e) => onUpdateApiKeys?.({ osoneCodeAnthropicApiKey: e.target.value })}
+                        placeholder="sk-ant-..."
+                        className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-cyan-400/60"
+                      />
+                    </label>
+                    <label className="space-y-1.5">
+                      <span className="text-[11px] uppercase tracking-[0.18em] text-zinc-500 font-mono">Modelo Claude</span>
+                      <input
+                        value={apiKeys?.osoneCodeAnthropicModel || 'claude-sonnet-5'}
+                        onChange={(e) => onUpdateApiKeys?.({ osoneCodeAnthropicModel: e.target.value })}
+                        placeholder="claude-sonnet-5"
+                        className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-cyan-400/60"
+                      />
+                    </label>
+                  </div>
+                )}
+
+                {provedorDoCode === 'gemini' && (
+                  <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-xs text-emerald-100 leading-relaxed">
+                    Modo padrão ativo: o OSONE CODE usa Gemini para gerar código, Hunter, Enxame e sugestões.
+                    Se houver uma chave Gemini nos Ajustes gerais, ela entra como chave do usuário.
+                  </div>
+                )}
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                  <div className="text-[11px] text-zinc-500">
+                    Provedor atual: <span className="text-cyan-300">{nomeDoProvedorDoCode}</span>
+                    <span className="mx-1">•</span>
+                    Modelo: <span className="text-zinc-300">{modeloDoProvedorDoCode}</span>
+                  </div>
+                  <button
+                    onClick={() => setIsCodeApiSettingsOpen(false)}
+                    className="px-4 py-2 rounded-xl bg-cyan-500/15 border border-cyan-400/40 text-cyan-100 text-xs font-mono font-bold hover:bg-cyan-500/25 transition-colors"
+                  >
+                    Salvar e voltar ao Code
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Top Header Navigation */}
       <div className="min-h-14 border-b border-white/5 bg-[#0c0e14]/90 backdrop-blur-md px-2 py-2 sm:px-4 flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 shrink-0 z-30">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -2413,6 +2566,21 @@ FORMATO OBRIGATÓRIO (JSON estrito):
           >
             <BowAndArrowIcon size={15} className="text-emerald-100 animate-pulse" />
             <span className="tracking-wider hidden sm:inline">HUNTER AGÊNTICO</span>
+          </button>
+
+          <button
+            onClick={() => setIsCodeApiSettingsOpen(true)}
+            className={cn(
+              "px-3 py-2 rounded-xl text-xs font-mono font-bold flex items-center gap-1.5 transition-all border shrink-0 cursor-pointer active:scale-95",
+              provedorDoCode === 'gemini'
+                ? "bg-cyan-500/10 text-cyan-300 border-cyan-500/30 hover:bg-cyan-500/20"
+                : "bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20"
+            )}
+            title={`API do OSONE CODE: ${nomeDoProvedorDoCode}`}
+          >
+            <KeyRound size={15} />
+            <span className="hidden sm:inline">API do Code</span>
+            <span className="sm:hidden">{provedorDoCode === 'gemini' ? 'Gemini' : 'API'}</span>
           </button>
 
           {/*

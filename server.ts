@@ -118,7 +118,10 @@ async function startServer() {
     //    novas apareceriam inteiras em mensagens de erro devolvidas ao navegador.
     let sanitized = message
       .replace(/AIzaSy[A-Za-z0-9_-]{33}/g, "[CHAVE_REMOVIDA]")
-      .replace(/AQ\.[A-Za-z0-9_-]{30,}/g, "[CHAVE_REMOVIDA]");
+      .replace(/AQ\.[A-Za-z0-9_-]{30,}/g, "[CHAVE_REMOVIDA]")
+      .replace(/sk-proj-[A-Za-z0-9_-]{20,}/g, "[CHAVE_REMOVIDA]")
+      .replace(/sk-ant-[A-Za-z0-9_-]{20,}/g, "[CHAVE_REMOVIDA]")
+      .replace(/\bsk-[A-Za-z0-9_-]{20,}/g, "[CHAVE_REMOVIDA]");
 
     // 2. Mask generic key/token patterns (such as api_key=..., key=..., xi-api-key, etc.)
     sanitized = sanitized.replace(/(key|api_key|apikey|xi-api-key|token)(?:["'\s:=]+)([A-Za-z0-9_-]{10,60})/gi, "$1=[REMOVED]");
@@ -4017,6 +4020,172 @@ ${processedChunk}`;
     return [contents];
   }
 
+  type ProvedorDoOsoneCode = 'gemini' | 'openai' | 'anthropic';
+
+  function provedorAlternativoDoCode(body: any): ProvedorDoOsoneCode {
+    const bruto = String(body?.codeAiProvider || body?.osoneCodeProvider || 'gemini').toLowerCase();
+    if (bruto === 'openai' || bruto === 'anthropic') return bruto;
+    return 'gemini';
+  }
+
+  function extrairPromptMultimodal(contents: any): {
+    texto: string;
+    imagens: Array<{ mimeType: string; data: string }>;
+  } {
+    const imagens: Array<{ mimeType: string; data: string }> = [];
+    const linhas: string[] = [];
+    const turnos = normalizarTurnos(contents);
+
+    const visitarParte = (parte: any) => {
+      if (!parte) return;
+      if (typeof parte === 'string') {
+        linhas.push(parte);
+        return;
+      }
+      if (typeof parte.text === 'string') linhas.push(parte.text);
+      const inlineData = parte.inlineData || parte.inline_data;
+      if (inlineData?.data && inlineData?.mimeType) {
+        imagens.push({ mimeType: String(inlineData.mimeType), data: String(inlineData.data) });
+      }
+    };
+
+    for (const turno of turnos) {
+      if (!turno) continue;
+      if (typeof turno === 'string') {
+        linhas.push(turno);
+        continue;
+      }
+      const role = turno.role ? String(turno.role).toUpperCase() : '';
+      const partes = Array.isArray(turno.parts) ? turno.parts : Array.isArray(turno.content) ? turno.content : [];
+      if (role) linhas.push(`\n[${role}]`);
+      if (partes.length > 0) {
+        partes.forEach(visitarParte);
+      } else if (typeof turno.text === 'string') {
+        linhas.push(turno.text);
+      }
+    }
+
+    return {
+      texto: linhas.join('\n').replace(/\n{4,}/g, '\n\n\n').trim(),
+      imagens
+    };
+  }
+
+  function textoDaRespostaOpenAi(data: any): string {
+    if (typeof data?.output_text === 'string') return data.output_text;
+    const blocos: string[] = [];
+    const output = Array.isArray(data?.output) ? data.output : [];
+    for (const item of output) {
+      const content = Array.isArray(item?.content) ? item.content : [];
+      for (const parte of content) {
+        if (typeof parte?.text === 'string') blocos.push(parte.text);
+        if (typeof parte?.content === 'string') blocos.push(parte.content);
+      }
+    }
+    return blocos.join('\n');
+  }
+
+  function textoDaRespostaAnthropic(data: any): string {
+    const content = Array.isArray(data?.content) ? data.content : [];
+    return content
+      .map((parte: any) => typeof parte?.text === 'string' ? parte.text : '')
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  async function gerarComOpenAiParaCode(body: any): Promise<{ text: string; finishReason?: string; truncated: boolean; modeloUsado: string }> {
+    const apiKey = String(body.openAiApiKey || body.openaiApiKey || '').trim();
+    if (!apiKey) throw new Error("Chave API da OpenAI não definida no OSONE CODE.");
+
+    const modelo = String(body.model || body.openAiModel || 'gpt-5.5').trim();
+    const entrada = extrairPromptMultimodal(body.prompt);
+    const content: any[] = [];
+    if (entrada.texto) content.push({ type: 'input_text', text: entrada.texto });
+    for (const img of entrada.imagens) {
+      content.push({ type: 'input_image', image_url: `data:${img.mimeType};base64,${img.data}` });
+    }
+
+    const payload: any = {
+      model: modelo,
+      input: [{ role: 'user', content: content.length ? content : [{ type: 'input_text', text: '' }] }]
+    };
+    if (body.systemInstruction) payload.instructions = String(body.systemInstruction);
+    if (body.unrestricted || body.maxEffort) {
+      payload.reasoning = { effort: 'high' };
+      payload.max_output_tokens = TETO_DE_SAIDA_PARA_CODIGO;
+    }
+
+    const resposta = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await resposta.json().catch(async () => ({ error: { message: await resposta.text().catch(() => '') } }));
+    if (!resposta.ok) {
+      throw new Error(`OpenAI (${resposta.status}): ${data?.error?.message || data?.message || 'falha na geração'}`);
+    }
+
+    const finishReason = data?.status === 'incomplete'
+      ? (data?.incomplete_details?.reason || 'incomplete')
+      : data?.status;
+    return {
+      text: textoDaRespostaOpenAi(data),
+      finishReason,
+      truncated: data?.status === 'incomplete',
+      modeloUsado: modelo
+    };
+  }
+
+  async function gerarComAnthropicParaCode(body: any): Promise<{ text: string; finishReason?: string; truncated: boolean; modeloUsado: string }> {
+    const apiKey = String(body.anthropicApiKey || '').trim();
+    if (!apiKey) throw new Error("Chave API da Anthropic/Claude não definida no OSONE CODE.");
+
+    const modelo = String(body.model || body.anthropicModel || 'claude-sonnet-5').trim();
+    const entrada = extrairPromptMultimodal(body.prompt);
+    const content: any[] = [];
+    if (entrada.texto) content.push({ type: 'text', text: entrada.texto });
+    for (const img of entrada.imagens) {
+      content.push({
+        type: 'image',
+        source: { type: 'base64', media_type: img.mimeType, data: img.data }
+      });
+    }
+
+    const maxTokens = Number(process.env.OSONE_CLAUDE_MAX_TOKENS || 8192);
+    const payload: any = {
+      model: modelo,
+      max_tokens: Math.max(1024, Math.min(maxTokens, TETO_DE_SAIDA_PARA_CODIGO)),
+      messages: [{ role: 'user', content: content.length ? content : [{ type: 'text', text: '' }] }]
+    };
+    if (body.systemInstruction) payload.system = String(body.systemInstruction);
+
+    const resposta = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await resposta.json().catch(async () => ({ error: { message: await resposta.text().catch(() => '') } }));
+    if (!resposta.ok) {
+      throw new Error(`Anthropic (${resposta.status}): ${data?.error?.message || data?.message || 'falha na geração'}`);
+    }
+
+    return {
+      text: textoDaRespostaAnthropic(data),
+      finishReason: data?.stop_reason,
+      truncated: data?.stop_reason === 'max_tokens',
+      modeloUsado: modelo
+    };
+  }
+
   /**
    * Emenda a continuação no que já existe, descontando o que o modelo repetiu.
    *
@@ -4320,6 +4489,33 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
   app.post("/api/generate", async (req, res) => {
     try {
       const { prompt, systemInstruction, clientApiKey, model, responseMimeType, maxEffort, unrestricted, modeloDeReserva } = req.body;
+      const provedorCode = provedorAlternativoDoCode(req.body);
+      if (provedorCode === 'openai') {
+        const resposta = await gerarComOpenAiParaCode(req.body);
+        return res.json({
+          text: resposta.text || "",
+          finishReason: resposta.finishReason,
+          blocked: false,
+          truncated: resposta.truncated,
+          continuacoes: 0,
+          modeloUsado: resposta.modeloUsado,
+          modeloPreferido: resposta.modeloUsado,
+          provedorUsado: 'openai'
+        });
+      }
+      if (provedorCode === 'anthropic') {
+        const resposta = await gerarComAnthropicParaCode(req.body);
+        return res.json({
+          text: resposta.text || "",
+          finishReason: resposta.finishReason,
+          blocked: false,
+          truncated: resposta.truncated,
+          continuacoes: 0,
+          modeloUsado: resposta.modeloUsado,
+          modeloPreferido: resposta.modeloUsado,
+          provedorUsado: 'anthropic'
+        });
+      }
       const apiKey = clientApiKey || getSecretGeminiKey();
 
       if (!apiKey) {
@@ -4401,7 +4597,11 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
       });
     } catch (err: any) {
       console.error("Error inside /api/generate endpoint:", err);
-      return res.status(500).json({ error: formatGeminiError(err) });
+      const provedorCode = provedorAlternativoDoCode(req.body);
+      const erro = provedorCode === 'gemini'
+        ? formatGeminiError(err)
+        : sanitizeMessageOfKeys(err?.message || String(err));
+      return res.status(500).json({ error: erro });
     }
   });
 
@@ -4423,6 +4623,45 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
    */
   app.post("/api/generate-stream", async (req, res) => {
     const { prompt, systemInstruction, clientApiKey, model, responseMimeType, maxEffort, unrestricted, modeloDeReserva } = req.body;
+    const provedorCode = provedorAlternativoDoCode(req.body);
+    if (provedorCode !== 'gemini') {
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.flushHeaders?.();
+
+      const enviar = (dado: any) => {
+        res.write(`data: ${JSON.stringify(dado)}\n\n`);
+        (res as any).flush?.();
+      };
+
+      try {
+        const resposta = provedorCode === 'openai'
+          ? await gerarComOpenAiParaCode(req.body)
+          : await gerarComAnthropicParaCode(req.body);
+
+        enviar({ modeloUsado: resposta.modeloUsado, modeloPreferido: resposta.modeloUsado, provedorUsado: provedorCode });
+        if (resposta.text) enviar({ text: resposta.text });
+        enviar({
+          done: true,
+          text: resposta.text || "",
+          finishReason: resposta.finishReason,
+          blocked: false,
+          truncated: resposta.truncated,
+          continuacoes: 0,
+          modeloUsado: resposta.modeloUsado,
+          modeloPreferido: resposta.modeloUsado,
+          provedorUsado: provedorCode
+        });
+      } catch (err: any) {
+        console.error("Error inside /api/generate-stream endpoint:", err);
+        enviar({ error: sanitizeMessageOfKeys(err?.message || String(err)) });
+      }
+      res.write("data: [DONE]\n\n");
+      res.end();
+      return;
+    }
     const apiKey = clientApiKey || getSecretGeminiKey();
 
     if (!apiKey) {
