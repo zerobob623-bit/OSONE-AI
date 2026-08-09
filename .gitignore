@@ -9,6 +9,9 @@ vendor
 .env.local
 .env.*.local
 .baileys_auth
+.wwebjs_auth/
+.wwebjs_cache/
+generated-content/
 firebase-applet-config.json
 
 # OSONE ZAP (WhatsApp) local data — contains customer PII, never commit
