@@ -28,6 +28,7 @@ export type NotaDoCowork =
   | 'inicio'
   | 'abrir'
   | 'clicar'
+  | 'clique_direito'
   | 'digitar'
   | 'tecla'
   | 'rolar'
@@ -65,6 +66,7 @@ const TOQUES: Record<NotaDoCowork, Toque> = {
   // qualquer coisa mais longa ou mais alta vira incômodo antes do décimo passo.
   abrir: { notas: [659.25], duracao: 0.09, volume: 0.1 },
   clicar: { notas: [880.0], duracao: 0.05, volume: 0.09 },
+  clique_direito: { notas: [830.61, 698.46], duracao: 0.045, volume: 0.085 },
   digitar: { notas: [1046.5], duracao: 0.045, volume: 0.07, tipo: 'triangle' },
   tecla: { notas: [987.77], duracao: 0.045, volume: 0.07, tipo: 'triangle' },
   rolar: { notas: [587.33], duracao: 0.06, volume: 0.07, tipo: 'triangle' },
