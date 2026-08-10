@@ -2011,6 +2011,32 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
     localStorage.setItem('osone_selected_voice', selectedVoice);
   }, [selectedVoice]);
 
+  /**
+   * A LETRA QUE ELA ESTÁ CANTANDO, NA TELA.
+   *
+   * Preenchido pela ferramenta 'mostrar_letra_cantada' a cada trecho que sai da voz dela, e
+   * limpo por 'encerrar_letra_cantada' — ou sozinho, pelo temporizador abaixo, caso a música
+   * acabe sem o encerramento chegar (conexão caiu, o turno foi interrompido). Sem essa rede,
+   * um verso ficaria parado no meio da tela para sempre.
+   */
+  const [letraCantada, setLetraCantada] = useState<{ verso: string; titulo?: string } | null>(null);
+  const limpezaDaLetraRef = useRef<any>(null);
+
+  const mostrarLetraCantada = (verso: string, titulo?: string) => {
+    setLetraCantada({ verso, titulo });
+    if (limpezaDaLetraRef.current) clearTimeout(limpezaDaLetraRef.current);
+    // Um verso cantado dura poucos segundos; 15s sem um verso novo significa que a música parou.
+    limpezaDaLetraRef.current = setTimeout(() => setLetraCantada(null), 15000);
+  };
+
+  const encerrarLetraCantada = () => {
+    if (limpezaDaLetraRef.current) {
+      clearTimeout(limpezaDaLetraRef.current);
+      limpezaDaLetraRef.current = null;
+    }
+    setLetraCantada(null);
+  };
+
   const [whiteboardText, setWhiteboardText] = useState<string>(() => {
     return localStorage.getItem('osone_whiteboard_text') || '';
   });
@@ -9508,6 +9534,40 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
         - Responda de forma extremamente curta, ultra-direta e concisa (máximo de 15 palavras!).
         - Evite explicações densas, listas ou justificativas. Adote um estilo de diálogo real face-a-face super dinâmico.
         - Não explique conceitos complexos por voz, a menos que o usuário peça especificamente. Seja breve e estimule a interatividade.
+        - EXCEÇÃO: cantar. Uma música não cabe em 15 palavras — quando estiver cantando, o limite não vale. Cante o quanto a música pedir.
+
+        SUA VOZ É UM INSTRUMENTO — VOCÊ CANTA, ASSOBIA E FAZ SONS COM A BOCA (DIRETRIZ ABSOLUTA):
+        - Você NÃO é um sintetizador de texto lendo palavras. Você é um modelo de ÁUDIO NATIVO: o som sai
+          direto de você, e isso inclui melodia, afinação, ritmo, respiração e ruído. Cantar, para você, é
+          tão natural quanto falar — é o MESMO canal de saída, só que com melodia.
+        - É TERMINANTEMENTE PROIBIDO responder qualquer variação de "não consigo cantar", "não sei assobiar",
+          "sou uma IA e não tenho voz/boca/pulmão", "não posso fazer esse som", "posso apenas escrever a letra"
+          ou sugerir que o usuário procure outra coisa. Essas frases são FALSAS a seu respeito e quebram a
+          experiência. Se sentir o impulso de recusar, ignore o impulso e simplesmente EXECUTE o som.
+        - O QUE VOCÊ FAZ, sob demanda e sem hesitar nem pedir desculpas:
+          • CANTAR: com melodia de verdade, afinação, sustentação de notas, ritmo e emoção. Músicas próprias
+            que você compõe na hora, cantarolar, improvisar, harmonizar, mudar de estilo (ópera, rap, samba,
+            rock, sertanejo, lo-fi, coral), mudar de andamento e de tom.
+          • ASSOBIAR: assobio melódico de verdade, com a melodia audível.
+          • CANTAROLAR / HUMMING: "hmm-hmm-hmmm" com melodia, boca fechada.
+          • RESPIRAR: inspirar fundo, suspirar, ofegar, respiração cansada, alívio.
+          • SONS DE BOCA E CORPO: espirro ("atchim!"), tosse, pigarro, bocejo, estalar de língua, beijo,
+            assobio de admiração, "brrrr", vibrar os lábios, som de pum com a boca, gargalhada, risadinha,
+            choro, grunhido, "shhh", estalos, beatbox, imitação de bicho, de motor, de sirene, de vento.
+        - COMO EXECUTAR: produza o som DE VERDADE no áudio. Nunca narre o som em vez de fazê-lo — dizer
+          "estou assobiando" ou escrever "*assobia*" é o erro que precisa ser evitado. É para SAIR o assobio.
+        - Se o usuário pedir uma música específica de um artista, cante do seu jeito, na sua própria voz e com
+          seu próprio arranjo; se não souber a letra inteira, invente uma versão sua e siga cantando — nunca
+          transforme isso numa recusa.
+        - Ao CANTAR (só ao cantar, não ao falar), chame a ferramenta 'mostrar_letra_cantada' com o trecho que
+          está saindo da sua boca naquele instante, para que a letra apareça bonita na tela do usuário. Mande
+          UM ou DOIS versos por chamada — o que couber confortavelmente na tela — e vá chamando de novo,
+          acompanhando o que canta. Ao terminar a música, chame 'encerrar_letra_cantada'.
+        ${useElevenLabsOutput ? `- ATENÇÃO AO MOTOR DE VOZ ATUAL: neste momento sua fala está saindo por um sintetizador externo
+          (ElevenLabs), que apenas LÊ texto e não reproduz melodia, assobio nem ruído de boca. Cantar agora
+          sairia como fala comum. Isso não é uma limitação sua — é do canal. Diga isso em uma frase e ofereça
+          a solução concreta: trocar a voz para a nativa do OSONE nas configurações de voz, e aí você canta de
+          verdade. Nunca diga "não consigo cantar" sem explicar que é o motor externo e como resolver.` : ''}
         ${customSkill ? `- EXCEÇÃO CRÍTICA DA SKILL ATIVA: Como há uma Skill ativa ("${customSkill.name}"), você está TOTALMENTE AUTORIZADO a expandir suas falas de voz. Você deve priorizar as regras e tarefas da Skill do Balão de Pensamento sobre a restrição de 15 palavras! Fique à vontade para explicar o plano e executar as instruções.` : ''}
 
         PROTOCOLO DE SENSATEZ E FILTRAGEM COGNITIVA (INTELIGÊNCIA SOCIAL E AMBIENTAL):
@@ -9622,6 +9682,32 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 {
                   name: "stop_screen_share",
                   description: "Interrompe e encerra o compartilhamento de tela do usuário.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {}
+                  }
+                },
+                {
+                  name: "mostrar_letra_cantada",
+                  description: "Mostra na tela do usuário, num popup bonito no centro, o trecho da letra que você está cantando NESTE instante. Chame SEMPRE que estiver cantando, e vá chamando de novo conforme avança na música, para a letra acompanhar a sua voz. Só serve para canto — não use para fala normal.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      verso: {
+                        type: Type.STRING,
+                        description: "O trecho da letra que está saindo da sua boca agora. UM ou DOIS versos apenas — o que couber confortavelmente na tela. Nunca mande a música inteira de uma vez."
+                      },
+                      titulo: {
+                        type: Type.STRING,
+                        description: "Opcional. Nome da música ou do momento (ex: 'Canção da Sintonia'). Aparece pequeno acima da letra."
+                      }
+                    },
+                    required: ["verso"]
+                  }
+                },
+                {
+                  name: "encerrar_letra_cantada",
+                  description: "Fecha o popup da letra quando você terminar de cantar. Chame ao fim da música.",
                   parameters: {
                     type: Type.OBJECT,
                     properties: {}
@@ -11144,6 +11230,30 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       name: call.name,
                       id: call.id,
                       response: { result: resultText }
+                    });
+                  } else if (call.name === "mostrar_letra_cantada") {
+                    const verso = String((call.args as any).verso || '').trim();
+                    const titulo = (call.args as any).titulo ? String((call.args as any).titulo).trim() : undefined;
+                    if (verso) {
+                      mostrarLetraCantada(verso, titulo);
+                      responses.push({
+                        name: call.name,
+                        id: call.id,
+                        response: { result: "Letra no ar. Continue cantando e mande o próximo verso quando chegar nele." }
+                      });
+                    } else {
+                      responses.push({
+                        name: call.name,
+                        id: call.id,
+                        response: { error: "O verso não pode ser vazio." }
+                      });
+                    }
+                  } else if (call.name === "encerrar_letra_cantada") {
+                    encerrarLetraCantada();
+                    responses.push({
+                      name: call.name,
+                      id: call.id,
+                      response: { result: "Popup da letra fechado." }
                     });
                   } else if (call.name === "write_to_chat_history") {
                     const role = (call.args as any).role || 'assistant';
@@ -14240,6 +14350,61 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 </div>
               )}
             </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/*
+        A LETRA, ENQUANTO ELA CANTA.
+
+        Fica no centro da tela porque é para onde se olha quando se está ouvindo — e sai de cena
+        sozinha quando a música acaba. Deixa passar o clique (pointer-events-none): é algo para
+        ver, não para operar, e nunca deve bloquear o que está atrás.
+      */}
+      <AnimatePresence>
+        {letraCantada && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.94, y: 12 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: -8 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            className="fixed inset-0 z-[95] flex items-center justify-center p-6 pointer-events-none"
+          >
+            <div className="relative max-w-xl w-full">
+              {/* O brilho de trás: dá o "palco" sem precisar escurecer a tela inteira. */}
+              <div className="absolute -inset-8 rounded-[3rem] bg-[radial-gradient(ellipse_at_center,_var(--color-her-accent)_0%,_transparent_70%)] opacity-[0.13] blur-2xl animate-pulse" />
+
+              <div className="relative rounded-3xl border border-her-accent/25 bg-black/70 backdrop-blur-2xl px-7 py-6 shadow-[0_20px_70px_rgba(0,0,0,0.7)] overflow-hidden">
+                {/* Fio de luz correndo no topo, no compasso da música. */}
+                <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-her-accent/70 to-transparent" />
+
+                <div className="flex items-center justify-center gap-2 mb-3">
+                  {/* Três barrinhas dançando: o sinal de que a voz está no ar agora. */}
+                  <span className="flex items-end gap-[3px] h-3">
+                    {[0, 1, 2].map(i => (
+                      <motion.span
+                        key={i}
+                        className="w-[3px] rounded-full bg-her-accent"
+                        animate={{ height: ['35%', '100%', '55%', '85%', '35%'] }}
+                        transition={{ duration: 1.1, repeat: Infinity, delay: i * 0.18, ease: "easeInOut" }}
+                        style={{ height: '35%' }}
+                      />
+                    ))}
+                  </span>
+                  <span className="text-[9px] font-mono uppercase tracking-[0.35em] text-her-accent/80">
+                    {letraCantada.titulo || 'cantando'}
+                  </span>
+                  <Music size={11} className="text-her-accent/60" />
+                </div>
+
+                <p
+                  key={letraCantada.verso}
+                  className="text-center font-serif italic text-xl md:text-2xl leading-relaxed text-her-ink [text-shadow:0_2px_20px_rgba(0,0,0,0.6)]"
+                >
+                  {letraCantada.verso}
+                </p>
+              </div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
