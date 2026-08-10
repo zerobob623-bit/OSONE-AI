@@ -7,7 +7,7 @@ import {
   FolderGit2, Sparkles, RefreshCw, Eye, Columns,
   Upload, X, Mic, Loader2, MessageSquare, AlertCircle,
   Bot, Layers, ShieldCheck, Terminal, Cpu, Zap, RotateCw, CheckCircle2,
-  AlertTriangle, ChevronDown, ChevronUp, PlayCircle, Gamepad2,
+  AlertTriangle, ChevronDown, ChevronUp, ChevronLeft, PlayCircle, Gamepad2,
   Undo, Redo, RotateCcw, Paperclip, Flame, Search, Replace, KeyRound, Archive
 } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -2763,9 +2763,26 @@ FORMATO OBRIGATÓRIO (JSON estrito):
         meio da tela é sempre o código/preview, inclusive num celular.
       */}
       <div className="border-b border-white/5 bg-[#0c0e14]/90 backdrop-blur-md px-2 sm:px-3 py-2 flex items-center gap-1.5 sm:gap-2 shrink-0 z-30">
+        {/*
+          A SAÍDA DA ABA.
+
+          Com o OSONE CODE ocupando a tela inteira — por cima do cabeçalho do app e da
+          navegação de baixo, que só roubavam altura daqui —, esta seta passa a ser o único
+          caminho de volta. Antes o `onClose` chegava como propriedade e nunca era usado: quem
+          entrava dependia da barra de navegação do app para sair.
+        */}
+        <button
+          onClick={onClose}
+          className="p-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] text-zinc-400 hover:text-white border border-white/5 transition-all shrink-0"
+          title="Fechar o OSONE CODE e voltar ao início"
+          aria-label="Fechar o OSONE CODE"
+        >
+          <ChevronLeft size={16} />
+        </button>
+
         <div className="flex items-center gap-2 shrink-0">
           <Code2 size={18} className="text-cyan-400 shrink-0" />
-          <h2 className="hidden md:block text-sm font-semibold tracking-tight text-white font-mono whitespace-nowrap">
+          <h2 className="hidden lg:block text-sm font-semibold tracking-tight text-white font-mono whitespace-nowrap">
             OSONE CODE
           </h2>
         </div>
