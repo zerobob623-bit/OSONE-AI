@@ -8,7 +8,7 @@ import {
   Upload, X, Mic, Loader2, MessageSquare, AlertCircle,
   Bot, Layers, ShieldCheck, Terminal, Cpu, Zap, RotateCw, CheckCircle2,
   AlertTriangle, ChevronDown, ChevronUp, PlayCircle, Gamepad2,
-  Undo, Redo, RotateCcw, Paperclip, Flame, Search, Replace, KeyRound, MoreHorizontal
+  Undo, Redo, RotateCcw, Paperclip, Flame, Search, Replace, KeyRound, Archive
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { CodePreview } from './CodePreview';
@@ -775,9 +775,9 @@ export const CodeWorkspace: React.FC<{
   const [isHunterModalOpen, setIsHunterModalOpen] = useState<boolean>(false);
   const [isCodeApiSettingsOpen, setIsCodeApiSettingsOpen] = useState<boolean>(false);
   const [isGithubPanelOpen, setIsGithubPanelOpen] = useState<boolean>(false);
-  // No mobile a barra de ações some atrás de um menu "⋯" — só os botões mais usados (Enxame,
-  // Hunter, Desfazer) ficam sempre visíveis. No desktop (sm+) tudo continua exposto como antes.
-  const [menuAcoesMobileAberto, setMenuAcoesMobileAberto] = useState<boolean>(false);
+  // O seletor de projeto virou um botão só, na barra superior: ele mostra o projeto ativo e
+  // abre a lista para trocar/renomear, em vez de gastar uma faixa inteira da tela com pastilhas.
+  const [menuProjetosAberto, setMenuProjetosAberto] = useState<boolean>(false);
   const [hunterPrompt, setHunterPrompt] = useState<string>('');
   const [hunterStatus, setHunterStatus] = useState<'idle' | 'analyzing' | 'doubt' | 'success' | 'error'>('idle');
   const [hunterReport, setHunterReport] = useState<string | null>(null);
@@ -2754,346 +2754,178 @@ FORMATO OBRIGATÓRIO (JSON estrito):
         )}
       </AnimatePresence>
 
-      {/* Top Header Navigation */}
-      <div className="border-b border-white/5 bg-[#0c0e14]/90 backdrop-blur-md px-2 py-2 sm:px-4 flex flex-col gap-2 shrink-0 z-30 overflow-hidden">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2 min-w-0">
-        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
-          <button 
-            onClick={() => setShowRepoSidebar(!showRepoSidebar)}
-            className={cn(
-              "p-2 rounded-xl transition-all border",
-              showRepoSidebar 
-                ? "bg-cyan-500/10 text-cyan-400 border-cyan-500/20" 
-                : "bg-white/[0.02] text-zinc-400 hover:text-white border-white/5"
-            )}
-            title="Alternar Repositório de Arquivos"
-          >
-            <FolderGit2 size={16} />
-          </button>
+      {/*
+        BARRA SUPERIOR — identidade, projeto e as chaves do estúdio.
 
-          <div className="flex items-center gap-2">
-            <Code2 size={18} className="text-cyan-400" />
-            <h2 className="text-sm font-semibold tracking-tight text-white font-mono flex items-center gap-2 whitespace-nowrap">
-              OSONE CODE
-              <span className="hidden min-[430px]:inline text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-normal">
-                {files.length} arquivo(s)
-              </span>
-            </h2>
-          </div>
+        Só o que é "de fora do código" mora aqui: qual projeto está aberto, para onde ele
+        publica (GitHub) e com que credencial ele gera (API). As ferramentas que MEXEM no
+        código ficam nas duas fileiras laterais, e o que se digita fica embaixo — assim o
+        meio da tela é sempre o código/preview, inclusive num celular.
+      */}
+      <div className="border-b border-white/5 bg-[#0c0e14]/90 backdrop-blur-md px-2 sm:px-3 py-2 flex items-center gap-1.5 sm:gap-2 shrink-0 z-30">
+        <div className="flex items-center gap-2 shrink-0">
+          <Code2 size={18} className="text-cyan-400 shrink-0" />
+          <h2 className="hidden md:block text-sm font-semibold tracking-tight text-white font-mono whitespace-nowrap">
+            OSONE CODE
+          </h2>
         </div>
 
-        {/* View Mode Controls */}
-        <div className="w-full lg:w-auto flex items-center gap-1 bg-black/40 p-1 rounded-xl border border-white/5 overflow-x-auto no-scrollbar shrink-0">
-          <button 
-            onClick={() => setViewLayout('editor')}
-            className={cn(
-              "px-3 py-1.5 rounded-lg text-xs font-mono flex items-center gap-1.5 transition-all font-medium shrink-0",
-              viewLayout === 'editor' 
-                ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" 
-                : "text-zinc-400 hover:text-white"
-            )}
-          >
-            <Code2 size={14} />
-            <span className="hidden sm:inline">Apenas Código</span>
-          </button>
-          
-          <button 
-            onClick={() => setViewLayout('split')}
-            className={cn(
-              "px-3 py-1.5 rounded-lg text-xs font-mono flex items-center gap-1.5 transition-all font-medium shrink-0",
-              viewLayout === 'split' 
-                ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" 
-                : "text-zinc-400 hover:text-white"
-            )}
-          >
-            <Columns size={14} />
-            <span className="hidden sm:inline">Dividido (Split)</span>
-          </button>
+        {/*
+          O PROJETO INTEIRO NUM BOTÃO SÓ.
 
-          <button 
-            onClick={() => setViewLayout('preview')}
-            className={cn(
-              "px-3 py-1.5 rounded-lg text-xs font-mono flex items-center gap-1.5 transition-all font-medium shrink-0",
-              viewLayout === 'preview' 
-                ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" 
-                : "text-zinc-400 hover:text-white"
-            )}
-          >
-            <Eye size={14} />
-            <span className="hidden sm:inline">Preview Vivo</span>
-          </button>
-        </div>
-
-        </div>
-
-        {/* Action Controls + SWARM BUTTON & HUNTER BUTTON */}
-        <div className="w-full flex items-center gap-1.5 rounded-2xl border border-white/5 bg-black/20 p-1.5 relative">
-          {/* BOTÃO ENXAME SWARM HARNESS — sempre visível, mobile e desktop */}
+          Eram cinco pastilhas lado a lado ocupando uma faixa inteira da tela para dizer uma
+          informação só: qual está aberto. Agora o botão MOSTRA o ativo e a troca acontece
+          dentro dele.
+        */}
+        <div className="relative min-w-0 flex-1 sm:flex-none">
           <button
-            onClick={() => setIsSwarmModalOpen(true)}
-            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-600 via-cyan-600 to-emerald-600 hover:from-purple-500 hover:to-emerald-500 text-white font-mono font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-purple-950/60 active:scale-95 cursor-pointer border border-purple-400/40 transition-all shrink-0"
-            title="Enxame OSONE CODE: 4 Agentes Especializados + Harness Engineering em Loop Autônomo!"
-          >
-            <Bot size={16} className="text-purple-200 animate-pulse" />
-            <span className="tracking-wider hidden sm:inline">🐝 ENXAME OSONE CODE</span>
-          </button>
-
-          {/* BOTÃO HUNTER NOVO — sempre visível, mobile e desktop */}
-          <button
-            onClick={() => setIsHunterModalOpen(true)}
-            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white font-mono font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-950/60 active:scale-95 cursor-pointer border border-emerald-400/40 transition-all shrink-0"
-            title="Hunter: Examinador Agêntico. Examina o código, aponta o que falta e implementa automaticamente!"
-          >
-            <BowAndArrowIcon size={15} className="text-emerald-100 animate-pulse" />
-            <span className="tracking-wider hidden sm:inline">HUNTER AGÊNTICO</span>
-          </button>
-
-          {/* BOTÃO DESFAZER ALTERAÇÃO NO CÓDIGO — sempre visível, mobile e desktop */}
-          <button
-            onClick={handleUndoChange}
-            disabled={historyStack.length === 0}
+            onClick={() => setMenuProjetosAberto(v => !v)}
             className={cn(
-              "px-3 py-2 rounded-xl text-xs font-mono font-bold flex items-center gap-1.5 transition-all border shrink-0",
-              historyStack.length > 0
-                ? "bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20 active:scale-95 cursor-pointer shadow-lg shadow-amber-950/30"
-                : "bg-white/[0.02] text-zinc-600 border-white/5 cursor-not-allowed opacity-40"
+              "w-full sm:w-auto max-w-full flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-mono font-bold transition-all cursor-pointer active:scale-95",
+              menuProjetosAberto
+                ? "bg-cyan-500/20 text-cyan-200 border-cyan-500/50"
+                : "bg-cyan-500/10 text-cyan-300 border-cyan-500/25 hover:bg-cyan-500/15"
             )}
-            title={historyStack.length > 0 ? "Desfazer alteração no código (Ctrl+Z)" : "Nada para desfazer"}
+            title={`Projeto ativo: ${activeProjectName} (isolado dos demais)`}
           >
-            <Undo size={15} className={historyStack.length > 0 ? "text-amber-400 animate-pulse" : ""} />
-            <span className="hidden sm:inline">Desfazer ({historyStack.length})</span>
-          </button>
-
-          {/*
-            AÇÕES SECUNDÁRIAS — no desktop ficam expostas nesta mesma barra; no mobile, essa
-            barra some inteira atrás do botão "⋯" logo abaixo, senão eram até 9 botões extras
-            disputando uma tela de poucos centímetros de largura.
-          */}
-          <div className="hidden sm:flex sm:items-center sm:gap-1.5 sm:overflow-x-auto sm:no-scrollbar">
-            <button
-              onClick={() => setIsCodeApiSettingsOpen(true)}
-              className={cn(
-                "px-3 py-2 rounded-xl text-xs font-mono font-bold flex items-center gap-1.5 transition-all border shrink-0 cursor-pointer active:scale-95",
-                provedorDoCode === 'gemini'
-                  ? "bg-cyan-500/10 text-cyan-300 border-cyan-500/30 hover:bg-cyan-500/20"
-                  : "bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20"
-              )}
-              title={`API do OSONE CODE: ${nomeDoProvedorDoCode}`}
-            >
-              <KeyRound size={15} />
-              <span>API do Code</span>
-            </button>
-
-            <button
-              onClick={() => setIsGithubPanelOpen(true)}
-              className="px-3 py-2 rounded-xl text-xs font-mono font-bold flex items-center gap-1.5 transition-all border shrink-0 cursor-pointer active:scale-95 bg-slate-500/10 text-slate-200 border-slate-400/30 hover:bg-slate-500/20"
-              title="GitHub: publicar o projeto, criar Pull Request e fazer merge com confirmação"
-            >
-              <FolderGit2 size={15} />
-              <span>GitHub</span>
-            </button>
-
-            {/*
-              SEPARAR O ARQUIVO GRUDADO EM index.html + estilo + script.
-
-              Só aparece quando há o que separar — um arquivo já dividido, ou que não é página, não
-              ganha um botão que só serviria para dizer "não". A conferência de segurança mora dentro
-              de separarProjeto: ela desfaz a separação e compara com o original antes de gravar.
-            */}
-            {activeFile && /<html|<body|<!DOCTYPE/i.test(activeFile.content) && /<(style|script)\b[^>]*>[\s\S]*?\S[\s\S]*?<\/\1\s*>/i.test(activeFile.content) && (
-              <button
-                onClick={separarArquivoAberto}
-                className="px-3 py-2 rounded-xl text-xs font-mono font-bold flex items-center gap-1.5 transition-all border shrink-0 cursor-pointer active:scale-95 bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20"
-                title="Separar este arquivo em index.html + styles.css + game.js (o preview continua idêntico)"
-              >
-                <Layers size={15} />
-                <span className="hidden lg:inline">Separar</span>
-              </button>
-            )}
-
-            {/* BUSCAR E SUBSTITUIR EM TODO O PROJETO */}
-            <button
-              onClick={() => { setBuscaAberta(v => !v); setTimeout(() => campoDeBuscaRef.current?.focus(), 0); }}
-              className={cn(
-                "px-3 py-2 rounded-xl text-xs font-mono font-bold flex items-center gap-1.5 transition-all border shrink-0 cursor-pointer active:scale-95",
-                buscaAberta
-                  ? "bg-violet-500/20 text-violet-300 border-violet-500/40"
-                  : "bg-violet-500/10 text-violet-400 border-violet-500/30 hover:bg-violet-500/20"
-              )}
-              title="Buscar e substituir em todos os arquivos (Ctrl+F)"
-            >
-              <Search size={15} />
-              <span>Buscar</span>
-            </button>
-
-            {/* BOTÃO REFAZER ALTERAÇÃO NO CÓDIGO */}
-            <button
-              onClick={handleRedoChange}
-              disabled={redoStack.length === 0}
-              className={cn(
-                "px-3 py-2 rounded-xl text-xs font-mono font-bold flex items-center gap-1.5 transition-all border shrink-0",
-                redoStack.length > 0
-                  ? "bg-cyan-500/10 text-cyan-400 border-cyan-500/30 hover:bg-cyan-500/20 active:scale-95 cursor-pointer shadow-lg shadow-cyan-950/30"
-                  : "bg-white/[0.02] text-zinc-600 border-white/5 cursor-not-allowed opacity-40"
-              )}
-              title={redoStack.length > 0 ? "Refazer alteração no código (Ctrl+Shift+Z)" : "Nada para refazer"}
-            >
-              <Redo size={15} className={redoStack.length > 0 ? "text-cyan-400 animate-pulse" : ""} />
-              <span>Refazer ({redoStack.length})</span>
-            </button>
-
-            <button
-              onClick={handleCopyCode}
-              className="p-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] text-zinc-300 border border-white/5 transition-all shrink-0"
-              title="Copiar Código do Arquivo Ativo"
-            >
-              {copied ? <Check size={16} className="text-emerald-400" /> : <Copy size={16} />}
-            </button>
-
-            {/*
-              VER O QUE MUDOU — ao lado do desfazer, porque é a pergunta que vem antes dele.
-              Só aparece havendo histórico: sem alteração anterior não há com o que comparar.
-            */}
-            {historyStack.length > 0 && (
-              <button
-                onClick={() => setComparacaoAberta(true)}
-                className="p-2 rounded-xl bg-violet-500/10 hover:bg-violet-500/20 text-violet-300 border border-violet-500/25 transition-all cursor-pointer shrink-0"
-                title="Ver o que mudou na última alteração"
-              >
-                <Columns size={16} />
-              </button>
-            )}
-
-            <button
-              onClick={handleDownloadFile}
-              className="p-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] text-zinc-300 border border-white/5 transition-all shrink-0"
-              title="Baixar apenas o arquivo aberto"
-            >
-              <Download size={16} />
-            </button>
-
-            {/* O projeto INTEIRO, num .zip — é o que tira o trabalho de dentro do app. */}
-            <button
-              onClick={exportarProjetoEmZip}
-              disabled={empacotando}
-              className="p-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/25 transition-all disabled:opacity-40 cursor-pointer shrink-0"
-              title={`Baixar o projeto inteiro (${files.length} arquivo(s)) em .zip`}
-            >
-              {empacotando ? <Loader2 size={16} className="animate-spin" /> : <FolderGit2 size={16} />}
-            </button>
-          </div>
-
-          {/* BOTÃO "MAIS AÇÕES" — só no mobile, abre em dropdown tudo que ficou escondido acima */}
-          <button
-            onClick={() => setMenuAcoesMobileAberto(v => !v)}
-            className={cn(
-              "sm:hidden ml-auto p-2 rounded-xl border transition-all shrink-0 cursor-pointer active:scale-95",
-              menuAcoesMobileAberto
-                ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/30"
-                : "bg-white/[0.03] hover:bg-white/[0.08] text-zinc-300 border-white/5"
-            )}
-            title="Mais ações (API, GitHub, Buscar, Refazer, Copiar, Baixar...)"
-          >
-            <MoreHorizontal size={16} />
+            <FolderGit2 size={14} className="shrink-0" />
+            <span className="truncate">{activeProjectName}</span>
+            <span className="hidden min-[430px]:inline text-[10px] font-normal text-cyan-400/70 shrink-0">
+              {files.length} arq.
+            </span>
+            <ChevronDown size={13} className={cn("shrink-0 transition-transform", menuProjetosAberto && "rotate-180")} />
           </button>
 
           <AnimatePresence>
-            {menuAcoesMobileAberto && (
+            {menuProjetosAberto && (
               <>
-                {/*
-                  Bottom sheet fixo (não dropdown ancorado): a barra de ações fica dentro de um
-                  cabeçalho com `overflow-hidden`, que cortaria um menu posicionado como
-                  `absolute`. `fixed` escapa desse corte e, de quebra, fica mais fácil de
-                  alcançar com o polegar no celular.
-                */}
+                <div className="fixed inset-0 z-40" onClick={() => setMenuProjetosAberto(false)} />
                 <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.15 }}
-                  className="sm:hidden fixed inset-0 z-40 bg-black/60"
-                  onClick={() => setMenuAcoesMobileAberto(false)}
-                />
-                <motion.div
-                  initial={{ opacity: 0, y: 16 }}
+                  initial={{ opacity: 0, y: -6 }}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 16 }}
-                  transition={{ duration: 0.18 }}
-                  className="sm:hidden fixed inset-x-0 bottom-0 z-50 max-h-[70vh] overflow-y-auto custom-scrollbar bg-[#0b0e17] border-t border-white/10 rounded-t-3xl p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-2xl flex flex-col gap-1"
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.15 }}
+                  className="absolute left-0 top-[calc(100%+6px)] z-50 w-64 max-w-[85vw] bg-[#0b0e17] border border-white/10 rounded-2xl p-2 shadow-2xl flex flex-col gap-1"
                 >
-                  <button
-                    onClick={() => { setIsCodeApiSettingsOpen(true); setMenuAcoesMobileAberto(false); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-mono font-bold text-left text-cyan-300 hover:bg-white/5 transition-colors"
-                  >
-                    <KeyRound size={15} className="shrink-0" /> API do Code · {nomeDoProvedorDoCode}
-                  </button>
+                  <p className="px-2 py-1 text-[10px] font-mono uppercase tracking-widest text-zinc-500">
+                    Projetos — isolados entre si
+                  </p>
+                  {projects.map((proj) => {
+                    const isCurrent = proj.id === activeProjectId;
+                    const isEditingThis = editingProjectNameId === proj.id;
 
-                  <button
-                    onClick={() => { setIsGithubPanelOpen(true); setMenuAcoesMobileAberto(false); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-mono font-bold text-left text-slate-200 hover:bg-white/5 transition-colors"
-                  >
-                    <FolderGit2 size={15} className="shrink-0" /> GitHub
-                  </button>
+                    return (
+                      <div
+                        key={proj.id}
+                        onClick={() => {
+                          if (isEditingThis) return;
+                          handleSwitchProject(proj.id);
+                          setMenuProjetosAberto(false);
+                        }}
+                        className={cn(
+                          "px-2.5 py-2 rounded-xl text-xs font-mono font-bold transition-all flex items-center gap-2 cursor-pointer border",
+                          isCurrent
+                            ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/40"
+                            : "bg-transparent text-zinc-400 hover:text-white border-transparent hover:bg-white/5"
+                        )}
+                      >
+                        <span className={cn("w-2 h-2 rounded-full shrink-0", isCurrent ? "bg-cyan-400 animate-pulse" : "bg-zinc-600")} />
 
-                  {activeFile && /<html|<body|<!DOCTYPE/i.test(activeFile.content) && /<(style|script)\b[^>]*>[\s\S]*?\S[\s\S]*?<\/\1\s*>/i.test(activeFile.content) && (
-                    <button
-                      onClick={() => { separarArquivoAberto(); setMenuAcoesMobileAberto(false); }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-mono font-bold text-left text-amber-300 hover:bg-white/5 transition-colors"
-                    >
-                      <Layers size={15} className="shrink-0" /> Separar arquivo
-                    </button>
-                  )}
+                        {isEditingThis ? (
+                          <input
+                            type="text"
+                            value={editingProjectNameText}
+                            onChange={(e) => setEditingProjectNameText(e.target.value)}
+                            onBlur={() => handleSaveProjectName(proj.id)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSaveProjectName(proj.id);
+                              if (e.key === 'Escape') setEditingProjectNameId(null);
+                            }}
+                            autoFocus
+                            className="flex-1 min-w-0 bg-black/80 text-white px-2 py-0.5 rounded border border-cyan-400 text-xs focus:outline-none"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        ) : (
+                          <span className="flex-1 truncate">{proj.name}</span>
+                        )}
 
-                  <button
-                    onClick={() => { setBuscaAberta(v => !v); setMenuAcoesMobileAberto(false); setTimeout(() => campoDeBuscaRef.current?.focus(), 0); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-mono font-bold text-left text-violet-300 hover:bg-white/5 transition-colors"
-                  >
-                    <Search size={15} className="shrink-0" /> Buscar e substituir
-                  </button>
-
-                  <button
-                    onClick={() => { handleRedoChange(); setMenuAcoesMobileAberto(false); }}
-                    disabled={redoStack.length === 0}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-mono font-bold text-left text-cyan-300 hover:bg-white/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    <Redo size={15} className="shrink-0" /> Refazer ({redoStack.length})
-                  </button>
-
-                  <button
-                    onClick={() => { handleCopyCode(); setMenuAcoesMobileAberto(false); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-mono font-bold text-left text-zinc-200 hover:bg-white/5 transition-colors"
-                  >
-                    {copied ? <Check size={15} className="shrink-0 text-emerald-400" /> : <Copy size={15} className="shrink-0" />} Copiar código
-                  </button>
-
-                  {historyStack.length > 0 && (
-                    <button
-                      onClick={() => { setComparacaoAberta(true); setMenuAcoesMobileAberto(false); }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-mono font-bold text-left text-violet-300 hover:bg-white/5 transition-colors"
-                    >
-                      <Columns size={15} className="shrink-0" /> Ver o que mudou
-                    </button>
-                  )}
-
-                  <button
-                    onClick={() => { handleDownloadFile(); setMenuAcoesMobileAberto(false); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-mono font-bold text-left text-zinc-200 hover:bg-white/5 transition-colors"
-                  >
-                    <Download size={15} className="shrink-0" /> Baixar arquivo
-                  </button>
-
-                  <button
-                    onClick={() => { exportarProjetoEmZip(); setMenuAcoesMobileAberto(false); }}
-                    disabled={empacotando}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-mono font-bold text-left text-emerald-300 hover:bg-white/5 transition-colors disabled:opacity-40"
-                  >
-                    {empacotando ? <Loader2 size={15} className="shrink-0 animate-spin" /> : <FolderGit2 size={15} className="shrink-0" />} Baixar projeto (.zip)
-                  </button>
+                        {!isEditingThis && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingProjectNameId(proj.id);
+                              setEditingProjectNameText(proj.name);
+                            }}
+                            className="p-1 rounded-lg text-zinc-500 hover:text-cyan-300 hover:bg-cyan-500/15 transition-colors shrink-0"
+                            title="Renomear projeto"
+                          >
+                            <Edit3 size={11} />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </motion.div>
               </>
             )}
           </AnimatePresence>
         </div>
+
+        {/* Layout do meio: código, dividido ou preview — só ícones, o rótulo vai no title */}
+        <div className="ml-auto flex items-center gap-0.5 bg-black/40 p-1 rounded-xl border border-white/5 shrink-0">
+          <button
+            onClick={() => setViewLayout('editor')}
+            className={cn(
+              "p-1.5 rounded-lg transition-all",
+              viewLayout === 'editor' ? "bg-cyan-500/20 text-cyan-300" : "text-zinc-500 hover:text-white"
+            )}
+            title="Apenas Código"
+          >
+            <Code2 size={15} />
+          </button>
+          <button
+            onClick={() => setViewLayout('split')}
+            className={cn(
+              "p-1.5 rounded-lg transition-all",
+              viewLayout === 'split' ? "bg-cyan-500/20 text-cyan-300" : "text-zinc-500 hover:text-white"
+            )}
+            title="Dividido (código + preview)"
+          >
+            <Columns size={15} />
+          </button>
+          <button
+            onClick={() => setViewLayout('preview')}
+            className={cn(
+              "p-1.5 rounded-lg transition-all",
+              viewLayout === 'preview' ? "bg-emerald-500/20 text-emerald-300" : "text-zinc-500 hover:text-white"
+            )}
+            title="Preview Vivo"
+          >
+            <Eye size={15} />
+          </button>
+        </div>
+
+        {/* GitHub e chave da API: o "para onde publica" e o "com o que gera" */}
+        <button
+          onClick={() => setIsGithubPanelOpen(true)}
+          className="p-2 rounded-xl border transition-all shrink-0 cursor-pointer active:scale-95 bg-slate-500/10 text-slate-200 border-slate-400/25 hover:bg-slate-500/20"
+          title="GitHub: publicar o projeto, criar Pull Request e fazer merge com confirmação"
+        >
+          <FolderGit2 size={15} />
+        </button>
+
+        <button
+          onClick={() => setIsCodeApiSettingsOpen(true)}
+          className={cn(
+            "p-2 rounded-xl border transition-all shrink-0 cursor-pointer active:scale-95",
+            provedorDoCode === 'gemini'
+              ? "bg-cyan-500/10 text-cyan-300 border-cyan-500/25 hover:bg-cyan-500/20"
+              : "bg-amber-500/10 text-amber-300 border-amber-500/25 hover:bg-amber-500/20"
+          )}
+          title={`API do OSONE CODE: ${nomeDoProvedorDoCode}`}
+        >
+          <KeyRound size={15} />
+        </button>
       </div>
 
       {/*
@@ -3199,82 +3031,89 @@ FORMATO OBRIGATÓRIO (JSON estrito):
         )}
       </AnimatePresence>
 
-      {/* Project Switcher Bar: "Em qual projeto você quer codar?" */}
-      <div className="bg-[#0b0d14] border-b border-white/10 px-2 sm:px-4 py-2 flex flex-col md:flex-row md:items-center justify-between gap-2 md:gap-3 shrink-0 z-20 overflow-hidden">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="p-1.5 rounded-lg bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shrink-0">
-            <FolderGit2 size={16} />
-          </div>
-          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 min-w-0">
-            <span className="text-xs font-bold text-white font-mono flex items-center gap-2">
-              Em qual projeto você quer codar?
-            </span>
-            <span className="text-[11px] text-cyan-400/80 font-mono truncate">
-              (Isolado: alterações afetam apenas o projeto ativo)
-            </span>
-          </div>
-        </div>
-
-        {/* 5 Project Buttons */}
-        <div className="w-full md:w-auto max-w-full flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0 custom-scrollbar">
-          {projects.map((proj) => {
-            const isCurrent = proj.id === activeProjectId;
-            const isEditingThis = editingProjectNameId === proj.id;
-
-            return (
-              <div
-                key={proj.id}
-                onClick={() => !isEditingThis && handleSwitchProject(proj.id)}
-                className={cn(
-                  "px-3 py-1.5 rounded-xl text-xs font-mono font-bold transition-all flex items-center gap-1.5 shrink-0 cursor-pointer border",
-                  isCurrent
-                    ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/50 shadow-md shadow-cyan-500/10 ring-1 ring-cyan-500/30"
-                    : "bg-white/[0.02] text-zinc-400 hover:text-white border-white/5 hover:bg-white/5"
-                )}
-                title={`Alternar para ${proj.name}`}
-              >
-                <span className={cn("w-2 h-2 rounded-full shrink-0", isCurrent ? "bg-cyan-400 animate-pulse" : "bg-zinc-600")} />
-                
-                {isEditingThis ? (
-                  <input
-                    type="text"
-                    value={editingProjectNameText}
-                    onChange={(e) => setEditingProjectNameText(e.target.value)}
-                    onBlur={() => handleSaveProjectName(proj.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleSaveProjectName(proj.id);
-                      if (e.key === 'Escape') setEditingProjectNameId(null);
-                    }}
-                    autoFocus
-                    className="bg-black/80 text-white px-2 py-0.5 rounded border border-cyan-400 text-xs w-24 focus:outline-none"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                ) : (
-                  <span>{proj.name}</span>
-                )}
-
-                {isCurrent && !isEditingThis && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setEditingProjectNameId(proj.id);
-                      setEditingProjectNameText(proj.name);
-                    }}
-                    className="p-0.5 hover:text-white text-cyan-400/80 hover:bg-cyan-500/20 rounded transition-colors"
-                    title="Renomear Projeto"
-                  >
-                    <Edit3 size={11} />
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
       {/* Main Studio Body */}
       <div className="flex-1 flex w-full min-h-0 overflow-hidden relative">
-        
+
+        {/*
+          FILEIRA ESQUERDA — os arquivos.
+
+          Uma coluna estreita de ícones que não sai da tela em nenhuma largura: abrir a árvore
+          de arquivos, criar, importar e montar a estrutura fullstack. O que antes era uma
+          barra horizontal a mais empilhada no topo virou uma coluna de 44px na lateral, que
+          rouba largura em vez de altura — e altura é o que falta num celular.
+        */}
+        <div className="w-11 sm:w-12 shrink-0 bg-[#0a0c12] border-r border-white/5 flex flex-col items-center gap-1 py-2 z-30">
+          <button
+            onClick={() => setShowRepoSidebar(!showRepoSidebar)}
+            className={cn(
+              "p-2 rounded-xl transition-all border",
+              showRepoSidebar
+                ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/30"
+                : "bg-white/[0.02] text-zinc-400 hover:text-white border-white/5"
+            )}
+            title={showRepoSidebar ? "Esconder os arquivos" : "Mostrar os arquivos"}
+          >
+            <FolderGit2 size={16} />
+          </button>
+
+          <button
+            onClick={handleCreateNewFile}
+            className="p-2 rounded-xl bg-white/[0.02] hover:bg-cyan-500/15 text-zinc-400 hover:text-cyan-300 border border-white/5 transition-all"
+            title="Novo arquivo"
+          >
+            <Plus size={16} />
+          </button>
+
+          <label
+            className="p-2 rounded-xl bg-white/[0.02] hover:bg-white/[0.08] text-zinc-400 hover:text-white border border-white/5 cursor-pointer transition-all"
+            title="Importar arquivo do computador"
+          >
+            <Upload size={15} />
+            <input type="file" onChange={handleImportFileDisk} className="hidden" accept=".html,.css,.js,.jsx,.ts,.tsx,.py,.sql,.json,.txt,.md" />
+          </label>
+
+          <button
+            onClick={criarEstruturaFullstack}
+            className="p-2 rounded-xl bg-white/[0.02] hover:bg-emerald-500/15 text-zinc-400 hover:text-emerald-300 border border-white/5 transition-all"
+            title="Criar estrutura fullstack"
+          >
+            <Layers size={15} />
+          </button>
+
+          <button
+            onClick={() => { setBuscaAberta(v => !v); setTimeout(() => campoDeBuscaRef.current?.focus(), 0); }}
+            className={cn(
+              "p-2 rounded-xl border transition-all",
+              buscaAberta
+                ? "bg-violet-500/20 text-violet-300 border-violet-500/40"
+                : "bg-white/[0.02] text-zinc-400 hover:text-violet-300 border-white/5"
+            )}
+            title="Buscar e substituir em todos os arquivos (Ctrl+F)"
+          >
+            <Search size={15} />
+          </button>
+
+          {/* Só existe quando há o que separar — um botão que só sabe dizer "não" é ruído. */}
+          {activeFile && /<html|<body|<!DOCTYPE/i.test(activeFile.content) && /<(style|script)\b[^>]*>[\s\S]*?\S[\s\S]*?<\/\1\s*>/i.test(activeFile.content) && (
+            <button
+              onClick={separarArquivoAberto}
+              className="p-2 rounded-xl bg-white/[0.02] hover:bg-amber-500/15 text-zinc-400 hover:text-amber-300 border border-white/5 transition-all"
+              title="Separar este arquivo em index.html + styles.css + game.js"
+            >
+              <Replace size={15} />
+            </button>
+          )}
+
+          {/* O estado do repositório, sem gastar uma linha de texto: verde salvo, âmbar pendente. */}
+          <span
+            className={cn(
+              "mt-auto w-2 h-2 rounded-full shrink-0",
+              isSaved ? "bg-emerald-500/70" : "bg-amber-400 animate-pulse"
+            )}
+            title={isSaved ? "Repositório salvo" : "Alterações não salvas"}
+          />
+        </div>
+
         {/* Virtual Repository File Tree Sidebar */}
         <AnimatePresence>
           {showRepoSidebar && (
@@ -3283,7 +3122,10 @@ FORMATO OBRIGATÓRIO (JSON estrito):
               animate={{ width: 240, opacity: 1 }}
               exit={{ width: 0, opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="absolute md:relative inset-y-0 left-0 h-full max-w-[86vw] bg-[#0a0c12] border-r border-white/5 flex flex-col shrink-0 overflow-hidden z-40 shadow-2xl md:shadow-none"
+              /* No mobile a árvore flutua POR CIMA do editor, mas começando depois da fileira
+                 de ícones (left-11) — cobrir a própria fileira que a abriu tiraria o caminho
+                 de volta. No desktop ela entra no fluxo, ao lado da fileira. */
+              className="absolute md:relative inset-y-0 left-11 sm:left-12 md:left-0 h-full max-w-[80vw] bg-[#0a0c12] border-r border-white/5 flex flex-col shrink-0 overflow-hidden z-40 shadow-2xl md:shadow-none"
             >
               <div className="p-3 border-b border-white/5 flex items-center justify-between">
                 <span className="text-[10px] font-mono uppercase tracking-widest text-zinc-500 font-semibold flex items-center gap-1.5">
@@ -3658,6 +3500,102 @@ FORMATO OBRIGATÓRIO (JSON estrito):
 
         </div>
 
+        {/*
+          FILEIRA DIREITA — as habilidades.
+
+          Enxame e Hunter são os dois agentes que trabalham SOZINHOS no código; ficam
+          separados do resto justamente porque não são "mais um botão de editor". Abaixo
+          deles, o histórico do que eles (e você) fizeram: desfazer, refazer e o comparador.
+        */}
+        <div className="w-11 sm:w-12 shrink-0 bg-[#0a0c12] border-l border-white/5 flex flex-col items-center gap-1 py-2 z-30">
+          <button
+            onClick={() => setIsSwarmModalOpen(true)}
+            className="p-2 rounded-xl bg-gradient-to-br from-purple-600/90 to-cyan-600/90 hover:from-purple-500 hover:to-cyan-500 text-white border border-purple-400/40 shadow-lg shadow-purple-950/50 transition-all active:scale-95 cursor-pointer"
+            title="Enxame OSONE CODE: 4 agentes especializados em loop autônomo"
+          >
+            <Bot size={16} className="text-purple-100" />
+          </button>
+
+          <button
+            onClick={() => setIsHunterModalOpen(true)}
+            className="p-2 rounded-xl bg-gradient-to-br from-emerald-600/90 to-green-600/90 hover:from-emerald-500 hover:to-green-500 text-white border border-emerald-400/40 shadow-lg shadow-emerald-950/50 transition-all active:scale-95 cursor-pointer"
+            title="Hunter Agêntico: examina o código, aponta o que falta e implementa"
+          >
+            <BowAndArrowIcon size={15} className="text-emerald-100" />
+          </button>
+
+          <div className="w-6 h-px bg-white/10 my-1 shrink-0" />
+
+          <button
+            onClick={handleUndoChange}
+            disabled={historyStack.length === 0}
+            className={cn(
+              "relative p-2 rounded-xl border transition-all",
+              historyStack.length > 0
+                ? "bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20 active:scale-95 cursor-pointer"
+                : "bg-white/[0.02] text-zinc-700 border-white/5 cursor-not-allowed"
+            )}
+            title={historyStack.length > 0 ? `Desfazer (${historyStack.length}) — Ctrl+Z` : "Nada para desfazer"}
+          >
+            <Undo size={15} />
+            {historyStack.length > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] px-0.5 rounded-full bg-amber-500 text-[9px] font-bold text-black flex items-center justify-center">
+                {historyStack.length > 9 ? '9+' : historyStack.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={handleRedoChange}
+            disabled={redoStack.length === 0}
+            className={cn(
+              "p-2 rounded-xl border transition-all",
+              redoStack.length > 0
+                ? "bg-cyan-500/10 text-cyan-400 border-cyan-500/30 hover:bg-cyan-500/20 active:scale-95 cursor-pointer"
+                : "bg-white/[0.02] text-zinc-700 border-white/5 cursor-not-allowed"
+            )}
+            title={redoStack.length > 0 ? `Refazer (${redoStack.length}) — Ctrl+Shift+Z` : "Nada para refazer"}
+          >
+            <Redo size={15} />
+          </button>
+
+          {historyStack.length > 0 && (
+            <button
+              onClick={() => setComparacaoAberta(true)}
+              className="p-2 rounded-xl bg-violet-500/10 hover:bg-violet-500/20 text-violet-300 border border-violet-500/25 transition-all cursor-pointer"
+              title="Ver o que mudou na última alteração"
+            >
+              <Columns size={15} />
+            </button>
+          )}
+
+          {/* Levar o trabalho embora: o arquivo aberto, ou o projeto inteiro em .zip. */}
+          <button
+            onClick={handleCopyCode}
+            className="mt-auto p-2 rounded-xl bg-white/[0.02] hover:bg-white/[0.08] text-zinc-400 hover:text-white border border-white/5 transition-all"
+            title="Copiar o código do arquivo aberto"
+          >
+            {copied ? <Check size={15} className="text-emerald-400" /> : <Copy size={15} />}
+          </button>
+
+          <button
+            onClick={handleDownloadFile}
+            className="p-2 rounded-xl bg-white/[0.02] hover:bg-white/[0.08] text-zinc-400 hover:text-white border border-white/5 transition-all"
+            title="Baixar apenas o arquivo aberto"
+          >
+            <Download size={15} />
+          </button>
+
+          <button
+            onClick={exportarProjetoEmZip}
+            disabled={empacotando}
+            className="p-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/25 transition-all disabled:opacity-40 cursor-pointer"
+            title={`Baixar o projeto inteiro (${files.length} arquivo(s)) em .zip`}
+          >
+            {empacotando ? <Loader2 size={15} className="animate-spin" /> : <Archive size={15} />}
+          </button>
+        </div>
+
       </div>
 
       {/* AI Code Assistant Footer Prompt Box */}
@@ -3822,8 +3760,15 @@ FORMATO OBRIGATÓRIO (JSON estrito):
             </div>
           )}
 
-          {/* Prompt Input Line */}
-          <div className="flex flex-col sm:flex-row sm:items-center gap-2 bg-black/50 border border-white/10 rounded-2xl p-1.5 focus-within:border-cyan-500/40 transition-all min-w-0">
+          {/*
+            O CAMPO DE DIGITAR, COM OS ÍCONES DENTRO DELE.
+
+            Antes o anexo, o esforço máximo, o texto e o botão disputavam uma linha só — no
+            celular isso virava uma fila horizontal espremida. Agora é uma caixa: o texto em
+            cima ocupando a largura toda, e embaixo os ícones à esquerda e o "Gerar" à direita,
+            que é onde o polegar já está.
+          */}
+          <div className="flex flex-col gap-1.5 bg-black/50 border border-white/10 rounded-2xl p-2 focus-within:border-cyan-500/40 transition-all min-w-0">
             <input
               ref={imageInputRef}
               type="file"
@@ -3836,29 +3781,6 @@ FORMATO OBRIGATÓRIO (JSON estrito):
               }}
             />
 
-            <button
-              onClick={() => imageInputRef.current?.click()}
-              disabled={isGenerating}
-              className="p-2 rounded-xl bg-white/[0.03] hover:bg-cyan-500/10 text-zinc-400 hover:text-cyan-300 border border-white/5 hover:border-cyan-500/20 transition-all shrink-0 disabled:opacity-50"
-              title="Anexar imagem(ns) de referência para o modelo usar na criação"
-            >
-              <Paperclip size={15} />
-            </button>
-
-            <button
-              onClick={() => setMaxEffort(prev => !prev)}
-              disabled={isGenerating}
-              className={cn(
-                "p-2 rounded-xl border transition-all shrink-0 disabled:opacity-50",
-                maxEffort
-                  ? "bg-orange-500/15 text-orange-400 border-orange-500/40 shadow-lg shadow-orange-950/30"
-                  : "bg-white/[0.03] text-zinc-400 hover:text-orange-300 border-white/5 hover:border-orange-500/20"
-              )}
-              title={maxEffort ? "Esforço Máximo ATIVADO: o modelo vai capricho e raciocínio máximo na criação (clique para desativar)" : "Ativar Esforço Máximo: pede ao modelo o maior nível de raciocínio e capricho possível"}
-            >
-              <Flame size={15} className={maxEffort ? "animate-pulse" : ""} />
-            </button>
-
             <input
               type="text"
               value={promptInput}
@@ -3866,28 +3788,61 @@ FORMATO OBRIGATÓRIO (JSON estrito):
               onKeyDown={(e) => e.key === 'Enter' && handleSendAIPrompt()}
               placeholder={selecaoDoEditor
                 ? `Descreva o que fazer com as ${selecaoDoEditor.texto.split('\n').length} linha(s) marcadas...`
-                : "Descreva a alteração ou o app que você quer criar neste arquivo de código..."}
+                : "Descreva a alteração ou o app que você quer criar..."}
               disabled={isGenerating}
-              className="w-full min-w-0 flex-1 bg-transparent px-3 py-1.5 text-xs text-white placeholder-zinc-500 outline-none font-mono"
+              className="w-full min-w-0 bg-transparent px-1.5 py-1.5 text-xs sm:text-sm text-white placeholder-zinc-500 outline-none font-mono"
             />
 
-            <button
-              onClick={() => handleSendAIPrompt()}
-              disabled={!promptInput.trim() || isGenerating}
-              className="w-full sm:w-auto px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 disabled:bg-zinc-800 text-black font-semibold text-xs font-mono transition-all flex items-center justify-center gap-1.5 shrink-0"
-            >
-              {isGenerating ? (
-                <>
-                  <RefreshCw size={13} className="animate-spin" />
-                  <span>Gerando...</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles size={13} />
-                  <span>Gerar Código</span>
-                </>
-              )}
-            </button>
+            <div className="flex items-center gap-1 min-w-0">
+              <button
+                onClick={() => imageInputRef.current?.click()}
+                disabled={isGenerating}
+                className="p-2 rounded-xl bg-white/[0.03] hover:bg-cyan-500/10 text-zinc-400 hover:text-cyan-300 border border-white/5 hover:border-cyan-500/20 transition-all shrink-0 disabled:opacity-50"
+                title="Anexar imagem(ns) de referência para o modelo usar na criação"
+              >
+                <Paperclip size={15} />
+              </button>
+
+              <button
+                onClick={() => setMaxEffort(prev => !prev)}
+                disabled={isGenerating}
+                className={cn(
+                  "p-2 rounded-xl border transition-all shrink-0 disabled:opacity-50",
+                  maxEffort
+                    ? "bg-orange-500/15 text-orange-400 border-orange-500/40 shadow-lg shadow-orange-950/30"
+                    : "bg-white/[0.03] text-zinc-400 hover:text-orange-300 border-white/5 hover:border-orange-500/20"
+                )}
+                title={maxEffort ? "Esforço Máximo ATIVADO: o modelo vai com capricho e raciocínio máximo (clique para desativar)" : "Ativar Esforço Máximo: pede ao modelo o maior nível de raciocínio e capricho possível"}
+              >
+                <Flame size={15} className={maxEffort ? "animate-pulse" : ""} />
+              </button>
+
+              {/* Onde o pedido vai bater: o arquivo aberto, ou só o trecho marcado no editor. */}
+              <span className="hidden min-[380px]:flex items-center gap-1 px-2 text-[10px] font-mono text-zinc-500 truncate min-w-0">
+                <FileCode size={11} className="shrink-0" />
+                <span className="truncate">
+                  {selecaoDoEditor ? `${selecaoDoEditor.texto.split('\n').length} linha(s)` : (activeFile?.name || 'sem arquivo')}
+                </span>
+              </span>
+
+              <button
+                onClick={() => handleSendAIPrompt()}
+                disabled={!promptInput.trim() || isGenerating}
+                className="ml-auto px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 disabled:bg-zinc-800 disabled:text-zinc-500 text-black font-semibold text-xs font-mono transition-all flex items-center justify-center gap-1.5 shrink-0"
+              >
+                {isGenerating ? (
+                  <>
+                    <RefreshCw size={13} className="animate-spin" />
+                    <span>Gerando...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={13} />
+                    <span>Gerar</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
         </div>
