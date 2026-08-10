@@ -3640,8 +3640,10 @@ FORMATO OBRIGATÓRIO (JSON estrito):
           {/* Interactive Live Preview Panel */}
           {(viewLayout === 'preview' || viewLayout === 'split') && (
             <div className={cn(
-              "flex flex-col min-h-0 bg-black transition-all overflow-hidden relative",
-              viewLayout === 'split' ? "w-full h-1/2 md:w-1/2 md:h-full" : "w-full h-full"
+              "flex flex-col bg-black transition-all overflow-hidden relative",
+              viewLayout === 'split'
+                ? "w-full h-1/2 min-h-0 md:w-1/2 md:h-full"
+                : "w-full h-full min-h-[45vh] md:min-h-0"
             )}>
               {/* O preview recebe o PROJETO montado, não o arquivo aberto: é o que faz o
                   styles.css e o script.js existirem de verdade, e o que evita desenhar CSS

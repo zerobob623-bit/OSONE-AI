@@ -675,8 +675,20 @@ export const CodePreview = ({ code, linguagem, aoDetectarProblema }: {
         </div>
       </div>
 
-      {/* Floating Action control for Full Screen at the bottom right corner */}
-      <div className="absolute bottom-4 right-4 z-[999] flex items-center gap-1.5 pointer-events-auto">
+      {/*
+        Floating Action control for Full Screen at the bottom right corner.
+
+        Este markup é reaproveitado nos dois estados: em tela cheia ele é portado pro
+        document.body (por isso precisa de um z-index altíssimo, acima de literalmente
+        tudo no app), mas fora da tela cheia ele fica dentro do painel normal do preview —
+        um z-index tão alto ali fazia esse botão renderizar por cima de outra UI do
+        workspace (como a barra lateral de arquivos), mesmo quando o painel do preview
+        estava visualmente atrás dela.
+      */}
+      <div className={cn(
+        "absolute bottom-4 right-4 flex items-center gap-1.5 pointer-events-auto",
+        isFullScreen ? "z-[999999]" : "z-20"
+      )}>
         <button
           onClick={toggleFullScreen}
           className={cn(
