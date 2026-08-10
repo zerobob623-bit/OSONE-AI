@@ -9703,21 +9703,20 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
       const sessionPromise = connectToLiveBridge({
         apiKey,
         /**
-         * ORDEM DE PREFERÊNCIA DA VOZ — do que canta melhor ao que certamente funciona.
+         * UM NOME SÓ, E ELE PRECISA SER UM QUE EXISTE.
          *
-         * Os modelos de *native audio dialog* geram a forma de onda da voz diretamente, e é
-         * isso que dá melodia, sustentação de nota, assobio e respiração de verdade; os modelos
-         * live "comuns" soam corretos falando, mas achatam o canto. Como o catálogo de
-         * pré-visualização muda e cada chave tem acesso a um conjunto diferente, aqui não se
-         * afirma que um nome existe: a conexão TESTA cada um em ordem e fica no primeiro que a
-         * API aceitar. O último da lista é o modelo que já estava em uso — a garantia de que,
-         * no pior caso, a voz continua exatamente como estava antes desta mudança.
+         * Houve uma tentativa de listar modelos de *native audio dialog* na frente deste, para
+         * ganhar um canto com mais melodia. Ela quebrou a voz inteira, e o motivo importa para
+         * não se repetir: `ai.live.connect()` abre um WebSocket e RESOLVE antes de o Google
+         * validar o modelo. Um nome inexistente não vira exceção — ele derruba o socket depois,
+         * pelo callback de erro. Ou seja, a lista de candidatos nunca chegava a testar o
+         * seguinte: o app já tinha se dado por conectado e a sessão morria em seguida.
+         *
+         * Trocar este nome exige confirmar antes que o modelo existe para a chave em uso
+         * (Google AI Studio / models.list). Uma cascata só funcionaria aqui se esperasse a
+         * sessão dar sinal de vida antes de considerá-la boa — e não é o que acontece hoje.
          */
-        model: [
-          "gemini-3.1-flash-native-audio-preview",
-          "gemini-2.5-flash-preview-native-audio-dialog",
-          "gemini-3.1-flash-live-preview"
-        ],
+        model: "gemini-3.1-flash-live-preview",
         config: {
           responseModalities: [Modality.AUDIO],
           outputAudioTranscription: { enabled: true },
