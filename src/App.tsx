@@ -2021,20 +2021,60 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
    */
   const [letraCantada, setLetraCantada] = useState<{ verso: string; titulo?: string } | null>(null);
   const limpezaDaLetraRef = useRef<any>(null);
+  const cantandoAgoraRef = useRef(false);
 
-  const mostrarLetraCantada = (verso: string, titulo?: string) => {
-    setLetraCantada({ verso, titulo });
-    if (limpezaDaLetraRef.current) clearTimeout(limpezaDaLetraRef.current);
-    // Um verso cantado dura poucos segundos; 15s sem um verso novo significa que a música parou.
-    limpezaDaLetraRef.current = setTimeout(() => setLetraCantada(null), 15000);
-  };
-
-  const encerrarLetraCantada = () => {
+  const limparRelogioDaLetra = () => {
     if (limpezaDaLetraRef.current) {
       clearTimeout(limpezaDaLetraRef.current);
       limpezaDaLetraRef.current = null;
     }
+  };
+
+  const mostrarLetraCantada = (verso: string, titulo?: string) => {
+    cantandoAgoraRef.current = true;
+    setLetraCantada({ verso, titulo });
+    limparRelogioDaLetra();
+    /**
+     * Rede de segurança, não o mecanismo principal.
+     *
+     * Quem fecha a letra na hora certa é o fim do áudio (onActivityChange) — este relógio só
+     * existe para o caso de o áudio nunca sinalizar o fim: conexão que cai no meio do verso,
+     * aba em segundo plano onde o AudioContext é suspenso. 25s é bem mais que a duração de um
+     * ou dois versos, então ele nunca corta uma música que ainda está tocando.
+     */
+    limpezaDaLetraRef.current = setTimeout(() => {
+      cantandoAgoraRef.current = false;
+      setLetraCantada(null);
+    }, 25000);
+  };
+
+  const encerrarLetraCantada = () => {
+    cantandoAgoraRef.current = false;
+    limparRelogioDaLetra();
     setLetraCantada(null);
+  };
+
+  /**
+   * A voz parou de sair. Se ela estava cantando, a música terminou — mas o último verso
+   * merece um instante a mais na tela, porque o áudio silencia no fim da nota e uma legenda
+   * que some no mesmo milissegundo parece um corte seco.
+   */
+  const fecharLetraQuandoAVozParar = () => {
+    if (!cantandoAgoraRef.current) return;
+    limparRelogioDaLetra();
+    limpezaDaLetraRef.current = setTimeout(() => {
+      cantandoAgoraRef.current = false;
+      setLetraCantada(null);
+    }, 1200);
+  };
+
+  /**
+   * O áudio voltou dentro da janela de graça — era um engasgo da rede entre dois trechos da
+   * mesma música, não o fim dela. Sem isso, uma pausa de meio segundo apagaria a letra no meio
+   * da canção e ela só voltaria no verso seguinte, piscando.
+   */
+  const cancelarFechamentoDaLetra = () => {
+    if (cantandoAgoraRef.current) limparRelogioDaLetra();
   };
 
   const [whiteboardText, setWhiteboardText] = useState<string>(() => {
@@ -6573,6 +6613,8 @@ ${isBad
     }
     voiceTranscriptRef.current = '';
     setVoiceTranscript('');
+    // Sessão encerrada: não existe mais voz para a letra acompanhar.
+    encerrarLetraCantada();
 
     if (liveAnimationFrameRef.current) {
       cancelAnimationFrame(liveAnimationFrameRef.current);
@@ -9492,6 +9534,11 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
       audioProcessorRef.current = new AudioProcessor();
       audioPlayerRef.current = new AudioPlayer((active) => {
         setIsSpeaking(active);
+        // A letra acompanha a VOZ, não o relógio: quando o áudio dela para de sair, a música
+        // acabou (ou foi cortada) e o verso sai da tela junto. É mais preciso do que esperar o
+        // 'encerrar_letra_cantada', que pode nunca chegar se o turno for interrompido.
+        if (active) cancelarFechamentoDaLetra();
+        else fecharLetraQuandoAVozParar();
       });
 
       const recentChatContext = chatHistory.slice(-100).map(m => `${m.role === 'user' ? 'Usuário' : 'OSONE'}: ${m.content}`).join('\n');
@@ -9655,7 +9702,22 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
 
       const sessionPromise = connectToLiveBridge({
         apiKey,
-        model: "gemini-3.1-flash-live-preview",
+        /**
+         * ORDEM DE PREFERÊNCIA DA VOZ — do que canta melhor ao que certamente funciona.
+         *
+         * Os modelos de *native audio dialog* geram a forma de onda da voz diretamente, e é
+         * isso que dá melodia, sustentação de nota, assobio e respiração de verdade; os modelos
+         * live "comuns" soam corretos falando, mas achatam o canto. Como o catálogo de
+         * pré-visualização muda e cada chave tem acesso a um conjunto diferente, aqui não se
+         * afirma que um nome existe: a conexão TESTA cada um em ordem e fica no primeiro que a
+         * API aceitar. O último da lista é o modelo que já estava em uso — a garantia de que,
+         * no pior caso, a voz continua exatamente como estava antes desta mudança.
+         */
+        model: [
+          "gemini-3.1-flash-native-audio-preview",
+          "gemini-2.5-flash-preview-native-audio-dialog",
+          "gemini-3.1-flash-live-preview"
+        ],
         config: {
           responseModalities: [Modality.AUDIO],
           outputAudioTranscription: { enabled: true },
@@ -11925,6 +11987,9 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
 
               if (message.serverContent?.interrupted && !isMutedRef.current) {
                 audioPlayerRef.current?.stop();
+                // Cortou no meio da música: a letra sai junto, na hora — deixá-la na tela
+                // enquanto ela já parou de cantar é a legenda de uma voz que não existe mais.
+                encerrarLetraCantada();
                 if (isElevenLabsLiveOutput()) {
                   try { elevenLabsQueuePlayerRef.current?.stop(); } catch (_) {}
                   if (elevenLabsWsRef.current) {

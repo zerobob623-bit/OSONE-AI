@@ -11,8 +11,19 @@ export interface LiveBridgeSession {
  * Suporta servidor Express local (via WebSocket proxy /api/live-ws) 
  * e ambientes Serverless / Vercel (via conexão direta client-side @google/genai).
  */
+/**
+ * O nome de um modelo não é uma verdade que dê para assumir do lado do cliente.
+ *
+ * Modelos de pré-visualização entram e saem de catálogo, e cada conta tem acesso a um conjunto
+ * diferente deles. Fixar um único nome significa que, no dia em que ele sair do ar (ou não
+ * estiver liberado para aquela chave), a voz simplesmente para de funcionar — sem alternativa.
+ *
+ * Por isso `model` aceita uma LISTA em ordem de preferência: a conexão tenta o primeiro, e só
+ * desce para o próximo se a API recusar aquele nome. O último da lista deve ser sempre o mais
+ * conservador, o que se sabe que funciona.
+ */
 export async function connectToLiveBridge(options: {
-  model: string;
+  model: string | string[];
   config: any;
   callbacks: {
     onopen?: () => void;
@@ -27,6 +38,29 @@ export async function connectToLiveBridge(options: {
   // puro para qualquer visitante do app (a chave do servidor só é usada server-side, dentro
   // do proxy WebSocket /api/live-ws, que nunca a devolve ao cliente).
   const effectiveApiKey = options.apiKey?.trim();
+
+  const modelosCandidatos = (Array.isArray(options.model) ? options.model : [options.model])
+    .map(m => String(m || '').trim())
+    .filter(Boolean);
+  const modeloPreferido = modelosCandidatos[0] || "gemini-3.1-flash-live-preview";
+
+  /**
+   * Um erro de "modelo não existe / sem acesso" merece a próxima tentativa; um erro de rede,
+   * cota ou chave inválida, não — insistir nos outros nomes só multiplicaria a mesma falha e
+   * atrasaria a mensagem certa para o usuário.
+   */
+  const pareceModeloIndisponivel = (erro: any): boolean => {
+    const texto = `${erro?.message || erro?.error?.message || erro || ''}`.toLowerCase();
+    const status = erro?.status ?? erro?.code ?? erro?.error?.code;
+    if (status === 404 || status === 400) return true;
+    return texto.includes('not found') ||
+           texto.includes('not_found') ||
+           texto.includes('is not supported') ||
+           texto.includes('does not exist') ||
+           texto.includes('unsupported model') ||
+           texto.includes('invalid model') ||
+           texto.includes('não encontrado');
+  };
 
   // 2. Detectar se está rodando em ambiente Serverless/Vercel
   const isVercelServerless = 
@@ -47,9 +81,33 @@ export async function connectToLiveBridge(options: {
     }
 
     const ai = new GoogleGenAI({ apiKey: key, vertexai: false });
-    const targetModel = options.model || "gemini-3.1-flash-live-preview";
 
-    try {
+    /**
+     * Percorre os candidatos até um conectar. É aqui que a preferência por um modelo de áudio
+     * nativo (que canta, assobia e sustenta melodia) deixa de ser um palpite e vira um teste
+     * de verdade: se a conta tiver acesso a ele, ele é usado; se não, cai no seguinte sem que
+     * o usuário perceba nada além da voz continuar funcionando.
+     */
+    const conectarComCandidatos = async () => {
+      let ultimoErro: any = null;
+      for (let i = 0; i < modelosCandidatos.length; i++) {
+        const nomeDoModelo = modelosCandidatos[i];
+        try {
+          return await tentarConectar(nomeDoModelo);
+        } catch (erro: any) {
+          ultimoErro = erro;
+          const aindaHaAlternativa = i < modelosCandidatos.length - 1;
+          if (aindaHaAlternativa && pareceModeloIndisponivel(erro)) {
+            console.warn(`OSONE G5 Client: modelo "${nomeDoModelo}" indisponível para esta chave. Tentando "${modelosCandidatos[i + 1]}"...`);
+            continue;
+          }
+          throw erro;
+        }
+      }
+      throw ultimoErro || new Error("Nenhum modelo de voz disponível.");
+    };
+
+    const tentarConectar = async (targetModel: string) => {
       const directSession = await ai.live.connect({
         model: targetModel,
         config: options.config,
@@ -81,7 +139,7 @@ export async function connectToLiveBridge(options: {
         }
       });
 
-      console.log("OSONE G5 Client: Conexão Gemini Live direta estabelecida com sucesso!");
+      console.log(`OSONE G5 Client: Conexão Gemini Live direta estabelecida com o modelo "${targetModel}"!`);
       if (options.callbacks?.onopen) {
         options.callbacks.onopen();
       }
@@ -113,6 +171,10 @@ export async function connectToLiveBridge(options: {
           } catch (_) {}
         }
       };
+    };
+
+    try {
+      return await conectarComCandidatos();
     } catch (directErr: any) {
       console.error("OSONE G5 Client: Falha na conexão direta do Gemini Live:", directErr);
       if (options.callbacks?.onerror) {
@@ -183,9 +245,13 @@ export async function connectToLiveBridge(options: {
       clearTimeout(connectionTimeout);
       console.log("OSONE G5 Client: Canal WebSocket estabelecido via servidor local!");
       if (ws) {
+        // O proxy fala com um modelo por vez. Vai o preferido; se ele não existir para esta
+        // chave, o erro volta pelo canal e o app cai na conexão direta, que sabe percorrer a
+        // lista inteira de candidatos.
         ws.send(JSON.stringify({
           type: "setup",
-          model: options.model,
+          model: modeloPreferido,
+          candidatos: modelosCandidatos,
           config: options.config
         }));
       }
