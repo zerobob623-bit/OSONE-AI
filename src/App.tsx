@@ -6766,6 +6766,30 @@ ${isBad
       stopLiveSession(false, false, true);
       await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
       await startLiveSession(cameraAtual, engineAtual);
+
+      /**
+       * `startLiveSession` trata os próprios erros e NÃO lança: numa falha ela apenas deixa o
+       * estado em 'error'. Sem conferir isso aqui, uma reconexão fracassada passaria por
+       * sucesso — o idioma ficaria trocado, a promessa de "volta ao anterior" nunca se
+       * cumpriria, e o modelo seguiria falando como se tivesse voz. Por isso esperamos o
+       * estado assentar antes de dizer qualquer coisa.
+       */
+      const conectou = await new Promise<boolean>((resolve) => {
+        const limite = Date.now() + 12000;
+        const conferir = () => {
+          const status = liveStateRef.current.status;
+          if (status === 'connected') return resolve(true);
+          if (status === 'error' || status === 'idle') return resolve(false);
+          if (Date.now() > limite) return resolve(false);
+          window.setTimeout(conferir, 150);
+        };
+        conferir();
+      });
+
+      if (!conectou) {
+        throw new Error(liveStateRef.current.error || 'a conexão não voltou a tempo');
+      }
+
       addNotification(`Voz agora em ${alvo}.`, "success");
       return { ok: true, detalhe: `Voz reconectada em ${alvo}. Fale e cante nesse idioma com a pronúncia nativa dele.` };
     } catch (erro: any) {
