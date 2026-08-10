@@ -3,8 +3,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   AlertCircle, ChevronRight, ChevronLeft, Loader2, VolumeX, Volume2, 
   Plus, MessageSquare, Trash2, BookOpen, RefreshCw, Folder, Eye, EyeOff, 
-  Heart, Lock, Copy, Maximize, Languages, MonitorOff, Monitor, Mic, MicOff, 
-  Paperclip, Globe, Send, X 
+  Heart, Lock, Copy, Maximize, Languages, MonitorOff, Monitor, Mic, MicOff,
+  Paperclip, Globe, Send, X, Captions, CaptionsOff
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { InfinityLogo } from './InfinityLogo';
@@ -1094,7 +1094,7 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
               )}
 
               {/* Real-time voice transcript */}
-              {voiceTranscript && (
+              {subtitlesEnabled && voiceTranscript && (
                 <motion.div 
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -1159,7 +1159,18 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
                 <Languages size={11} className={isTranslationMode ? "animate-pulse" : ""} />
               </button>
 
-              <button 
+              <button
+                onClick={() => setSubtitlesEnabled(!subtitlesEnabled)}
+                className={cn(
+                  "w-7 h-7 rounded-full flex items-center justify-center transition-all bg-white/[0.03] border border-white/[0.05]",
+                  subtitlesEnabled ? "text-her-accent border-her-accent/20" : "text-her-muted"
+                )}
+                title={subtitlesEnabled ? "Desativar Legendas" : "Ativar Legendas"}
+              >
+                {subtitlesEnabled ? <Captions size={11} /> : <CaptionsOff size={11} />}
+              </button>
+
+              <button
                 onClick={isScreenSharing ? stopScreenSharing : startScreenSharing}
                 className={cn(
                   "w-7 h-7 rounded-full flex items-center justify-center transition-all bg-white/[0.03] border border-white/[0.05]",
@@ -1255,12 +1266,25 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
                     <Languages size={14} className={isTranslationMode ? "animate-pulse" : ""} />
                   </button>
 
-                  <button 
+                  <button
+                    onClick={() => setSubtitlesEnabled(!subtitlesEnabled)}
+                    className={cn(
+                      "w-9 h-9 rounded-full flex items-center justify-center transition-all border",
+                      subtitlesEnabled
+                        ? "bg-her-accent/20 text-her-accent border-her-accent/30"
+                        : "bg-white/[0.03] text-her-muted hover:bg-white/[0.05] border-white/[0.05]"
+                    )}
+                    title={subtitlesEnabled ? "Desativar Legendas" : "Ativar Legendas"}
+                  >
+                    {subtitlesEnabled ? <Captions size={14} /> : <CaptionsOff size={14} />}
+                  </button>
+
+                  <button
                     onClick={isScreenSharing ? stopScreenSharing : startScreenSharing}
                     className={cn(
                       "w-9 h-9 rounded-full flex items-center justify-center transition-all border",
-                      isScreenSharing 
-                        ? "bg-her-accent/20 text-her-accent border-her-accent/30" 
+                      isScreenSharing
+                        ? "bg-her-accent/20 text-her-accent border-her-accent/30"
                         : "bg-white/[0.03] text-her-muted hover:bg-white/[0.05] border-white/[0.05]"
                     )}
                     title={isScreenSharing ? "Compartilhar Tela" : "Parar Tela"}
@@ -1412,12 +1436,25 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
               <Languages size={18} className={isTranslationMode ? "animate-pulse" : ""} />
             </button>
 
-            <button 
+            <button
+              onClick={() => setSubtitlesEnabled(!subtitlesEnabled)}
+              className={cn(
+                "w-11 h-11 items-center justify-center transition-all duration-300 relative shrink-0 hidden md:flex",
+                subtitlesEnabled
+                  ? "bg-her-accent/10 text-her-accent border border-her-accent/20"
+                  : "bg-white/[0.03] text-her-muted hover:bg-white/[0.05] border border-white/[0.05]"
+              )}
+              title={subtitlesEnabled ? "Desativar Legendas" : "Ativar Legendas"}
+            >
+              {subtitlesEnabled ? <Captions size={18} /> : <CaptionsOff size={18} />}
+            </button>
+
+            <button
               onClick={isScreenSharing ? stopScreenSharing : startScreenSharing}
               className={cn(
                 "w-11 h-11 items-center justify-center transition-all duration-300 relative shrink-0 hidden md:flex",
-                isScreenSharing 
-                  ? "bg-her-accent/10 text-her-accent border border-her-accent/20" 
+                isScreenSharing
+                  ? "bg-her-accent/10 text-her-accent border border-her-accent/20"
                   : "bg-white/[0.03] text-her-muted hover:bg-white/[0.05] border border-white/[0.05]"
               )}
               title={isScreenSharing ? "Parar Compartilhamento" : "Compartilhar Tela"}
