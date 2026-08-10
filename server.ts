@@ -436,7 +436,18 @@ Comentário de @${user}: "${text}"`;
        * que vem depois desta linha segue valendo. O que mudou de verdade é o formato das opções,
        * tratado logo abaixo.
        */
-      const { TikTokLiveConnection } = await import("tiktok-live-connector");
+      /**
+       * Os EVENTOS também vêm do pacote, e não como texto solto.
+       *
+       * Os nomes em si não mudaram — WebcastEvent.CHAT continua valendo "chat", ControlEvent.
+       * DISCONNECTED continua "disconnected", e assim por diante. O que mudou é que o mapa de
+       * eventos da v2 é indexado pelos MEMBROS do enum, então `on("chat", ...)` com a string
+       * crua deixa de ser aceito pela tipagem, mesmo escrevendo exatamente o mesmo valor.
+       * Usar os enums mantém o comportamento idêntico em execução e ainda deixa o compilador
+       * avisar caso um nome seja renomeado numa versão futura — que é justamente o tipo de
+       * quebra silenciosa que trouxe este código até aqui.
+       */
+      const { TikTokLiveConnection, WebcastEvent, ControlEvent } = await import("tiktok-live-connector");
 
       /**
        * Opções no formato da v2.
@@ -489,7 +500,7 @@ Comentário de @${user}: "${text}"`;
       const connection = new TikTokLiveConnection(username, configOpts);
       activeTikTokRunner = connection;
 
-      connection.on("chat", async (data) => {
+      connection.on(WebcastEvent.CHAT, async (data: any) => {
         const logEntry: TikTokLog = {
           id: data.msgId || Math.random().toString(),
           type: "chat",
@@ -505,7 +516,7 @@ Comentário de @${user}: "${text}"`;
         }
       });
 
-      connection.on("gift", (data) => {
+      connection.on(WebcastEvent.GIFT, (data: any) => {
         const giftCount = data.repeatCount || data.count || 1;
         const logEntry: TikTokLog = {
           id: data.msgId || Math.random().toString(),
@@ -518,7 +529,7 @@ Comentário de @${user}: "${text}"`;
          if (tiktokEventLogs.length > 300) tiktokEventLogs.pop();
       });
 
-      connection.on("like", (data) => {
+      connection.on(WebcastEvent.LIKE, (data: any) => {
         if (data && typeof data.likeCount === "number") {
           tiktokLikeCount = data.likeCount;
         }
@@ -533,13 +544,13 @@ Comentário de @${user}: "${text}"`;
       });
 
       // Track spectators count in real-time
-      connection.on("roomUser", (data) => {
+      connection.on(WebcastEvent.ROOM_USER, (data: any) => {
         if (data && typeof data.viewerCount === "number") {
           tiktokViewerCount = data.viewerCount;
         }
       });
 
-      connection.on("member", (data) => {
+      connection.on(WebcastEvent.MEMBER, (data: any) => {
         tiktokEventLogs.unshift({
           id: Math.random().toString(),
           type: "member",
@@ -550,7 +561,7 @@ Comentário de @${user}: "${text}"`;
         if (tiktokEventLogs.length > 300) tiktokEventLogs.pop();
       });
 
-      connection.on("disconnected", () => {
+      connection.on(ControlEvent.DISCONNECTED, () => {
         // Only trigger reconnect check if we are still targeting this user and didn't disconnect manually
         if (currentTikTokUser === username && tiktokStatus === "connected") {
           tiktokStatus = "connecting";
@@ -571,7 +582,7 @@ Comentário de @${user}: "${text}"`;
         }
       });
 
-      connection.on("error", (err) => {
+      connection.on(ControlEvent.ERROR, (err: any) => {
         tiktokEventLogs.unshift({
           id: Math.random().toString(),
           type: "error",
