@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from "express";
 import http from "http";
+import https from "https";
 import path from "path";
 import fs from "fs";
 import os from "os";
@@ -2482,17 +2483,19 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
 
       console.log(`[Knowledge Base] Extraindo dados da URL: ${targetUrl}...`);
 
-      const response = await fetch(targetUrl, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-      });
+      let response: { ok: boolean; status: number; text: string };
+      try {
+        response = await buscarTextoComProtecaoSsrf(targetUrl);
+      } catch (err: any) {
+        if (err?.bloqueado) return res.status(403).json({ error: err.message });
+        throw err;
+      }
 
       if (!response.ok) {
         return res.status(400).json({ error: `HTTP Error ${response.status}: Não foi possível carregar a página.` });
       }
 
-      const html = await response.text();
+      const html = response.text;
       const $ = cheerio.load(html);
 
       // Remove script, style, header, footer, nav, buttons, SVG
@@ -3324,8 +3327,36 @@ Retorne SOMENTE o objeto JSON conforme o esquema.
     }
   });
 
+  // O ID de sync (8 caracteres alfanuméricos) é a única barreira de acesso ao perfil de
+  // outro usuário — sem limite de tentativas, um cliente decidido consegue tentar força
+  // bruta contra o espaço de IDs. Isso não impede, mas encarece a tentativa por IP.
+  const tentativasDeCargaPorIp = new Map<string, { contagem: number; expiraEm: number }>();
+  setInterval(() => {
+    const agora = Date.now();
+    for (const [chave, registro] of tentativasDeCargaPorIp) {
+      if (registro.expiraEm < agora) tentativasDeCargaPorIp.delete(chave);
+    }
+  }, 5 * 60 * 1000).unref();
+
+  const limitarCargaDeMemoria = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const chave = req.ip || req.socket?.remoteAddress || "desconhecido";
+    const agora = Date.now();
+    const janelaMs = 60 * 1000;
+    const maxTentativas = 20;
+    const registro = tentativasDeCargaPorIp.get(chave);
+    if (!registro || registro.expiraEm < agora) {
+      tentativasDeCargaPorIp.set(chave, { contagem: 1, expiraEm: agora + janelaMs });
+      return next();
+    }
+    if (registro.contagem >= maxTentativas) {
+      return res.status(429).json({ status: "error", error: "Muitas tentativas de carregar IDs de sincronização. Aguarde um minuto e tente de novo." });
+    }
+    registro.contagem++;
+    next();
+  };
+
   // GET to load memory sync profile
-  app.get("/api/memory-sync/load/:syncId", (req, res) => {
+  app.get("/api/memory-sync/load/:syncId", limitarCargaDeMemoria, (req, res) => {
     try {
       const syncId = String(req.params.syncId).trim().toUpperCase();
       const profiles = readSyncProfiles();
@@ -5571,7 +5602,13 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
       }
 
       const targetDir = type === 'video' ? generatedVideosDir : generatedImagesDir;
-      const filePath = path.join(targetDir, filename);
+      // `filename` vem do cliente: reduz para o nome puro (sem separadores/"..") antes de juntar
+      // ao diretório, senão um valor como "../../whatsapp-config.json" apaga arquivo fora da pasta.
+      const nomeSeguro = path.basename(String(filename));
+      const filePath = path.resolve(targetDir, nomeSeguro);
+      if (nomeSeguro !== filename || !filePath.startsWith(path.resolve(targetDir) + path.sep)) {
+        return res.status(400).json({ error: "Nome de arquivo inválido." });
+      }
 
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
@@ -5966,42 +6003,88 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
     return false;
   };
 
-  const resolveAndCheckPrivateUrl = async (urlString: string): Promise<boolean> => {
-    try {
-      const parsed = new URL(urlString);
+  const hostnameEhPrivado = (hostname: string): boolean => {
+    const h = hostname.toLowerCase();
+    return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '0.0.0.0' ||
+      h.endsWith('.local') || h.endsWith('.internal') || isPrivateIp(h);
+  };
+
+  /**
+   * Busca uma URL fornecida pelo usuário travando o IP de destino: a checagem de "não é
+   * privado/interno" e a conexão de fato usam a MESMA resolução de DNS. Antes, uma checava
+   * via `dns.lookup` e a outra deixava o `fetch` resolver de novo por conta própria — um
+   * domínio com TTL=0 (DNS rebinding) podia responder um IP público na checagem e um IP
+   * interno milissegundos depois, na hora da conexão real. Também revalida cada redirect,
+   * já que um `fetch` comum seguiria redirects para dentro da rede interna sem re-checar nada.
+   */
+  const buscarTextoComProtecaoSsrf = async (
+    urlInicial: string,
+    opcoes: { timeoutMs?: number } = {}
+  ): Promise<{ ok: boolean; status: number; text: string }> => {
+    const timeoutMs = opcoes.timeoutMs ?? 10000;
+    const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    let urlAtual = urlInicial;
+
+    for (let redirecionamentos = 0; redirecionamentos <= 5; redirecionamentos++) {
+      const parsed = new URL(urlAtual);
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        return true;
+        throw Object.assign(new Error("Acesso a URLs privadas, locais ou não permitidas é bloqueado por segurança."), { bloqueado: true });
       }
       const hostname = parsed.hostname.toLowerCase();
-      if (
-        hostname === 'localhost' ||
-        hostname === '127.0.0.1' ||
-        hostname === '::1' ||
-        hostname === '0.0.0.0' ||
-        hostname.endsWith('.local') ||
-        hostname.endsWith('.internal')
-      ) {
-        return true;
+      if (hostnameEhPrivado(hostname)) {
+        throw Object.assign(new Error("Acesso a URLs privadas, locais ou não permitidas é bloqueado por segurança."), { bloqueado: true });
       }
 
-      if (isPrivateIp(hostname)) {
-        return true;
+      const enderecos = await dns.promises.lookup(hostname, { all: true }).catch(() => []);
+      if (!enderecos || enderecos.length === 0) {
+        throw Object.assign(new Error("Não foi possível resolver o endereço informado."), { bloqueado: true });
       }
-
-      // Resolve hostname via DNS to prevent DNS rebinding attacks
-      const addresses = await dns.promises.lookup(hostname, { all: true }).catch(() => []);
-      if (!addresses || addresses.length === 0) {
-        return true; // Reject unresolvable hostnames for safety
-      }
-      for (const addr of addresses) {
-        if (isPrivateIp(addr.address)) {
-          return true;
+      for (const endereco of enderecos) {
+        if (isPrivateIp(endereco.address)) {
+          throw Object.assign(new Error("Acesso a URLs privadas, locais ou não permitidas é bloqueado por segurança."), { bloqueado: true });
         }
       }
-      return false;
-    } catch (_) {
-      return true;
+
+      const escolhido = enderecos.find(e => e.family === 4) || enderecos[0];
+      const modulo = parsed.protocol === 'https:' ? https : http;
+      const porta = parsed.port ? Number(parsed.port) : (parsed.protocol === 'https:' ? 443 : 80);
+
+      const resultado = await new Promise<{ status: number; corpo: string; redirecionarPara?: string }>((resolve, reject) => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        const reqHttp = modulo.request({
+          host: escolhido.address,
+          port: porta,
+          path: parsed.pathname + parsed.search,
+          method: 'GET',
+          headers: { Host: parsed.host, 'User-Agent': userAgent },
+          // Garante SNI/validação de certificado pelo hostname original, mesmo conectando pelo IP fixado.
+          servername: parsed.protocol === 'https:' ? hostname : undefined,
+          signal: controller.signal
+        } as any, (respostaHttp) => {
+          clearTimeout(timer);
+          const status = respostaHttp.statusCode || 0;
+          if (status >= 300 && status < 400 && respostaHttp.headers.location) {
+            respostaHttp.resume();
+            resolve({ status, corpo: '', redirecionarPara: new URL(respostaHttp.headers.location, urlAtual).toString() });
+            return;
+          }
+          const partes: Buffer[] = [];
+          respostaHttp.on('data', (chunk) => partes.push(chunk));
+          respostaHttp.on('end', () => resolve({ status, corpo: Buffer.concat(partes).toString('utf-8') }));
+          respostaHttp.on('error', reject);
+        });
+        reqHttp.on('error', (err) => { clearTimeout(timer); reject(err); });
+        reqHttp.end();
+      });
+
+      if (resultado.redirecionarPara) {
+        urlAtual = resultado.redirecionarPara;
+        continue;
+      }
+      return { ok: resultado.status >= 200 && resultado.status < 300, status: resultado.status, text: resultado.corpo };
     }
+    throw Object.assign(new Error("Excesso de redirecionamentos."), { bloqueado: true });
   };
 
   // POST endpoint for high-speed server-side webpage text scraping & parsing
@@ -6012,26 +6095,19 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
         return res.status(400).json({ error: "O parâmetro 'url' é obrigatório." });
       }
 
-      if (await resolveAndCheckPrivateUrl(url)) {
-        return res.status(403).json({ error: "Acesso a URLs privadas, locais ou não permitidas é bloqueado por segurança." });
+      let response: { ok: boolean; status: number; text: string };
+      try {
+        response = await buscarTextoComProtecaoSsrf(url);
+      } catch (err: any) {
+        if (err?.bloqueado) return res.status(403).json({ error: err.message });
+        throw err;
       }
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-      const response = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-      });
-      clearTimeout(timeoutId);
 
       if (!response.ok) {
         return res.status(400).json({ error: `Falha ao acessar o site: status ${response.status}` });
       }
 
-      const html = await response.text();
+      const html = response.text;
 
       // Strips structural elements like script tags, stylesheets, and menus
       let text = html
@@ -6232,6 +6308,21 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
   // Tela de consentimento simples exibida no navegador durante o fluxo "Vincular Conta" do
   // Google. Em vez de embutir HTML solto no servidor, delega para uma página estática servida
   // pelo Vite/dist, repassando os parâmetros originais do Google via querystring.
+  // O Google só chama esse fluxo a partir de um punhado de domínios dele próprio. Aceitar
+  // qualquer redirect_uri deixaria um link malicioso usar o consentimento real do dono do
+  // dispositivo para emitir um código de autorização e mandá-lo para um domínio de terceiro.
+  const isRedirectUriDoGoogle = (redirectUri: string): boolean => {
+    try {
+      const parsed = new URL(redirectUri);
+      return parsed.protocol === "https:" && (
+        parsed.hostname === "oauth-redirect.googleusercontent.com" ||
+        parsed.hostname === "oauth-redirect-sandbox.googleusercontent.com"
+      );
+    } catch {
+      return false;
+    }
+  };
+
   app.get("/api/google-home/authorize", (req, res) => {
     const { client_id, redirect_uri, state, response_type } = req.query;
     const expectedId = (process.env.GOOGLE_HOME_CLIENT_ID || "").trim();
@@ -6241,8 +6332,8 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
     if (!client_id || client_id !== expectedId) {
       return res.status(400).send("client_id inválido ou não configurado no servidor (GOOGLE_HOME_CLIENT_ID).");
     }
-    if (!redirect_uri || typeof redirect_uri !== "string") {
-      return res.status(400).send("redirect_uri é obrigatório.");
+    if (!redirect_uri || typeof redirect_uri !== "string" || !isRedirectUriDoGoogle(redirect_uri)) {
+      return res.status(400).send("redirect_uri é obrigatório e precisa ser um domínio de OAuth do Google.");
     }
 
     const params = new URLSearchParams({
@@ -6256,8 +6347,8 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
   // de autorização e redireciona de volta para o Google com ele.
   app.post("/api/google-home/approve", (req, res) => {
     const { redirect_uri, state } = req.body || {};
-    if (!redirect_uri || typeof redirect_uri !== "string") {
-      return res.status(400).json({ error: "redirect_uri é obrigatório." });
+    if (!redirect_uri || typeof redirect_uri !== "string" || !isRedirectUriDoGoogle(redirect_uri)) {
+      return res.status(400).json({ error: "redirect_uri é obrigatório e precisa ser um domínio de OAuth do Google." });
     }
     const code = issueAuthCode();
     const params = new URLSearchParams({ code, state: state || "" });
