@@ -6646,7 +6646,14 @@ ${isBad
     };
   }, []);
 
-  const stopLiveSessionInternal = (keepError = false) => {
+  /**
+   * `preservarTela` existe para a reconexão por troca de idioma: ali a sessão morre e renasce
+   * em cerca de um segundo, e derrubar o compartilhamento de tela no caminho obrigaria o
+   * usuário a autorizar tudo de novo — por uma troca de sotaque que ele nem pediu explicitamente.
+   * Os quadros são enviados lendo `liveSessionRef.current` na hora, então o fluxo preservado
+   * passa a alimentar a sessão nova sozinho.
+   */
+  const stopLiveSessionInternal = (keepError = false, preservarTela = false) => {
     if (transcriptThrottleRef.current) {
       clearTimeout(transcriptThrottleRef.current);
       transcriptThrottleRef.current = null;
@@ -6662,7 +6669,7 @@ ${isBad
     }
     audioProcessorRef.current?.stopRecording?.();
     audioPlayerRef.current?.stop?.();
-    stopScreenSharing();
+    if (!preservarTela) stopScreenSharing();
     liveSessionRef.current?.close?.();
     liveSessionRef.current = null;
     liveAudioOutputEngineRef.current = 'gemini';
@@ -6673,8 +6680,8 @@ ${isBad
     }
   };
 
-  const stopLiveSession = (keepError = false, rearmHandsFree = true) => {
-    stopLiveSessionInternal(keepError);
+  const stopLiveSession = (keepError = false, rearmHandsFree = true, preservarTela = false) => {
+    stopLiveSessionInternal(keepError, preservarTela);
     stopElevenLabsLiveSession(false, false);
     if (rearmHandsFree) scheduleHandsFreeRearm();
   };
@@ -6720,10 +6727,27 @@ ${isBad
       setIdiomaDaVoz(alvo);
       return { ok: true, detalhe: `Idioma da voz definido como ${alvo} para a próxima conexão.` };
     }
+    if (isElevenLabsLiveOutput()) {
+      /**
+       * Com a saída na ElevenLabs, quem produz o som é o sintetizador externo — o languageCode
+       * do Gemini não toca nele. Reconectar aqui custaria o corte na conversa e não mudaria
+       * uma vírgula do sotaque: churn puro, que é justamente o que não pode acontecer.
+       */
+      idiomaDaVozRef.current = alvo;
+      setIdiomaDaVoz(alvo);
+      return {
+        ok: true,
+        detalhe: `Anotado: ${alvo}. Sua voz agora sai pela ElevenLabs, cujo sotaque não é controlado por aqui — então NÃO houve reconexão. Fale nesse idioma normalmente; para a pronúncia nativa, o usuário precisa trocar para a voz nativa do OSONE nas configurações.`
+      };
+    }
 
     const idiomaAnterior = idiomaDaVozRef.current;
     const engineAtual = liveAudioOutputEngineRef.current;
-    const cameraAtual = isCameraActive;
+    // Do ref, não do state: este código roda dentro de um callback criado quando a sessão
+    // abriu, e o valor do state ali dentro é o daquele instante — a câmera pode ter sido
+    // ligada ou desligada desde então, e reabrir com o valor velho a apagaria ou a acenderia
+    // sem que ninguém tivesse pedido.
+    const cameraAtual = isCameraActiveRef.current;
 
     idiomaDaVozRef.current = alvo;
     setIdiomaDaVoz(alvo);
@@ -6734,7 +6758,9 @@ ${isBad
       retomandoPorTrocaDeIdiomaRef.current = true;
       // `rearmHandsFree: false` — a escuta por palavra-chave não pode reativar no meio de uma
       // troca de idioma e roubar a sessão que está sendo reaberta.
-      stopLiveSession(false, false);
+      // `preservarTela: true` — o compartilhamento de tela sobrevive à troca; derrubá-lo
+      // obrigaria o usuário a autorizar tudo de novo por causa de um ajuste de sotaque.
+      stopLiveSession(false, false, true);
       await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
       await startLiveSession(cameraAtual, engineAtual);
       addNotification(`Voz agora em ${alvo}.`, "success");
