@@ -2018,7 +2018,7 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
     return localStorage.getItem('osone_show_whiteboard') !== 'false';
   });
   const [subtitlesEnabled, setSubtitlesEnabled] = useState<boolean>(() => {
-    return localStorage.getItem('osone_subtitles_enabled') !== 'false';
+    return localStorage.getItem('osone_subtitles_enabled') === 'true';
   });
 
   useEffect(() => {
