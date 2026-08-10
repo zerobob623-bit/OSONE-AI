@@ -2031,8 +2031,30 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
    * sendRealtimeInput, sendToolResponse e close. Mudar o idioma exige RECONECTAR, e é por isso
    * que ele vive num ref lido na hora de montar a configuração.
    */
+  /**
+   * QUAL SESSÃO DE VOZ ESTÁ VALENDO AGORA.
+   *
+   * Fechar uma sessão Live não é instantâneo: o `onclose` do WebSocket chega depois, e até
+   * então já pode existir uma sessão NOVA no lugar. Sem um jeito de saber de qual sessão o
+   * evento veio, o `onclose` atrasado da sessão velha derruba a sessão nova — que era
+   * exatamente o que acontecia ao trocar o idioma (e também ao trocar a voz): a conexão
+   * reabria, morria pelo evento antigo, reabria de novo, e a saudação tocava a cada volta.
+   *
+   * Cada sessão nasce com um número. Todo callback confere se o número dele ainda é o número
+   * da vez; se não for, o evento é de um fantasma e é ignorado.
+   */
+  const geracaoDaSessaoDeVozRef = useRef(0);
+
   const idiomaDaVozRef = useRef<string>('pt-BR');
   const [idiomaDaVoz, setIdiomaDaVoz] = useState<string>('pt-BR');
+  // Impede que um segundo pedido de troca comece enquanto o primeiro ainda está reabrindo a
+  // conexão — duas reconexões sobrepostas se derrubariam mutuamente.
+  const trocaDeIdiomaEmCursoRef = useRef(false);
+  // Quando foi a última troca. Reabrir a conexão é caro e barulhento; mesmo que o modelo peça
+  // demais, o intervalo mínimo garante que a conversa nunca vire uma sequência de reconexões.
+  // `null` = nunca trocou. Um sentinela explícito, e não "zero", porque zero também é um
+  // instante válido no relógio e confundir os dois faria a primeira troca escapar do intervalo.
+  const ultimaTrocaDeIdiomaRef = useRef<number | null>(null);
   // Marca a reconexão que é continuação de conversa (troca de sotaque), para a sessão nova não
   // se apresentar como se estivesse chegando agora e engolir o pedido que estava em curso.
   const retomandoPorTrocaDeIdiomaRef = useRef(false);
@@ -6680,7 +6702,17 @@ ${isBad
       return { ok: false, detalhe: `"${novoIdioma}" não é um código de idioma válido. Use o formato ISO, como en-US, es-ES, ja-JP.` };
     }
     if (alvo.toLowerCase() === idiomaDaVozRef.current.toLowerCase()) {
-      return { ok: true, detalhe: `A voz já está em ${alvo}. Pode falar/cantar nesse idioma agora.` };
+      return { ok: true, detalhe: `A voz já está em ${alvo}. Pode falar/cantar nesse idioma agora — não peça a troca de novo.` };
+    }
+    if (trocaDeIdiomaEmCursoRef.current) {
+      return { ok: false, detalhe: `Já estou reabrindo a voz neste instante. Não peça outra troca agora: espere a conexão voltar e siga falando.` };
+    }
+    const desdeAUltimaTroca = Date.now() - (ultimaTrocaDeIdiomaRef.current ?? 0);
+    if (ultimaTrocaDeIdiomaRef.current !== null && desdeAUltimaTroca < 8000) {
+      return {
+        ok: false,
+        detalhe: `A voz acabou de ser reaberta há ${Math.round(desdeAUltimaTroca / 1000)}s. Não troque de novo agora — continue a conversa no idioma atual (${idiomaDaVozRef.current}).`
+      };
     }
     if (!liveSessionRef.current) {
       // Sem sessão no ar não há o que reconectar: guarda para a próxima conexão.
@@ -6696,6 +6728,8 @@ ${isBad
     idiomaDaVozRef.current = alvo;
     setIdiomaDaVoz(alvo);
 
+    trocaDeIdiomaEmCursoRef.current = true;
+    ultimaTrocaDeIdiomaRef.current = Date.now();
     try {
       retomandoPorTrocaDeIdiomaRef.current = true;
       // `rearmHandsFree: false` — a escuta por palavra-chave não pode reativar no meio de uma
@@ -6714,6 +6748,8 @@ ${isBad
         ok: false,
         detalhe: `Não consegui reabrir a voz em ${alvo} (${erro?.message || 'erro na reconexão'}). Continuo em ${idiomaAnterior} — siga a conversa normalmente nesse idioma.`
       };
+    } finally {
+      trocaDeIdiomaEmCursoRef.current = false;
     }
   };
 
@@ -9594,6 +9630,12 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
     const apiKey = apiKeys.gemini || '';
     const useElevenLabsOutput = audioOutputEngine === 'elevenlabs';
 
+    // O número desta sessão. Os callbacks abaixo o comparam com o número da vez para descobrir
+    // se ainda são a sessão válida — é o que impede o evento atrasado de uma sessão fechada de
+    // derrubar a que nasceu no lugar dela.
+    const minhaGeracao = ++geracaoDaSessaoDeVozRef.current;
+    const souAGeracaoAtual = () => minhaGeracao === geracaoDaSessaoDeVozRef.current;
+
     pauseHandsFreeDetection();
     setIsVoiceOutputPaused(false);
     liveAudioOutputEngineRef.current = audioOutputEngine;
@@ -9698,15 +9740,21 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
         - EM QUE LÍNGUA CANTAR: na que o usuário pedir. Se ele pedir "canta em inglês", cante em inglês; se
           pedir uma música em japonês, cante em japonês. Se ele não disser a língua, use a língua em que ELE
           está falando com você. Cantar em português um pedido feito em inglês é errar o pedido.
-        - O SOTAQUE É UMA CONFIGURAÇÃO, E QUEM A TROCA É VOCÊ (REGRA DECISIVA): sua voz sai com a fonética do
-          idioma que está configurado na sessão — hoje "${idiomaDaVoz}". Enquanto ela não mudar, uma letra em
-          inglês sai pronunciada com a boca de quem fala ${idiomaDaVoz}: as palavras certas, o som errado.
-          Então, ANTES de começar a falar ou cantar em outro idioma, chame 'definir_idioma_da_voz' com o
-          código dele (en-US, es-ES, ja-JP, fr-FR...). A troca reabre a conexão e leva cerca de um segundo,
-          por isso ela vem SEMPRE antes — nunca no meio de uma frase ou de uma música. Quando a conversa
-          voltar para o português, chame de novo com 'pt-BR'.
-        - Não anuncie a troca como um procedimento técnico ("vou reconectar", "aguarde um instante"): faça a
+        - O SOTAQUE É UMA CONFIGURAÇÃO: sua voz sai com a fonética do idioma configurado na sessão, que
+          AGORA é "${idiomaDaVoz}". Enquanto ela não mudar, uma letra em inglês sai pronunciada com a boca de
+          quem fala ${idiomaDaVoz} — as palavras certas, o som errado.
+        - QUANDO chamar 'definir_idioma_da_voz': SOMENTE quando o idioma que você vai usar for DIFERENTE de
+          ${idiomaDaVoz}, e SOMENTE uma vez, imediatamente antes de começar. Depois de trocar, siga falando e
+          cantando nesse idioma por quantos turnos forem necessários SEM chamar a ferramenta de novo.
+        - QUANDO NÃO CHAMAR (isto é o mais importante): se você já vai falar em ${idiomaDaVoz}, NÃO chame.
+          Se acabou de trocar, NÃO chame de novo. Não chame "por garantia", não chame a cada turno, não
+          chame para confirmar o idioma atual. Cada chamada REABRE a conexão de voz — chamar sem necessidade
+          faz a conversa travar e recomeçar, e é a pior experiência possível para quem está do outro lado.
+          Na dúvida, NÃO chame: falar com o sotaque atual é muito melhor do que reconectar à toa.
+        - Não anuncie a troca como procedimento técnico ("vou reconectar", "aguarde um instante"): faça a
           chamada e emende no idioma novo. Para quem ouve, deve parecer que você simplesmente mudou de língua.
+        - Se a ferramenta responder que a voz JÁ está nesse idioma, que uma troca está em curso ou que ela
+          acabou de acontecer, isso não é erro: apenas continue falando normalmente e NÃO tente de novo.
         - RESPONDA na língua em que o usuário falou. Se ele falar com você em espanhol, converse em espanhol —
           inclusive as frases antes e depois da música.
         - A letra que você manda para 'mostrar_letra_cantada' vai no MESMO idioma em que você está cantando,
@@ -10598,6 +10646,16 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         callbacks: {
           onopen: () => {
             sessionPromise.then((session: any) => {
+              /**
+               * Chegou tarde demais: enquanto esta conexão era estabelecida, outra sessão
+               * assumiu o lugar. Adotar esta agora sobrescreveria a válida e deixaria duas
+               * sessões vivas — uma delas sem ninguém para fechá-la, despejando áudio.
+               */
+              if (!souAGeracaoAtual()) {
+                console.log("[Voz] Sessão obsoleta descartada ao abrir — outra assumiu no lugar.");
+                try { session?.close?.(); } catch (_) {}
+                return;
+              }
               liveSessionRef.current = session;
               setLiveState({ status: 'connected' });
               setIsListening(true);
@@ -12169,9 +12227,18 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
             });
           },
           onclose: () => {
+            // Fantasma: esta sessão já foi substituída. Encerrar aqui mataria a sessão nova.
+            if (!souAGeracaoAtual()) {
+              console.log("[Voz] onclose de sessão antiga ignorado — já existe outra no lugar.");
+              return;
+            }
             stopLiveSession();
           },
           onerror: (error: any) => {
+            if (!souAGeracaoAtual()) {
+              console.log("[Voz] onerror de sessão antiga ignorado.");
+              return;
+            }
             console.error("Live API Error:", error);
             const errorMessage = error?.message || String(error);
             const isQuotaError = errorMessage.toLowerCase().includes("quota") || 
