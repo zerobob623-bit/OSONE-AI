@@ -12262,10 +12262,18 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         />
       )}
 
-      {/* Header */}
+      {/*
+        Header.
+
+        O OSONE CODE é a única aba que precisa da tela inteira: ele tem editor, preview e as
+        próprias fileiras de ferramentas. Com o cabeçalho do app e a navegação de baixo
+        aparecendo junto, sobravam poucos centímetros de altura para o código — então ali ele
+        se sobrepõe a tudo, e a volta acontece pela seta dentro da própria aba.
+      */}
         <header className={cn(
           "relative z-30 flex justify-between items-center px-4 md:px-8 py-4 md:py-6 shrink-0 w-full border-b border-white/[0.03] bg-black/20 transition-all duration-500",
-          !showUi && "opacity-0 pointer-events-none -translate-y-4"
+          !showUi && "opacity-0 pointer-events-none -translate-y-4",
+          workspaceMode === 'code' && "hidden"
         )}>
           {/* O nome do botão não é decoração: é por ele que o próprio OSONE encontra este botão
               quando o usuário manda clicar. Um botão só de ícone sem rótulo é invisível tanto para
@@ -13075,7 +13083,9 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
       {/* Mobile Bottom Navigation */}
       <nav className={cn(
          "shrink-0 bg-[#050505]/90 backdrop-blur-3xl border-t border-white/[0.05] flex md:hidden items-center justify-around px-4 py-3 shadow-[0_-10px_40px_rgba(0,0,0,0.5)] transition-all duration-500 w-full z-[60]",
-        !showUi && "hidden"
+        !showUi && "hidden",
+        // No OSONE CODE a aba toma a tela inteira; a volta é pela seta dentro dela.
+        workspaceMode === 'code' && "hidden"
       )}>
         {[
           { id: 'home', icon: Volume2, label: 'Início', action: () => setWorkspaceMode('home') },
@@ -14235,7 +14245,9 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
       </AnimatePresence>
 
       {/* GLOBAL CHAMAR OSONE FLOATING BUTTON FOR NON-HOME PAGES/TABS */}
-      {workspaceMode !== 'home' && showUi && (
+      {/* Fora do CODE: lá ele flutuaria bem em cima da fileira direita de ferramentas da aba,
+          que ocupa justamente o canto inferior direito. */}
+      {workspaceMode !== 'home' && workspaceMode !== 'code' && showUi && (
         <div className="fixed bottom-6 right-6 z-[60] flex items-center gap-2 pointer-events-auto">
           <button
             onClick={handleSummonOsone}
