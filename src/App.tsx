@@ -5308,6 +5308,10 @@ ${isBad
   const elevenLabsSilenceTimeoutRef = useRef<any>(null);
   const elevenLabsUtteranceTimeoutRef = useRef<any>(null);
   const elevenLabsResumeWatchdogRef = useRef<any>(null);
+  // Conta pedaços consecutivos de áudio do mic acima do limiar de voz enquanto o ElevenLabs
+  // fala, pra só interromper com volume SUSTENTADO (fala de verdade) e não com um pico único
+  // de eco da própria caixa de som voltando pelo microfone.
+  const elevenLabsInterruptStreakRef = useRef(0);
   const accumulatedTranscriptRef = useRef<string>("");
   const lastProcessedResultIndexRef = useRef<number>(0);
   // Quando uma fala do ElevenLabs é roteada pelo mesmo orquestrador do chat, o chat não
@@ -10343,11 +10347,23 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     // Isso permite interrupção (barge-in) real por voz se o usuário falar com volume normal, enquanto filtra o próprio eco do assistente vindo da caixa de som!
                     if (isElevenLabsLiveOutput() && elevenLabsStateRef.current === 'speaking') {
                       if (rms < 0.018) {
+                        elevenLabsInterruptStreakRef.current = 0;
                         return;
                       }
+                      // Exige volume de voz em pelo menos 2 pedaços seguidos (~500ms) antes de
+                      // interromper. Um pico único quase sempre é o próprio eco da fala do OSONE
+                      // voltando pelo microfone, não é possível diferenciar isso de um "oi" real
+                      // com um só pedaço — mas eco raramente se sustenta por meio segundo.
+                      elevenLabsInterruptStreakRef.current += 1;
+                      if (elevenLabsInterruptStreakRef.current < 2) {
+                        return;
+                      }
+                      elevenLabsInterruptStreakRef.current = 0;
                       interromperSaidaElevenLabs('interrupção por voz', false);
                       elevenLabsStateRef.current = 'listening';
                       setIsListening(true);
+                    } else {
+                      elevenLabsInterruptStreakRef.current = 0;
                     }
                     if (isSpeakingRef.current) {
                       // Se o assistente estiver falando, enviamos o áudio somente se houver um sinal sonoro de voz real (RMS >= 0.012).
