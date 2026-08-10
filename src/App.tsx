@@ -2019,6 +2019,24 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
    * acabe sem o encerramento chegar (conexão caiu, o turno foi interrompido). Sem essa rede,
    * um verso ficaria parado no meio da tela para sempre.
    */
+  /**
+   * O IDIOMA DA VOZ — o que decide o SOTAQUE, não só as palavras.
+   *
+   * `speechConfig.languageCode` é descrito pelo SDK como "language code for the speech
+   * synthesization": é ele que define a fonética com que o texto vira som. Sem esse campo, a
+   * API fixa um locale só, e aí inglês, espanhol e japonês saem todos com a boca de quem fala
+   * português — palavras certas, sotaque errado.
+   *
+   * A sessão Live não permite trocar isso em andamento: `Session` só expõe sendClientContent,
+   * sendRealtimeInput, sendToolResponse e close. Mudar o idioma exige RECONECTAR, e é por isso
+   * que ele vive num ref lido na hora de montar a configuração.
+   */
+  const idiomaDaVozRef = useRef<string>('pt-BR');
+  const [idiomaDaVoz, setIdiomaDaVoz] = useState<string>('pt-BR');
+  // Marca a reconexão que é continuação de conversa (troca de sotaque), para a sessão nova não
+  // se apresentar como se estivesse chegando agora e engolir o pedido que estava em curso.
+  const retomandoPorTrocaDeIdiomaRef = useRef(false);
+
   const [letraCantada, setLetraCantada] = useState<{ verso: string; titulo?: string } | null>(null);
   const limpezaDaLetraRef = useRef<any>(null);
   const cantandoAgoraRef = useRef(false);
@@ -6639,6 +6657,66 @@ ${isBad
     if (rearmHandsFree) scheduleHandsFreeRearm();
   };
 
+  /**
+   * Troca o idioma da VOZ (o sotaque) reabrindo a sessão Live.
+   *
+   * A API não deixa mudar `speechConfig.languageCode` com a sessão no ar, então o único
+   * caminho é fechar e abrir de novo. O corte é curto e acontece ANTES de ela começar a falar
+   * no idioma novo — nunca no meio de uma frase ou de uma música.
+   *
+   * Se a reconexão falhar, o idioma volta ao anterior e a mensagem devolvida diz isso: é
+   * melhor continuar com o sotaque errado do que ficar sem voz nenhuma.
+   */
+  const trocarIdiomaDaVoz = async (novoIdioma: string): Promise<{ ok: boolean; detalhe: string }> => {
+    const bruto = String(novoIdioma || '').trim();
+    // O modelo pode escrever "EN-US", "en_us" ou "Ja-Jp" — todos querem dizer a mesma coisa.
+    // Recusar por causa da caixa das letras seria transformar uma diferença de escrita em falha.
+    const partes = bruto.replace(/_/g, '-').split('-');
+    const alvo = partes.length > 1
+      ? `${partes[0].toLowerCase()}-${partes.slice(1).join('-').toUpperCase()}`
+      : partes[0].toLowerCase();
+
+    if (!/^[a-z]{2,3}(-[A-Z0-9]{2,8})?$/.test(alvo)) {
+      return { ok: false, detalhe: `"${novoIdioma}" não é um código de idioma válido. Use o formato ISO, como en-US, es-ES, ja-JP.` };
+    }
+    if (alvo.toLowerCase() === idiomaDaVozRef.current.toLowerCase()) {
+      return { ok: true, detalhe: `A voz já está em ${alvo}. Pode falar/cantar nesse idioma agora.` };
+    }
+    if (!liveSessionRef.current) {
+      // Sem sessão no ar não há o que reconectar: guarda para a próxima conexão.
+      idiomaDaVozRef.current = alvo;
+      setIdiomaDaVoz(alvo);
+      return { ok: true, detalhe: `Idioma da voz definido como ${alvo} para a próxima conexão.` };
+    }
+
+    const idiomaAnterior = idiomaDaVozRef.current;
+    const engineAtual = liveAudioOutputEngineRef.current;
+    const cameraAtual = isCameraActive;
+
+    idiomaDaVozRef.current = alvo;
+    setIdiomaDaVoz(alvo);
+
+    try {
+      retomandoPorTrocaDeIdiomaRef.current = true;
+      // `rearmHandsFree: false` — a escuta por palavra-chave não pode reativar no meio de uma
+      // troca de idioma e roubar a sessão que está sendo reaberta.
+      stopLiveSession(false, false);
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
+      await startLiveSession(cameraAtual, engineAtual);
+      addNotification(`Voz agora em ${alvo}.`, "success");
+      return { ok: true, detalhe: `Voz reconectada em ${alvo}. Fale e cante nesse idioma com a pronúncia nativa dele.` };
+    } catch (erro: any) {
+      retomandoPorTrocaDeIdiomaRef.current = false;
+      idiomaDaVozRef.current = idiomaAnterior;
+      setIdiomaDaVoz(idiomaAnterior);
+      console.error('[Voz] Falha ao trocar o idioma da sessão:', erro);
+      return {
+        ok: false,
+        detalhe: `Não consegui reabrir a voz em ${alvo} (${erro?.message || 'erro na reconexão'}). Continuo em ${idiomaAnterior} — siga a conversa normalmente nesse idioma.`
+      };
+    }
+  };
+
   const startScreenSharing = async () => {
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
@@ -9620,6 +9698,15 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
         - EM QUE LÍNGUA CANTAR: na que o usuário pedir. Se ele pedir "canta em inglês", cante em inglês; se
           pedir uma música em japonês, cante em japonês. Se ele não disser a língua, use a língua em que ELE
           está falando com você. Cantar em português um pedido feito em inglês é errar o pedido.
+        - O SOTAQUE É UMA CONFIGURAÇÃO, E QUEM A TROCA É VOCÊ (REGRA DECISIVA): sua voz sai com a fonética do
+          idioma que está configurado na sessão — hoje "${idiomaDaVoz}". Enquanto ela não mudar, uma letra em
+          inglês sai pronunciada com a boca de quem fala ${idiomaDaVoz}: as palavras certas, o som errado.
+          Então, ANTES de começar a falar ou cantar em outro idioma, chame 'definir_idioma_da_voz' com o
+          código dele (en-US, es-ES, ja-JP, fr-FR...). A troca reabre a conexão e leva cerca de um segundo,
+          por isso ela vem SEMPRE antes — nunca no meio de uma frase ou de uma música. Quando a conversa
+          voltar para o português, chame de novo com 'pt-BR'.
+        - Não anuncie a troca como um procedimento técnico ("vou reconectar", "aguarde um instante"): faça a
+          chamada e emende no idioma novo. Para quem ouve, deve parecer que você simplesmente mudou de língua.
         - RESPONDA na língua em que o usuário falou. Se ele falar com você em espanhol, converse em espanhol —
           inclusive as frases antes e depois da música.
         - A letra que você manda para 'mostrar_letra_cantada' vai no MESMO idioma em que você está cantando,
@@ -9744,10 +9831,13 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
           outputAudioTranscription: { enabled: true },
           inputAudioTranscription: { enabled: true },
           speechConfig: {
-            voiceConfig: { 
-              prebuiltVoiceConfig: { 
+            // Sem este campo a síntese fica presa num único locale e todo idioma sai com
+            // sotaque brasileiro. Ele é lido do ref porque a troca de idioma reabre a sessão.
+            languageCode: idiomaDaVozRef.current,
+            voiceConfig: {
+              prebuiltVoiceConfig: {
                 voiceName: getTargetVoiceName(selectedVoice)
-              } 
+              }
             },
           },
           systemInstruction: liveSystemInstruction,
@@ -9794,6 +9884,20 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   parameters: {
                     type: Type.OBJECT,
                     properties: {}
+                  }
+                },
+                {
+                  name: "definir_idioma_da_voz",
+                  description: "Troca o IDIOMA DA SUA VOZ, ou seja, o SOTAQUE com que o som é produzido. Chame SEMPRE antes de começar a falar ou cantar num idioma diferente do atual — sem isso você pronuncia as palavras estrangeiras com sotaque do idioma anterior, e soa errado. A troca reabre a conexão de voz e leva cerca de um segundo, então chame ANTES de começar, nunca no meio de uma frase ou de uma música. Depois de trocar, fale/cante imediatamente no novo idioma.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      idioma: {
+                        type: Type.STRING,
+                        description: "Código ISO do idioma com a região, que é o que define a pronúncia. Ex.: 'pt-BR' (português do Brasil), 'en-US' (inglês americano), 'en-GB' (inglês britânico), 'es-ES' (espanhol da Espanha), 'es-US' (espanhol latino), 'fr-FR', 'it-IT', 'de-DE', 'ja-JP', 'ko-KR', 'cmn-CN' (mandarim), 'ru-RU', 'ar-XA', 'hi-IN'."
+                      }
+                    },
+                    required: ["idioma"]
                   }
                 },
                 {
@@ -10501,10 +10605,20 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 elevenLabsStateRef.current = 'listening';
               }
               
-              // Trigger proactive greeting
-              const greetingText = "O sistema OSONE está online. Seja breve, direto e pare de enrolar com introduções longas. Apenas diga que está pronto e pergunte o que faremos agora.";
+              /**
+               * A saudação é de QUEM CHEGA, não de quem só trocou de sotaque.
+               *
+               * Uma reconexão por troca de idioma acontece no meio de uma conversa já em
+               * andamento — normalmente entre o pedido ("canta em inglês") e a música. Mandar
+               * a saudação padrão aqui faria ela responder "estou pronta, o que vamos fazer?"
+               * em vez de cantar, e o pedido do usuário se perderia na troca.
+               */
+              const greetingText = retomandoPorTrocaDeIdiomaRef.current
+                ? `A conexão de voz foi reaberta agora com o idioma ${idiomaDaVozRef.current} — foi só uma troca de sotaque no meio da nossa conversa, não um começo. NÃO se apresente, NÃO cumprimente e NÃO pergunte o que vamos fazer. Retome exatamente de onde paramos: execute agora, neste idioma e com a pronúncia nativa dele, o que eu tinha acabado de pedir.`
+                : "O sistema OSONE está online. Seja breve, direto e pare de enrolar com introduções longas. Apenas diga que está pronto e pergunte o que faremos agora.";
+              retomandoPorTrocaDeIdiomaRef.current = false;
 
-              (session as any).sendRealtimeInput([{ 
+              (session as any).sendRealtimeInput([{
                 text: greetingText
               }]);
 
@@ -11331,6 +11445,24 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                         response: { error: "O verso não pode ser vazio." }
                       });
                     }
+                  } else if (call.name === "definir_idioma_da_voz") {
+                    /**
+                     * A resposta é enviada ANTES de a troca acontecer de propósito: reconectar
+                     * fecha a sessão que está lendo esta própria resposta, e uma resposta que
+                     * chega numa sessão morta nunca alcança o modelo. Assim ele recebe a
+                     * confirmação, e a sessão nova já nasce no idioma pedido.
+                     */
+                    const idiomaPedido = String((call.args as any).idioma || '').trim();
+                    responses.push({
+                      name: call.name,
+                      id: call.id,
+                      response: { result: `Trocando a voz para ${idiomaPedido}. Assim que a conexão voltar, fale e cante nesse idioma com a pronúncia nativa dele.` }
+                    });
+                    if (responses.length > 0) {
+                      try { session.sendToolResponse({ functionResponses: responses }); } catch (_) {}
+                      responses.length = 0;
+                    }
+                    void trocarIdiomaDaVoz(idiomaPedido);
                   } else if (call.name === "encerrar_letra_cantada") {
                     encerrarLetraCantada();
                     responses.push({
