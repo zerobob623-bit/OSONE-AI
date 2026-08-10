@@ -423,20 +423,36 @@ Comentário de @${user}: "${text}"`;
         timestamp: Date.now()
       });
 
-      // Dynamic import to support clean compilation
-      // A versão instalada exporta WebcastPushConnection pelo módulo principal; não existe um
-      // subcaminho /legacy no pacote publicado, que quebraria tipagem e execução em produção.
-      const { WebcastPushConnection } = await import("tiktok-live-connector");
-      
+      /**
+       * A classe mudou de nome na versão 2 do tiktok-live-connector.
+       *
+       * O código foi escrito para a v1, que exportava `WebcastPushConnection` e conversava com o
+       * TikTok por polling HTTP. A 2.4.3 — que é a versão fixada no package.json — exporta
+       * `TikTokLiveConnection` e usa WebSocket. Enquanto a pasta node_modules ainda guardava uma
+       * instalação antiga isso passou despercebido; numa instalação limpa a compilação para na
+       * hora, porque o nome antigo simplesmente não existe mais no pacote.
+       *
+       * Os nomes dos EVENTOS continuam iguais (chat, gift, like, member, roomUser), então tudo o
+       * que vem depois desta linha segue valendo. O que mudou de verdade é o formato das opções,
+       * tratado logo abaixo.
+       */
+      const { TikTokLiveConnection } = await import("tiktok-live-connector");
+
+      /**
+       * Opções no formato da v2.
+       *
+       * Sumiram: `requestPollingIntervalMs` (não há mais polling), `clientParams` e
+       * `requestOptions` — o transporte HTTP agora se configura por `webClientOptions`, que é
+       * repassado ao `got`.
+       */
       const configOpts: any = {
         enableExtendedGiftInfo: true,
-        requestPollingIntervalMs: 2000,
-        clientParams: {
-          "app_language": "pt-BR",
-          "webcast_language": "pt-BR"
-        },
-        requestOptions: {
-          timeout: 12000,
+        webClientOptions: {
+          timeout: { request: 12000 },
+          searchParams: {
+            app_language: "pt-BR",
+            webcast_language: "pt-BR"
+          },
           headers: {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
           }
@@ -444,7 +460,23 @@ Comentário de @${user}: "${text}"`;
       };
 
       if (sessionId && sessionId.trim()) {
-        configOpts.sessionId = sessionId.trim();
+        /**
+         * A credencial deixou de ser um campo solto (`sessionId`) e passou a ser um pacote de
+         * sessão tipado. Sem esta tradução o login seria ignorado em silêncio: a conexão subiria
+         * como anônima e os shadow-blocks — exatamente o que o Session ID existe para evitar —
+         * voltariam sem nenhuma mensagem de erro para explicar o porquê.
+         */
+        configOpts.session = {
+          cookie: {
+            type: 'cookie',
+            value: {
+              sessionId: sessionId.trim(),
+              ttTargetIdc: (targetIdc || '').trim()
+            }
+          }
+        };
+        configOpts.authenticateWs = true;
+
         tiktokEventLogs.unshift({
           id: Math.random().toString(),
           type: "system",
@@ -452,18 +484,9 @@ Comentário de @${user}: "${text}"`;
           message: "Autenticação Ativa: Conectando com Session ID credenciado para evitar shadow-blocks.",
           timestamp: Date.now()
         });
-
-        if (targetIdc && targetIdc.trim()) {
-          const idcValue = targetIdc.trim();
-          configOpts.requestOptions.headers["Cookie"] = `tt-target-idc=${idcValue}; tt-idc-switch=1`;
-          configOpts.requestOptions.headers["cookie"] = `tt-target-idc=${idcValue}; tt-idc-switch=1`;
-          // Also try adding directly in case WebcastPushConnection parses it
-          configOpts.targetIdc = idcValue;
-          configOpts.target_idc = idcValue;
-        }
       }
 
-      const connection = new WebcastPushConnection(username, configOpts);
+      const connection = new TikTokLiveConnection(username, configOpts);
       activeTikTokRunner = connection;
 
       connection.on("chat", async (data) => {
