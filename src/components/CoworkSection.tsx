@@ -304,7 +304,11 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
 
   const tocarAudioDaNarracao = async (blob: Blob, prioridade = false) => {
     if (typeof window === 'undefined') return;
-    if (prioridade) pararNarracaoAtual();
+    // Cada narração nova substitui a anterior, esteja ela terminada ou não — sem isso, a fala
+    // de uma ação que ainda não acabou de tocar quando a próxima ação já concluiu ficava
+    // sobreposta à fala seguinte, as duas vozes juntas ao mesmo tempo. `prioridade` continua
+    // controlando só o rate-limit em narrar(), não se corta o áudio em andamento.
+    pararNarracaoAtual();
     if (!blob.size) throw new Error('O motor de voz gerou áudio vazio.');
 
     const url = URL.createObjectURL(blob);
