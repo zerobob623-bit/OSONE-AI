@@ -6812,12 +6812,31 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
         }
 
         if (message.type === "setup") {
-          const { model, config } = message;
-          const targetModel = model || "gemini-3.1-flash-live-preview";
-          console.log(`Connecting Live API on server mode: ${targetModel}`);
-          
-          try {
-            bidiSession = await ai.live.connect({
+          const { model, config, candidatos } = message;
+          /**
+           * A lista de candidatos vem do cliente em ordem de preferência (modelo de áudio
+           * nativo primeiro, o conservador por último). Tentar em cascata aqui é o que faz o
+           * caminho local se comportar igual ao da conexão direta: quem tiver acesso ao modelo
+           * melhor o recebe, quem não tiver continua com voz funcionando.
+           */
+          const listaDeModelos: string[] = (Array.isArray(candidatos) && candidatos.length > 0
+            ? candidatos
+            : [model || "gemini-3.1-flash-live-preview"])
+            .map((m: any) => String(m || '').trim())
+            .filter(Boolean);
+
+          const modeloIndisponivel = (erro: any): boolean => {
+            const texto = `${erro?.message || erro?.error?.message || erro || ''}`.toLowerCase();
+            const status = erro?.status ?? erro?.code ?? erro?.error?.code;
+            if (status === 404 || status === 400) return true;
+            return texto.includes('not found') || texto.includes('not_found') ||
+                   texto.includes('is not supported') || texto.includes('does not exist') ||
+                   texto.includes('unsupported model') || texto.includes('invalid model');
+          };
+
+          const abrirSessao = async (targetModel: string) => {
+            console.log(`Connecting Live API on server mode: ${targetModel}`);
+            return await ai.live.connect({
               model: targetModel,
               config: config,
               callbacks: {
@@ -6843,6 +6862,28 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
                 }
               }
             });
+          };
+
+          try {
+            let ultimoErro: any = null;
+            let modeloUsado = '';
+            for (let i = 0; i < listaDeModelos.length; i++) {
+              try {
+                bidiSession = await abrirSessao(listaDeModelos[i]);
+                modeloUsado = listaDeModelos[i];
+                break;
+              } catch (erro: any) {
+                ultimoErro = erro;
+                bidiSession = null;
+                if (i < listaDeModelos.length - 1 && modeloIndisponivel(erro)) {
+                  console.warn(`Modelo "${listaDeModelos[i]}" indisponível para esta chave. Tentando "${listaDeModelos[i + 1]}"...`);
+                  continue;
+                }
+                throw erro;
+              }
+            }
+            if (!bidiSession) throw ultimoErro || new Error("Nenhum modelo de voz disponível.");
+
             // O cliente pode ter ido embora enquanto esta conexão era estabelecida. Se foi,
             // fecha a sessão recém-criada agora — senão ela fica órfã, sem ninguém do outro lado.
             if (clienteSaiu || clientWs.readyState !== WebSocket.OPEN) {
@@ -6851,13 +6892,13 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
               bidiSession = null;
               return;
             }
-            console.log("Server successfully connected to Google Gemini Live endpoint!");
+            console.log(`Server successfully connected to Google Gemini Live endpoint with model "${modeloUsado}"!`);
           } catch (connectError: any) {
             console.error("Failed to connect to Gemini Live:", connectError);
             if (clientWs.readyState === WebSocket.OPEN) {
-              clientWs.send(JSON.stringify({ 
-                type: "error", 
-                error: `Falha na conexão Neural do Servidor: ${connectError?.message || connectError}` 
+              clientWs.send(JSON.stringify({
+                type: "error",
+                error: `Falha na conexão Neural do Servidor: ${connectError?.message || connectError}`
               }));
               clientWs.close();
             }
