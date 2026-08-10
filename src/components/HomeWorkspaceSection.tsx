@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   AlertCircle, ChevronRight, ChevronLeft, Loader2, VolumeX, Volume2, 
   Plus, MessageSquare, Trash2, BookOpen, RefreshCw, Folder, Eye, EyeOff, 
-  Heart, Lock, Copy, Maximize, Languages, MonitorOff, Monitor, Mic, MicOff,
+  Heart, Lock, Copy, Maximize, MonitorOff, Monitor, Mic, MicOff,
   Paperclip, Globe, Send, X, Captions, CaptionsOff
 } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -1140,25 +1140,6 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
             </div>
             
             <div className="flex items-center gap-2">
-              <button 
-                onClick={() => {
-                  const nextMod = !isTranslationMode;
-                  setIsTranslationMode(nextMod);
-                  addNotification(nextMod ? "Modo Tradutor Live G3.5 Ativo!" : "Modo Tradutor Desativado.", "success");
-                  if (liveSessionRef.current && liveState.status === 'connected') {
-                    stopLiveSession();
-                    setTimeout(() => startLiveSession(), 400);
-                  }
-                }}
-                className={cn(
-                  "w-7 h-7 rounded-full flex items-center justify-center transition-all bg-white/[0.03] border border-white/[0.05]",
-                  isTranslationMode ? "text-violet-400 border-violet-500/20 shadow-[0_0_8px_rgba(139,92,246,0.25)]" : "text-her-muted"
-                )}
-                title={isTranslationMode ? "Tradutor Simultâneo Ativo" : "Ativar Gemini Live 3.5 Translate"}
-              >
-                <Languages size={11} className={isTranslationMode ? "animate-pulse" : ""} />
-              </button>
-
               <button
                 onClick={() => setSubtitlesEnabled(!subtitlesEnabled)}
                 className={cn(
@@ -1243,27 +1224,6 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
                     title={isCameraActive ? "Desativar Visão" : "Ativar Visão em Tempo Real"}
                   >
                     {isCameraActive ? <Eye size={14} className="animate-pulse" /> : <EyeOff size={14} />}
-                  </button>
-
-                  <button 
-                    onClick={() => {
-                      const nextMod = !isTranslationMode;
-                      setIsTranslationMode(nextMod);
-                      addNotification(nextMod ? "Modo Tradutor Live G3.5 Ativo! Compartilhe abas para tradução simultânea." : "Modo Tradutor Desativado.", "success");
-                      if (liveSessionRef.current && liveState.status === 'connected') {
-                        stopLiveSession();
-                        setTimeout(() => startLiveSession(), 400);
-                      }
-                    }}
-                    className={cn(
-                      "w-9 h-9 rounded-full flex items-center justify-center transition-all border",
-                      isTranslationMode 
-                        ? "bg-violet-500/20 text-violet-400 border-violet-500/30 shadow-[0_0_10px_rgba(139,92,246,0.2)]" 
-                        : "bg-white/[0.03] text-her-muted hover:bg-white/[0.05] border-white/[0.05] hover:text-violet-400"
-                    )}
-                    title={isTranslationMode ? "Tradutor Simultâneo Ativo" : "Ativar Gemini Live 3.5 Translate"}
-                  >
-                    <Languages size={14} className={isTranslationMode ? "animate-pulse" : ""} />
                   </button>
 
                   <button
@@ -1413,27 +1373,6 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
               title={isCameraActive ? "Desativar Visão" : "Ativar Visão em Tempo Real"}
             >
               {isCameraActive ? <Eye size={18} className="animate-pulse" /> : <EyeOff size={18} />}
-            </button>
-
-            <button 
-              onClick={() => {
-                const nextMod = !isTranslationMode;
-                setIsTranslationMode(nextMod);
-                addNotification(nextMod ? "Modo Tradutor Live G3.5 Ativo! Compartilhe abas para tradução simultânea." : "Modo Tradutor Desativado.", "success");
-                if (liveSessionRef.current && liveState.status === 'connected') {
-                  stopLiveSession();
-                  setTimeout(() => startLiveSession(), 400);
-                }
-              }}
-              className={cn(
-                "w-11 h-11 items-center justify-center transition-all duration-300 relative shrink-0 flex",
-                isTranslationMode 
-                  ? "bg-violet-500/20 text-violet-400 border border-violet-500/40 shadow-[0_0_15px_rgba(139,92,246,0.3)]" 
-                  : "bg-white/[0.03] text-her-muted hover:bg-white/[0.05] border border-white/[0.05] hover:text-violet-400 hover:border-violet-500/20"
-              )}
-              title={isTranslationMode ? "Tradutor Simultâneo Ativo (Clique para Desativar)" : "Ativar Gemini Live 3.5 Translate"}
-            >
-              <Languages size={18} className={isTranslationMode ? "animate-pulse" : ""} />
             </button>
 
             <button
