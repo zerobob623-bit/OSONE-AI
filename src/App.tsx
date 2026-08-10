@@ -2055,6 +2055,9 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   // `null` = nunca trocou. Um sentinela explícito, e não "zero", porque zero também é um
   // instante válido no relógio e confundir os dois faria a primeira troca escapar do intervalo.
   const ultimaTrocaDeIdiomaRef = useRef<number | null>(null);
+  // Idioma pedido pelo modelo neste lote de ferramentas, executado só depois de o lote inteiro
+  // ser respondido — a troca fecha a sessão, e fazê-la antes cortaria o canal de resposta.
+  const trocaDeIdiomaPendenteRef = useRef<string | null>(null);
   // Marca a reconexão que é continuação de conversa (troca de sotaque), para a sessão nova não
   // se apresentar como se estivesse chegando agora e engolir o pedido que estava em curso.
   const retomandoPorTrocaDeIdiomaRef = useRef(false);
@@ -11531,22 +11534,19 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     }
                   } else if (call.name === "definir_idioma_da_voz") {
                     /**
-                     * A resposta é enviada ANTES de a troca acontecer de propósito: reconectar
-                     * fecha a sessão que está lendo esta própria resposta, e uma resposta que
-                     * chega numa sessão morta nunca alcança o modelo. Assim ele recebe a
-                     * confirmação, e a sessão nova já nasce no idioma pedido.
+                     * A troca fecha a sessão de forma SÍNCRONA. Dispará-la aqui dentro mataria
+                     * a sessão no meio do lote de ferramentas, e as respostas das chamadas
+                     * seguintes (inclusive esta) seriam enviadas por um canal já morto — o
+                     * modelo nunca saberia o que aconteceu. Por isso ela fica agendada e só
+                     * roda depois que este lote inteiro for despachado.
                      */
                     const idiomaPedido = String((call.args as any).idioma || '').trim();
                     responses.push({
                       name: call.name,
                       id: call.id,
-                      response: { result: `Trocando a voz para ${idiomaPedido}. Assim que a conexão voltar, fale e cante nesse idioma com a pronúncia nativa dele.` }
+                      response: { result: `Trocando a voz para ${idiomaPedido}. Assim que a conexão voltar, fale e cante nesse idioma com a pronúncia nativa dele — e não peça a troca de novo.` }
                     });
-                    if (responses.length > 0) {
-                      try { session.sendToolResponse({ functionResponses: responses }); } catch (_) {}
-                      responses.length = 0;
-                    }
-                    void trocarIdiomaDaVoz(idiomaPedido);
+                    trocaDeIdiomaPendenteRef.current = idiomaPedido;
                   } else if (call.name === "encerrar_letra_cantada") {
                     encerrarLetraCantada();
                     responses.push({
@@ -12218,7 +12218,24 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 }
 
                 if (responses.length > 0) {
-                  session.sendToolResponse({ functionResponses: responses });
+                  // Protegido: se a sessão tiver caído entre o início do lote e este envio, a
+                  // exceção aqui derrubaria o tratamento da mensagem inteira em vez de apenas
+                  // perder uma resposta que já não tinha para onde ir.
+                  try {
+                    session.sendToolResponse({ functionResponses: responses });
+                  } catch (erroDeEnvio) {
+                    console.warn("[Voz] Não foi possível devolver as respostas de ferramenta (sessão encerrada):", erroDeEnvio);
+                  }
+                }
+
+                /**
+                 * A troca de idioma acontece AGORA, com o lote já despachado: ela derruba a
+                 * sessão, e fazer isso antes deixaria as respostas acima sem canal de volta.
+                 */
+                if (trocaDeIdiomaPendenteRef.current) {
+                  const idiomaAlvo = trocaDeIdiomaPendenteRef.current;
+                  trocaDeIdiomaPendenteRef.current = null;
+                  void trocarIdiomaDaVoz(idiomaAlvo);
                 }
               }
 
