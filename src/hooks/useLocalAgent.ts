@@ -90,6 +90,104 @@ function descreverOComputador(ambiente: any, area?: EstadoDaAreaParalela | null)
   ].filter(Boolean).join('\n');
 }
 
+/**
+ * De quantas voltas o ERRO vai por extenso, e não só o relato.
+ *
+ * O histórico comprime cada volta numa linha, e isso está certo para uma tarefa longa. Mas as
+ * falhas eram comprimidas junto: sobrava "[FALHOU] ia clicar em Enviar → não achei", sem o motivo
+ * que o computador devolveu. O modelo ficava sabendo QUE falhou e não POR QUE — que é exatamente
+ * o dado de que ele precisa para não tentar de novo pelo mesmo caminho. As últimas voltas são as
+ * que explicam a tela atual; nelas o erro vai inteiro.
+ */
+const VOLTAS_COM_ERRO_POR_EXTENSO = 3;
+
+function resumirOQueJaFoiFeito(historico: VoltaDoAgente[]): string {
+  const recentes = historico.slice(-VOLTAS_NO_CONTEXTO);
+  const primeiroIndice = historico.length - recentes.length;
+  return recentes.map((v, i) => {
+    const numero = primeiroIndice + i + 1;
+    const detalhe = v.erro && i >= recentes.length - VOLTAS_COM_ERRO_POR_EXTENSO
+      ? ` [motivo: ${v.erro}]`
+      : '';
+    return `${numero}. [${v.ok ? 'ok' : 'FALHOU'}] ${v.pensamento} → ${v.relato}${detalhe}`;
+  }).join('\n');
+}
+
+/**
+ * ====== PARAR DE AGIR E LER A TELA ======
+ *
+ * Esta é a outra pergunta que o COWORK sabe fazer, e ela existe por um motivo concreto: o modelo
+ * que decide mal sob pressão descreve bem uma imagem parada. São habilidades diferentes, e o laço
+ * só usava a primeira — inclusive quando estava travado, quando ela é a que menos ajuda.
+ *
+ * Repare no que NÃO tem aqui: não pede ação, não pede JSON, não manda a instrução do agente. Se
+ * mandasse, seria a mesma pergunta de sempre com outro nome, e a resposta seria a mesma decisão de
+ * sempre — que é justamente o que travou. O que se pede é o que faltava: os RÓTULOS que estão
+ * escritos na tela. Por isso funciona no mesmo modelo gratuito, sem trocar por um mais caro.
+ */
+const INSTRUCAO_DE_LEITURA_DA_TELA = `Você são os OLHOS do OSONE COWORK, que está operando o computador de alguém e TRAVOU nesta tela.
+
+Você NÃO decide ação nenhuma e NÃO responde JSON — outra parte do sistema faz isso. Seu trabalho é olhar a foto e DESCREVER o que está ali, porque quem decide travou justamente por não ter entendido esta tela.
+
+Responda em português, em texto corrido curto (no máximo 12 linhas), nesta ordem:
+
+1. QUE JANELA É ESTA: página de site, DIÁLOGO DE ARQUIVO DO SISTEMA (escolher/salvar arquivo), menu suspenso, alerta, assistente de etapas, aviso de cookie? Se for diálogo de arquivo, diga isso com todas as letras.
+2. OS RÓTULOS: transcreva o texto EXATO de cada botão, aba e campo clicável que você consegue ler — do jeito que está escrito na tela, sem traduzir e sem trocar por sinônimo. Onde for só um ícone, descreva o desenho e diga onde ele fica.
+3. QUAL DELES AVANÇA a tarefa do usuário, e por quê. Lembre que o botão quase nunca leva o nome da tarefa: enviar um arquivo se confirma em "Abrir"; baixar se confirma em "Salvar"; anexar pode ser "Selecionar" ou "Escolher".
+4. O QUE NÃO FAZER aqui, olhando o que já foi tentado sem sucesso. Se o caminho tentado não existe nesta tela, diga onde ele provavelmente está.
+
+Se esta tela não tem nada a ver com a tarefa, diga isso claramente e diga em que tela a pessoa deveria estar.`;
+
+const PORQUE_TRAVOU: Record<string, string> = {
+  'falhas-seguidas': 'as últimas ações falharam, uma atrás da outra',
+  'ciclo': 'ele está andando em círculo: já passou por esta mesma tela e voltou para ela',
+  'sem-decisao': 'ele não conseguiu sequer formular uma ação para esta tela',
+  'regressao': 'ele tentou FECHAR o que acabou de abrir em vez de usar o que apareceu — sinal de que procurou um botão e não achou'
+};
+
+async function estudarATelaComOModelo(
+  objetivo: string,
+  foto: string | null,
+  historico: VoltaDoAgente[],
+  motivo: string,
+  janela: JanelaDeTrabalho | null,
+  visao?: VisaoDoMotor,
+  ambiente?: any,
+  area?: EstadoDaAreaParalela | null
+): Promise<string> {
+  if (!foto) {
+    throw new Error('Não consegui fotografar a janela para estudar a tela.');
+  }
+
+  const contexto = [
+    `TAREFA QUE O AGENTE ESTÁ TENTANDO FAZER: ${objetivo}`,
+    descreverOComputador(ambiente, area),
+    janela ? `JANELA DA FOTO: "${janela.titulo}" (${janela.app}), ${janela.width}x${janela.height}.` : '',
+    `POR QUE ELE PAROU PARA TE PERGUNTAR: ${PORQUE_TRAVOU[motivo] || 'ele travou'}.`,
+    historico.length ? `O QUE ELE JÁ TENTOU (o mais recente por último):\n${resumirOQueJaFoiFeito(historico)}` : '',
+    'Descreva a tela da foto seguindo os quatro pontos.'
+  ].filter(Boolean).join('\n\n');
+
+  const dados = foto.includes(',') ? foto.split(',')[1] : foto;
+
+  return chamarModeloComAFoto({
+    partes: [{ inlineData: { mimeType: 'image/png', data: dados } }, { text: contexto }],
+    instrucao: INSTRUCAO_DE_LEITURA_DA_TELA,
+    visao,
+    /**
+     * Mais baixa que a da decisão, e não mais alta.
+     *
+     * O que tira o modelo do sulco aqui é a PERGUNTA ter mudado, não a temperatura. E o produto
+     * desta chamada é leitura de texto na imagem: um rótulo transcrito errado com criatividade
+     * seria pior do que o problema que ela veio resolver — mandaria o agente clicar num botão que
+     * não existe, com a confiança de quem acha que leu.
+     */
+    temperatura: 0.15,
+    json: false,
+    oQueEstavaFazendo: 'estudar a tela'
+  });
+}
+
 async function perguntarProximaAcao(
   objetivo: string,
   foto: string | null,
@@ -99,11 +197,10 @@ async function perguntarProximaAcao(
   ambiente?: any,
   area?: EstadoDaAreaParalela | null,
   memoriaDaAutomacao?: string,
-  frameAtual?: CapturaConfirmada | null
+  frameAtual?: CapturaConfirmada | null,
+  orientacao?: string
 ): Promise<string> {
-  const feito = historico.slice(-VOLTAS_NO_CONTEXTO).map((v, i) =>
-    `${historico.length - Math.min(historico.length, VOLTAS_NO_CONTEXTO) + i + 1}. [${v.ok ? 'ok' : 'FALHOU'}] ${v.pensamento} → ${v.relato}`
-  ).join('\n');
+  const feito = resumirOQueJaFoiFeito(historico);
 
   const contexto = [
     `OBJETIVO DO USUÁRIO: ${objetivo}`,
@@ -115,8 +212,21 @@ async function perguntarProximaAcao(
         `confirmado há ${Math.max(0, frameAtual?.idadeMs || 0)}ms. Olhe-a antes de decidir.`
       : 'ATENÇÃO: não foi possível fotografar a janela nesta rodada.',
     historico.length ? `O QUE VOCÊ JÁ FEZ:\n${feito}` : 'Você ainda não fez nada. Esta é a primeira ação.',
+    /**
+     * A LEITURA DA TELA VEM DEPOIS DO HISTÓRICO E ANTES DA PERGUNTA, DE PROPÓSITO.
+     *
+     * Ela só existe porque ele travou: é o resultado de ter parado de agir para olhar a tela com
+     * outra pergunta. Posta aqui, ela é a última coisa lida antes de decidir — e é a única parte
+     * do contexto que contém os RÓTULOS REAIS dos botões, que é o que faltava quando ele
+     * procurava "Enviar" numa janela cujo botão se chama "Abrir".
+     */
+    orientacao
+      ? `VOCÊ JÁ TRAVOU NESTA TAREFA E PAROU PARA LER A TELA. Foi isto que você apurou:\n${orientacao}\n\n` +
+        `Use esta leitura: ela tem o nome REAL dos botões. Não volte a procurar um botão com o nome da tarefa, ` +
+        `e não refaça o caminho que já não deu certo.`
+      : '',
     historico.some(v => !v.ok || /não mudou|nao mudou|não achei|nao achei|não consegui|nao consegui/i.test(`${v.relato} ${v.erro || ''}`))
-      ? 'SINAL DE EMPACAMENTO: algo recente falhou, não mudou a tela ou não foi encontrado. NÃO repita a mesma ação. Formule uma hipótese nova e teste uma alternativa segura: menu de três pontos, clique_direito no item, rolagem curta, campo de busca, botão Mais/More, Escape para fechar pop-up, ou abrir endereço direto.'
+      ? 'SINAL DE EMPACAMENTO: algo recente falhou, não mudou a tela ou não foi encontrado. NÃO repita a mesma ação. Formule uma hipótese nova e teste uma alternativa segura: menu de três pontos, clique_direito no item, rolagem curta, campo de busca, botão Mais/More, ou abrir endereço direto. NÃO feche o que você mesmo acabou de abrir.'
       : '',
     'Qual é a PRÓXIMA ação? Responda só o JSON.'
   ].filter(Boolean).join('\n\n');
@@ -128,6 +238,33 @@ async function perguntarProximaAcao(
   }
   partes.push({ text: contexto });
 
+  return chamarModeloComAFoto({
+    partes, visao,
+    instrucao: INSTRUCAO_DO_AGENTE,
+    // Baixa, mas não zero: decidir o passo seguinte tem mais de um caminho certo, e um pouco
+    // de variação ajuda quando o botão está escondido em menus/alternativas seguras.
+    temperatura: 0.28,
+    json: true,
+    oQueEstavaFazendo: 'decidir a ação'
+  });
+}
+
+/**
+ * A ida ao modelo com a foto na mão. Serve às DUAS perguntas que o COWORK faz.
+ *
+ * São perguntas de natureza oposta — uma quer uma ação em JSON, a outra quer a tela descrita em
+ * português — e é justamente por isso que o transporte é o mesmo: o que muda entre elas tem de
+ * ficar visível no lugar da chamada (instrução, temperatura, formato), e não escondido em duas
+ * cópias do mesmo fetch que depois divergem sozinhas.
+ */
+async function chamarModeloComAFoto(opcoes: {
+  partes: any[];
+  instrucao: string;
+  temperatura: number;
+  json: boolean;
+  visao?: VisaoDoMotor;
+  oQueEstavaFazendo: string;
+}): Promise<string> {
   const controle = new AbortController();
   // “Pensando” por cinco minutos é uma falha, não trabalho. Em 45s a decisão curta já deveria ter
   // vindo; cancelar devolve um erro explícito ao laço e mantém o computador intocado.
@@ -138,27 +275,27 @@ async function perguntarProximaAcao(
       method: 'POST', signal: controle.signal,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        clientApiKey: visao?.chaveGemini || undefined,
-        model: visao?.modeloGemini || 'gemini-3.6-flash',
-        contents: [{ role: 'user', parts: partes }],
+        clientApiKey: opcoes.visao?.chaveGemini || undefined,
+        model: opcoes.visao?.modeloGemini || 'gemini-3.6-flash',
+        contents: [{ role: 'user', parts: opcoes.partes }],
         config: {
-          systemInstruction: INSTRUCAO_DO_AGENTE,
-          // Baixa, mas não zero: decidir o passo seguinte tem mais de um caminho certo, e um pouco
-          // de variação ajuda quando o botão está escondido em menus/alternativas seguras.
-          temperature: 0.28,
-          responseMimeType: 'application/json'
+          systemInstruction: opcoes.instrucao,
+          temperature: opcoes.temperatura,
+          ...(opcoes.json ? { responseMimeType: 'application/json' } : {})
         }
       })
     });
   } catch (err: any) {
-    if (err?.name === 'AbortError') throw new Error('A decisão passou de 45 segundos e foi cancelada para não ficar presa pensando.');
+    if (err?.name === 'AbortError') {
+      throw new Error(`Passei de 45 segundos ao ${opcoes.oQueEstavaFazendo} e cancelei para não ficar preso pensando.`);
+    }
     throw err;
   } finally {
     clearTimeout(limite);
   }
 
   const corpo = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(corpo?.error || `O modelo não respondeu ao decidir a ação (HTTP ${res.status}).`);
+  if (!res.ok) throw new Error(corpo?.error || `O modelo não respondeu ao ${opcoes.oQueEstavaFazendo} (HTTP ${res.status}).`);
   return corpo?.text
     ?? corpo?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text).filter(Boolean).join('')
     ?? '';
@@ -1502,13 +1639,21 @@ export function useLocalAgent() {
         return await executeLocalAgentCall('controlar_pc', { acao, ...args }, localAgentToken, false, visao);
       },
 
-      decidir: async (objetivoAtual, foto, historico) => {
+      decidir: async (objetivoAtual, foto, historico, orientacao) => {
         return await perguntarProximaAcao(
           objetivoAtual, foto, historico, janelaRef.current, visao,
           await lerAmbienteDaMaquina(localAgentToken), areaRef.current, memoriaDaAutomacao,
           ultimoFrameConfirmadoRef.current
             ? { ...ultimoFrameConfirmadoRef.current, idadeMs: Date.now() - ultimoFrameConfirmadoRef.current.capturedAt }
-            : null
+            : null,
+          orientacao
+        );
+      },
+
+      consultar: async (objetivoAtual, foto, historico, motivo) => {
+        return await estudarATelaComOModelo(
+          objetivoAtual, foto, historico, motivo, janelaRef.current, visao,
+          await lerAmbienteDaMaquina(localAgentToken), areaRef.current
         );
       },
 

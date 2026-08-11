@@ -55,6 +55,7 @@ function computadorDeMentira(opcoes = {}) {
   const estado = {
     executadas: [],
     decisoesPedidas: [],
+    consultas: [],
     janelaAtual: 'Navegador',
     tempo: 0,
     tela: 0
@@ -81,10 +82,24 @@ function computadorDeMentira(opcoes = {}) {
         if (!r?.error && !opcoes.telaNaoMuda) estado.tela++;
         return r;
       },
-      decidir: async (objetivo, foto, historico) => {
-        estado.decisoesPedidas.push({ objetivo, foto, historico: historico.map(h => ({ ok: h.ok, relato: h.relato })) });
+      decidir: async (objetivo, foto, historico, orientacao) => {
+        estado.decisoesPedidas.push({
+          objetivo, foto, orientacao,
+          historico: historico.map(h => ({ ok: h.ok, relato: h.relato }))
+        });
         return opcoes.decidir(estado, historico);
-      }
+      },
+      /**
+       * Só existe quando o caso pede. É assim que a suíte cobre as DUAS metades: com quem estudar
+       * a tela o laço destrava e continua; sem, ele encerra como sempre encerrou — e nenhuma das
+       * duas pode depender da outra ter sido escrita.
+       */
+      ...(opcoes.consultar ? {
+        consultar: async (objetivo, foto, historico, motivo) => {
+          estado.consultas.push({ motivo, foto, voltas: historico.length });
+          return opcoes.consultar(estado, motivo);
+        }
+      } : {})
     }
   };
 }
@@ -261,6 +276,19 @@ const decisao = (acao, args, pensamento = `Vou ${acao}`) => ({ acao, args, pensa
 }
 
 {
+  /**
+   * O QUE ESTE CASO GARANTE — e o que ele deliberadamente NÃO garante.
+   *
+   * Garante o que importa: nenhuma dessas ações chega ao computador, nunca, e o laço para com o
+   * motivo escrito no relatório.
+   *
+   * Não garante POR QUAL das duas travas ela foi barrada, e essa distinção já custou uma falha
+   * falsa nesta suíte. O caso exigia o motivo "acao-recusada", que é o da validação de segurança
+   * (validarPasso). Só que existe uma trava ANTES dela: o vocabulário. "terminal" e "apagar" não
+   * são verbos que o laço aceita, então lerDecisao devolve a decisão como ilegível e o motivo é
+   * "sem-decisao" — a ação é barrada uma camada mais cedo, o que é melhor e não pior. Fixar o
+   * motivo aqui fazia a suíte acusar buraco de segurança onde havia trava a mais.
+   */
   const foraDoLaco = ['terminal', 'apagar', 'mover', 'escrever_arquivo', 'renomear'];
   const recusadas = [];
   for (const acao of foraDoLaco) {
@@ -268,10 +296,20 @@ const decisao = (acao, args, pensamento = `Vou ${acao}`) => ({ acao, args, pensa
       decidir: roteiro(decisao(acao, { caminho: '/tmp/x' }, 'mexer no arquivo'))
     });
     const r = await trabalharAteConcluir('tarefa', deps);
-    if (r.motivo === 'acao-recusada' && estado.executadas.length === 0) recusadas.push(acao);
+    const barrada = r.motivo === 'acao-recusada' || r.motivo === 'sem-decisao';
+    if (barrada && estado.executadas.length === 0) recusadas.push(acao);
   }
   registrar('arquivo e terminal continuam fora do laço automático',
     recusadas.length === foraDoLaco.length, `${recusadas.length}/${foraDoLaco.length} recusadas`);
+
+  // E o motivo, seja qual for a trava, precisa dizer o que foi barrado — senão a pessoa vê o
+  // agente parar sozinho sem entender por quê.
+  const { deps } = computadorDeMentira({
+    decidir: roteiro(decisao('terminal', { caminho: '/tmp/x' }, 'mexer no arquivo'))
+  });
+  const r = await trabalharAteConcluir('tarefa', deps);
+  registrar('a recusa de arquivo/terminal explica o que foi barrado',
+    /terminal/i.test(r.resumo), r.resumo.slice(0, 70));
 }
 
 {
@@ -497,6 +535,142 @@ const decisao = (acao, args, pensamento = `Vou ${acao}`) => ({ acao, args, pensa
   registrar('a instrução avisa para abrir cada coisa uma vez só',
     t.includes('abra cada coisa uma vez só') && t.includes('nunca mande abrir de novo'),
     'a regra que o código aplica também está escrita para o modelo');
+
+  registrar('a instrução diz que o rótulo do botão não é a palavra do pedido',
+    t.includes('não a palavra do pedido') && t.includes('abrir') && t.includes('salvar'),
+    'enviar se confirma em "Abrir", baixar em "Salvar"');
+
+  registrar('a instrução proíbe fechar o diálogo de arquivo do sistema',
+    t.includes('diálogo de arquivo do sistema não é pop-up para fechar'),
+    'era onde ele clicava no X e recomeçava o ciclo');
+
+  registrar('a instrução diz que fechar o que abriu é andar para trás',
+    t.includes('fechar o que você acabou de abrir é andar para trás'),
+    'a regra que o código aplica também está escrita para o modelo');
+}
+
+// ============================================================================
+// 11) TRAVOU: EM VEZ DE DESISTIR, ELE PARA E LÊ A TELA
+// ============================================================================
+/**
+ * O caso que motivou tudo isto, em uso real: "envie este vídeo para o YouTube". O agente chega ao
+ * fim, o diálogo de arquivo do sistema abre, ele procura um botão escrito "Enviar", não encontra
+ * (o botão se chama "Abrir") e clica no X. O clique FUNCIONA e a tela muda inteira — então pelas
+ * medidas do laço aquilo era sucesso, o contador de falhas voltava a zero, e o ciclo recomeçava
+ * até estourar o teto de ações.
+ *
+ * Os casos abaixo cobrem as três peças que quebram esse ciclo, e a quarta que impede a cura de
+ * virar doença: um laço que nunca desiste é pior do que um que desiste cedo demais.
+ */
+{
+  // Abre o diálogo e, em seguida, tenta fechá-lo — exatamente a sequência observada.
+  const { estado, deps } = computadorDeMentira({
+    decidir: roteiro(
+      decisao('clicar', { alvo: 'o botão Selecionar arquivos' }, 'vou escolher o vídeo'),
+      decisao('clicar', { alvo: 'o X para fechar' }, 'não achei o botão Enviar aqui')
+    )
+  });
+  const r = await trabalharAteConcluir('enviar o vídeo para o YouTube', deps);
+
+  registrar('fechar o que acabou de abrir não chega a ser executado',
+    estado.executadas.length === 1 && estado.executadas[0].args.alvo === 'o botão Selecionar arquivos',
+    `executadas: ${estado.executadas.map(e => e.args.alvo).join(', ')}`);
+
+  registrar('a tentativa de fechar entra no relatório como falha, e não como sucesso',
+    r.voltas.some(v => !v.ok && /NÃO FECHEI/.test(v.relato)),
+    'o retrocesso silencioso passou a ser visível');
+
+  registrar('a recusa de fechar aponta o nome real do botão que confirma',
+    r.voltas.some(v => /"Abrir"/.test(v.relato)),
+    'é o dado que faltava quando ele procurava "Enviar"');
+}
+
+{
+  // O ciclo que a trava de repetição não pegava: as ações são todas DIFERENTES entre si, e mesmo
+  // assim a tela volta para onde já esteve.
+  const telasDoCiclo = [1, 2, 0];
+  let passo = 0;
+  let n = 0;
+  let jaLeuATela = false;
+  const { estado, deps } = computadorDeMentira({
+    executar: (acao, args, estado) => {
+      // O motor da suíte incrementa a tela depois desta função; daí o -1.
+      estado.tela = telasDoCiclo[passo++ % telasDoCiclo.length] - 1;
+      return { success: true };
+    },
+    // Enquanto anda no escuro, ele chuta alvos diferentes e roda em círculo. Depois de LER a tela,
+    // ele sabe o nome do botão e termina — é a recuperação inteira, do jeito que acontece em uso.
+    decidir: () => jaLeuATela
+      ? JSON.stringify(decisao('concluir', { resposta: 'Cliquei em Abrir e o envio começou.' }, 'agora sei o nome do botão'))
+      : JSON.stringify(decisao('clicar', { alvo: `alvo ${n++}` }, `passo ${n}`)),
+    consultar: () => {
+      jaLeuATela = true;
+      return 'É um diálogo de arquivo. Os botões são "Cancelar" e "Abrir".';
+    }
+  });
+  const r = await trabalharAteConcluir('tarefa em círculo', deps);
+
+  registrar('voltar para uma tela por onde já passou dispara o estudo da tela',
+    estado.consultas.length > 0 && estado.consultas[0].motivo === 'ciclo',
+    `${estado.consultas.length} estudo(s), primeiro por "${estado.consultas[0]?.motivo}"`);
+
+  registrar('o ciclo deixa de ser o fim da tarefa e passa a ser onde ele para para entender',
+    r.motivo === 'concluido', `terminou por "${r.motivo}"`);
+
+  registrar('o que foi lido na tela chega à decisão seguinte',
+    estado.decisoesPedidas.some(d => /diálogo de arquivo/.test(d.orientacao || '')),
+    'a decisão deixa de adivinhar o nome do botão');
+
+  registrar('um estudo bastou: ele não fica estudando a cada volta',
+    estado.consultas.length === 1, `${estado.consultas.length} estudo(s)`);
+
+  registrar('o estudo aparece no relatório, e não acontece escondido',
+    r.voltas.some(v => v.acao === 'estudar_tela'), 'a pessoa vê ele parar para ler a tela');
+}
+
+{
+  // Sem quem estudar a tela, nada muda: o laço encerra como sempre encerrou.
+  const { estado, deps } = computadorDeMentira({
+    executar: () => ({ error: 'não deu' }),
+    decidir: roteiro(
+      decisao('clicar', { alvo: 'a' }, 'tentativa 1'),
+      decisao('clicar', { alvo: 'b' }, 'tentativa 2'),
+      decisao('clicar', { alvo: 'c' }, 'tentativa 3')
+    )
+  });
+  const r = await trabalharAteConcluir('tarefa', deps);
+  registrar('sem quem estudar a tela, as falhas seguidas encerram como antes',
+    r.motivo === 'falhas-seguidas' && estado.executadas.length === LIMITES_DO_AGENTE.maxFalhasSeguidas,
+    `${r.motivo} em ${estado.executadas.length} falhas`);
+}
+
+{
+  // Falhando sempre, com quem estudar sempre: o teto de consultas é o que impede o laço eterno.
+  const { estado, deps } = computadorDeMentira({
+    executar: () => ({ error: 'não deu' }),
+    decidir: roteiro(decisao('clicar', { alvo: 'o botão' }, 'tentando')),
+    consultar: () => 'A tela mostra um erro que eu não sei resolver.'
+  });
+  const r = await trabalharAteConcluir('tarefa impossível', deps);
+
+  registrar('o estudo da tela tem teto e não vira laço eterno',
+    estado.consultas.length === LIMITES_DO_AGENTE.maxConsultas,
+    `${estado.consultas.length} estudo(s) (teto ${LIMITES_DO_AGENTE.maxConsultas})`);
+
+  registrar('esgotado o teto, ele encerra dizendo que já tentou entender',
+    /estudar a tela|estudei|parei/i.test(r.resumo), r.resumo.slice(0, 80));
+}
+
+{
+  // Estudar a tela não pode virar buraco na trava de dinheiro.
+  const { estado, deps } = computadorDeMentira({
+    decidir: roteiro(decisao('clicar', { alvo: 'Pagar com o cartão' }, 'Vou finalizar a compra')),
+    consultar: () => 'É a tela de pagamento.'
+  });
+  const r = await trabalharAteConcluir('comprar', deps);
+  registrar('nem com estudo da tela uma ação de dinheiro é executada',
+    r.motivo === 'acao-recusada' && estado.executadas.length === 0,
+    `${estado.executadas.length} ação(ões) executadas`);
 }
 
 fs.rmSync(pastaTemp, { recursive: true, force: true });
