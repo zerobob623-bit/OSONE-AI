@@ -5,7 +5,7 @@ import { mirarPorVisao } from '../lib/mirarPorVisao';
 import { assinaturaDaImagem, historicoVazio, HistoricoDeEsperas } from '../lib/esperarTela';
 import { PassoDoPlano, RelatorioDoPlano, ResultadoDoPasso, executarPlano, validarPlano } from '../lib/planoDeAcoes';
 import {
-  INSTRUCAO_DO_AGENTE, RelatorioDoAgente, VoltaDoAgente, trabalharAteConcluir
+  AnotacaoDoAgente, INSTRUCAO_DO_AGENTE, RelatorioDoAgente, VoltaDoAgente, trabalharAteConcluir
 } from '../lib/agenteAutonomo';
 import { aprenderAutomacao, pistasDaAutomacao } from '../lib/historicoDoCowork';
 import { MetadadosDaCaptura, novoIdDeCaptura, validarCapturaAtual } from '../lib/capturaAtual';
@@ -188,6 +188,84 @@ async function estudarATelaComOModelo(
   });
 }
 
+// ============================================================================
+// LER A INTERNET SEM ABRIR NAVEGADOR
+// ============================================================================
+
+/** Quantos resultados voltam de uma busca. Mais do que isto vira lista para o modelo escolher no chute. */
+const RESULTADOS_POR_BUSCA = 6;
+
+/**
+ * Pesquisa na web pelo próprio Gemini, com a busca do Google ligada.
+ *
+ * Não é o modelo respondendo de cabeça: com "googleSearch" nas ferramentas, ele pesquisa de
+ * verdade e a resposta vem acompanhada dos ENDEREÇOS consultados (groundingChunks). São esses
+ * endereços que interessam aqui — o resumo que ele escreve é descartado de propósito.
+ *
+ * O motivo de descartar: quem vai decidir o que fazer com a informação é o agente, na volta
+ * seguinte, e ele precisa do texto ORIGINAL da página (via "ler_pagina") e não do resumo de um
+ * resumo. Duas camadas de síntese antes de alguém olhar o texto é como um número certo vira um
+ * número quase certo.
+ */
+async function procurarNaWeb(
+  consulta: string, visao?: VisaoDoMotor
+): Promise<{ resultados?: Array<{ titulo: string; url: string }>; error?: string }> {
+  try {
+    const res = await fetch('/api/gemini/generateContent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clientApiKey: visao?.chaveGemini || undefined,
+        model: visao?.modeloGemini || 'gemini-3.6-flash',
+        contents: [{ role: 'user', parts: [{ text: `Pesquise na web: ${consulta}` }] }],
+        config: { tools: [{ googleSearch: {} }] }
+      })
+    });
+    const corpo = await res.json().catch(() => null);
+    if (!res.ok) return { error: corpo?.error || `A busca falhou (HTTP ${res.status}).` };
+
+    const pedacos = corpo?.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    const resultados: Array<{ titulo: string; url: string }> = [];
+    const jaVistos = new Set<string>();
+    for (const pedaco of pedacos) {
+      const url = pedaco?.web?.uri;
+      if (!url || jaVistos.has(url)) continue;
+      jaVistos.add(url);
+      resultados.push({ titulo: pedaco.web.title || url, url });
+      if (resultados.length >= RESULTADOS_POR_BUSCA) break;
+    }
+    if (!resultados.length) {
+      return { error: `A busca por "${consulta}" não devolveu nenhuma fonte. Tente outras palavras.` };
+    }
+    return { resultados };
+  } catch (err: any) {
+    return { error: err?.message || 'Não consegui pesquisar agora.' };
+  }
+}
+
+/**
+ * Lê o texto de uma página pelo /api/scrape, que já existe e já tem a proteção contra SSRF.
+ *
+ * Essa proteção deixa de ser precaução e passa a ser estrutural aqui. Ela foi escrita para uma URL
+ * que a PESSOA digita; agora quem escolhe o endereço é o agente, a partir de resultados de busca e
+ * de links lidos em páginas de terceiros. Basta uma página sugerir um endereço interno para o
+ * agente segui-lo sem desconfiar — e é a checagem do IP resolvido, do outro lado, que segura isso.
+ */
+async function lerPaginaDaWeb(url: string): Promise<{ texto?: string; error?: string }> {
+  try {
+    const res = await fetch('/api/scrape', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
+    const corpo = await res.json().catch(() => null);
+    if (!res.ok) return { error: corpo?.error || `Não consegui ler a página (HTTP ${res.status}).` };
+    return { texto: String(corpo?.text || '') };
+  } catch (err: any) {
+    return { error: err?.message || 'Não consegui ler a página agora.' };
+  }
+}
+
 async function perguntarProximaAcao(
   objetivo: string,
   foto: string | null,
@@ -198,7 +276,8 @@ async function perguntarProximaAcao(
   area?: EstadoDaAreaParalela | null,
   memoriaDaAutomacao?: string,
   frameAtual?: CapturaConfirmada | null,
-  orientacao?: string
+  orientacao?: string,
+  anotacoes?: AnotacaoDoAgente[]
 ): Promise<string> {
   const feito = resumirOQueJaFoiFeito(historico);
 
@@ -227,6 +306,18 @@ async function perguntarProximaAcao(
       : '',
     historico.some(v => !v.ok || /não mudou|nao mudou|não achei|nao achei|não consegui|nao consegui/i.test(`${v.relato} ${v.erro || ''}`))
       ? 'SINAL DE EMPACAMENTO: algo recente falhou, não mudou a tela ou não foi encontrado. NÃO repita a mesma ação. Formule uma hipótese nova e teste uma alternativa segura: menu de três pontos, clique_direito no item, rolagem curta, campo de busca, botão Mais/More, ou abrir endereço direto. NÃO feche o que você mesmo acabou de abrir.'
+      : '',
+    /**
+     * O CADERNO VAI INTEIRO, E VAI PERTO DA PERGUNTA.
+     *
+     * O histórico das voltas é cortado em 12 justamente para uma tarefa longa não estourar o
+     * contexto — e é esse corte que faz o que ele leu no começo desaparecer no meio. As anotações
+     * são o contrapeso: pequenas, escritas por ele mesmo, e as únicas que não podem sumir, porque
+     * são elas que sustentam a resposta final. Sem isto, o agente termina escrevendo de memória
+     * sobre páginas que já saíram do seu campo de visão.
+     */
+    anotacoes?.length
+      ? `SEU CADERNO (o que você já anotou, com as fontes):\n${anotacoes.map((a, i) => `${i + 1}. ${a.fato} [fonte: ${a.fonte}]`).join('\n')}`
       : '',
     'Qual é a PRÓXIMA ação? Responda só o JSON.'
   ].filter(Boolean).join('\n\n');
@@ -1639,14 +1730,14 @@ export function useLocalAgent() {
         return await executeLocalAgentCall('controlar_pc', { acao, ...args }, localAgentToken, false, visao);
       },
 
-      decidir: async (objetivoAtual, foto, historico, orientacao) => {
+      decidir: async (objetivoAtual, foto, historico, orientacao, anotacoes) => {
         return await perguntarProximaAcao(
           objetivoAtual, foto, historico, janelaRef.current, visao,
           await lerAmbienteDaMaquina(localAgentToken), areaRef.current, memoriaDaAutomacao,
           ultimoFrameConfirmadoRef.current
             ? { ...ultimoFrameConfirmadoRef.current, idadeMs: Date.now() - ultimoFrameConfirmadoRef.current.capturedAt }
             : null,
-          orientacao
+          orientacao, anotacoes
         );
       },
 
@@ -1656,6 +1747,9 @@ export function useLocalAgent() {
           await lerAmbienteDaMaquina(localAgentToken), areaRef.current
         );
       },
+
+      procurar: (consulta) => procurarNaWeb(consulta, visao),
+      lerPagina: (url) => lerPaginaDaWeb(url),
 
       aoProgredir: (volta) => {
         setRelatoDoAgente(prev => ({ voltas: [...(prev?.voltas || []), volta], rodando: true }));

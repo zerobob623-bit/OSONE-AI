@@ -14,7 +14,7 @@ const dados = new Map<string, string>();
 };
 
 const relatorio: RelatorioDoAgente = {
-  motivo: 'concluido', resumo: 'feito', duracaoTotalMs: 10, historico: {} as any,
+  motivo: 'concluido', resumo: 'feito', duracaoTotalMs: 10, historico: {} as any, anotacoes: [],
   voltas: [
     { indice: 0, pensamento: 'abrir', acao: 'abrir', args: { caminho: 'https://exemplo.test/painel?token=segredo#parte' }, ok: true, relato: 'abriu', duracaoMs: 1, mudancaDaTela: 1 },
     { indice: 1, pensamento: 'clicar', acao: 'clicar', args: { alvo: 'botão Entrar', x: 999, y: 888 }, ok: true, relato: 'clicou', duracaoMs: 1, mudancaDaTela: 1 },
