@@ -1,6 +1,6 @@
 import { PassoDoPlano, validarPasso, LIMITES_PADRAO, LimitesDoPlano } from './planoDeAcoes';
 import {
-  AssinaturaDaTela, DependenciasDaEspera, HistoricoDeEsperas,
+  AssinaturaDaTela, DependenciasDaEspera, HistoricoDeEsperas, LIMIAR_DE_TELA_PARADA,
   diferencaEntreTelas, esperarTelaParar, historicoVazio, previsaoDeEspera, registrarMedicao
 } from './esperarTela';
 
@@ -98,6 +98,15 @@ export interface RelatorioDoAgente {
 export interface LimitesDoAgente extends LimitesDoPlano {
   /** Quantas decisões iguais seguidas, sem a tela mudar, antes de considerar que travou. */
   maxRepeticoes: number;
+  /**
+   * Quantas vezes o agente pode PARAR PARA ESTUDAR a tela antes de desistir de vez.
+   *
+   * Cada estudo é uma chamada a mais ao modelo, então isto não é "quantas vezes ele pode travar" e
+   * sim quanto se aceita gastar tentando destravar sozinho em vez de devolver a tarefa à pessoa.
+   */
+  maxConsultas: number;
+  /** Quantas assinaturas de tela ficam guardadas para reconhecer que ele voltou para onde já esteve. */
+  memoriaDeTelas: number;
 }
 
 export const LIMITES_DO_AGENTE: LimitesDoAgente = {
@@ -107,7 +116,9 @@ export const LIMITES_DO_AGENTE: LimitesDoAgente = {
   // plano escrito por alguém que já sabia o caminho.
   maxPassos: 40,
   maxTotalMs: 8 * 60 * 1000,
-  maxRepeticoes: 3
+  maxRepeticoes: 3,
+  maxConsultas: 3,
+  memoriaDeTelas: 8
 };
 
 /**
@@ -138,8 +149,11 @@ REGRAS:
 - "pensamento" é obrigatório e em português: diga o que você ESTÁ VENDO na foto e por que age assim. É o que o usuário lê enquanto você trabalha.
 - OLHE A FOTO ANTES DE DECIDIR. Não repita a ação anterior se a tela não mudou — se não mudou, o que você tentou não funcionou; tente outro caminho.
 - Se aparecer algo que não estava previsto (aviso de cookies, login, pop-up, atualização), RESOLVA e siga. É para isso que você decide olhando.
-- Quando a opção exata NÃO estiver visível, NÃO fique clicando no mesmo alvo nem olhando parado. Faça exploração segura, como uma pessoa faria: procure campo de busca, menu de três pontos/⋮/More/Mais, botão de download, compartilhar/exportar, menu de perfil/engrenagem, abas laterais, rolagem curta, tecla Escape para fechar pop-up, ou "clique_direito" sobre a imagem/card/item. Cada exploração precisa ter um motivo no "pensamento" e deve ser reversível/baixo risco.
+- Quando a opção exata NÃO estiver visível, NÃO fique clicando no mesmo alvo nem olhando parado. Faça exploração segura, como uma pessoa faria: procure campo de busca, menu de três pontos/⋮/More/Mais, botão de download, compartilhar/exportar, menu de perfil/engrenagem, abas laterais, rolagem curta, ou "clique_direito" sobre a imagem/card/item. Cada exploração precisa ter um motivo no "pensamento" e deve ser reversível/baixo risco.
 - Para baixar imagem/arquivo/mídia: antes de insistir no botão "Salvar" da página, tente nesta ordem quando fizer sentido na foto: botão/ícone de download visível; menu de três pontos do item; "clique_direito" no item/imagem para abrir opções; rolar ou abrir a imagem em tamanho real; só então procurar "Salvar imagem como", "Download", "Baixar" ou equivalente no menu. Não clique repetidamente na própria imagem se isso não abriu opções.
+- O RÓTULO DO BOTÃO É O QUE ESTÁ ESCRITO NA TELA, NÃO A PALAVRA DO PEDIDO. Quase nunca existe um botão com o nome exato da tarefa. "Baixar" costuma aparecer como "Salvar", "Save", "Download", "Exportar" ou só um ícone de seta para baixo; "enviar" costuma aparecer como "Abrir", "Open", "Adicionar", "Anexar", "Carregar", "Upload", "Publicar" ou "Selecionar". LEIA os rótulos que estão na foto e escolha o que FAZ a mesma coisa. Só conclua que a opção não existe depois de ter lido o que existe.
+- DIÁLOGO DE ARQUIVO DO SISTEMA NÃO É POP-UP PARA FECHAR. Quando aparece a janela do sistema para escolher ou salvar arquivo (lista de pastas de um lado, arquivos do outro, campo de nome, dois botões num canto), o botão que CONFIRMA leva o nome da ação do SISTEMA, nunca o nome do seu objetivo: "Abrir", "Open", "Salvar", "Save", "Selecionar", "Escolher", "OK". Se o usuário pediu para ENVIAR um arquivo e essa janela apareceu pedindo para escolher um, o caminho é: selecionar o arquivo e clicar em "Abrir". NUNCA clique no X nem em "Cancelar" e NUNCA aperte Escape dentro de um diálogo de arquivo — isso joga fora tudo o que você já andou e devolve você ao começo do mesmo ciclo.
+- FECHAR O QUE VOCÊ ACABOU DE ABRIR É ANDAR PARA TRÁS. Se a sua ação anterior fez aparecer uma janela, um menu, um painel ou um diálogo, a próxima ação é USAR o que apareceu — não fechá-lo para tentar o mesmo caminho de novo. Fechar e recomeçar é o ciclo que mais faz uma tarefa falhar: você volta para a tela de onde saiu e toma a mesma decisão outra vez, para sempre. Escape e "fechar" servem para aviso de cookie, propaganda e notificação que apareceram SOZINHOS, não para o que você mesmo abriu.
 - Se você notar confusão ("não vejo", "não achei", opção escondida, tela igual, clique sem efeito), transforme a dúvida em hipótese testável: "vou abrir o menu de três pontos porque downloads costumam ficar ali". Não peça ajuda ao usuário para descobrir onde clicar; investigue com ações seguras.
 - Se a tarefa era descobrir/analisar algo, você só termina depois de LER na tela o que foi pedido. Concluir sem a informação é não ter feito a tarefa.
 - "esperaDaTela": "mudar" no caso normal, "qualquer" quando não dá para prever.
@@ -235,6 +249,78 @@ const mesmoAlvo = (a: string, b: string): boolean => {
 const jaAbriu = (voltas: VoltaDoAgente[], caminho: string): boolean =>
   voltas.some(v => v.acao === 'abrir' && v.ok && mesmoAlvo(String(v.args?.caminho || ''), caminho));
 
+/**
+ * ====== ANDAR PARA TRÁS TAMBÉM É ERRAR, MESMO QUANDO O CLIQUE FUNCIONA ======
+ *
+ * O laço media duas coisas para dizer se uma volta deu certo: o comando não devolveu erro, e a
+ * tela mudou. Nenhuma das duas fala de PROGRESSO — e há uma ação que passa nas duas enquanto
+ * desfaz o trabalho: fechar o que acabou de abrir.
+ *
+ * Foi o caso observado em uso. Pedido "envie este vídeo para o YouTube": o agente chega ao fim,
+ * abre o diálogo de arquivo do sistema, procura um botão escrito "Enviar", não acha (o botão se
+ * chama "Abrir") e — seguindo a própria regra de "feche o pop-up e tente outro caminho" — clica no
+ * X. O clique funciona. A tela muda inteira, porque o diálogo sumiu. Pelas duas medidas antigas
+ * isso foi um SUCESSO: o contador de falhas voltava a zero e o ciclo recomeçava do início, até o
+ * teto de voltas. O agente não estava travado por falha nenhuma; estava travado por acerto.
+ *
+ * Daí estas duas leituras, que existem para o laço enxergar o que a pessoa enxerga:
+ *
+ *   1. FECHAMENTO LOGO DEPOIS DE ABERTURA é recusado, e conta como falha.
+ *   2. VOLTAR PARA UMA TELA EM QUE JÁ SE ESTEVE é ciclo, mesmo que cada ação individual seja
+ *      diferente — que é justamente o que a trava de repetição não pegava.
+ */
+const PALAVRAS_DE_FECHAR = /(^|[^a-zà-ú])(x|fechar|close|cancelar|cancel|sair|dispensar|descartar|voltar|agora n[ãa]o)([^a-zà-ú]|$)/i;
+
+const acaoFechaTela = (decisao: DecisaoDoAgente): boolean => {
+  if (decisao.acao === 'tecla') {
+    return String(decisao.args?.tecla || '').trim().toLowerCase() === 'escape';
+  }
+  if (decisao.acao !== 'clicar') return false;
+  const alvo = String(decisao.args?.alvo || '');
+  return PALAVRAS_DE_FECHAR.test(alvo);
+};
+
+/**
+ * Acima disto a volta anterior FEZ APARECER alguma coisa — janela, menu, diálogo, painel.
+ *
+ * É o mesmo patamar que o laço já usa para dizer que um clique teve efeito (0.01), com uma folga
+ * para não confundir com um campo ganhando foco ou um botão mudando de cor.
+ */
+const LIMIAR_DE_ABERTURA = 0.02;
+
+/**
+ * Abaixo disto duas telas são a MESMA tela para efeito de ciclo.
+ *
+ * É o MESMO número que o motor de espera já usa para dizer "esta tela é a de antes" — e é de
+ * propósito que não seja um segundo, mais frouxo. Duas fotos que o motor considera diferentes não
+ * podem ser "a mesma tela" aqui: um limiar próprio e mais generoso apontaria ciclo onde há
+ * progresso lento, e o preço disso é jogar fora uma decisão boa para ir estudar uma tela que não
+ * precisava. Ficando no limiar já estabelecido, o erro possível é o barato: deixar passar um ciclo
+ * em que a tela mudou de verdade no meio, que é o comportamento que já existia antes desta trava.
+ */
+const LIMIAR_DE_TELA_REPETIDA = LIMIAR_DE_TELA_PARADA;
+
+/**
+ * Quantas voltas atrás uma tela precisa estar para valer como ciclo.
+ *
+ * Menos que isto pegaria o caso normal de "cliquei e nada mudou", que já tem trava própria e não
+ * merece uma consulta ao modelo. Um ciclo de verdade tem ida e volta: abre, tenta, fecha, volta.
+ */
+const DISTANCIA_MINIMA_DO_CICLO = 3;
+
+/** Há quantas voltas o agente já esteve nesta mesma tela — ou null se esta tela é nova. */
+function voltasDesdeQueViuEstaTela(
+  telas: (AssinaturaDaTela | null)[],
+  atual: AssinaturaDaTela | null
+): number | null {
+  if (!atual) return null;
+  // De trás para frente: interessa a vez MAIS RECENTE em que ele esteve aqui.
+  for (let i = telas.length - DISTANCIA_MINIMA_DO_CICLO; i >= 0; i--) {
+    if (diferencaEntreTelas(telas[i], atual) < LIMIAR_DE_TELA_REPETIDA) return telas.length - i;
+  }
+  return null;
+}
+
 /** Ações que terminam o trabalho em vez de mexer no computador. */
 const ACOES_QUE_ENCERRAM = new Set(['concluir', 'desistir']);
 /** Ações que não tocam no computador — não passam pela validação de dinheiro/arquivo. */
@@ -267,11 +353,32 @@ export interface DependenciasDoAgente extends DependenciasDaEspera {
   /**
    * Pergunta ao modelo qual a próxima ação, dando a foto atual e o histórico.
    * Devolve o texto cru da resposta — a leitura acontece aqui, em lerDecisao.
+   *
+   * A "orientacao" é o que saiu do último estudo da tela (consultar), quando houve um. Ela chega
+   * separada do histórico de propósito: não é uma coisa que aconteceu, é uma coisa que se sabe.
    */
-  decidir: (objetivo: string, foto: string | null, historico: VoltaDoAgente[]) => Promise<string>;
+  decidir: (
+    objetivo: string, foto: string | null, historico: VoltaDoAgente[], orientacao?: string
+  ) => Promise<string>;
+  /**
+   * PARA DE AGIR E ESTUDA A TELA — chamado só quando o laço trava.
+   *
+   * Não pede uma ação: pede a LEITURA da tela (que janela é essa, quais botões existem e o que
+   * cada um está escrito). É outra pergunta, e é por isso que funciona sem trocar de modelo: o
+   * mesmo modelo que decide mal sob pressão descreve bem uma imagem parada. O texto que volta
+   * entra nas decisões seguintes, e é lá que a decisão deixa de ser adivinhação.
+   *
+   * Sem esta dependência o laço se comporta como antes: trava e encerra.
+   */
+  consultar?: (
+    objetivo: string, foto: string | null, historico: VoltaDoAgente[], motivo: MotivoDaConsulta
+  ) => Promise<string>;
   /** Chamado a cada volta, para o relatório ao vivo. */
   aoProgredir?: (volta: VoltaDoAgente) => void;
 }
+
+/** Por que o agente parou de agir para estudar a tela. Vai no texto da consulta. */
+export type MotivoDaConsulta = 'falhas-seguidas' | 'ciclo' | 'sem-decisao' | 'regressao';
 
 /**
  * O laço: olhar, decidir, agir, olhar de novo — até terminar ou até um dos freios pegar.
@@ -301,6 +408,82 @@ export async function trabalharAteConcluir(
 
   let assinaturaDaTela: AssinaturaDaTela | null = await deps.fotografar();
 
+  /** As últimas telas por onde ele passou, para reconhecer que voltou para uma delas. */
+  let telasVistas: (AssinaturaDaTela | null)[] = [];
+  /** O que o último estudo da tela apurou. Vai junto de toda decisão daqui para a frente. */
+  let orientacao = '';
+  let consultasFeitas = 0;
+  /**
+   * Depois do primeiro estudo, fechar volta a ser permitido.
+   *
+   * A recusa de fechar existe para o agente não desfazer o que abriu — mas há o caso legítimo:
+   * aviso de cookie e propaganda que nasceram sozinhos em cima da tela e precisam sair. Travar
+   * isso para sempre quebraria a tarefa. Então a recusa vale enquanto ele estiver decidindo no
+   * escuro; assim que ele ESTUDA a tela e mesmo assim quer fechar, é uma decisão informada e passa.
+   */
+  let fechamentoLiberado = false;
+  /**
+   * O motivo da última ação que FEZ APARECER alguma coisa na tela — ou vazio, se o que está aí não
+   * foi ele que abriu.
+   *
+   * Precisa ser um estado guardado, e não "a volta anterior abriu algo". Foi um furo real: a
+   * recusa de fechar entra no relatório como uma volta que não abriu nada, então na tentativa
+   * seguinte a volta anterior deixava de ser uma abertura e o mesmo X passava direto. A trava
+   * durava exatamente uma tentativa — e o modelo que insiste é justamente o que ela existe para
+   * segurar. Só uma ação EXECUTADA muda este estado; recusa não conta, porque o computador nem
+   * foi tocado e o que está na tela continua sendo o que ele abriu.
+   */
+  let oQueAbriuNaTela = '';
+
+  /**
+   * O agente travou: em vez de encerrar, olha a tela com outra pergunta e volta a trabalhar.
+   *
+   * Devolve o motivo de parada quando não há como estudar (sem dependência, estudo falhou ou o
+   * teto de consultas acabou) — e undefined quando o laço deve continuar.
+   */
+  const estudarATela = async (
+    motivo: MotivoDaConsulta, foto: string | null, oQueTravou: string
+  ): Promise<string | undefined> => {
+    if (!deps.consultar) return oQueTravou;
+    if (consultasFeitas >= limites.maxConsultas) {
+      return `${oQueTravou} Já parei ${consultasFeitas} vezes para estudar a tela e mesmo assim não achei o caminho.`;
+    }
+
+    consultasFeitas++;
+    let leitura = '';
+    try {
+      leitura = (await deps.consultar(objetivo, foto, voltas, motivo)).trim();
+    } catch (err: any) {
+      return `${oQueTravou} Tentei estudar a tela para achar outro caminho e não consegui falar com o modelo: ${err?.message || err}`;
+    }
+    if (!leitura) {
+      return `${oQueTravou} Parei para estudar a tela e o modelo não descreveu nada.`;
+    }
+
+    orientacao = leitura;
+    fechamentoLiberado = true;
+    registrar({
+      indice: voltas.length, pensamento: 'Travei aqui — vou parar de tentar e ler a tela com calma.',
+      acao: 'estudar_tela', args: { motivo }, ok: true,
+      // O texto inteiro vive em "orientacao", que vai junto de cada decisão daqui para a frente.
+      // Aqui entra só o começo: esta linha é repetida em toda janela de histórico, e a leitura
+      // inteira duplicada em toda rodada empurraria para fora justamente o que ele já tentou.
+      relato: `Estudei a tela antes de continuar: ${leitura.length > 220 ? `${leitura.slice(0, 217)}...` : leitura}`,
+      duracaoMs: 0, mudancaDaTela: 0, foto: foto || undefined
+    });
+
+    // Zerar é o ponto do estudo: ele volta com informação nova, então merece as mesmas chances de
+    // quem está começando. Sem isto o próximo tropeço encerraria na hora, e o estudo teria sido só
+    // uma chamada a mais antes da mesma desistência.
+    falhasSeguidas = 0;
+    repeticoes = 0;
+    assinaturaDaDecisaoAnterior = '';
+    // A memória de telas também: senão a volta seguinte reconhece o mesmo ciclo que acabou de ser
+    // tratado e queima todas as consultas de uma vez.
+    telasVistas = [];
+    return undefined;
+  };
+
   for (let i = 0; i < limites.maxPassos; i++) {
     if (deps.cancelado?.()) {
       return encerrar('parado-pelo-usuario', `Parado por você depois de ${voltas.length} ação(ões). Nada além disso foi executado.`);
@@ -317,7 +500,7 @@ export async function trabalharAteConcluir(
     // ====== DECIDIR, COM A FOTO À FRENTE ======
     let textoDaDecisao = '';
     try {
-      textoDaDecisao = await deps.decidir(objetivo, foto, voltas);
+      textoDaDecisao = await deps.decidir(objetivo, foto, voltas, orientacao || undefined);
     } catch (err: any) {
       return encerrar('sem-decisao', `Não consegui falar com o modelo para decidir a próxima ação: ${err?.message || err}`);
     }
@@ -331,7 +514,9 @@ export async function trabalharAteConcluir(
         erro: problema, duracaoMs: deps.agora() - comecouAVolta, mudancaDaTela: 0, foto: foto || undefined
       });
       if (falhasSeguidas >= limites.maxFalhasSeguidas) {
-        return encerrar('sem-decisao', `Parei: ${problema} Isso aconteceu ${falhasSeguidas} vezes seguidas.`);
+        const semSaida = await estudarATela('sem-decisao', foto,
+          `Parei: ${problema} Isso aconteceu ${falhasSeguidas} vezes seguidas.`);
+        if (semSaida) return encerrar('sem-decisao', semSaida);
       }
       continue;
     }
@@ -373,14 +558,68 @@ export async function trabalharAteConcluir(
     if (assinaturaDaDecisao === assinaturaDaDecisaoAnterior) {
       repeticoes++;
       if (repeticoes >= limites.maxRepeticoes) {
-        return encerrar('repeticao',
+        const semSaida = await estudarATela('ciclo', foto,
           `Parei: repeti "${decisao.pensamento}" ${repeticoes} vezes e a tela não avançou. ` +
           `O caminho que estou tentando não está funcionando — me diga por onde ir, ou refaça o pedido com mais detalhe.`);
+        if (semSaida) return encerrar('repeticao', semSaida);
+        continue;
       }
     } else {
       repeticoes = 0;
     }
     assinaturaDaDecisaoAnterior = assinaturaDaDecisao;
+
+    /**
+     * ====== O CICLO QUE A TRAVA ACIMA NÃO PEGA ======
+     *
+     * A trava de repetição compara a decisão de agora com a IMEDIATAMENTE anterior. Isso pega
+     * gagueira — a mesma ação duas vezes seguidas — e não pega o que de fato acontece numa tarefa
+     * real: abre o diálogo, tenta, fecha, volta para a tela de antes, abre de novo. As ações são
+     * todas DIFERENTES entre si, então o contador zera a cada volta e nunca chega ao teto; o laço
+     * só para quando estoura o limite de passos, depois de repetir o mesmo ciclo dez vezes.
+     *
+     * Comparar TELAS em vez de decisões pega qualquer ciclo, sem depender do nome das ações: se ele
+     * está de volta a uma tela em que já esteve três voltas atrás, o que fez no meio não levou a
+     * lugar nenhum.
+     */
+    const voltasAtras = voltasDesdeQueViuEstaTela(telasVistas, assinaturaDaTela);
+    telasVistas = [...telasVistas, assinaturaDaTela].slice(-limites.memoriaDeTelas);
+    if (voltasAtras !== null) {
+      const semSaida = await estudarATela('ciclo', foto,
+        `Parei: dei ${voltasAtras} voltas e acabei de volta na mesma tela de onde saí. ` +
+        `Estou andando em círculo — me diga por onde ir, ou refaça o pedido com mais detalhe.`);
+      if (semSaida) return encerrar('repeticao', semSaida);
+      continue;
+    }
+
+    /**
+     * ====== FECHAR O QUE ACABOU DE ABRIR: RECUSADO ANTES DE FECHAR ======
+     *
+     * A regra está escrita na instrução, mas escrever não basta aqui: esta é exatamente a decisão
+     * que o modelo toma quando NÃO achou o botão que procurava, e é a decisão que apaga a prova de
+     * que ele não achou. Recusar transforma um retrocesso silencioso — que o laço contava como
+     * sucesso, porque o clique funcionou e a tela mudou — numa falha visível, que é o que faz o
+     * estudo da tela acontecer em vez do décimo ciclo.
+     */
+    if (!fechamentoLiberado && oQueAbriuNaTela && acaoFechaTela(decisao)) {
+      const aviso =
+        `NÃO FECHEI. A sua ação anterior ("${oQueAbriuNaTela}") fez aparecer isso que está na tela, e fechar agora ` +
+        `desfaz o que você acabou de fazer — você volta para a tela de antes e toma a mesma decisão outra vez. ` +
+        `Se é um diálogo de arquivo, o botão que confirma tem o nome da ação do sistema ("Abrir", "Salvar", "Selecionar", "OK"), ` +
+        `não o nome da tarefa. LEIA os rótulos que estão na foto e use o que apareceu. Se realmente não houver saída aqui, use "desistir".`;
+      falhasSeguidas++;
+      registrar({
+        indice: i, pensamento: decisao.pensamento, acao: decisao.acao, args: decisao.args, ok: false,
+        relato: aviso, erro: aviso,
+        duracaoMs: deps.agora() - comecouAVolta, mudancaDaTela: 0, foto: foto || undefined
+      });
+      if (falhasSeguidas >= limites.maxFalhasSeguidas) {
+        const semSaida = await estudarATela('regressao', foto,
+          `Parei: tentei ${falhasSeguidas} vezes fechar o que eu mesmo tinha acabado de abrir, em vez de usar o que apareceu.`);
+        if (semSaida) return encerrar('falhas-seguidas', semSaida);
+      }
+      continue;
+    }
 
     // ====== TROCAR DE JANELA É COM O AGENTE, NÃO COM O USUÁRIO ======
     if (decisao.acao === 'trocar_janela') {
@@ -395,8 +634,12 @@ export async function trabalharAteConcluir(
       });
       // A janela mudou: a assinatura antiga é de outra tela, e compará-las diria "mudou tudo".
       assinaturaDaTela = await deps.fotografar();
+      // E o que ele tinha aberto ficou na janela de onde saiu: aqui, fechar não desfaz nada dele.
+      if (ok) oQueAbriuNaTela = '';
       if (!ok && falhasSeguidas >= limites.maxFalhasSeguidas) {
-        return encerrar('falhas-seguidas', `Parei depois de ${falhasSeguidas} falhas seguidas. A última: ${r.error}`);
+        const semSaida = await estudarATela('falhas-seguidas', foto,
+          `Parei depois de ${falhasSeguidas} falhas seguidas. A última: ${r.error}`);
+        if (semSaida) return encerrar('falhas-seguidas', semSaida);
       }
       continue;
     }
@@ -450,8 +693,9 @@ export async function trabalharAteConcluir(
         duracaoMs: deps.agora() - comecouAVolta, mudancaDaTela: 0, foto: foto || undefined
       });
       if (falhasSeguidas >= limites.maxFalhasSeguidas) {
-        return encerrar('falhas-seguidas',
+        const semSaida = await estudarATela('falhas-seguidas', foto,
           `Parei depois de ${falhasSeguidas} falhas seguidas. A última: ${resposta.error}`);
+        if (semSaida) return encerrar('falhas-seguidas', semSaida);
       }
       // A falha VOLTA para o modelo na próxima rodada, dentro do histórico: é assim que ele tenta
       // outro caminho em vez de repetir o mesmo. Um plano fixo não tinha para onde levar isto.
@@ -477,6 +721,9 @@ export async function trabalharAteConcluir(
      */
     const naoMudou = decisao.esperaDaTela === 'mudar' && mudancaDaTela < 0.01;
     falhasSeguidas = 0;
+    // Esta ação passa a ser a dona do que está na tela. Se ela fez algo aparecer, é ela que a
+    // recusa de fechar vai citar; se não fez, o que quer que estivesse aberto já não está.
+    oQueAbriuNaTela = mudancaDaTela >= LIMIAR_DE_ABERTURA ? decisao.pensamento : '';
 
     registrar({
       indice: i, pensamento: decisao.pensamento, acao: decisao.acao, args: decisao.args, ok: true,
