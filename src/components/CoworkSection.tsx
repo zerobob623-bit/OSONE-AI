@@ -661,7 +661,10 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
               value={objetivo}
               onChange={e => setObjetivo(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) comecar(); }}
-              placeholder={'Ex: entra no meu canal do YouTube, abre as análises dos últimos 28 dias e me diz o que o gráfico mostra'}
+              // O exemplo agora mostra os DOIS caminhos que o agente sabe seguir: operar o
+              // computador e trazer dado da internet. Uma capacidade que não aparece em lugar
+              // nenhum da tela é, na prática, uma capacidade que ninguém descobre que existe.
+              placeholder={'Ex: pesquisa os preços dos concorrentes e me traz uma tabela com as fontes — ou: entra no meu canal do YouTube, abre as análises e me diz o que o gráfico mostra'}
               rows={3}
               disabled={trabalhando}
               className="mt-3 w-full bg-transparent border border-white/[0.06] rounded-2xl px-4 py-3 text-sm
