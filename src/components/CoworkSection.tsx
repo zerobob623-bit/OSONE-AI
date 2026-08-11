@@ -507,11 +507,20 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
   const comecar = async (texto?: string) => {
     const alvo = (texto ?? objetivo).trim();
     if (!alvo || trabalhando) return;
-    // Com a tela dele ligada, começar sem janela é o normal: ela nasce vazia e a primeira coisa
-    // que ele faz lá é abrir alguma coisa. Na SUA tela, escolher a janela continua obrigatório.
+    /**
+     * COMEÇAR SEM JANELA DEIXOU DE SER ERRO.
+     *
+     * A exigência fazia sentido quando a única coisa que o agente sabia fazer era mexer na tela:
+     * sem janela, não havia onde agir. Depois que ele passou a pesquisar e ler páginas, a mesma
+     * regra virou uma parede na frente do caso mais comum — "pesquisa isso e me traz" não precisa
+     * de janela nenhuma, e mesmo assim o botão ficava desligado e a mensagem mandava escolher uma
+     * tela que a tarefa não usaria. A capacidade existia e não tinha por onde ser pedida.
+     *
+     * Quem decide agora é o próprio agente, que é informado no contexto de que não tem janela: se
+     * a tarefa for de pesquisa, ele pesquisa; se exigir clicar, ele desiste dizendo o que falta.
+     */
     if (!janelaDeTrabalho && !areaParalela?.ligada) {
-      onNotification('Escolha em qual janela eu devo começar a trabalhar.', 'error');
-      return;
+      onNotification('Sem janela escolhida — vou trabalhar só pesquisando e lendo páginas.', 'info');
     }
     if (motorParado) onRetomar();
 
@@ -554,7 +563,15 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
           : desfecho === 'parada' ? 'parado'
           : 'falha'
       );
-      narrar(texto || 'Tarefa finalizada.', true);
+      /**
+       * A lista de fontes fica na TELA, e fora da narração.
+       *
+       * Ela é o que dá procedência à resposta escrita, e por isso é impressa junto dela. Falada,
+       * vira o oposto: "Fontes: um endereço, um endereço, um endereço" — porque a limpeza para voz
+       * troca toda URL por "um endereço", e o que sobra é ruído que enterra a resposta de verdade,
+       * dita nos primeiros segundos.
+       */
+      narrar((texto || 'Tarefa finalizada.').split('\n\nFontes:')[0], true);
       onNotification(texto || 'Tarefa finalizada.',
         desfecho === 'concluida' ? 'success' : desfecho === 'parada' ? 'info' : 'error');
     } finally {
@@ -568,11 +585,19 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
     return <CornerDownRight className="w-3.5 h-3.5 text-her-muted" />;
   };
 
+  /**
+   * O aviso passou a separar as DUAS metades do que esta aba faz.
+   *
+   * Dizer "esta aba só funciona no app instalado" virou meia verdade quando o agente aprendeu a
+   * pesquisar e ler páginas: isso funciona em qualquer lugar, porque não toca no computador de
+   * ninguém. O que exige o app instalado é a outra metade — clicar, digitar, rolar. Uma frase que
+   * bloqueia as duas faz a pessoa nem tentar a que funcionaria.
+   */
   const avisoDeDisponibilidade =
     disponibilidade === 'web'
-      ? 'Esta aba só funciona no OSONE instalado no computador. Na versão pelo navegador o controle da máquina é bloqueado de propósito — nenhum servidor na nuvem clica no seu computador.'
+      ? 'Pelo navegador ele PESQUISA e LÊ páginas normalmente. O que não funciona aqui é mexer no seu computador (clicar, digitar, rolar): isso é bloqueado de propósito — nenhum servidor na nuvem opera a sua máquina. Para essa parte, use o OSONE instalado.'
       : disponibilidade === 'sem-agente'
-        ? 'O Agente Local não respondeu. Abra o OSONE instalado no computador e confira o Token do Agente Local nas Configurações.'
+        ? 'O Agente Local não respondeu, então ele não consegue mexer no seu computador agora — mas PESQUISAR e LER páginas continua funcionando. Para operar a máquina, abra o OSONE instalado e confira o Token do Agente Local nas Configurações.'
         : '';
 
   const respostaFinal = relatorio && !(relatorio as any).error ? String((relatorio as any).resumo || '') : '';
@@ -693,7 +718,10 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
             ) : (
               <button
                 onClick={() => comecar()}
-                disabled={!objetivo.trim() || (!janelaDeTrabalho && !areaParalela?.ligada) || disponibilidade === 'web'}
+                // Só o objetivo é obrigatório. Janela e Agente Local viraram requisito DA TAREFA,
+                // não da aba: pesquisar e ler não precisam de nenhum dos dois, e é o agente que
+                // avisa, com o motivo escrito, quando o que foi pedido exige a tela.
+                disabled={!objetivo.trim()}
                 className="mt-3 w-full py-3 rounded-2xl text-sm font-light transition-all
                            bg-indigo-500/10 text-indigo-300 border border-indigo-500/25 hover:bg-indigo-500/15
                            disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
@@ -964,8 +992,15 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
                       {/* O PENSAMENTO vem primeiro: é o que ele viu e por que decidiu assim. Sem
                           isso o relatório vira uma lista de cliques sem explicação nenhuma. */}
                       <p className="text-[13px] text-her-ink/85 font-light leading-snug">{v.pensamento}</p>
-                      <p className={cn("text-[11px] mt-0.5 leading-snug", v.ok ? "text-her-muted/80" : "text-amber-400/90")}>
-                        {v.relato}
+                      {/*
+                        O RELATO VAI CORTADO NA TELA — e inteiro só para o modelo.
+                        Uma leitura de página traz a página inteira no relato (o modelo precisa
+                        dela para decidir). Jogar isso cru aqui enterrava o relatório: uma volta
+                        virava um paredão de texto e as outras sumiam do campo de visão. Quem lê
+                        esta lista quer saber O QUE ele fez, e para isso o começo basta.
+                      */}
+                      <p className={cn("text-[11px] mt-0.5 leading-snug whitespace-pre-wrap break-words", v.ok ? "text-her-muted/80" : "text-amber-400/90")}>
+                        {v.relato.length > 400 ? `${v.relato.slice(0, 400)}… (${v.relato.length} caracteres lidos)` : v.relato}
                       </p>
                       <p className="text-[9px] text-her-muted/50 mt-0.5">
                         {v.acao} · {(v.duracaoMs / 1000).toFixed(1)}s

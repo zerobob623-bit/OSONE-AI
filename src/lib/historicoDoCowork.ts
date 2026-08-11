@@ -113,6 +113,32 @@ function pistaSegura(volta: VoltaDoAgente): { acao: string; descricao: string } 
       return { acao: 'rolar', descricao: `rolar ${String(args.direcao || 'down')}` };
     case 'digitar':
       return { acao: 'digitar', descricao: 'digitar no campo em foco (conteúdo omitido por privacidade)' };
+    /**
+     * PESQUISA TAMBÉM É CAMINHO, E TAMBÉM SE APRENDE.
+     *
+     * Sem estes dois casos, o "default: null" abaixo descartava tudo: uma pesquisa concluída com
+     * sucesso não deixava pista nenhuma, e a mesma pergunta na semana seguinte recomeçava do zero,
+     * redescobrindo as mesmas páginas. Justamente o tipo de tarefa que mais se repete.
+     *
+     * O que se guarda é o CAMINHO (a consulta que funcionou, o endereço que tinha a resposta), e
+     * não o resultado: preço muda, notícia muda, e uma memória que devolvesse o número velho seria
+     * pior que memória nenhuma. Da próxima vez ele vai direto à fonte certa e lê o valor de agora.
+     */
+    case 'procurar': {
+      const consulta = String(args.consulta || '').trim();
+      return consulta ? { acao: 'procurar', descricao: `pesquisar por "${consulta}"` } : null;
+    }
+    case 'ler_pagina': {
+      let endereco = String(args.url || '').trim();
+      try {
+        // Mesmo cuidado do "abrir": a parte depois de "?" costuma carregar sessão e identificador,
+        // e esta memória fica no aparelho, mas guardar segredo que não serve para nada é dívida.
+        const url = new URL(endereco);
+        url.search = ''; url.hash = '';
+        endereco = url.toString();
+      } catch { /* endereço estranho não vira pista */ }
+      return endereco ? { acao: 'ler_pagina', descricao: `ler ${endereco}` } : null;
+    }
     default:
       return null;
   }

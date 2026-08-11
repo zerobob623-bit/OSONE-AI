@@ -101,15 +101,37 @@ function descreverOComputador(ambiente: any, area?: EstadoDaAreaParalela | null)
  */
 const VOLTAS_COM_ERRO_POR_EXTENSO = 3;
 
-function resumirOQueJaFoiFeito(historico: VoltaDoAgente[]): string {
+/**
+ * SÓ A PÁGINA MAIS RECENTE VAI POR EXTENSO. AS ANTERIORES VIRAM UMA LINHA.
+ *
+ * Sem isto, ler páginas envenena o próprio contexto que torna a leitura útil. O relato de um
+ * "ler_pagina" carrega o texto inteiro da página — até 12 mil caracteres — e o histórico manda os
+ * relatos das últimas 12 voltas ao modelo A CADA RODADA. Três páginas lidas viram ~36 mil
+ * caracteres repetidos em toda decisão, empurrando para fora justamente o objetivo e o que ele já
+ * tentou. O sintoma seria cruel: quanto MAIS ele pesquisasse, pior ele decidiria.
+ *
+ * Manter só a última inteira também é o que dá sentido ao caderno. A regra "anote enquanto lê"
+ * deixa de ser conselho e passa a ser a única forma de o conteúdo sobreviver — que é exatamente o
+ * comportamento desejado, porque o que está no caderno vem com fonte e o que está no relato, não.
+ */
+const ACOES_QUE_TRAZEM_TEXTO_LONGO = new Set(['ler_pagina']);
+
+export function resumirOQueJaFoiFeito(historico: VoltaDoAgente[]): string {
   const recentes = historico.slice(-VOLTAS_NO_CONTEXTO);
   const primeiroIndice = historico.length - recentes.length;
+  const ultimaLeitura = recentes.map(v => v.acao).lastIndexOf('ler_pagina');
+
   return recentes.map((v, i) => {
     const numero = primeiroIndice + i + 1;
     const detalhe = v.erro && i >= recentes.length - VOLTAS_COM_ERRO_POR_EXTENSO
       ? ` [motivo: ${v.erro}]`
       : '';
-    return `${numero}. [${v.ok ? 'ok' : 'FALHOU'}] ${v.pensamento} → ${v.relato}${detalhe}`;
+
+    const relato = (v.ok && ACOES_QUE_TRAZEM_TEXTO_LONGO.has(v.acao) && i !== ultimaLeitura)
+      ? `Li ${String(v.args?.url || 'a página')} — o conteúdo já saiu do seu contexto. Se precisar dele de novo, use o que anotou, ou leia a página outra vez.`
+      : v.relato;
+
+    return `${numero}. [${v.ok ? 'ok' : 'FALHOU'}] ${v.pensamento} → ${relato}${detalhe}`;
   }).join('\n');
 }
 
@@ -285,7 +307,20 @@ async function perguntarProximaAcao(
     `OBJETIVO DO USUÁRIO: ${objetivo}`,
     memoriaDaAutomacao,
     descreverOComputador(ambiente, area),
-    janela ? `JANELA EM QUE VOCÊ ESTÁ: "${janela.titulo}" (${janela.app}), ${janela.width}x${janela.height}.` : '',
+    /**
+     * SEM JANELA NÃO É ERRO — É OUTRO TIPO DE TAREFA.
+     *
+     * Uma tarefa só de pesquisa não precisa de janela nenhuma: procurar, ler e anotar não tocam no
+     * computador. Antes, o silêncio aqui fazia o agente decidir "clicar" contra uma tela que não
+     * existe, falhar duas vezes e desistir — parecendo incapaz de uma coisa que ele sabe fazer.
+     * Dizer o que ele TEM em vez de deixá-lo descobrir errando é a diferença entre as duas coisas.
+     */
+    janela
+      ? `JANELA EM QUE VOCÊ ESTÁ: "${janela.titulo}" (${janela.app}), ${janela.width}x${janela.height}.`
+      : 'VOCÊ NÃO TEM JANELA DE TRABALHO nesta sessão: ninguém escolheu uma tela para você operar. '
+        + 'Você PODE pesquisar na web, ler páginas e anotar — é assim que se resolve uma tarefa de trazer informação. '
+        + 'Você NÃO pode clicar, digitar nem rolar, porque não há tela onde fazer isso. Se a tarefa exigir mexer no '
+        + 'computador, use "desistir" dizendo que a pessoa precisa escolher a janela primeiro.',
     foto
       ? `A IMAGEM ACIMA é o frame ATUAL ${frameAtual?.captureId || '(sem id)'} dessa janela, ` +
         `confirmado há ${Math.max(0, frameAtual?.idadeMs || 0)}ms. Olhe-a antes de decidir.`
