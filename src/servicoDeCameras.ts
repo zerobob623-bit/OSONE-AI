@@ -35,9 +35,31 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { spawn, ChildProcess } from 'child_process';
+import { createRequire } from 'module';
 import { Request, Response, Router } from 'express';
-import ffmpegStatic from 'ffmpeg-static';
 import { AssinaturaDaTela, diferencaEntreTelas } from './lib/esperarTela';
+
+/**
+ * O ffmpeg é carregado SOB DEMANDA, e não por "import" no topo do arquivo.
+ *
+ * Um import no topo é resolvido quando o módulo carrega — ou seja, quando o servidor sobe. Se o
+ * pacote não estiver lá (o ffmpeg-static baixa um binário de ~80 MB num script de pós-instalação,
+ * que pode ser pulado ou falhar em algumas hospedagens), o import derruba o carregamento inteiro
+ * do servidor. E como este arquivo é importado pelo server.ts, derrubar o carregamento não
+ * quebraria só as câmeras: quebraria TODAS as rotas da API de uma vez, com erro 500 em tudo.
+ *
+ * Nenhum recurso deve ter poder de derrubar os outros por causa de uma dependência que só ele usa.
+ * Carregando aqui dentro, e com o erro contido, a falta do ffmpeg vira "as câmeras não funcionam"
+ * em vez de "o OSONE não funciona".
+ *
+ * O createRequire com esta base cobre os dois formatos em que este código roda: o bundle CommonJS
+ * de produção (onde __filename existe) e o modo desenvolvimento com tsx, que é módulo ES e não o
+ * tem — usar import.meta direto quebraria o bundle CommonJS, e usar __filename direto quebraria o
+ * modo desenvolvimento.
+ */
+const exigirModulo = createRequire(
+  typeof __filename !== 'undefined' ? __filename : path.join(process.cwd(), 'package.json')
+);
 
 // ============================================================================
 // ONDE AS COISAS MORAM
@@ -103,13 +125,17 @@ export interface EventoDaCamera {
  * "app.asar.unpacked". Sem esta troca, câmera funcionaria em desenvolvimento e falharia no
  * instalador, que é o pior lugar para descobrir.
  */
+let caminhoDoFfmpeg: string | undefined;
+
 function resolverFfmpeg(): string {
+  if (caminhoDoFfmpeg !== undefined) return caminhoDoFfmpeg;
+  caminhoDoFfmpeg = 'ffmpeg';
   try {
-    const bruto = (ffmpegStatic as unknown as string) || '';
+    const bruto = (exigirModulo('ffmpeg-static') as string) || '';
     const desempacotado = bruto.replace('app.asar', 'app.asar.unpacked');
-    if (desempacotado && fs.existsSync(desempacotado)) return desempacotado;
-  } catch { /* cai para o ffmpeg do sistema */ }
-  return 'ffmpeg';
+    if (desempacotado && fs.existsSync(desempacotado)) caminhoDoFfmpeg = desempacotado;
+  } catch { /* sem o pacote, tenta o ffmpeg do sistema */ }
+  return caminhoDoFfmpeg;
 }
 
 /**

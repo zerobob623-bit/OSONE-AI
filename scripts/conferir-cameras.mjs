@@ -20,6 +20,7 @@
  */
 import { build } from 'esbuild';
 import { spawn } from 'child_process';
+import http from 'http';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -263,6 +264,89 @@ const registrar = (nome, passou, detalhe) => {
     registrar('miniaturas de uma cena em movimento saem diferentes entre si',
       miniaturasLidas.length < 2 || diferentes,
       miniaturasLidas.length < 2 ? 'poucas leituras para comparar' : 'o detector tem o que comparar');
+  }
+}
+
+// ============================================================================
+// 6) A TELA PARA DE PERGUNTAR QUANDO PERGUNTAR NÃO ADIANTA
+// ============================================================================
+/**
+ * O defeito que este bloco vigia apareceu em produção e é fácil de repetir sem querer: a tela
+ * relia a lista de 5 em 5 segundos e engolia o erro em silêncio. No site publicado, onde o
+ * servidor NÃO tem como alcançar a rede de casa, isso virou centenas de pedidos fracassados no
+ * console e nenhuma explicação na tela — barulhento por dentro e mudo por fora.
+ *
+ * Contar pedidos é a única forma honesta de conferir isto: o comportamento errado e o certo
+ * mostram exatamente a mesma tela, e só se distinguem por quantas vezes bateram no servidor.
+ */
+{
+  const { build: construir } = await import('esbuild');
+  const paginaJs = path.join(pastaDoBundle, 'painel.js');
+  const entrada = path.join(pastaDoBundle, 'entrada.tsx');
+  fs.writeFileSync(entrada, `
+    import React from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { CamerasSection } from ${JSON.stringify(path.join(RAIZ, 'src/components/CamerasSection.tsx'))};
+    createRoot(document.getElementById('raiz')).render(
+      React.createElement(CamerasSection, { onBack: () => {}, onNotification: () => {} })
+    );
+  `);
+  await construir({
+    entryPoints: [entrada], bundle: true, format: 'iife', outfile: paginaJs,
+    absWorkingDir: RAIZ, logLevel: 'silent', loader: { '.css': 'empty' },
+    define: { 'process.env.NODE_ENV': '"production"' }
+  });
+
+  const contarPedidos = async (responder) => {
+    let pedidos = 0;
+    const servidor = http.createServer((req, res) => {
+      if (req.url.startsWith('/api/')) { pedidos++; return responder(req, res); }
+      if (req.url === '/painel.js') {
+        res.writeHead(200, { 'Content-Type': 'text/javascript' });
+        return fs.createReadStream(paginaJs).pipe(res);
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<!doctype html><div id="raiz"></div><script src="/painel.js"></script>');
+    });
+    await new Promise(r => servidor.listen(4388, '127.0.0.1', r));
+
+    const perfil = fs.mkdtempSync(path.join(pastaTemp, 'perfil-'));
+    const navegador = spawn('/opt/pw-browsers/chromium', [
+      '--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
+      `--user-data-dir=${perfil}`, 'http://127.0.0.1:4388/'
+    ], { stdio: 'ignore' });
+
+    // 22 segundos cobrem quatro janelas da releitura de 5s: se ela continuasse, daria mais de
+    // oito pedidos. É o intervalo mínimo em que "parou" e "não parou" não se confundem.
+    await new Promise(r => setTimeout(r, 22_000));
+    try { navegador.kill('SIGKILL'); } catch { /* já morreu */ }
+    await new Promise(r => servidor.close(r));
+    return pedidos;
+  };
+
+  if (!fs.existsSync('/opt/pw-browsers/chromium')) {
+    console.log('  (pulado) sem Chromium para conferir a releitura da tela.');
+  } else {
+    const comRecusaDefinitiva = await contarPedidos((req, res) => {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'As câmeras não funcionam nesta implantação.', unavailableOnVercel: true }));
+    });
+    registrar('resposta "aqui isso não existe" faz a tela parar de perguntar na hora',
+      comRecusaDefinitiva <= 2,
+      `${comRecusaDefinitiva} pedido(s) em 22s (a releitura de 5s daria 8 ou mais)`);
+
+    // Erro 500, e não conexão derrubada: derrubar o socket faz o próprio navegador repetir o
+    // pedido por conta dele, e a contagem passaria a medir a retentativa do Chromium em vez da
+    // insistência da tela. 500 é também o que a pessoa viu no console em produção.
+    const comServidorCaido = await contarPedidos((req, res) => {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'falha do servidor' }));
+    });
+    // Três rodadas de duas chamadas cada. Sem a desistência seriam cinco rodadas (dez pedidos)
+    // nesta janela, e o número seguiria crescendo enquanto a tela ficasse aberta.
+    registrar('servidor fora do ar faz a tela desistir depois de três tentativas',
+      comServidorCaido <= 6,
+      `${comServidorCaido} pedido(s) em 22s (sem desistir seriam 10, e subindo)`);
   }
 }
 

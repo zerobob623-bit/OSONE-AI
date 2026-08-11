@@ -90,22 +90,65 @@ export const CamerasSection: React.FC<CamerasSectionProps> = ({ onBack, onNotifi
    * o que aparece é o último quadro congelado de minutos atrás — parece que a câmera travou.
    */
   const [selo, setSelo] = useState(() => Date.now());
+  /** Muda quando a pessoa manda tentar de novo — é o que rearma a releitura periódica. */
+  const [tentativa, setTentativa] = useState(0);
   const jaMontado = useRef(true);
 
-  const buscar = useCallback(async (silencioso = false) => {
+  /**
+   * POR QUE PAROU DE PERGUNTAR — e o motivo, para a pessoa ler.
+   *
+   * Nasceu de um defeito real: quando o servidor não podia atender (o site na Vercel não alcança
+   * a rede da casa de ninguém), a releitura de 5 em 5 segundos continuava para sempre, engolindo o
+   * erro em silêncio. Em poucos minutos eram centenas de pedidos fracassados no console e nenhuma
+   * explicação na tela — o pior dos dois mundos: barulhento por dentro e mudo por fora.
+   *
+   * Repetir só faz sentido quando repetir pode dar certo. Uma queda passageira do servidor merece
+   * insistência; "este ambiente não faz isso" não merece nenhuma.
+   */
+  const [paradoPorque, setParadoPorque] = useState<{ texto: string; definitivo: boolean } | null>(null);
+  const falhasSeguidas = useRef(0);
+
+  const buscar = useCallback(async (silencioso = false): Promise<'ok' | 'falhou' | 'impossivel'> => {
     try {
       const [respCameras, respEventos] = await Promise.all([
         fetch('/api/cameras'),
         fetch('/api/cameras/eventos?limite=100')
       ]);
+
+      // 501 é o servidor dizendo "aqui isso não existe", e não "deu erro agora". Insistir nunca vai
+      // mudar essa resposta, então a tela para de perguntar e passa a explicar.
+      if (respCameras.status === 501) {
+        const corpo = await respCameras.json().catch(() => null);
+        if (!jaMontado.current) return 'impossivel';
+        setParadoPorque({
+          texto: corpo?.error
+            || 'As câmeras vivem na sua rede, e este endereço na internet não alcança a sua rede. Use o OSONE instalado no computador.',
+          definitivo: true
+        });
+        setCarregando(false);
+        return 'impossivel';
+      }
+
       const dadosCameras = await respCameras.json();
-      const dadosEventos = await respEventos.json();
-      if (!jaMontado.current) return;
+      const dadosEventos = await respEventos.json().catch(() => ({ eventos: [] }));
+      if (!jaMontado.current) return 'ok';
       if (!respCameras.ok) throw new Error(dadosCameras?.error || 'Não consegui ler a lista de câmeras.');
+
+      falhasSeguidas.current = 0;
+      setParadoPorque(null);
       setCameras(dadosCameras.cameras || []);
       setEventos(dadosEventos.eventos || []);
+      return 'ok';
     } catch (err: any) {
+      falhasSeguidas.current++;
       if (!silencioso) onNotification(err?.message || 'Não consegui falar com o servidor das câmeras.', 'error');
+      if (jaMontado.current && falhasSeguidas.current >= 3) {
+        setParadoPorque({
+          texto: `Sem contato com o servidor das câmeras depois de ${falhasSeguidas.current} tentativas. Parei de tentar para não encher o console de erro.`,
+          definitivo: false
+        });
+      }
+      return 'falhou';
     } finally {
       if (jaMontado.current) setCarregando(false);
     }
@@ -113,12 +156,29 @@ export const CamerasSection: React.FC<CamerasSectionProps> = ({ onBack, onNotifi
 
   useEffect(() => {
     jaMontado.current = true;
-    buscar();
+    let relogio: ReturnType<typeof setInterval> | null = null;
+
+    const parar = () => { if (relogio) { clearInterval(relogio); relogio = null; } };
+
     // O estado da câmera muda por fora (queda de rede, reconexão, evento gravando), e nada disso
-    // gera aviso para a tela. Uma releitura leve a cada 5s é o que mantém o painel honesto.
-    const relogio = setInterval(() => buscar(true), 5_000);
-    return () => { jaMontado.current = false; clearInterval(relogio); };
-  }, [buscar]);
+    // gera aviso para a tela. Uma releitura leve a cada 5s é o que mantém o painel honesto —
+    // enquanto ela puder dar certo.
+    const rodar = async (primeira: boolean) => {
+      const r = await buscar(primeira);
+      if (r === 'impossivel' || (r === 'falhou' && falhasSeguidas.current >= 3)) parar();
+      return r;
+    };
+
+    // A primeira leitura passa pelo MESMO caminho das seguintes, e não por uma chamada à parte.
+    // Tratá-la como caso especial fazia a contagem de desistência começar torta: a tentativa
+    // inicial não era conferida, e a tela insistia uma rodada a mais do que o combinado.
+    rodar(true).then(r => {
+      if (r === 'impossivel' || !jaMontado.current) return;
+      relogio = setInterval(() => rodar(false), 5_000);
+    });
+
+    return () => { jaMontado.current = false; parar(); };
+  }, [buscar, tentativa]);
 
   useEffect(() => {
     if (!selecionada && cameras.length) setSelecionada(cameras.find(c => c.ligada)?.id || cameras[0].id);
@@ -323,6 +383,19 @@ export const CamerasSection: React.FC<CamerasSectionProps> = ({ onBack, onNotifi
             {carregando ? (
               <div className="flex items-center justify-center py-8 text-zinc-500 text-xs gap-2">
                 <Loader2 size={14} className="animate-spin" /> lendo as câmeras…
+              </div>
+            ) : paradoPorque ? (
+              <div className="px-3 py-6 text-center">
+                <WifiOff size={26} className="mx-auto text-zinc-700 mb-2" />
+                <p className="text-[11px] text-zinc-400 leading-relaxed">{paradoPorque.texto}</p>
+                {!paradoPorque.definitivo && (
+                  <button
+                    onClick={() => { falhasSeguidas.current = 0; setParadoPorque(null); setCarregando(true); setTentativa(t => t + 1); }}
+                    className="mt-3 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-[11px] text-zinc-300 hover:bg-white/10 transition-colors"
+                  >
+                    Tentar de novo
+                  </button>
+                )}
               </div>
             ) : !cameras.length ? (
               <div className="text-center py-8 px-3">
