@@ -159,6 +159,9 @@ const VisionControlPanel = React.lazy(() =>
 const CoworkSection = React.lazy(() =>
   import('./components/CoworkSection').then(module => ({ default: module.CoworkSection }))
 );
+const CamerasSection = React.lazy(() =>
+  import('./components/CamerasSection').then(module => ({ default: module.CamerasSection }))
+);
 const TeacherWhiteboard = React.lazy(() =>
   import('./components/TeacherWhiteboard').then(module => ({ default: module.TeacherWhiteboard }))
 );
@@ -577,6 +580,7 @@ const getFriendlyModeName = (mode: WorkspaceMode): string => {
     case 'memory_book': return 'Livro de Memórias';
     case 'vision_control': return 'Controle por Visão';
     case 'cowork': return 'OSONE COWORK — agente que clica e digita no computador';
+    case 'cameras': return 'OSONE VIGIA — câmeras de segurança ao vivo e o registro do que aconteceu';
     case 'hear': return 'OSONE HEAR — escuta ativa, transcrição do discurso e elaboração adaptativa';
     default: return String(mode);
   }
@@ -10088,8 +10092,8 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     properties: {
                       mode: {
                         type: Type.STRING,
-                        enum: ["home", "writing", "code", "sounds", "canvas", "wellness", "whatsapp", "creator", "smarthome", "tiktok", "map", "cowork", "hear"],
-                        description: "O modo para o qual alternar: 'writing' (Aba de Prosa e Escrita de Texto/Documentos), 'code' (Aba OSONE CODE - Programação, Desenvolvimento de Jogos e Software), 'home' (Fechar aba atual / Voltar ao Início), 'canvas' (Lousa Interativa), 'sounds' (Biblioteca de Sons), 'wellness' (Saúde), 'whatsapp' (OSONE ZAP - Atendimento pelo WhatsApp), 'cowork' (OSONE COWORK - a aba onde o usuário pede uma tarefa no computador, aprova o plano e vê o agente clicar e digitar sozinho), 'hear' (OSONE HEAR - escuta ativa que transcreve um discurso falado e depois o organiza; abra quando o usuário pedir para ouvir, gravar, transcrever, anotar uma reunião/aula, ou 'escutar o que eu vou falar')."
+                        enum: ["home", "writing", "code", "sounds", "canvas", "wellness", "whatsapp", "creator", "smarthome", "tiktok", "map", "cowork", "hear", "cameras"],
+                        description: "O modo para o qual alternar: 'writing' (Aba de Prosa e Escrita de Texto/Documentos), 'code' (Aba OSONE CODE - Programação, Desenvolvimento de Jogos e Software), 'home' (Fechar aba atual / Voltar ao Início), 'canvas' (Lousa Interativa), 'sounds' (Biblioteca de Sons), 'wellness' (Saúde), 'whatsapp' (OSONE ZAP - Atendimento pelo WhatsApp), 'cowork' (OSONE COWORK - a aba onde o usuário pede uma tarefa no computador, aprova o plano e vê o agente clicar e digitar sozinho), 'hear' (OSONE HEAR - escuta ativa que transcreve um discurso falado e depois o organiza; abra quando o usuário pedir para ouvir, gravar, transcrever, anotar uma reunião/aula, ou 'escutar o que eu vou falar'), 'cameras' (OSONE VIGIA — as câmeras de segurança: mostra o vídeo ao vivo e a lista do que foi detectado. Abra quando ele perguntar o que está acontecendo na garagem/portão/loja, pedir para ver uma câmera, ou quiser rever uma gravação)."
                       }
                     },
                     required: ["mode"]
@@ -13234,6 +13238,19 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 motorParado={motorParado}
                 onParar={pararMotor}
                 onRetomar={retomarMotor}
+                onNotification={addNotification}
+              />
+            </motion.div>
+          ) : workspaceMode === 'cameras' ? (
+            <motion.div
+              key="workspace-cameras"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              className="w-full flex-1 flex flex-col min-h-0"
+            >
+              <CamerasSection
+                onBack={() => setWorkspaceMode('home')}
                 onNotification={addNotification}
               />
             </motion.div>

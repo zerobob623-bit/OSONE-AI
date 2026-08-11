@@ -27,6 +27,7 @@ import {
   diagnosticarTuya
 } from "./src/tuyaService";
 import { agentRouter, OSONE_INSTALL_DIR } from "./src/localAgentService";
+import { cameraRouter, iniciarCamerasSalvas, pararTodasAsCameras } from "./src/servicoDeCameras";
 import { NaoRepetir } from "./src/lib/naoRepetir";
 import { acompanharClienteDoStream } from "./src/lib/clienteDoStream";
 import {
@@ -2057,6 +2058,8 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   // computador (loopback) pode acessar; para uso remoto (ex: túnel, deploy), defina
   // WHATSAPP_ACCESS_TOKEN no .env e envie o header "x-whatsapp-token" com o mesmo valor.
   const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || "";
+  /** Mesmo papel do token do ZAP, para quem expõe o OSONE por túnel e quer ver as câmeras de fora. */
+  const CAMERA_ACCESS_TOKEN = process.env.CAMERA_ACCESS_TOKEN || "";
 
   const isLoopbackAddress = (addr: string | undefined): boolean => {
     if (!addr) return false;
@@ -2099,6 +2102,52 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   });
 
   app.use("/api/whatsapp", blockOnVercel("O OSONE ZAP (WhatsApp)"), requireWhatsAppAccess);
+
+  /**
+   * CÂMERAS DE SEGURANÇA — só a partir do próprio computador.
+   *
+   * A trava é a mesma do OSONE ZAP, e pela mesma razão, só que mais grave: quem alcança estas
+   * rotas vê o vídeo ao vivo de dentro da casa e baixa as gravações. Deixar isso aberto para a
+   * rede seria transformar um sistema de vigilância em vigilância CONTRA quem instalou.
+   *
+   * Na Vercel a coisa nem faz sentido: "a rede local" de uma função serverless é o contêiner dela,
+   * não a casa de ninguém — a câmera do usuário está fora de alcance por definição.
+   */
+  const requireCameraAccess = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (isLoopbackAddress(req.socket?.remoteAddress)) return next();
+    const tokenEnviado = req.headers["x-camera-token"];
+    if (CAMERA_ACCESS_TOKEN && tokenEnviado === CAMERA_ACCESS_TOKEN) return next();
+    return res.status(403).json({
+      error: "Acesso às câmeras negado. Esta área só é acessível a partir do próprio computador, ou com um CAMERA_ACCESS_TOKEN válido configurado no servidor."
+    });
+  };
+
+  app.use("/api/cameras", blockOnVercel("As câmeras de segurança"), requireCameraAccess, cameraRouter);
+
+  if (!isVercel) {
+    try {
+      iniciarCamerasSalvas();
+    } catch (err) {
+      console.error("[Câmeras] Não consegui subir as câmeras salvas:", err);
+    }
+    // Sem isto, um ffmpeg por câmera continuaria vivo depois de fechar o app — segurando a
+    // conexão da câmera e impedindo a próxima abertura de conectar.
+    const desligarCameras = () => { try { pararTodasAsCameras(); } catch { /* saindo mesmo */ } };
+    /**
+     * O process.exit() ao fim NÃO é enfeite, e a falta dele quase passou.
+     *
+     * Registrar um ouvinte de SIGINT/SIGTERM SUBSTITUI o comportamento padrão do Node, que é
+     * encerrar o processo. Sem encerrar por conta própria, o efeito de adicionar esta limpeza
+     * seria deixar o servidor imune a Ctrl+C e a "kill" — apareceu ao tentar reiniciar o servidor
+     * durante o teste e ver que ele não morria. Um recurso de câmera não pode custar a capacidade
+     * de fechar o programa.
+     */
+    const desligarESair = () => { desligarCameras(); process.exit(0); };
+    process.once("SIGINT", desligarESair);
+    process.once("SIGTERM", desligarESair);
+    // No evento "exit" só cabe trabalho síncrono, e é o que esta limpeza faz: matar os processos.
+    process.once("exit", desligarCameras);
+  }
 
   // WhatsApp Web API routes
   app.get("/api/whatsapp/status", (req, res) => {

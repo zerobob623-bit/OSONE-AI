@@ -48,3 +48,8 @@ android/local.properties
 android/*.jks
 .vercel
 .env*
+
+# OSONE VIGIA — a configuração das câmeras guarda a URL RTSP, que embute usuário e SENHA
+# da câmera. As gravações são vídeo de dentro da casa. Nada disso entra no repositório.
+cameras-osone.json
+gravacoes/

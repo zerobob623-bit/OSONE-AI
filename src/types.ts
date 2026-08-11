@@ -46,7 +46,7 @@ export interface ApiKeys {
 export type OrbStyle = 'classic' | 'superintelligence' | 'neural' | 'shadow' | 'wave' | 'jarvis' | 'smoke';
 export type AppTheme = 'her' | 'cyberpunk' | 'monochrome' | 'nature';
 
-export type WorkspaceMode = 'home' | 'writing' | 'code' | 'sounds' | 'canvas' | 'wellness' | 'local_control' | 'whatsapp' | 'map' | 'rag' | 'creator' | 'tiktok' | 'sensus_evolution' | 'memory_book' | 'smarthome' | 'vision_control' | 'cowork' | 'hear';
+export type WorkspaceMode = 'home' | 'writing' | 'code' | 'sounds' | 'canvas' | 'wellness' | 'local_control' | 'whatsapp' | 'map' | 'rag' | 'creator' | 'tiktok' | 'sensus_evolution' | 'memory_book' | 'smarthome' | 'vision_control' | 'cowork' | 'hear' | 'cameras';
 
 /**
  * Uma cena: o estado desejado de aparelhos REAIS da conta Tuya, guardado pelo usuário.
