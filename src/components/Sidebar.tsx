@@ -84,6 +84,16 @@ const GRUPOS: GrupoDoMenu[] = [
         corDoIcone: "text-violet-400"
       },
       {
+        /**
+         * A vigilância fica junto da automação da casa, e não em "Criação": as três entradas
+         * vizinhas são o que o OSONE faz COM o mundo físico — os aparelhos, o computador, e agora
+         * o que as câmeras estão vendo.
+         */
+        rotulo: 'OSONE VIGIA', icone: Video, modo: 'cameras',
+        ativo: "bg-rose-500/10 text-rose-300 border border-rose-500/25 shadow-[0_0_15px_rgba(244,63,94,0.15)]",
+        corDoIcone: "text-rose-400"
+      },
+      {
         rotulo: 'Controle por Visão', icone: Eye, modo: 'vision_control',
         ativo: "bg-teal-500/10 text-teal-300 border border-teal-500/25 shadow-[0_0_15px_rgba(20,184,166,0.15)]",
         corDoIcone: "text-teal-400"
