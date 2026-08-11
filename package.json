@@ -29,6 +29,7 @@
     "test:code-layout": "node scripts/conferir-layout-code.mjs",
     "test:code-fullstack": "node scripts/conferir-fullstack-code.mjs",
     "test:cameras": "node scripts/conferir-cameras.mjs",
+    "test:tela-inicial": "node scripts/conferir-tela-inicial.mjs",
     "test:cowork-memory": "tsx scripts/conferir-memoria-cowork.ts",
     "test:cowork-teaching": "tsx scripts/conferir-ensino-cowork.ts",
     "test:cowork-teaching-ui": "node scripts/conferir-ensino-cowork-na-tela.mjs",

@@ -1,5 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+// 'motion/react' e NÃO 'framer-motion' — as outras 38 telas importam daqui.
+// Misturar os dois puxa duas cópias do mesmo motor de animação para o grafo de módulos, e o
+// fatiamento em pedaços (manualChunks) acaba criando uma dependência circular ENTRE pedaços: um
+// deles lê uma variável do outro antes de ela existir. O resultado é
+// "Cannot access 'At' before initialization" antes do React montar — ou seja, tela branca no app
+// inteiro, não só nesta aba, porque o erro acontece antes de qualquer coisa renderizar.
+import { motion, AnimatePresence } from 'motion/react';
 import {
   Video, VideoOff, Plus, Trash2, ChevronLeft, Loader2, AlertTriangle,
   Play, X, Eye, Clock, Film, ImageIcon, Settings2, Wifi, WifiOff, CircleDot
