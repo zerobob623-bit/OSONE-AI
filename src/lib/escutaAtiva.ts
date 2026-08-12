@@ -113,6 +113,21 @@ export function reconhecimentoDisponivel(): boolean {
   return !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
 }
 
+/**
+ * O instalador desktop roda em Electron: tem microfone e MediaRecorder, mas o Web Speech do
+ * Chromium empacotado pode falhar por depender do serviço externo do navegador.
+ */
+export function ambienteDesktopInstalado(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /\bElectron\//i.test(navigator.userAgent || '');
+}
+
+/** Se é possível gravar o áudio cru para uma transcrição posterior no backend. */
+export function gravacaoDeAudioDisponivel(): boolean {
+  if (typeof navigator === 'undefined' || typeof window === 'undefined') return false;
+  return !!(navigator.mediaDevices?.getUserMedia && (window as any).MediaRecorder);
+}
+
 /** Cria o reconhecedor já configurado para escuta contínua em português. */
 export function criarReconhecedor(idioma: string = 'pt-BR'): any | null {
   if (typeof window === 'undefined') return null;
