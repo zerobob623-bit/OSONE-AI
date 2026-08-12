@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, session, desktopCapturer } from 'electron';
+import { app, BrowserWindow, shell, session, desktopCapturer, screen } from 'electron';
 import electronUpdaterPkg from 'electron-updater';
 import path from 'path';
 import http from 'http';
@@ -19,6 +19,7 @@ const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 
 let mainWindow = null;
+let mascotWindow = null;
 const DEFAULT_PORT = Number(process.env.PORT) || 3000;
 let logStream = null;
 
@@ -44,6 +45,391 @@ function registrarEventoDeLogin(oQue, url) {
 
 function escaparHtml(valor) {
   return String(valor || '').replace(/[<>&]/g, '');
+}
+
+function htmlDoMascoteOsone() {
+  return `<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+<style>
+  html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  .stage {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+    font-family: Inter, system-ui, sans-serif;
+  }
+
+  .walker {
+    position: absolute;
+    left: 26px;
+    bottom: 34px;
+    width: 152px;
+    height: 190px;
+    transform-origin: 50% 100%;
+    animation: travel 34s linear infinite;
+  }
+
+  .mascot {
+    position: absolute;
+    left: 18px;
+    bottom: 12px;
+    width: 116px;
+    height: 154px;
+    transform-origin: 50% 100%;
+    animation: breathe 2.6s ease-in-out infinite;
+  }
+
+  .body {
+    position: absolute;
+    left: 13px;
+    top: 8px;
+    width: 90px;
+    height: 94px;
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at 34% 28%, rgba(255,255,255,.34), transparent 14%),
+      radial-gradient(circle at 66% 68%, rgba(151,61,0,.28), transparent 33%),
+      linear-gradient(145deg, #ffb133 0%, #ff861f 48%, #f06a12 100%);
+    border: 1px solid rgba(110,47,0,.45);
+    box-shadow: inset -10px -13px 18px rgba(129,47,0,.24), inset 7px 8px 14px rgba(255,219,114,.34), 0 14px 26px rgba(0,0,0,.38);
+  }
+
+  .shadow {
+    position: absolute;
+    left: 22px;
+    bottom: 2px;
+    width: 72px;
+    height: 16px;
+    border-radius: 50%;
+    background: radial-gradient(ellipse at center, rgba(0,0,0,.42), rgba(0,0,0,0));
+    filter: blur(1px);
+  }
+
+  .eye {
+    position: absolute;
+    top: 34px;
+    width: 19px;
+    height: 22px;
+    border-radius: 50%;
+    background: #fff7e8;
+    border: 2px solid rgba(94,48,10,.55);
+    box-shadow: inset 0 -2px 0 rgba(0,0,0,.13);
+    animation: blink 6.2s ease-in-out infinite;
+  }
+
+  .eye.left { left: 25px; }
+  .eye.right { right: 25px; }
+  .eye::after {
+    content: "";
+    position: absolute;
+    left: 6px;
+    top: 6px;
+    width: 8px;
+    height: 9px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 28%, #fff 0 18%, #24140c 24% 100%);
+    transition: transform 260ms ease;
+  }
+
+  .brow {
+    position: absolute;
+    top: 25px;
+    width: 20px;
+    height: 5px;
+    border-radius: 999px;
+    border-top: 3px solid rgba(112,55,11,.7);
+  }
+
+  .brow.left { left: 24px; transform: rotate(-13deg); }
+  .brow.right { right: 23px; transform: rotate(13deg); }
+
+  .mouth {
+    position: absolute;
+    left: 39px;
+    top: 64px;
+    width: 15px;
+    height: 8px;
+    border-radius: 0 0 999px 999px;
+    border-bottom: 3px solid #4e230d;
+    transition: all 220ms ease;
+  }
+
+  .arm, .leg {
+    position: absolute;
+    display: block;
+    background: linear-gradient(180deg, #ff941f, #de5f0d);
+    border: 1px solid rgba(113,48,0,.28);
+    box-shadow: inset 3px 4px 5px rgba(255,201,88,.24);
+    transform-origin: 50% 8px;
+  }
+
+  .arm {
+    top: 65px;
+    width: 16px;
+    height: 48px;
+    border-radius: 999px 999px 13px 13px;
+  }
+
+  .arm.left { left: 8px; transform: rotate(21deg); }
+  .arm.right { right: 8px; transform: rotate(-21deg); }
+  .leg {
+    top: 91px;
+    width: 17px;
+    height: 55px;
+    border-radius: 999px 999px 11px 11px;
+  }
+
+  .leg.left { left: 34px; transform: rotate(6deg); }
+  .leg.right { right: 34px; transform: rotate(-6deg); }
+
+  .bubble {
+    position: absolute;
+    left: 78px;
+    bottom: 144px;
+    width: 164px;
+    min-height: 40px;
+    padding: 9px 10px;
+    border-radius: 8px;
+    background: rgba(13,12,11,.88);
+    border: 1px solid rgba(255,137,45,.34);
+    color: #fff7e8;
+    font: 700 10px/1.35 Inter, system-ui, sans-serif;
+    box-shadow: 0 16px 34px rgba(0,0,0,.34);
+    opacity: 0;
+    transform: translateY(8px) scale(.96);
+    transition: opacity 260ms ease, transform 260ms ease;
+  }
+
+  .bubble::after {
+    content: "";
+    position: absolute;
+    left: 15px;
+    bottom: -7px;
+    width: 13px;
+    height: 13px;
+    background: inherit;
+    border-right: 1px solid rgba(255,137,45,.28);
+    border-bottom: 1px solid rgba(255,137,45,.28);
+    transform: rotate(45deg);
+  }
+
+  .speak .bubble, .point-right .bubble, .point-up .bubble, .point-down .bubble {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  .speak .mouth {
+    left: 37px;
+    top: 62px;
+    width: 19px;
+    height: 17px;
+    border: 3px solid #4e230d;
+    border-radius: 50%;
+    background: radial-gradient(circle at 50% 66%, #ffb17d 0 22%, #3b170c 24% 100%);
+    animation: talk 340ms ease-in-out infinite;
+  }
+
+  .point-right .arm.right {
+    width: 72px;
+    height: 14px;
+    right: -51px;
+    top: 58px;
+    border-radius: 999px;
+    transform: rotate(-6deg);
+  }
+
+  .point-up .arm.right {
+    width: 15px;
+    height: 70px;
+    right: 18px;
+    top: 7px;
+    transform: rotate(33deg);
+  }
+
+  .point-down .arm.right {
+    width: 15px;
+    height: 64px;
+    right: 4px;
+    top: 72px;
+    transform: rotate(-120deg);
+  }
+
+  .walk .leg.left { animation: legLeft 520ms ease-in-out infinite; }
+  .walk .leg.right { animation: legRight 520ms ease-in-out infinite; }
+  .walk .arm.left { animation: armLeft 520ms ease-in-out infinite; }
+  .walk .arm.right { animation: armRight 520ms ease-in-out infinite; }
+  .jump { animation: jump 1s cubic-bezier(.2,.9,.2,1) infinite; }
+  .jump .shadow { animation: shadowJump 1s cubic-bezier(.2,.9,.2,1) infinite; }
+  .look .eye::after, .point-right .eye::after { transform: translateX(3px); }
+  .point-up .eye::after { transform: translateY(-3px); }
+  .point-down .eye::after { transform: translateY(3px); }
+
+  @keyframes travel {
+    0% { transform: translateX(0) scaleX(1); }
+    16% { transform: translateX(calc(100vw - 230px)) scaleX(1); }
+    19% { transform: translateX(calc(100vw - 230px)) scaleX(-1); }
+    34% { transform: translateX(22vw) scaleX(-1); }
+    39% { transform: translateX(22vw) scaleX(1); }
+    54% { transform: translateX(62vw) scaleX(1); }
+    59% { transform: translateX(62vw) scaleX(-1); }
+    78% { transform: translateX(6vw) scaleX(-1); }
+    82% { transform: translateX(6vw) scaleX(1); }
+    100% { transform: translateX(0) scaleX(1); }
+  }
+
+  @keyframes breathe {
+    0%, 100% { transform: translateY(0) scale(1); }
+    50% { transform: translateY(-4px) scale(1.015, .99); }
+  }
+
+  @keyframes blink {
+    0%, 45%, 49%, 100% { transform: scaleY(1); }
+    47% { transform: scaleY(.08); }
+  }
+
+  @keyframes talk {
+    0%, 100% { transform: scaleY(.76); }
+    50% { transform: scaleY(1.12); }
+  }
+
+  @keyframes legLeft {
+    0%, 100% { transform: rotate(20deg) translateY(0); }
+    50% { transform: rotate(-18deg) translateY(2px); }
+  }
+
+  @keyframes legRight {
+    0%, 100% { transform: rotate(-18deg) translateY(2px); }
+    50% { transform: rotate(20deg) translateY(0); }
+  }
+
+  @keyframes armLeft {
+    0%, 100% { transform: rotate(-18deg); }
+    50% { transform: rotate(28deg); }
+  }
+
+  @keyframes armRight {
+    0%, 100% { transform: rotate(28deg); }
+    50% { transform: rotate(-18deg); }
+  }
+
+  @keyframes jump {
+    0%, 100% { transform: translateY(0) scale(1); }
+    45% { transform: translateY(-42px) scale(.98, 1.04); }
+    72% { transform: translateY(3px) scale(1.06, .94); }
+  }
+
+  @keyframes shadowJump {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    45% { transform: scale(.58); opacity: .45; }
+    72% { transform: scale(1.15); opacity: 1; }
+  }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="walker">
+    <div id="mascot" class="mascot idle">
+      <div id="bubble" class="bubble">Estou olhando junto.</div>
+      <div class="shadow"></div>
+      <div class="body">
+        <span class="brow left"></span>
+        <span class="brow right"></span>
+        <span class="eye left"></span>
+        <span class="eye right"></span>
+        <span class="mouth"></span>
+        <span class="arm left"></span>
+        <span class="arm right"></span>
+        <span class="leg left"></span>
+        <span class="leg right"></span>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+  const states = ['idle', 'walk', 'speak', 'point-right', 'look', 'point-up', 'jump', 'point-down'];
+  const phrases = [
+    'Estou olhando junto.',
+    'Posso apontar o proximo passo.',
+    'Esse botao parece importante.',
+    'Quando voce chama, eu venho.',
+    'Fico por fora da janela para ajudar sem cobrir o app.'
+  ];
+  const mascot = document.getElementById('mascot');
+  const bubble = document.getElementById('bubble');
+  let index = 0;
+  setInterval(() => {
+    index += 1;
+    mascot.className = 'mascot ' + states[index % states.length];
+    bubble.textContent = phrases[index % phrases.length];
+  }, 3300);
+</script>
+</body>
+</html>`;
+}
+
+function ajustarJanelaDoMascote() {
+  if (!mascotWindow || mascotWindow.isDestroyed()) return;
+  const display = screen.getPrimaryDisplay();
+  mascotWindow.setBounds({
+    x: display.bounds.x,
+    y: display.bounds.y,
+    width: display.bounds.width,
+    height: display.bounds.height
+  });
+}
+
+function criarJanelaDoMascote() {
+  if (process.env.OSONE_MASCOT_OVERLAY === '0') return;
+  if (mascotWindow && !mascotWindow.isDestroyed()) return;
+
+  const display = screen.getPrimaryDisplay();
+  mascotWindow = new BrowserWindow({
+    x: display.bounds.x,
+    y: display.bounds.y,
+    width: display.bounds.width,
+    height: display.bounds.height,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
+    resizable: false,
+    movable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    focusable: false,
+    show: false,
+    alwaysOnTop: true,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true
+    }
+  });
+
+  mascotWindow.setIgnoreMouseEvents(true, { forward: true });
+  mascotWindow.setAlwaysOnTop(true, 'screen-saver');
+  mascotWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlDoMascoteOsone())}`);
+  mascotWindow.once('ready-to-show', () => {
+    if (!mascotWindow || mascotWindow.isDestroyed()) return;
+    ajustarJanelaDoMascote();
+    mascotWindow.showInactive();
+  });
+  mascotWindow.on('closed', () => {
+    mascotWindow = null;
+  });
 }
 
 function setupFileLogging() {
@@ -422,6 +808,7 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
+    criarJanelaDoMascote();
   });
 
   // Rede de segurança: se por qualquer motivo a janela não tiver aparecido, mostramos assim
@@ -550,6 +937,9 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+    if (mascotWindow && !mascotWindow.isDestroyed()) {
+      mascotWindow.close();
+    }
   });
 }
 
@@ -724,6 +1114,9 @@ if (!gotSingleInstanceLock) {
 app.whenReady().then(async () => {
   setupFileLogging();
   setupScreenSharing();
+  screen.on('display-metrics-changed', ajustarJanelaDoMascote);
+  screen.on('display-added', ajustarJanelaDoMascote);
+  screen.on('display-removed', ajustarJanelaDoMascote);
   // O controle vai para o ar ANTES do servidor: é ele que o servidor procura ao responder as
   // rotas de atualização, e um servidor que suba primeiro não encontraria nada.
   publicarControleDeAtualizacao();
