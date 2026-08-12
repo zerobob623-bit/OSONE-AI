@@ -20,6 +20,7 @@ const require = createRequire(import.meta.url);
 
 let mainWindow = null;
 let mascotWindow = null;
+let mascotOverlayEnabled = false;
 const DEFAULT_PORT = Number(process.env.PORT) || 3000;
 let logStream = null;
 
@@ -85,20 +86,20 @@ function htmlDoMascoteOsone() {
   .mascot {
     position: absolute;
     left: 18px;
-    bottom: 12px;
-    width: 116px;
-    height: 154px;
+    bottom: 10px;
+    width: 132px;
+    height: 136px;
     transform-origin: 50% 100%;
     animation: breathe 2.6s ease-in-out infinite;
   }
 
   .body {
     position: absolute;
-    left: 13px;
-    top: 8px;
-    width: 90px;
-    height: 94px;
-    border-radius: 50%;
+    left: 14px;
+    top: 18px;
+    width: 104px;
+    height: 88px;
+    border-radius: 52% 52% 48% 48%;
     background:
       radial-gradient(circle at 34% 28%, rgba(255,255,255,.34), transparent 14%),
       radial-gradient(circle at 66% 68%, rgba(151,61,0,.28), transparent 33%),
@@ -109,10 +110,10 @@ function htmlDoMascoteOsone() {
 
   .shadow {
     position: absolute;
-    left: 22px;
+    left: 21px;
     bottom: 2px;
-    width: 72px;
-    height: 16px;
+    width: 90px;
+    height: 18px;
     border-radius: 50%;
     background: radial-gradient(ellipse at center, rgba(0,0,0,.42), rgba(0,0,0,0));
     filter: blur(1px);
@@ -120,9 +121,9 @@ function htmlDoMascoteOsone() {
 
   .eye {
     position: absolute;
-    top: 34px;
-    width: 19px;
-    height: 22px;
+    top: 38px;
+    width: 23px;
+    height: 25px;
     border-radius: 50%;
     background: #fff7e8;
     border: 2px solid rgba(94,48,10,.55);
@@ -130,15 +131,15 @@ function htmlDoMascoteOsone() {
     animation: blink 6.2s ease-in-out infinite;
   }
 
-  .eye.left { left: 25px; }
-  .eye.right { right: 25px; }
+  .eye.left { left: 28px; }
+  .eye.right { right: 28px; }
   .eye::after {
     content: "";
     position: absolute;
-    left: 6px;
-    top: 6px;
-    width: 8px;
-    height: 9px;
+    left: 8px;
+    top: 7px;
+    width: 9px;
+    height: 10px;
     border-radius: 50%;
     background: radial-gradient(circle at 35% 28%, #fff 0 18%, #24140c 24% 100%);
     transition: transform 260ms ease;
@@ -146,21 +147,21 @@ function htmlDoMascoteOsone() {
 
   .brow {
     position: absolute;
-    top: 25px;
+    top: 31px;
     width: 20px;
     height: 5px;
     border-radius: 999px;
     border-top: 3px solid rgba(112,55,11,.7);
   }
 
-  .brow.left { left: 24px; transform: rotate(-13deg); }
-  .brow.right { right: 23px; transform: rotate(13deg); }
+  .brow.left { left: 29px; transform: rotate(-13deg); }
+  .brow.right { right: 28px; transform: rotate(13deg); }
 
   .mouth {
     position: absolute;
-    left: 39px;
-    top: 64px;
-    width: 15px;
+    left: 46px;
+    top: 69px;
+    width: 16px;
     height: 8px;
     border-radius: 0 0 999px 999px;
     border-bottom: 3px solid #4e230d;
@@ -177,19 +178,19 @@ function htmlDoMascoteOsone() {
   }
 
   .arm {
-    top: 65px;
-    width: 16px;
-    height: 48px;
-    border-radius: 999px 999px 13px 13px;
+    top: 70px;
+    width: 20px;
+    height: 38px;
+    border-radius: 999px 999px 15px 15px;
   }
 
-  .arm.left { left: 8px; transform: rotate(21deg); }
-  .arm.right { right: 8px; transform: rotate(-21deg); }
+  .arm.left { left: 4px; transform: rotate(21deg); }
+  .arm.right { right: 4px; transform: rotate(-21deg); }
   .leg {
     top: 91px;
-    width: 17px;
-    height: 55px;
-    border-radius: 999px 999px 11px 11px;
+    width: 24px;
+    height: 38px;
+    border-radius: 999px 999px 16px 16px;
   }
 
   .leg.left { left: 34px; transform: rotate(6deg); }
@@ -226,16 +227,16 @@ function htmlDoMascoteOsone() {
     transform: rotate(45deg);
   }
 
-  .speak .bubble, .point-right .bubble, .point-up .bubble, .point-down .bubble {
+  .speak .bubble, .point-right .bubble, .point-up .bubble, .point-down .bubble, .show-bubble .bubble {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
 
   .speak .mouth {
-    left: 37px;
-    top: 62px;
-    width: 19px;
-    height: 17px;
+    left: 43px;
+    top: 66px;
+    width: 22px;
+    height: 18px;
     border: 3px solid #4e230d;
     border-radius: 50%;
     background: radial-gradient(circle at 50% 66%, #ffb17d 0 22%, #3b170c 24% 100%);
@@ -243,27 +244,27 @@ function htmlDoMascoteOsone() {
   }
 
   .point-right .arm.right {
-    width: 72px;
-    height: 14px;
-    right: -51px;
-    top: 58px;
+    width: 66px;
+    height: 18px;
+    right: -44px;
+    top: 64px;
     border-radius: 999px;
     transform: rotate(-6deg);
   }
 
   .point-up .arm.right {
-    width: 15px;
-    height: 70px;
-    right: 18px;
-    top: 7px;
+    width: 18px;
+    height: 58px;
+    right: 21px;
+    top: 24px;
     transform: rotate(33deg);
   }
 
   .point-down .arm.right {
-    width: 15px;
-    height: 64px;
-    right: 4px;
-    top: 72px;
+    width: 18px;
+    height: 50px;
+    right: 6px;
+    top: 78px;
     transform: rotate(-120deg);
   }
 
@@ -327,7 +328,7 @@ function htmlDoMascoteOsone() {
 
   @keyframes jump {
     0%, 100% { transform: translateY(0) scale(1); }
-    45% { transform: translateY(-42px) scale(.98, 1.04); }
+    45% { transform: translateY(-28px) scale(.98, 1.04); }
     72% { transform: translateY(3px) scale(1.06, .94); }
   }
 
@@ -359,22 +360,24 @@ function htmlDoMascoteOsone() {
   </div>
 </div>
 <script>
-  const states = ['idle', 'walk', 'speak', 'point-right', 'look', 'point-up', 'jump', 'point-down'];
-  const phrases = [
-    'Estou olhando junto.',
-    'Posso apontar o proximo passo.',
-    'Esse botao parece importante.',
-    'Quando voce chama, eu venho.',
-    'Fico por fora da janela para ajudar sem cobrir o app.'
-  ];
   const mascot = document.getElementById('mascot');
   const bubble = document.getElementById('bubble');
-  let index = 0;
+  let ultimoSinal = 0;
+  let idleIndex = 0;
+  const posesPermitidas = new Set(['idle', 'walk', 'speak', 'point-right', 'look', 'point-up', 'jump', 'point-down']);
+  window.osoneMascoteSetState = (payload) => {
+    ultimoSinal = Date.now();
+    const pose = posesPermitidas.has(payload?.pose) ? payload.pose : 'idle';
+    const fala = String(payload?.fala || '').slice(0, 120);
+    mascot.className = 'mascot ' + pose + (fala ? ' show-bubble' : '');
+    bubble.textContent = fala;
+  };
   setInterval(() => {
-    index += 1;
-    mascot.className = 'mascot ' + states[index % states.length];
-    bubble.textContent = phrases[index % phrases.length];
-  }, 3300);
+    if (Date.now() - ultimoSinal < 5000) return;
+    idleIndex += 1;
+    mascot.className = 'mascot ' + (idleIndex % 3 === 0 ? 'walk' : 'idle');
+    bubble.textContent = '';
+  }, 4200);
 </script>
 </body>
 </html>`;
@@ -393,6 +396,7 @@ function ajustarJanelaDoMascote() {
 
 function criarJanelaDoMascote() {
   if (process.env.OSONE_MASCOT_OVERLAY === '0') return;
+  mascotOverlayEnabled = true;
   if (mascotWindow && !mascotWindow.isDestroyed()) return;
 
   const display = screen.getPrimaryDisplay();
@@ -430,6 +434,32 @@ function criarJanelaDoMascote() {
   mascotWindow.on('closed', () => {
     mascotWindow = null;
   });
+}
+
+function fecharJanelaDoMascote() {
+  mascotOverlayEnabled = false;
+  if (!mascotWindow || mascotWindow.isDestroyed()) {
+    mascotWindow = null;
+    return;
+  }
+  mascotWindow.close();
+}
+
+function sinalizarMascote(sinal = {}) {
+  if (!mascotOverlayEnabled || !mascotWindow || mascotWindow.isDestroyed()) {
+    return { ok: false, ativo: mascotOverlayEnabled };
+  }
+  const payload = {
+    pose: String(sinal.pose || 'idle').slice(0, 32),
+    fala: String(sinal.fala || '').slice(0, 160),
+    atividade: String(sinal.atividade || 'idle').slice(0, 32),
+    alvo: String(sinal.alvo || '').slice(0, 80)
+  };
+  mascotWindow.webContents.executeJavaScript(
+    `window.osoneMascoteSetState && window.osoneMascoteSetState(${JSON.stringify(payload)})`,
+    true
+  ).catch(() => {});
+  return { ok: true, ativo: true };
 }
 
 function setupFileLogging() {
@@ -808,7 +838,6 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
-    criarJanelaDoMascote();
   });
 
   // Rede de segurança: se por qualquer motivo a janela não tiver aparecido, mostramos assim
@@ -974,6 +1003,45 @@ function publicarDiagnosticoDeLogin() {
   };
 }
 
+function publicarControleDoMascote() {
+  globalThis.__osoneMascote = {
+    estado: () => ({
+      suportado: process.env.OSONE_MASCOT_OVERLAY !== '0',
+      ativo: mascotOverlayEnabled,
+      externo: true,
+      mensagem: process.env.OSONE_MASCOT_OVERLAY === '0'
+        ? 'Mascote externo desativado por OSONE_MASCOT_OVERLAY=0.'
+        : ''
+    }),
+    definir: (ativo) => {
+      if (process.env.OSONE_MASCOT_OVERLAY === '0') {
+        return {
+        ok: false,
+        suportado: false,
+        ativo: false,
+          externo: true,
+          mensagem: 'Mascote externo desativado por OSONE_MASCOT_OVERLAY=0.'
+        };
+      }
+      if (ativo) {
+        criarJanelaDoMascote();
+      } else {
+        fecharJanelaDoMascote();
+      }
+      return {
+        ok: true,
+        suportado: true,
+        ativo: mascotOverlayEnabled,
+        externo: true,
+        mensagem: ativo ? 'Mascote ativado.' : 'Mascote ocultado.'
+      };
+    },
+    sinal: (sinal) => {
+      return sinalizarMascote(sinal);
+    }
+  };
+}
+
 function publicarControleDeAtualizacao() {
   globalThis.__osoneAtualizador = {
     estado: () => ({ ...estadoDaAtualizacao }),
@@ -1119,6 +1187,7 @@ app.whenReady().then(async () => {
   screen.on('display-removed', ajustarJanelaDoMascote);
   // O controle vai para o ar ANTES do servidor: é ele que o servidor procura ao responder as
   // rotas de atualização, e um servidor que suba primeiro não encontraria nada.
+  publicarControleDoMascote();
   publicarControleDeAtualizacao();
   publicarDiagnosticoDeLogin();
   await startBackendServer();

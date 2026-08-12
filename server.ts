@@ -4993,6 +4993,7 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
    * alcance de quem alcançar a porta pela rede.
    */
   const controleDeAtualizacao = (): any => (globalThis as any).__osoneAtualizador || null;
+  const controleDoMascote = (): any => (globalThis as any).__osoneMascote || null;
 
   /**
    * A versão que está rodando, lida do package.json.
@@ -5074,6 +5075,44 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
       return res.json({ noAppInstalado: false, eventos: [], userAgent: req.headers['user-agent'] || '' });
     }
     return res.json({ noAppInstalado: true, userAgent: diag.userAgent, eventos: diag.eventos() });
+  });
+
+  app.get("/api/mascote/estado", (req, res) => {
+    if (!somenteDaPropriaMaquina(req, res, 'O mascote externo do OSONE')) return;
+    const controle = controleDoMascote();
+    if (!controle) {
+      return res.json({
+        suportado: false,
+        ativo: false,
+        externo: false,
+        mensagem: 'Mascote externo só existe no aplicativo instalado. No navegador, o botão ativa o mascote dentro da própria página.'
+      });
+    }
+    return res.json(controle.estado());
+  });
+
+  app.post("/api/mascote/ativar", (req, res) => {
+    if (!somenteDaPropriaMaquina(req, res, 'O mascote externo do OSONE')) return;
+    const controle = controleDoMascote();
+    if (!controle) {
+      return res.json({
+        ok: true,
+        suportado: false,
+        ativo: Boolean(req.body?.ativo),
+        externo: false,
+        mensagem: 'Sem Electron: a interface vai usar o mascote dentro da página.'
+      });
+    }
+    return res.json(controle.definir(Boolean(req.body?.ativo)));
+  });
+
+  app.post("/api/mascote/sinal", (req, res) => {
+    if (!somenteDaPropriaMaquina(req, res, 'O mascote externo do OSONE')) return;
+    const controle = controleDoMascote();
+    if (!controle) {
+      return res.json({ ok: true, externo: false, mensagem: 'Sinal aplicado somente no mascote dentro da página.' });
+    }
+    return res.json(controle.sinal(req.body || {}));
   });
 
   app.get("/api/atualizacao/estado", (req, res) => {
