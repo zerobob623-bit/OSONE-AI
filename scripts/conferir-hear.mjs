@@ -127,11 +127,39 @@ const RECONHECEDOR_DE_MENTIRA = `
   window.webkitSpeechRecognition = ReconhecimentoDeMentira;
 `;
 
-const abrir = async ({ respostaDoGemini, statusHttp = 200 } = {}) => {
+const GRAVADOR_DE_MENTIRA = `
+  Object.defineProperty(window, 'SpeechRecognition', { value: undefined, configurable: true });
+  Object.defineProperty(window, 'webkitSpeechRecognition', { value: undefined, configurable: true });
+  Object.defineProperty(navigator, 'mediaDevices', {
+    value: {
+      getUserMedia: async () => ({ getTracks: () => [{ stop() { window.__gravacaoEncerrada = true; } }] })
+    },
+    configurable: true
+  });
+  class MediaRecorderDeMentira {
+    static isTypeSupported() { return true; }
+    constructor(stream, opcoes) {
+      this.stream = stream;
+      this.mimeType = opcoes?.mimeType || 'audio/webm';
+      this.state = 'inactive';
+      window.__gravador = this;
+    }
+    start() { this.state = 'recording'; }
+    stop() {
+      if (this.state === 'inactive') return;
+      this.state = 'inactive';
+      this.ondataavailable && this.ondataavailable({ data: new Blob(['audio-de-teste'], { type: this.mimeType }) });
+      this.onstop && this.onstop();
+    }
+  }
+  window.MediaRecorder = MediaRecorderDeMentira;
+`;
+
+const abrir = async ({ respostaDoGemini, statusHttp = 200, semReconhecimento = false, respostaTranscricao } = {}) => {
   const ctx = await nav.newContext();
   const pag = await ctx.newPage();
 
-  await pag.addInitScript(RECONHECEDOR_DE_MENTIRA);
+  await pag.addInitScript(semReconhecimento ? GRAVADOR_DE_MENTIRA : RECONHECEDOR_DE_MENTIRA);
 
   await pag.route('**/api/gemini/generateContent', async (rota) => {
     const corpo = JSON.parse(rota.request().postData() || '{}');
@@ -148,6 +176,16 @@ const abrir = async ({ respostaDoGemini, statusHttp = 200 } = {}) => {
         porqueDoFormato: 'A fala terminou em encaminhamentos com responsáveis.',
         discurso: '## O que ficou decidido\\n- Refazer o cronograma.'
       }) })
+    });
+  });
+
+  await pag.route('**/api/hear/transcribe', async (rota) => {
+    const corpo = JSON.parse(rota.request().postData() || '{}');
+    await pag.evaluate(c => { window.__ultimoAudio = c; }, corpo);
+    return rota.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, transcricao: respostaTranscricao || 'fala gravada pelo instalador' })
     });
   });
 
@@ -381,6 +419,24 @@ const transcricaoNaTela = (pag) => pag.evaluate(() => {
   registrar('a transcrição parada aceita digitação, colagem e correção pelo teclado',
     texto === 'Texto digitado e corrigido diretamente pelo teclado.' && persistido === texto,
     texto === persistido ? `"${texto}"` : `tela="${texto}", salvo="${persistido}"`);
+  await ctx.close();
+}
+
+// 15) Sem Web Speech (caso típico do instalador), o HEAR grava áudio e transcreve no backend.
+{
+  const { pag, ctx } = await abrir({
+    semReconhecimento: true,
+    respostaTranscricao: 'este texto veio da gravação local do instalador'
+  });
+  await pag.getByTitle('Começar a gravar').click();
+  await pag.waitForSelector('text=Gravando');
+  await pararMicrofone(pag);
+  await pag.waitForSelector('text=Áudio transcrito', { timeout: 5000 });
+  const texto = await transcricaoNaTela(pag);
+  const audio = await pag.evaluate(() => window.__ultimoAudio);
+  registrar('sem reconhecimento de voz do navegador, grava áudio e transcreve pelo backend',
+    texto.includes('gravação local do instalador') && audio?.mimeType?.startsWith('audio/') && !!audio?.audioBase64,
+    texto.includes('gravação local do instalador') ? 'fallback do instalador preencheu a transcrição' : `texto="${texto}"`);
   await ctx.close();
 }
 

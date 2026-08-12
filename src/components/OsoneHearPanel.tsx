@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import {
+  ambienteDesktopInstalado,
   ESCUTA_VAZIA,
   EstadoDaEscuta,
   aplicarResultado,
@@ -13,6 +14,8 @@ import {
   criarReconhecedor,
   explicarErroDaEscuta,
   formatarDuracao,
+  gravacaoDeAudioDisponivel,
+  juntarTrechos,
   reconhecimentoDisponivel,
   textoDaEscuta
 } from '../lib/escutaAtiva';
@@ -34,6 +37,19 @@ import {
 
 /** A transcrição sobrevive a um recarregar sem querer: uma hora de fala não se refaz. */
 const CHAVE_DA_TRANSCRICAO = 'osone_hear_transcricao';
+type ModoDaEscuta = 'reconhecimento' | 'gravacao' | '';
+
+async function blobParaBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const leitor = new FileReader();
+    leitor.onload = () => {
+      const dataUrl = String(leitor.result || '');
+      resolve(dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl);
+    };
+    leitor.onerror = () => reject(leitor.error || new Error('Não foi possível ler o áudio gravado.'));
+    leitor.readAsDataURL(blob);
+  });
+}
 
 export const OsoneHearPanel: React.FC<{
   chaveGemini?: string;
@@ -41,7 +57,11 @@ export const OsoneHearPanel: React.FC<{
   onNotification?: (msg: string, type: 'info' | 'success' | 'error') => void;
 }> = ({ chaveGemini, modeloGemini, onNotification }) => {
   const [suportado] = useState<boolean>(() => reconhecimentoDisponivel());
+  const [gravacaoDisponivel] = useState<boolean>(() => gravacaoDeAudioDisponivel());
+  const [preferirGravacaoNoDesktop] = useState<boolean>(() => ambienteDesktopInstalado());
   const [ouvindo, setOuvindo] = useState(false);
+  const [modoDaEscuta, setModoDaEscuta] = useState<ModoDaEscuta>('');
+  const [transcrevendoAudio, setTranscrevendoAudio] = useState(false);
   const [escuta, setEscuta] = useState<EstadoDaEscuta>(() => {
     try {
       const salvo = localStorage.getItem(CHAVE_DA_TRANSCRICAO);
@@ -57,6 +77,11 @@ export const OsoneHearPanel: React.FC<{
   const [copiado, setCopiado] = useState<'transcricao' | 'discurso' | ''>('');
 
   const reconhecedorRef = useRef<any>(null);
+  const gravadorRef = useRef<MediaRecorder | null>(null);
+  const fluxoGravacaoRef = useRef<MediaStream | null>(null);
+  const pedacosDaGravacaoRef = useRef<Blob[]>([]);
+  const descartarGravacaoRef = useRef(false);
+  const versaoDaTranscricaoDeAudioRef = useRef(0);
   /**
    * Se a parada foi pedida pela PESSOA ou veio do navegador desligando sozinho no silêncio.
    * Vive num ref, e não em estado, porque quem lê isso é o `onend` do reconhecedor — um callback
@@ -68,6 +93,8 @@ export const OsoneHearPanel: React.FC<{
 
   const texto = textoDaEscuta(escuta);
   const palavras = contarPalavras(escuta.finalizado);
+  const usandoGravacao = modoDaEscuta === 'gravacao';
+  const podeCapturarAudio = suportado || gravacaoDisponivel;
 
   // Guarda só o definitivo: o parcial é uma aposta do navegador que ainda vai mudar.
   useEffect(() => {
@@ -90,25 +117,171 @@ export const OsoneHearPanel: React.FC<{
     if (area && ouvindo) area.scrollTop = area.scrollHeight;
   }, [texto, ouvindo]);
 
+  const encerrarFluxoDaGravacao = useCallback(() => {
+    fluxoGravacaoRef.current?.getTracks().forEach(track => track.stop());
+    fluxoGravacaoRef.current = null;
+    gravadorRef.current = null;
+  }, []);
+
+  const transcreverAudioGravado = useCallback(async (audio: Blob) => {
+    if (!audio.size) {
+      setAviso('A gravação ficou vazia. Confira o microfone e tente de novo.');
+      return;
+    }
+
+    const versao = ++versaoDaTranscricaoDeAudioRef.current;
+    setTranscrevendoAudio(true);
+    setAviso('Transcrevendo o áudio gravado pelo backend local...');
+    try {
+      const audioBase64 = await blobParaBase64(audio);
+      const resposta = await fetch('/api/hear/transcribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          audioBase64,
+          mimeType: audio.type || 'audio/webm',
+          clientApiKey: chaveGemini || '',
+          model: modeloGemini || 'gemini-3.6-flash'
+        })
+      });
+      const dados = await resposta.json().catch(() => null);
+      if (!resposta.ok) {
+        throw new Error(dados?.error || `O servidor recusou a transcrição (HTTP ${resposta.status}).`);
+      }
+
+      const transcricao = String(dados?.transcricao || dados?.text || '').trim();
+      if (!transcricao) throw new Error('O áudio foi recebido, mas nenhuma fala foi transcrita.');
+      if (versao !== versaoDaTranscricaoDeAudioRef.current) return;
+
+      setEscuta(atual => ({
+        finalizado: juntarTrechos(textoDaEscuta(atual), transcricao),
+        parcial: ''
+      }));
+      setResultado(null);
+      setErroDaElaboracao('');
+      setAviso('Áudio transcrito. Você pode corrigir o texto antes de elaborar.');
+      onNotification?.('Áudio gravado transcrito pelo OSONE HEAR.', 'success');
+    } catch (e: any) {
+      if (versao !== versaoDaTranscricaoDeAudioRef.current) return;
+      const msg = e?.message || String(e);
+      setAviso(`Não foi possível transcrever o áudio gravado: ${msg}`);
+      onNotification?.(`Não foi possível transcrever o áudio: ${msg}`, 'error');
+    } finally {
+      if (versao === versaoDaTranscricaoDeAudioRef.current) setTranscrevendoAudio(false);
+    }
+  }, [chaveGemini, modeloGemini, onNotification]);
+
+  const iniciarGravacaoLocal = useCallback(async (motivo?: string): Promise<boolean> => {
+    if (!gravacaoDisponivel) {
+      setAviso('Este ambiente não oferece reconhecimento de voz nem gravação de áudio pelo microfone.');
+      return false;
+    }
+
+    try {
+      const fluxo = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+      const MediaRecorderCtor = (window as any).MediaRecorder;
+      const tipos = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+      const tipo = tipos.find(t => MediaRecorderCtor.isTypeSupported?.(t)) || '';
+      const gravador: MediaRecorder = new MediaRecorderCtor(fluxo, tipo ? { mimeType: tipo } : undefined);
+
+      pedacosDaGravacaoRef.current = [];
+      descartarGravacaoRef.current = false;
+      fluxoGravacaoRef.current = fluxo;
+      gravadorRef.current = gravador;
+      pararDeVezRef.current = false;
+      setModoDaEscuta('gravacao');
+      setSegundos(0);
+      setAviso(motivo || 'Gravando áudio localmente. Ao parar, o OSONE transcreve pelo backend.');
+
+      gravador.ondataavailable = (evento: BlobEvent) => {
+        if (evento.data?.size) pedacosDaGravacaoRef.current.push(evento.data);
+      };
+      gravador.onerror = () => {
+        setAviso('A gravação local do microfone falhou. O texto já digitado foi mantido.');
+        setOuvindo(false);
+        setModoDaEscuta('');
+        encerrarFluxoDaGravacao();
+      };
+      gravador.onstop = () => {
+        const pedacos = pedacosDaGravacaoRef.current;
+        const descartar = descartarGravacaoRef.current;
+        const mimeType = gravador.mimeType || tipo || pedacos[0]?.type || 'audio/webm';
+        pedacosDaGravacaoRef.current = [];
+        descartarGravacaoRef.current = false;
+        encerrarFluxoDaGravacao();
+        setModoDaEscuta('');
+        if (!descartar && pedacos.length) {
+          transcreverAudioGravado(new Blob(pedacos, { type: mimeType }));
+        }
+      };
+
+      gravador.start(1000);
+      setOuvindo(true);
+      return true;
+    } catch (e: any) {
+      encerrarFluxoDaGravacao();
+      setModoDaEscuta('');
+      setOuvindo(false);
+      const msg = e?.name === 'NotAllowedError'
+        ? 'O microfone foi bloqueado. Autorize o microfone para gravar e transcrever.'
+        : `Não foi possível abrir a gravação local do microfone: ${e?.message || e}`;
+      setAviso(msg);
+      return false;
+    }
+  }, [encerrarFluxoDaGravacao, gravacaoDisponivel, transcreverAudioGravado]);
+
   const pararEscuta = useCallback(() => {
+    if (modoDaEscuta === 'gravacao') {
+      pararDeVezRef.current = true;
+      setOuvindo(false);
+      try {
+        const gravador = gravadorRef.current;
+        if (gravador && gravador.state !== 'inactive') gravador.stop();
+        else encerrarFluxoDaGravacao();
+      } catch {
+        encerrarFluxoDaGravacao();
+        setModoDaEscuta('');
+      }
+      return;
+    }
+
     pararDeVezRef.current = true;
     try { reconhecedorRef.current?.stop(); } catch { /* já estava parado */ }
     setOuvindo(false);
+    setModoDaEscuta('');
     // A última aposta parcial é promovida a definitivo: quem para no meio de uma frase não pode
     // perdê-la só porque o navegador não teve tempo de confirmá-la.
     setEscuta(atual => atual.parcial
       ? { finalizado: textoDaEscuta(atual), parcial: '' }
       : atual);
-  }, []);
+  }, [encerrarFluxoDaGravacao, modoDaEscuta]);
 
   const comecarEscuta = useCallback(() => {
-    if (!suportado) return;
+    if (preferirGravacaoNoDesktop && gravacaoDisponivel) {
+      iniciarGravacaoLocal('No instalador, o OSONE grava o áudio e transcreve ao parar para não depender do reconhecimento de voz do navegador.');
+      return;
+    }
+
+    if (!suportado) {
+      iniciarGravacaoLocal('Este navegador não tem transcrição ao vivo. Gravando áudio para transcrever ao parar.');
+      return;
+    }
 
     const rec = criarReconhecedor('pt-BR');
-    if (!rec) return;
+    if (!rec) {
+      iniciarGravacaoLocal('A transcrição ao vivo não abriu. Gravando áudio para transcrever ao parar.');
+      return;
+    }
 
     reconhecedorRef.current = rec;
     pararDeVezRef.current = false;
+    setModoDaEscuta('reconhecimento');
     setAviso('');
     setSegundos(0);
 
@@ -117,13 +290,25 @@ export const OsoneHearPanel: React.FC<{
     };
 
     rec.onerror = (evento: any) => {
-      const explicacao = explicarErroDaEscuta(evento?.error || '');
+      const codigo = evento?.error || '';
+      const explicacao = explicarErroDaEscuta(codigo);
       if (explicacao) setAviso(explicacao);
+      if (['network', 'service-not-allowed'].includes(codigo) && gravacaoDisponivel) {
+        pararDeVezRef.current = true;
+        try { rec.stop(); } catch { /* já parou */ }
+        setOuvindo(false);
+        setModoDaEscuta('');
+        setTimeout(() => {
+          iniciarGravacaoLocal('O reconhecimento de voz do navegador falhou. OSONE entrou no modo de gravação local e vai transcrever ao parar.');
+        }, 350);
+        return;
+      }
       // Erro de permissão e de microfone não têm como se resolver religando — insistir viraria
       // um laço de tentativas que nunca dá certo e ainda esconde a causa.
       if (['not-allowed', 'service-not-allowed', 'audio-capture'].includes(evento?.error)) {
         pararDeVezRef.current = true;
         setOuvindo(false);
+        setModoDaEscuta('');
       }
     };
 
@@ -157,17 +342,29 @@ export const OsoneHearPanel: React.FC<{
     } catch (e: any) {
       setAviso(`Não foi possível abrir o microfone: ${e?.message || e}`);
       setOuvindo(false);
+      setModoDaEscuta('');
     }
-  }, [suportado]);
+  }, [gravacaoDisponivel, iniciarGravacaoLocal, preferirGravacaoNoDesktop, suportado]);
 
   // Um reconhecedor vivo depois que a aba fecha continua com o microfone aberto.
   useEffect(() => () => {
     pararDeVezRef.current = true;
     try { reconhecedorRef.current?.stop(); } catch { /* já estava parado */ }
-  }, []);
+    descartarGravacaoRef.current = true;
+    try {
+      const gravador = gravadorRef.current;
+      if (gravador && gravador.state !== 'inactive') gravador.stop();
+      else encerrarFluxoDaGravacao();
+    } catch { encerrarFluxoDaGravacao(); }
+  }, [encerrarFluxoDaGravacao]);
 
   const limpar = () => {
-    if (ouvindo) pararEscuta();
+    versaoDaTranscricaoDeAudioRef.current++;
+    setTranscrevendoAudio(false);
+    if (ouvindo && modoDaEscuta === 'gravacao') {
+      descartarGravacaoRef.current = true;
+      pararEscuta();
+    } else if (ouvindo) pararEscuta();
     setEscuta(ESCUTA_VAZIA);
     setResultado(null);
     setErroDaElaboracao('');
@@ -211,7 +408,7 @@ export const OsoneHearPanel: React.FC<{
     }
   };
 
-  const podeElaborar = palavras >= MINIMO_DE_PALAVRAS && !elaborando;
+  const podeElaborar = palavras >= MINIMO_DE_PALAVRAS && !elaborando && !transcrevendoAudio && modoDaEscuta !== 'gravacao';
 
   return (
     <div className="w-full flex-1 flex flex-col bg-[#07090e] text-zinc-100 min-h-0 overflow-hidden font-sans relative">
@@ -228,9 +425,11 @@ export const OsoneHearPanel: React.FC<{
                 "text-[10px] px-2.5 py-0.5 rounded-full border font-normal transition-colors",
                 ouvindo
                   ? "bg-red-500/15 text-red-300 border-red-500/40"
+                  : transcrevendoAudio
+                  ? "bg-amber-500/15 text-amber-300 border-amber-500/40"
                   : "bg-violet-500/10 text-violet-300 border-violet-500/30"
               )}>
-                {ouvindo ? 'ouvindo' : 'escuta ativa'}
+                {transcrevendoAudio ? 'transcrevendo' : ouvindo ? (usandoGravacao ? 'gravando' : 'ouvindo') : 'escuta ativa'}
               </span>
             </h2>
             <p className="text-xs text-zinc-400">
@@ -239,11 +438,16 @@ export const OsoneHearPanel: React.FC<{
           </div>
         </div>
 
-        {ouvindo && (
+        {(ouvindo || transcrevendoAudio) && (
           <div className="flex items-center gap-3 px-4 py-2 rounded-2xl bg-black/50 border border-red-500/25">
-            <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse shrink-0" />
+            <span className={cn(
+              "w-2.5 h-2.5 rounded-full animate-pulse shrink-0",
+              transcrevendoAudio ? "bg-amber-400" : "bg-red-500"
+            )} />
             <span className="text-sm font-mono font-bold text-red-300 tabular-nums">{formatarDuracao(segundos)}</span>
-            <span className="text-[11px] font-mono text-zinc-500">{palavras} palavra(s)</span>
+            <span className="text-[11px] font-mono text-zinc-500">
+              {transcrevendoAudio ? 'processando áudio' : `${palavras} palavra(s)`}
+            </span>
           </div>
         )}
       </div>
@@ -251,9 +455,8 @@ export const OsoneHearPanel: React.FC<{
       <div className="flex-1 overflow-y-auto p-6 min-h-0 custom-scrollbar">
         <div className="max-w-4xl mx-auto space-y-5">
 
-          {/* Navegador sem reconhecimento de voz: dizer, em vez de mostrar um botão que não faz
-              nada. O Firefox é o caso comum, e o silêncio ali pareceria defeito do OSONE. */}
-          {!suportado && (
+          {/* Ambientes sem Web Speech ainda podem gravar áudio e transcrever pelo backend local. */}
+          {!suportado && !gravacaoDisponivel && (
             <div className="p-6 rounded-3xl bg-[#0c0e17] border border-amber-500/30 flex items-start gap-3">
               <AlertCircle size={20} className="text-amber-400 shrink-0 mt-0.5" />
               <div className="space-y-1">
@@ -266,18 +469,31 @@ export const OsoneHearPanel: React.FC<{
             </div>
           )}
 
+          {gravacaoDisponivel && (!suportado || preferirGravacaoNoDesktop) && (
+            <div className="p-5 rounded-3xl bg-[#0c0e17] border border-emerald-500/25 flex items-start gap-3">
+              <Check size={18} className="text-emerald-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <h3 className="text-sm font-bold text-white font-mono">Modo compatível com instalador ativo</h3>
+                <p className="text-xs text-zinc-400 leading-relaxed">
+                  O OSONE vai gravar o áudio pelo microfone e transcrever ao parar, sem depender do serviço de
+                  reconhecimento de voz embutido no navegador.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* O MICROFONE. Um botão só, grande, que liga e desliga — não há modo escondido. */}
           <div className="p-8 rounded-3xl bg-[#0c0f18] border border-white/5 flex flex-col items-center gap-4">
             <button
               onClick={ouvindo ? pararEscuta : comecarEscuta}
-              disabled={!suportado}
+              disabled={!podeCapturarAudio || transcrevendoAudio}
               className={cn(
                 "relative w-24 h-24 rounded-full flex items-center justify-center transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed",
                 ouvindo
                   ? "bg-red-500 text-black shadow-2xl shadow-red-500/30"
                   : "bg-violet-500 hover:bg-violet-400 text-black shadow-2xl shadow-violet-500/25"
               )}
-              title={ouvindo ? 'Parar a escuta' : 'Começar a escutar'}
+              title={ouvindo ? 'Parar a escuta' : gravacaoDisponivel && (!suportado || preferirGravacaoNoDesktop) ? 'Começar a gravar' : 'Começar a escutar'}
             >
               {ouvindo && (
                 <motion.span
@@ -291,10 +507,18 @@ export const OsoneHearPanel: React.FC<{
 
             <div className="text-center space-y-1">
               <p className="text-sm font-bold text-white font-mono">
-                {ouvindo ? 'Ouvindo — pode falar' : palavras > 0 ? 'Escuta parada' : 'Toque para começar a falar'}
+                {transcrevendoAudio
+                  ? 'Transcrevendo áudio'
+                  : ouvindo
+                  ? (usandoGravacao ? 'Gravando — pode falar' : 'Ouvindo — pode falar')
+                  : palavras > 0 ? 'Escuta parada' : 'Toque para começar a falar'}
               </p>
               <p className="text-xs text-zinc-500 leading-relaxed max-w-md">
-                {ouvindo
+                {transcrevendoAudio
+                  ? 'A gravação terminou. O texto aparece na transcrição assim que o backend concluir.'
+                  : usandoGravacao
+                  ? 'Pode falar com calma. Ao parar, o OSONE transcreve o áudio gravado.'
+                  : ouvindo
                   ? 'Pode pausar entre as frases: a escuta se religa sozinha e só termina quando você mandar parar.'
                   : 'A escuta fica ligada até você parar. Pausas no meio do discurso não a encerram.'}
               </p>
@@ -385,7 +609,7 @@ export const OsoneHearPanel: React.FC<{
               </button>
               <span className="text-[11px] text-zinc-500 leading-tight">
                 {palavras < MINIMO_DE_PALAVRAS
-                  ? 'Fale um pouco mais para o OSONE ter o que organizar.'
+                  ? (transcrevendoAudio ? 'Aguarde a transcrição do áudio para elaborar.' : 'Fale um pouco mais para o OSONE ter o que organizar.')
                   : 'O OSONE lê o discurso, nomeia o tema e escolhe a forma que aquele assunto pede.'}
               </span>
             </div>
