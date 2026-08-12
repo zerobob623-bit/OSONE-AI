@@ -106,6 +106,7 @@ import { resolveAudioUrl, deleteAudio } from './lib/audioDb';
 import { auth, googleProvider, signInWithPopup, signOut, onAuthStateChanged, db, doc, setDoc, getDoc, OperationType, handleFirestoreError, isFirebaseFullyConfigured, firebaseConfigFaltando, explicarErroDeLogin } from './firebase';
 import { TelaDeEntrada } from './components/TelaDeEntrada';
 import { LegalConsentGate } from './components/LegalConsentGate';
+import { OsoneMascotCompanion } from './components/OsoneMascotCompanion';
 
 import { HomeWorkspaceSection } from './components/HomeWorkspaceSection';
 import { useSubscription } from './hooks/useSubscription';
@@ -14806,6 +14807,8 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
           </motion.div>
         )}
       </AnimatePresence>
+
+      <OsoneMascotCompanion />
 
       {/* GLOBAL CHAMAR OSONE FLOATING BUTTON FOR NON-HOME PAGES/TABS */}
       {/* Fora do CODE: lá ele flutuaria bem em cima da fileira direita de ferramentas da aba,

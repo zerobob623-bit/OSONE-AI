@@ -220,3 +220,326 @@
   overflow: visible !important;
 }
 
+/* OSONE Mascote vivo: fallback dentro do navegador. No app instalado, a versao nativa
+   fica fora da janela em um overlay transparente do Electron. */
+.osone-mascot-web-layer {
+  position: fixed;
+  left: max(18px, env(safe-area-inset-left));
+  bottom: max(18px, env(safe-area-inset-bottom));
+  width: 180px;
+  height: 210px;
+  z-index: 58;
+  pointer-events: none;
+  contain: layout style paint;
+}
+
+.osone-mascot {
+  position: absolute;
+  left: 26px;
+  bottom: 16px;
+  width: 116px;
+  height: 154px;
+  transform-origin: 50% 100%;
+  animation: osone-mascot-breathe 2.6s ease-in-out infinite;
+}
+
+.osone-mascot-body {
+  position: absolute;
+  left: 13px;
+  top: 8px;
+  width: 90px;
+  height: 94px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 28%, rgba(255,255,255,0.34), transparent 14%),
+    radial-gradient(circle at 66% 68%, rgba(151,61,0,0.28), transparent 33%),
+    linear-gradient(145deg, #ffb133 0%, #ff861f 48%, #f06a12 100%);
+  border: 1px solid rgba(110, 47, 0, 0.45);
+  box-shadow:
+    inset -10px -13px 18px rgba(129, 47, 0, 0.24),
+    inset 7px 8px 14px rgba(255, 219, 114, 0.34),
+    0 14px 26px rgba(0, 0, 0, 0.38);
+}
+
+.osone-mascot-eye {
+  position: absolute;
+  top: 34px;
+  width: 19px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff7e8;
+  border: 2px solid rgba(94, 48, 10, 0.55);
+  box-shadow: inset 0 -2px 0 rgba(0,0,0,0.13);
+  animation: osone-mascot-blink 6.2s ease-in-out infinite;
+}
+
+.osone-mascot-eye-left { left: 25px; }
+.osone-mascot-eye-right { right: 25px; }
+
+.osone-mascot-eye span {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  width: 8px;
+  height: 9px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 28%, #fff 0 18%, #24140c 24% 100%);
+  transition: transform 260ms ease;
+}
+
+.osone-mascot-brow {
+  position: absolute;
+  top: 25px;
+  width: 20px;
+  height: 5px;
+  border-radius: 999px;
+  border-top: 3px solid rgba(112, 55, 11, 0.7);
+}
+
+.osone-mascot-brow-left {
+  left: 24px;
+  transform: rotate(-13deg);
+}
+
+.osone-mascot-brow-right {
+  right: 23px;
+  transform: rotate(13deg);
+}
+
+.osone-mascot-mouth {
+  position: absolute;
+  left: 39px;
+  top: 64px;
+  width: 15px;
+  height: 8px;
+  border-radius: 0 0 999px 999px;
+  border-bottom: 3px solid #4e230d;
+  transition: all 220ms ease;
+}
+
+.osone-mascot-arm,
+.osone-mascot-leg {
+  position: absolute;
+  display: block;
+  background: linear-gradient(180deg, #ff941f, #de5f0d);
+  border: 1px solid rgba(113, 48, 0, 0.28);
+  box-shadow: inset 3px 4px 5px rgba(255, 201, 88, 0.24);
+  transform-origin: 50% 8px;
+}
+
+.osone-mascot-arm {
+  top: 65px;
+  width: 16px;
+  height: 48px;
+  border-radius: 999px 999px 13px 13px;
+}
+
+.osone-mascot-arm-left {
+  left: 8px;
+  transform: rotate(21deg);
+}
+
+.osone-mascot-arm-right {
+  right: 8px;
+  transform: rotate(-21deg);
+}
+
+.osone-mascot-leg {
+  top: 91px;
+  width: 17px;
+  height: 55px;
+  border-radius: 999px 999px 11px 11px;
+}
+
+.osone-mascot-leg-left {
+  left: 34px;
+  transform: rotate(6deg);
+}
+
+.osone-mascot-leg-right {
+  right: 34px;
+  transform: rotate(-6deg);
+}
+
+.osone-mascot-shadow {
+  position: absolute;
+  left: 22px;
+  bottom: 2px;
+  width: 72px;
+  height: 16px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(0,0,0,0.42), rgba(0,0,0,0));
+  filter: blur(1px);
+  transform-origin: 50% 50%;
+}
+
+.osone-mascot-bubble {
+  position: absolute;
+  left: 62px;
+  bottom: 128px;
+  width: 150px;
+  min-height: 40px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: rgba(13, 12, 11, 0.9);
+  border: 1px solid rgba(255, 137, 45, 0.34);
+  color: #fff7e8;
+  font: 700 10px/1.35 "Outfit", "Inter", sans-serif;
+  box-shadow: 0 16px 34px rgba(0,0,0,0.34);
+}
+
+.osone-mascot-bubble::after {
+  content: "";
+  position: absolute;
+  left: 15px;
+  bottom: -7px;
+  width: 13px;
+  height: 13px;
+  background: inherit;
+  border-right: 1px solid rgba(255, 137, 45, 0.28);
+  border-bottom: 1px solid rgba(255, 137, 45, 0.28);
+  transform: rotate(45deg);
+}
+
+.osone-mascot-speak .osone-mascot-mouth {
+  left: 37px;
+  top: 62px;
+  width: 19px;
+  height: 17px;
+  border: 3px solid #4e230d;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 66%, #ffb17d 0 22%, #3b170c 24% 100%);
+  animation: osone-mascot-talk 340ms ease-in-out infinite;
+}
+
+.osone-mascot-point-right .osone-mascot-arm-right {
+  width: 68px;
+  height: 14px;
+  right: -47px;
+  top: 58px;
+  border-radius: 999px;
+  transform: rotate(-6deg);
+}
+
+.osone-mascot-point-up .osone-mascot-arm-right {
+  width: 15px;
+  height: 70px;
+  right: 18px;
+  top: 7px;
+  transform: rotate(33deg);
+}
+
+.osone-mascot-point-down .osone-mascot-arm-right {
+  width: 15px;
+  height: 64px;
+  right: 4px;
+  top: 72px;
+  transform: rotate(-120deg);
+}
+
+.osone-mascot-walk .osone-mascot-leg-left {
+  animation: osone-mascot-leg-left 520ms ease-in-out infinite;
+}
+
+.osone-mascot-walk .osone-mascot-leg-right {
+  animation: osone-mascot-leg-right 520ms ease-in-out infinite;
+}
+
+.osone-mascot-walk .osone-mascot-arm-left {
+  animation: osone-mascot-arm-left 520ms ease-in-out infinite;
+}
+
+.osone-mascot-walk .osone-mascot-arm-right {
+  animation: osone-mascot-arm-right 520ms ease-in-out infinite;
+}
+
+.osone-mascot-jump {
+  animation: osone-mascot-jump 1s cubic-bezier(.2,.9,.2,1) infinite;
+}
+
+.osone-mascot-jump .osone-mascot-shadow {
+  animation: osone-mascot-shadow-jump 1s cubic-bezier(.2,.9,.2,1) infinite;
+}
+
+.osone-mascot-look .osone-mascot-eye span,
+.osone-mascot-point-right .osone-mascot-eye span {
+  transform: translateX(3px);
+}
+
+.osone-mascot-point-up .osone-mascot-eye span {
+  transform: translateY(-3px);
+}
+
+.osone-mascot-point-down .osone-mascot-eye span {
+  transform: translateY(3px);
+}
+
+@keyframes osone-mascot-breathe {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-4px) scale(1.015, 0.99); }
+}
+
+@keyframes osone-mascot-blink {
+  0%, 45%, 49%, 100% { transform: scaleY(1); }
+  47% { transform: scaleY(0.08); }
+}
+
+@keyframes osone-mascot-talk {
+  0%, 100% { transform: scaleY(0.76); }
+  50% { transform: scaleY(1.12); }
+}
+
+@keyframes osone-mascot-leg-left {
+  0%, 100% { transform: rotate(20deg) translateY(0); }
+  50% { transform: rotate(-18deg) translateY(2px); }
+}
+
+@keyframes osone-mascot-leg-right {
+  0%, 100% { transform: rotate(-18deg) translateY(2px); }
+  50% { transform: rotate(20deg) translateY(0); }
+}
+
+@keyframes osone-mascot-arm-left {
+  0%, 100% { transform: rotate(-18deg); }
+  50% { transform: rotate(28deg); }
+}
+
+@keyframes osone-mascot-arm-right {
+  0%, 100% { transform: rotate(28deg); }
+  50% { transform: rotate(-18deg); }
+}
+
+@keyframes osone-mascot-jump {
+  0%, 100% { transform: translateY(0) scale(1); }
+  45% { transform: translateY(-42px) scale(0.98, 1.04); }
+  72% { transform: translateY(3px) scale(1.06, 0.94); }
+}
+
+@keyframes osone-mascot-shadow-jump {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  45% { transform: scale(0.58); opacity: 0.45; }
+  72% { transform: scale(1.15); opacity: 1; }
+}
+
+@media (max-width: 720px) {
+  .osone-mascot-web-layer {
+    width: 126px;
+    height: 154px;
+    transform: scale(0.76);
+    transform-origin: left bottom;
+  }
+
+  .osone-mascot-bubble {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .osone-mascot,
+  .osone-mascot *,
+  .osone-mascot::before,
+  .osone-mascot::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
