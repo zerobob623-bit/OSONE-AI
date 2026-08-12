@@ -553,7 +553,12 @@ export const CodeWorkspace: React.FC<{
   apiKeys?: ApiKeys;
   onUpdateApiKeys?: (patch: Partial<ApiKeys>) => void;
   isGenerating?: boolean;
-}> = ({ onClose, onGenerateCodeRequest, onStartLiveVoice, apiKeys, onUpdateApiKeys, isGenerating }) => {
+  /** Primeiro pedido aguardando na fila criada pela ferramenta de voz. */
+  comandoDeVoz?: { id: string; prompt: string };
+  /** Remove da fila somente depois que o editor terminou de aplicar (ou relatar a falha). */
+  aoConcluirComandoDeVoz?: (id: string) => void;
+}> = ({ onClose, onGenerateCodeRequest, onStartLiveVoice, apiKeys, onUpdateApiKeys, isGenerating,
+  comandoDeVoz, aoConcluirComandoDeVoz }) => {
   // 5 PROJECTS MANAGEMENT
   const [projects, setProjects] = useState<OSONEProject[]>(() => {
     try {
@@ -1906,6 +1911,16 @@ Responda APENAS um array JSON de 4 strings. Exemplo do formato:
         (textoAcumulado) => setEscritaAoVivo(textoAcumulado),
         controle.signal
       );
+    } catch (e: any) {
+      // Um pedido vindo da voz não tem um clique aguardando a Promise. Sem capturar aqui, uma
+      // falha de rede virava rejection solta e a fila parecia simplesmente parar.
+      console.error('[OSONE CODE] Falha ao gerar código:', e);
+      setPromptInput(textToSend);
+      setNotificationBanner({
+        message: `A geração falhou: ${e?.message || String(e)}. O pedido ficou na caixa para tentar novamente.`,
+        type: 'error'
+      });
+      return;
     } finally {
       // O editor volta em qualquer desfecho — inclusive erro e cancelamento. Deixar o painel de
       // acompanhamento na tela depois que a geração morreu esconderia o arquivo do usuário.
@@ -1995,6 +2010,23 @@ Responda APENAS um array JSON de 4 strings. Exemplo do formato:
       type: 'error'
     });
   };
+
+  const processandoComandoDeVozRef = useRef(false);
+  useEffect(() => {
+    // Se a pessoa acabou de clicar em Gerar, a voz espera esse trabalho terminar. Compartilhar o
+    // cancelamentoRef entre duas gerações faria o segundo pedido perder o controle da primeira e
+    // os dois resultados disputarem o mesmo arquivo.
+    if (!comandoDeVoz || processandoComandoDeVozRef.current || escritaAoVivo !== null || cancelamentoRef.current) return;
+
+    processandoComandoDeVozRef.current = true;
+    // A Promise continua independente do fim do turno do Gemini Live. O microfone pode voltar a
+    // escutar imediatamente; apenas a fila do CODE permanece serial para dois pedidos não
+    // sobrescreverem o mesmo arquivo ao mesmo tempo.
+    void handleSendAIPrompt(comandoDeVoz.prompt).finally(() => {
+      processandoComandoDeVozRef.current = false;
+      aoConcluirComandoDeVoz?.(comandoDeVoz.id);
+    });
+  }, [comandoDeVoz?.id, escritaAoVivo]);
 
   const handleAttachImages = (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
