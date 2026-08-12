@@ -9,6 +9,7 @@ import {
 import { cn, safeJsonParse } from '../lib/utils';
 import { SoundEffect } from '../types';
 import { saveAudio } from '../lib/audioDb';
+import { validarAudioDaBiblioteca } from '../lib/bibliotecaDeSons';
 
 export interface FreesoundItem {
   id: string;
@@ -375,7 +376,7 @@ export const SoundLibrary = ({
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingSound, setEditingSound] = useState<SoundEffect | null>(null);
-  const [newSound, setNewSound] = useState({ name: '', category: 'funny', url: '' });
+  const [newSound, setNewSound] = useState({ name: '', category: 'comico', url: '' });
   const [uploadType, setUploadType] = useState<'url' | 'file'>('url');
   const [isUploading, setIsUploading] = useState(false);
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
@@ -514,12 +515,7 @@ export const SoundLibrary = ({
   });
 
   // Music list only (or synth/ambient/epic categories which represent high-quality audio)
-  const musicSounds = sounds.filter(s => 
-    s.category === 'musica' || 
-    s.category === 'synth' || 
-    s.category === 'ambient' || 
-    s.category === 'epic'
-  );
+  const musicSounds = sounds.filter(s => s.tipo === 'musica' || s.category === 'musica');
 
   const filteredMusicSounds = musicSounds.filter(s => 
     s.name.toLowerCase().includes(filter.toLowerCase())
@@ -527,10 +523,15 @@ export const SoundLibrary = ({
 
   const handleAdd = () => {
     if (newSound.name && newSound.url) {
+      const validacao = validarAudioDaBiblioteca(newSound);
+      if ('erro' in validacao) {
+        alert(validacao.erro);
+        return;
+      }
       if (editingSound) {
-        onUpdateSound(editingSound.id, newSound);
+        onUpdateSound(editingSound.id, validacao.audio);
       } else {
-        onAddSound(newSound);
+        onAddSound(validacao.audio);
       }
       resetForm();
     }
@@ -551,10 +552,10 @@ export const SoundLibrary = ({
       const prompt = `Você é um gerador de efeitos sonoros e músicas via IA para o sistema operacional OSONE.
       O usuário quer o seguinte som: "${aiPrompt}"
       
-      Retorne um JSON com:
+      Retorne um JSON com (você NÃO gera áudio aqui; apenas seleciona uma fonte real da lista):
       {
         "name": "Nome curto e criativo em Português",
-        "category": "Uma destas: funny, comico, horror, suspense, halloween, sneaky, epic, synth, ambient, musica",
+        "category": "Uma destas: comico, terror, suspense, interface, magia, impacto, natureza, ambiente, musica",
         "url": "Escolha a URL mais adequada da lista abaixo baseada na descrição",
         "rationale": "Breve explicação por que este som foi escolhido/gerado"
       }
@@ -588,7 +589,7 @@ export const SoundLibrary = ({
 
       const result = await response.json();
       const textResponse = result.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      const data = safeJsonParse(textResponse, { name: "Som", category: "funny", url: "" });
+      const data = safeJsonParse(textResponse, { name: "Som", category: "comico", url: "" });
       
       onAddSound({
         name: `[AI] ${data.name}`,
@@ -607,7 +608,7 @@ export const SoundLibrary = ({
   };
 
   const resetForm = () => {
-    setNewSound({ name: '', category: 'funny', url: '' });
+    setNewSound({ name: '', category: 'comico', url: '' });
     setUploadType('url');
     setIsAddModalOpen(false);
     setEditingSound(null);
@@ -2020,16 +2021,15 @@ export const SoundLibrary = ({
                     onChange={(e) => setNewSound({ ...newSound, category: e.target.value })}
                     className="w-full bg-white/[0.03] border border-white/[0.05] py-3 px-4 text-sm font-light focus:outline-none focus:border-her-accent/30 appearance-none text-white bg-black/60"
                   >
-                    <option value="funny">Funny</option>
-                    <option value="comico">Comico</option>
-                    <option value="horror">Terror</option>
+                    <option value="comico">Cômico</option>
+                    <option value="terror">Terror</option>
                     <option value="suspense">Suspense</option>
-                    <option value="halloween">Halloween</option>
-                    <option value="sneaky">Sneaky</option>
+                    <option value="interface">Interface</option>
+                    <option value="magia">Magia</option>
+                    <option value="impacto">Impacto</option>
+                    <option value="natureza">Natureza</option>
                     <option value="musica">Música</option>
-                    <option value="epic">Cinematic / Épico</option>
-                    <option value="ambient">Ambient / Relaxante</option>
-                    <option value="synth">Synthwave / Futurista</option>
+                    <option value="ambiente">Ambiente / Relaxante</option>
                   </select>
                 </div>
                 <div>

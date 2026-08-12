@@ -88,6 +88,7 @@ import { NotificationToast, NotificationType } from './components/NotificationTo
 import { MemoryBookEntry } from './types';
 import osoneOrbImage from './assets/images/osone_constellation_orb_1782154846239.jpg';
 import { SoundEffect, DrawingObject, User } from './types';
+import { normalizarBibliotecaDeSons, validarAudioDaBiblioteca } from './lib/bibliotecaDeSons';
 import { INTIMATE_QUESTIONS } from './constants/osoneConstants';
 import { useTuyaSmartHome } from './hooks/useTuyaSmartHome';
 import { useHierarchicalMemory } from './hooks/useHierarchicalMemory';
@@ -1448,13 +1449,27 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
       const saved = localStorage.getItem('osone_sound_library');
       if (saved) {
         const parsed = JSON.parse(saved);
-        return Array.isArray(parsed) ? parsed : DEFAULT_SOUNDS;
+        return Array.isArray(parsed) ? normalizarBibliotecaDeSons(parsed) : normalizarBibliotecaDeSons(DEFAULT_SOUNDS);
       }
     } catch (e) {
       console.error("Failed to parse sound library:", e);
     }
-    return DEFAULT_SOUNDS;
+    return normalizarBibliotecaDeSons(DEFAULT_SOUNDS);
   });
+
+  const instalarAudioNaBiblioteca = (proposta: Partial<SoundEffect>): { ok: boolean; mensagem: string } => {
+    const validacao = validarAudioDaBiblioteca(proposta);
+    if ('erro' in validacao) return { ok: false, mensagem: validacao.erro };
+    if (soundLibraryRef.current.some(s => s.url === validacao.audio.url || s.name.toLowerCase() === validacao.audio.name.toLowerCase())) {
+      return { ok: false, mensagem: 'Esse áudio já existe na biblioteca.' };
+    }
+    const descricao = `${validacao.audio.name}\nTipo: ${validacao.audio.tipo}\nCategoria: ${validacao.audio.category}\nFonte: ${validacao.audio.origem || validacao.audio.url}`;
+    if (!window.confirm(`Adicionar este áudio à Biblioteca OSONE?\n\n${descricao}`)) {
+      return { ok: false, mensagem: 'O usuário cancelou a instalação do áudio.' };
+    }
+    setSoundLibrary(prev => [...prev, { ...validacao.audio, id: `osone-audio-${Date.now()}` }]);
+    return { ok: true, mensagem: `“${validacao.audio.name}” foi adicionado como ${validacao.audio.tipo}.` };
+  };
 
   useEffect(() => {
     localStorage.setItem('osone_sound_library', JSON.stringify(soundLibrary));
@@ -8198,6 +8213,34 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
       });
 
       functionDeclarations.push({
+        name: "install_sound_library_item",
+        description: "Propõe adicionar um áudio REAL à Biblioteca OSONE. Use quando o usuário pedir para implementar/adicionar um efeito, música ou ambiente e você já tiver uma URL HTTPS direta de arquivo de áudio. A tela valida tipo/categoria e pede confirmação humana; nunca anuncie instalação antes da resposta desta ferramenta.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            name: { type: Type.STRING, description: "Nome fiel ao áudio, sem afirmar que é outro som." },
+            tipo: { type: Type.STRING, enum: ["efeito", "musica", "ambiente"] },
+            category: { type: Type.STRING, enum: ["comico", "terror", "suspense", "interface", "magia", "impacto", "natureza", "ambiente", "musica"] },
+            url: { type: Type.STRING, description: "URL HTTPS direta terminando em MP3/WAV/OGG/M4A/AAC/FLAC. Não use página HTML, YouTube ou URL inventada." },
+            origem: { type: Type.STRING, description: "Autor, site e licença/proveniência conhecida. Não invente licença." }
+          },
+          required: ["name", "tipo", "category", "url", "origem"]
+        }
+      });
+
+      functionDeclarations.push({
+        name: "search_freesound_catalog",
+        description: "Pesquisa fontes reais no catálogo Freesound antes de instalar um novo áudio. Use primeiro quando o usuário não fornecer uma URL. Retorna preview direto, duração, autor, licença e categoria; depois proponha um resultado com install_sound_library_item.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            query: { type: Type.STRING, description: "Descrição objetiva do som, preferencialmente em inglês." },
+            tipo: { type: Type.STRING, enum: ["effect", "music", "ambient"] }
+          }, required: ["query", "tipo"]
+        }
+      });
+
+      functionDeclarations.push({
         name: "export_to_excel",
         description: "Gera um arquivo Excel (.xlsx) para o usuário baixar a partir de dados estruturados em formato JSON, a partir da edição ou criação que o usuário pedir. Use para tabelas, planilhas, relatórios baseados em grade.",
         parameters: {
@@ -9092,6 +9135,19 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
               role: 'assistant' as const,
               content: `*Busca na Biblioteca de Sons OSONE:* (fração de resultados)\n\n${resultsStr}\n\n*Você pode reproduzir qualquer um destes sons pedindo para mim ou clicando nele na aba de Sons.*`
             }]);
+          } else if (call.name === "install_sound_library_item") {
+            const resultado = instalarAudioNaBiblioteca(call.args as Partial<SoundEffect>);
+            addNotification(resultado.mensagem, resultado.ok ? 'success' : 'error');
+            setChatHistory(prev => [...prev, {
+              id: Math.random().toString(36).slice(2), role: 'assistant' as const,
+              content: resultado.ok ? `✅ ${resultado.mensagem}` : `⚠️ ${resultado.mensagem}`
+            }]);
+          } else if (call.name === "search_freesound_catalog") {
+            const params = new URLSearchParams({ q: String((call.args as any).query || ''), category: String((call.args as any).tipo || 'effect'), page_size: '8' });
+            const resposta = await fetch(`/api/library/search?${params}`);
+            const dados = await resposta.json().catch(() => ({}));
+            const itens = (dados.results || []).slice(0, 8).map((s: any) => ({ name: s.name, url: s.previewUrl, duration: s.duration, author: s.username, license: s.license, category: s.category }));
+            setChatHistory(prev => [...prev, { id: Math.random().toString(36).slice(2), role: 'assistant' as const, content: resposta.ok ? `Encontrei ${itens.length} fonte(s) reais no Freesound para avaliar.` : `Não consegui pesquisar o Freesound: ${dados.error || resposta.status}` }]);
           } else if (call.name === 'export_to_excel') {
             const { fileName, data } = call.args as any;
             try {
@@ -12124,6 +12180,18 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       id: call.id,
                       response: { result: `Busca bem sucedida. Encontrados ${results.length} resultados.`, sounds: results }
                     });
+                  } else if (call.name === "install_sound_library_item") {
+                    const resultado = instalarAudioNaBiblioteca(call.args as Partial<SoundEffect>);
+                    responses.push({
+                      name: call.name, id: call.id,
+                      response: resultado.ok ? { result: resultado.mensagem } : { error: resultado.mensagem }
+                    });
+                  } else if (call.name === "search_freesound_catalog") {
+                    const params = new URLSearchParams({ q: String(call.args.query || ''), category: String(call.args.tipo || 'effect'), page_size: '8' });
+                    const resposta = await fetch(`/api/library/search?${params}`);
+                    const dados = await resposta.json().catch(() => ({}));
+                    const itens = (dados.results || []).slice(0, 8).map((s: any) => ({ name: s.name, url: s.previewUrl, duration: s.duration, author: s.username, license: s.license, category: s.category }));
+                    responses.push({ name: call.name, id: call.id, response: resposta.ok ? { result: itens } : { error: dados.error || `HTTP ${resposta.status}` } });
                   }
                 }
 
@@ -13049,7 +13117,11 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 sounds={soundLibrary}
                 playingUrl={playingSoundUrl}
                 apiKeys={apiKeys}
-                onAddSound={(s) => setSoundLibrary(prev => [...prev, { ...s, id: Math.random().toString(36).substr(2, 9) } as SoundEffect])}
+                onAddSound={(s) => {
+                  const validacao = validarAudioDaBiblioteca(s);
+                  if ('audio' in validacao) setSoundLibrary(prev => [...prev, { ...validacao.audio, id: Math.random().toString(36).substr(2, 9) }]);
+                  else addNotification(validacao.erro, 'error');
+                }}
                 onUpdateSound={(id, updated) => setSoundLibrary(prev => prev.map(s => s.id === id ? { ...s, ...updated } : s))}
                 onRemoveSound={async (id) => {
                   const soundToRemove = soundLibrary.find(s => s.id === id);
@@ -13066,7 +13138,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   if (confirm('Tem certeza que deseja restaurar os sons padrão? Isso manterá seus sons personalizados se você os adicionou manualmente.')) {
                     setSoundLibrary(prev => {
                       const newLibrary = [...prev];
-                      DEFAULT_SOUNDS.forEach(def => {
+                      normalizarBibliotecaDeSons(DEFAULT_SOUNDS).forEach(def => {
                         if (!newLibrary.some(s => s.url === def.url)) {
                           newLibrary.push(def);
                         }
