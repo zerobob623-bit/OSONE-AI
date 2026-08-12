@@ -29,6 +29,7 @@
     "test:code-layout": "node scripts/conferir-layout-code.mjs",
     "test:code-fullstack": "node scripts/conferir-fullstack-code.mjs",
     "test:code-multiarquivo": "node scripts/conferir-projeto-multiarquivo.mjs",
+    "test:code-modulos": "node scripts/conferir-preview-modulos.mjs",
     "test:cameras": "node scripts/conferir-cameras.mjs",
     "test:tela-inicial": "node scripts/conferir-tela-inicial.mjs",
     "test:cowork-memory": "tsx scripts/conferir-memoria-cowork.ts",
