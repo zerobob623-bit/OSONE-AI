@@ -15,6 +15,7 @@ import { CodePreview } from './CodePreview';
 import { CodeGithubPanel } from './CodeGithubPanel';
 import { ApiKeys, CodeRepositoryFile } from '../types';
 import { buildCodeEditSystemInstruction, applyModelCodeResponse, parseSections, pareceDocumentoIncompleto } from '../lib/codeEdits';
+import { aplicarArquivosDoModelo } from '../lib/projetoMultiArquivo';
 import { montarPreview } from '../lib/montarPreview';
 import { ProblemaDoPreview, juntarProblemas, montarPedidoDeCorrecao } from '../lib/errosDoPreview';
 import { separarProjeto } from '../lib/separarArquivos';
@@ -542,7 +543,12 @@ export const CodeWorkspace: React.FC<{
     aoEscrever?: (textoAcumulado: string) => void,
     /** Permite abandonar a geração pela metade, sem esperar o modelo terminar. */
     sinal?: AbortSignal
-  ) => Promise<{ conteudo: string; resumo: string } | null>;
+    /**
+     * "projetoMultiArquivo" chega com o texto CRU quando a resposta foi um conjunto de arquivos,
+     * e não o conteúdo de um. Quem aplica é este componente, porque os arquivos são dele e é aqui
+     * que existe o histórico do Ctrl+Z.
+     */
+  ) => Promise<{ conteudo: string; resumo: string; projetoMultiArquivo?: string } | null>;
   onStartLiveVoice?: () => void;
   apiKeys?: ApiKeys;
   onUpdateApiKeys?: (patch: Partial<ApiKeys>) => void;
@@ -1890,7 +1896,7 @@ Responda APENAS um array JSON de 4 strings. Exemplo do formato:
     cancelamentoRef.current = controle;
     setEscritaAoVivo('');
 
-    let resultado: { conteudo: string; resumo: string } | null = null;
+    let resultado: { conteudo: string; resumo: string; projetoMultiArquivo?: string } | null = null;
     try {
       resultado = await onGenerateCodeRequest(
         textToSend,
@@ -1910,6 +1916,45 @@ Responda APENAS um array JSON de 4 strings. Exemplo do formato:
     if (controle.signal.aborted) {
       setNotificationBanner({ message: 'Geração cancelada. O arquivo não foi alterado.', type: 'info' });
       setPromptInput(textToSend);
+      return;
+    }
+
+    /**
+     * O PROJETO INTEIRO, QUANDO FOI ISSO QUE O MODELO RESPONDEU.
+     *
+     * Vem antes do caminho de arquivo único porque os dois são excludentes: ou a resposta é um
+     * conjunto de arquivos, ou é o conteúdo do arquivo aberto. Passar um pelo outro grava o texto
+     * com os marcadores dentro de um arquivo só.
+     */
+    if (resultado?.projetoMultiArquivo) {
+      // O histórico é empilhado ANTES de gravar: é o que faz "a IA criou 8 arquivos e eu não
+      // gostei" caber num Ctrl+Z, igual a qualquer outra escrita da IA neste editor.
+      pushHistory(filesRef.current);
+      const r = aplicarArquivosDoModelo(resultado.projetoMultiArquivo, filesRef.current, {
+        linguagemDe: (caminho) => linguagemPelaExtensao(caminho)
+      });
+
+      if (!r.criados.length && !r.atualizados.length) {
+        setPromptInput(textToSend);
+        setNotificationBanner({
+          message: r.cortada
+            ? `⚠️ A resposta acabou no meio de ${r.caminhoCortado ? `"${r.caminhoCortado}"` : 'um arquivo'} e nada foi gravado, para não deixar meio arquivo no projeto. Peça de novo em partes menores.`
+            : `Nada foi gravado. ${r.resumo}`,
+          type: 'error'
+        });
+        return;
+      }
+
+      setFiles(r.arquivos);
+      // A pessoa precisa ver ALGUMA coisa do que acabou de nascer: abrir o primeiro arquivo novo
+      // evita o efeito de "criou oito arquivos" com a tela ainda mostrando o de antes.
+      const primeiroNovo = r.arquivos.find(a => a.name === (r.criados[0] || r.atualizados[0]));
+      if (primeiroNovo) setActiveFileId(primeiroNovo.id);
+
+      setNotificationBanner({
+        message: `${r.resumo}. Dá para desfazer tudo com Ctrl+Z.`,
+        type: r.cortada || r.recusados.length ? 'info' : 'success'
+      });
       return;
     }
 
