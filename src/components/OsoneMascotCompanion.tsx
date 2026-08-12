@@ -40,6 +40,7 @@ const estadoVisualDoCerebro = (brain: EstadoDoCerebroDoMascote): { pose: EstadoD
 export function OsoneMascotCompanion({ brain }: OsoneMascotCompanionProps) {
   const [ativo, setAtivo] = useState(false);
   const [overlayExterno, setOverlayExterno] = useState(false);
+  const [apiExternaDisponivel, setApiExternaDisponivel] = useState(false);
   const [sincronizando, setSincronizando] = useState(false);
   const [estado, setEstado] = useState<EstadoDoMascote>('idle');
   const [fala, setFala] = useState('');
@@ -47,6 +48,11 @@ export function OsoneMascotCompanion({ brain }: OsoneMascotCompanionProps) {
   useEffect(() => {
     const salvo = localStorage.getItem(STORAGE_KEY) === '1';
     setAtivo(salvo);
+    if (!estaNoElectron()) {
+      setOverlayExterno(false);
+      setApiExternaDisponivel(false);
+      return;
+    }
 
     let cancelado = false;
     fetch('/api/mascote/estado')
@@ -55,7 +61,8 @@ export function OsoneMascotCompanion({ brain }: OsoneMascotCompanionProps) {
         if (cancelado || !dados) return;
         const externo = Boolean(dados.externo && dados.suportado);
         setOverlayExterno(externo);
-        if (salvo) {
+        setApiExternaDisponivel(externo);
+        if (salvo && externo) {
           await fetch('/api/mascote/ativar', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -63,7 +70,10 @@ export function OsoneMascotCompanion({ brain }: OsoneMascotCompanionProps) {
           }).catch(() => null);
         }
       })
-      .catch(() => setOverlayExterno(estaNoElectron()));
+      .catch(() => {
+        setOverlayExterno(false);
+        setApiExternaDisponivel(false);
+      });
     return () => {
       cancelado = true;
     };
@@ -85,6 +95,7 @@ export function OsoneMascotCompanion({ brain }: OsoneMascotCompanionProps) {
     const visual = estadoVisualDoCerebro(brain);
     setEstado(visual.pose);
     setFala(visual.fala);
+    if (!overlayExterno || !apiExternaDisponivel) return;
     fetch('/api/mascote/sinal', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -94,14 +105,23 @@ export function OsoneMascotCompanion({ brain }: OsoneMascotCompanionProps) {
         fala: visual.fala,
         alvo: brain.alvo || ''
       })
+    }).then((res) => {
+      if (res.status === 404) {
+        setOverlayExterno(false);
+        setApiExternaDisponivel(false);
+      }
     }).catch(() => null);
-  }, [ativo, brain.atividade, brain.alvo]);
+  }, [ativo, overlayExterno, apiExternaDisponivel, brain.atividade, brain.alvo]);
 
   const alternarMascote = async () => {
     const proximo = !ativo;
     setAtivo(proximo);
     localStorage.setItem(STORAGE_KEY, proximo ? '1' : '0');
     setSincronizando(true);
+    if (!apiExternaDisponivel) {
+      setSincronizando(false);
+      return;
+    }
     try {
       const resposta = await fetch('/api/mascote/ativar', {
         method: 'POST',
