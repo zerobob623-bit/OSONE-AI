@@ -5156,6 +5156,67 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
     }
   });
 
+  // Fallback do OSONE HEAR para o instalador/Electron: grava no navegador, transcreve no backend.
+  app.post("/api/hear/transcribe", async (req, res) => {
+    try {
+      const { audioBase64, mimeType, clientApiKey, model } = req.body || {};
+      const apiKey = clientApiKey || getSecretGeminiKey();
+      if (!apiKey) {
+        return res.status(400).json({ error: "Chave API do Gemini não definida. Insira uma chave válida nos Ajustes." });
+      }
+
+      const tipo = String(mimeType || "audio/webm").toLowerCase();
+      if (!tipo.startsWith("audio/")) {
+        return res.status(400).json({ error: "O arquivo recebido não é um áudio válido." });
+      }
+
+      const base64Limpo = String(audioBase64 || "").replace(/^data:audio\/[a-z0-9.+-]+;base64,/i, "").trim();
+      if (!base64Limpo || !/^[A-Za-z0-9+/=\s]+$/.test(base64Limpo)) {
+        return res.status(400).json({ error: "Áudio ausente ou inválido para transcrição." });
+      }
+
+      const bytesEstimados = Math.floor(base64Limpo.replace(/\s/g, "").length * 0.75);
+      if (bytesEstimados > 45 * 1024 * 1024) {
+        return res.status(413).json({ error: "A gravação ficou grande demais para transcrever de uma vez. Grave em partes menores." });
+      }
+
+      const ai = new GoogleGenAI({
+        apiKey,
+        vertexai: false,
+        httpOptions: {
+          headers: { "User-Agent": "aistudio-build" }
+        }
+      });
+
+      const prompt = "Transcreva literalmente, em português do Brasil, a fala presente neste áudio. Responda APENAS com a transcrição, sem comentários, sem resumo e sem markdown. Preserve nomes próprios quando possível. Se não houver fala inteligível, responda apenas com: [áudio incompreensível]";
+      const resposta = await generateContentWithFallback(ai, {
+        model: model || "gemini-3.6-flash",
+        contents: [{
+          role: "user",
+          parts: [
+            { inlineData: { data: base64Limpo, mimeType: tipo } },
+            { text: prompt }
+          ]
+        }],
+        config: { temperature: 0 }
+      });
+
+      const transcricao = (resposta.text || "").trim();
+      if (!transcricao || transcricao === "[áudio incompreensível]") {
+        return res.status(422).json({ error: "Não foi possível identificar fala compreensível no áudio." });
+      }
+
+      return res.json({
+        ok: true,
+        transcricao,
+        modeloUsado: (resposta as any).__modeloUsado || model || "gemini-3.6-flash"
+      });
+    } catch (err: any) {
+      console.error("Erro ao transcrever áudio do OSONE HEAR:", err);
+      return res.status(500).json({ error: formatGeminiError(err) });
+    }
+  });
+
   // POST secure proxy endpoint for general Gemini content generation (supports history, tools, etc.)
   app.post("/api/gemini/generateContent", async (req, res) => {
     try {
