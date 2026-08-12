@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "buildCommand": "npm run build:vercel",
+  "buildCommand": "npm run build:vercel && node scripts/conferir-build-vercel.mjs",
   "outputDirectory": "dist",
   "rewrites": [
     {

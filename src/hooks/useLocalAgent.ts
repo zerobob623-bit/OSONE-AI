@@ -9,6 +9,7 @@ import {
 } from '../lib/agenteAutonomo';
 import { aprenderAutomacao, pistasDaAutomacao } from '../lib/historicoDoCowork';
 import { MetadadosDaCaptura, novoIdDeCaptura, validarCapturaAtual } from '../lib/capturaAtual';
+import { validarContextoDeExecucaoDoCowork } from '../lib/contextoDoCowork';
 
 /** Chave e modelo usados quando o motor precisa OLHAR a tela para achar um alvo. */
 export interface VisaoDoMotor {
@@ -133,6 +134,25 @@ export function resumirOQueJaFoiFeito(historico: VoltaDoAgente[]): string {
 
     return `${numero}. [${v.ok ? 'ok' : 'FALHOU'}] ${v.pensamento} → ${relato}${detalhe}`;
   }).join('\n');
+}
+
+/**
+ * Memória operacional curta e estável. O histórico narrativo perde as voltas antigas para caber
+ * no modelo; este checkup mantém cada resultado confirmado e a última etapa ainda sem prova.
+ */
+export function montarCheckupDasEtapas(historico: VoltaDoAgente[]): string {
+  const feitos = new Map<string, string>();
+  for (const volta of historico) {
+    if (!volta.ok || ['esperar', 'estudar_tela'].includes(volta.acao)) continue;
+    const chave = `${volta.acao}|${JSON.stringify(volta.args || {})}`;
+    feitos.set(chave, volta.relato);
+  }
+  const ultimas = [...feitos.values()].slice(-12).map((relato, i) => `${i + 1}. [FEITO E CONFIRMADO] ${relato}`);
+  const ultima = historico.at(-1);
+  if (ultima && (!ultima.ok || /não mudou|nao mudou|pendente|ainda/i.test(`${ultima.relato} ${ultima.erro || ''}`))) {
+    ultimas.push(`[EM ANDAMENTO — NÃO ABANDONAR] ${ultima.pensamento} → ${ultima.relato}`);
+  }
+  return ultimas.length ? ultimas.join('\n') : '[A FAZER] Nenhuma etapa foi confirmada ainda.';
 }
 
 /**
@@ -302,6 +322,7 @@ async function perguntarProximaAcao(
   anotacoes?: AnotacaoDoAgente[]
 ): Promise<string> {
   const feito = resumirOQueJaFoiFeito(historico);
+  const checkup = montarCheckupDasEtapas(historico);
 
   const contexto = [
     `OBJETIVO DO USUÁRIO: ${objetivo}`,
@@ -326,6 +347,7 @@ async function perguntarProximaAcao(
         `confirmado há ${Math.max(0, frameAtual?.idadeMs || 0)}ms. Olhe-a antes de decidir.`
       : 'ATENÇÃO: não foi possível fotografar a janela nesta rodada.',
     historico.length ? `O QUE VOCÊ JÁ FEZ:\n${feito}` : 'Você ainda não fez nada. Esta é a primeira ação.',
+    `CHECKUP DAS ETAPAS (fonte de verdade para não voltar nem trocar de estratégia cedo demais):\n${checkup}`,
     /**
      * A LEITURA DA TELA VEM DEPOIS DO HISTÓRICO E ANTES DA PERGUNTA, DE PROPÓSITO.
      *
@@ -1644,12 +1666,15 @@ export function useLocalAgent() {
     const { localAgentToken, visao } = opcoes;
     if (opcoes.janela !== undefined) definirJanela(opcoes.janela);
 
-    // Com a tela do agente ligada, começar sem janela é o NORMAL: ela nasce vazia, e a primeira
-    // coisa que ele faz lá é abrir alguma coisa. Sem ela, escolher a janela é obrigatório — ele
-    // vai agir na sua tela, e "em qualquer janela" não é uma resposta aceitável para isso.
-    if (!janelaRef.current && !areaRef.current?.ligada) {
-      return { error: 'Escolha em qual janela eu devo trabalhar antes de começar.' };
-    }
+    /**
+     * SEM JANELA AINDA É UMA TAREFA VÁLIDA.
+     *
+     * O agente também sabe `procurar`, `ler_pagina` e `anotar`, que não mexem no computador. A
+     * interface já permitia "pesquise e me traga com fontes" sem escolher uma janela, mas esta
+     * guarda antiga encerrava o pedido antes da primeira decisão. O laço recebe honestamente
+     * janela=null e pode pesquisar; se tentar agir na tela, fotografar/executar devolvem a falta
+     * da janela em vez de escolher uma janela qualquer e tocar no computador errado.
+     */
     if (motorParadoRef.current) {
       return { error: 'O motor de ações está PARADO por pedido seu. Retome antes de começar uma tarefa.' };
     }
@@ -1657,6 +1682,17 @@ export function useLocalAgent() {
     setRelatoDoAgente({ voltas: [], rodando: true });
     setAlvoMedido(null);
     const memoriaDaAutomacao = pistasDaAutomacao(objetivo);
+    const ambienteInicial = await lerAmbienteDaMaquina(localAgentToken);
+    const pastaDownloads = ambienteInicial?.userFolders?.downloads || ambienteInicial?.pastas?.downloads || 'downloads';
+    const listarDownloads = async (): Promise<string[]> => {
+      const r = await executeLocalAgentCall('controlar_pc', { acao: 'listar', caminho: pastaDownloads }, localAgentToken, false, visao);
+      if (r?.error) throw new Error(r.error);
+      const entradas = Array.isArray(r?.entries) ? r.entries : Array.isArray(r?.items) ? r.items : [];
+      return entradas.map((item: any) => String(item?.name || item?.nome || item?.path || item)).filter(Boolean);
+    };
+    // Tirado ANTES de qualquer clique: sem esta linha, o arquivo recém-baixado já faria parte da
+    // base e seria impossível provar que nasceu durante esta tarefa.
+    const downloadsNoInicio = new Set(await listarDownloads().catch(() => []));
 
     const fotografar = async () => {
       const f = await fotografarJanelaDeTrabalho(localAgentToken, opcoes.aoCapturar);
@@ -1706,6 +1742,11 @@ export function useLocalAgent() {
       },
 
       executar: async (acao, args) => {
+        const contextoInseguro = validarContextoDeExecucaoDoCowork({
+          temJanela: !!janelaRef.current,
+          areaParalelaLigada: !!areaRef.current?.ligada
+        });
+        if (contextoInseguro) return { error: contextoInseguro };
         // Clicar passa pelo caminho que MEDE dentro da janela; o resto vai direto.
         if (acao === 'clicar') {
           const alvo = String(args?.alvo || '').trim();
@@ -1785,6 +1826,17 @@ export function useLocalAgent() {
 
       procurar: (consulta) => procurarNaWeb(consulta, visao),
       lerPagina: (url) => lerPaginaDaWeb(url),
+      verificarDownload: async (nomeContem) => {
+        try {
+          const atuais = await listarDownloads();
+          const filtro = (nomeContem || '').trim().toLowerCase();
+          const novos = atuais.filter(nome => !downloadsNoInicio.has(nome) && (!filtro || nome.toLowerCase().includes(filtro)));
+          const pendentes = novos.filter(nome => /\.(crdownload|part|partial|tmp)$/i.test(nome));
+          return { arquivosNovos: novos.filter(nome => !pendentes.includes(nome)), pendentes };
+        } catch (erro: any) {
+          return { error: erro?.message || 'Não consegui listar a pasta Downloads.' };
+        }
+      },
 
       aoProgredir: (volta) => {
         setRelatoDoAgente(prev => ({ voltas: [...(prev?.voltas || []), volta], rodando: true }));
