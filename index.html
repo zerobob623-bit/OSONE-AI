@@ -1,45 +1,1242 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="pt-BR">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>OSONE</title>
-    <link rel="manifest" href="/manifest.json" />
-    <meta name="theme-color" content="#050505" />
-    <link rel="icon" href="/favicon.ico" sizes="any" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32x32.png" />
-    <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16x16.png" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="OSONE" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <script>
-      /**
-       * O service worker é conferido A CADA ABERTURA, e não quando o navegador resolver.
-       *
-       * Só chamar register() não basta: quando já existe um registro, o Chrome limita essa
-       * conferência a uma vez por dia. Foi isso que transformou um cache errado num problema que
-       * durava — enquanto a conferência não acontecia, o navegador seguia com o service worker
-       * antigo, entregando o index.html velho, que aponta para um pacote de código que já não
-       * existe no servidor. O resultado era tela branca em toda atualização de página.
-       *
-       * updateViaCache 'none' garante que o próprio /sw.js não venha do cache do navegador, e o
-       * update() explícito dispensa o agendamento. Juntos, um service worker desatualizado dura
-       * no máximo uma abertura de página, em vez de até um dia.
-       */
-      if ('serviceWorker' in navigator && !window.location.hostname.includes('localhost') && !window.location.hostname.includes('127.0.0.1') && !window.location.hostname.includes('.run.app')) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
-            .then((registro) => registro.update())
-            .catch(() => { /* sem service worker o app funciona igual, só não abre offline */ });
-        });
-      }
-    </script>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
-</html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#080b10" />
+  <meta name="description" content="OSONE — IA pessoal para Windows, Linux e Android. Voz, automação, navegador, terminal, WhatsApp e APIs configuradas por você." />
+  <title>OSONE — Sua IA. Suas APIs. Seu controle.</title>
 
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    :root{
+      --bg:#07090d;
+      --bg-soft:#0b0f16;
+      --card:#0e131c;
+      --card-2:#111824;
+      --line:rgba(255,255,255,.08);
+      --line-strong:rgba(255,149,0,.23);
+      --text:#f7f8fb;
+      --muted:#a9b2c0;
+      --muted-2:#7b8492;
+      --orange:#ff9500;
+      --orange-2:#ff6a00;
+      --amber:#ffc266;
+      --purple:#8b5cf6;
+      --purple-2:#6d28d9;
+      --violet:#c084fc;
+      --green:#79e6b0;
+      --shadow:0 24px 80px rgba(0,0,0,.35);
+      --radius:24px;
+      --max:1180px;
+    }
+
+    *{box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{
+      margin:0;
+      color:var(--text);
+      background:
+        radial-gradient(circle at 82% 8%, rgba(139,92,246,.14), transparent 27%),
+        radial-gradient(circle at 16% 24%, rgba(255,117,0,.11), transparent 28%),
+        radial-gradient(circle at 70% 72%, rgba(109,40,217,.07), transparent 24%),
+        var(--bg);
+      font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      overflow-x:hidden;
+    }
+
+    body::before{
+      content:"";
+      position:fixed;
+      inset:0;
+      pointer-events:none;
+      opacity:.18;
+      background-image:
+        linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px);
+      background-size:42px 42px;
+      mask-image:linear-gradient(to bottom, black, transparent 85%);
+      z-index:-1;
+    }
+
+    a{color:inherit;text-decoration:none}
+    button,input{font:inherit}
+    .container{width:min(calc(100% - 32px),var(--max));margin:auto}
+
+    .nav{
+      position:sticky;
+      top:0;
+      z-index:50;
+      backdrop-filter:blur(18px);
+      background:rgba(7,9,13,.76);
+      border-bottom:1px solid var(--line);
+    }
+
+    .nav-inner{
+      height:74px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:24px;
+    }
+
+    .brand{
+      display:flex;
+      align-items:center;
+      gap:12px;
+      font-family:"Space Grotesk",sans-serif;
+      font-weight:700;
+      letter-spacing:.03em;
+      font-size:1.08rem;
+    }
+
+    .logo{
+      width:38px;
+      height:38px;
+      border-radius:12px;
+      position:relative;
+      background:linear-gradient(135deg,#c084fc 0%,#8b5cf6 34%,#ff9500 72%,#ff6a00 100%);
+      box-shadow:0 0 30px rgba(255,126,0,.28);
+    }
+
+    .logo::before,
+    .logo::after{
+      content:"";
+      position:absolute;
+      inset:8px;
+      border:2px solid rgba(7,9,13,.85);
+      border-radius:50%;
+    }
+
+    .logo::after{
+      inset:14px;
+      background:#080b10;
+      border:0;
+    }
+
+    .nav-links{display:flex;gap:26px;align-items:center;color:var(--muted);font-size:.94rem}
+    .nav-links a:hover{color:white}
+
+    .nav-cta,
+    .btn{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:10px;
+      border-radius:14px;
+      border:1px solid transparent;
+      transition:.25s ease;
+      cursor:pointer;
+      font-weight:700;
+    }
+
+    .nav-cta{
+      padding:11px 16px;
+      color:#111;
+      background:linear-gradient(135deg,var(--amber),var(--orange));
+      box-shadow:0 10px 30px rgba(255,149,0,.18);
+    }
+
+    .hero{
+      min-height:calc(100vh - 74px);
+      display:grid;
+      align-items:center;
+      padding:82px 0 72px;
+    }
+
+    .hero-grid{
+      display:grid;
+      grid-template-columns:1.06fr .94fr;
+      gap:64px;
+      align-items:center;
+    }
+
+    .eyebrow{
+      width:max-content;
+      max-width:100%;
+      display:inline-flex;
+      gap:9px;
+      align-items:center;
+      padding:8px 12px;
+      border-radius:999px;
+      border:1px solid var(--line-strong);
+      background:rgba(255,149,0,.06);
+      color:#ffd298;
+      font-size:.82rem;
+      font-weight:700;
+      letter-spacing:.03em;
+      margin-bottom:22px;
+    }
+
+    .dot{
+      width:8px;height:8px;border-radius:50%;background:var(--orange);
+      box-shadow:0 0 15px rgba(255,149,0,.9);
+    }
+
+    h1,h2,h3,p{margin-top:0}
+    h1{
+      font-family:"Space Grotesk",sans-serif;
+      font-size:clamp(3.3rem,7vw,6.6rem);
+      line-height:.92;
+      letter-spacing:-.055em;
+      margin-bottom:24px;
+    }
+
+    .accent{
+      background:linear-gradient(90deg,#fff 0%,#d9c8ff 28%,#a78bfa 48%,#ffb04d 72%,#ff7a00 100%);
+      -webkit-background-clip:text;
+      background-clip:text;
+      color:transparent;
+    }
+
+    .hero-copy{
+      max-width:690px;
+      color:var(--muted);
+      font-size:1.14rem;
+      line-height:1.7;
+      margin-bottom:28px;
+    }
+
+    .hero-actions{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:30px}
+    .btn{padding:14px 18px}
+    .btn-primary{
+      background:linear-gradient(135deg,#c084fc 0%,#8b5cf6 38%,#ff9500 100%);
+      color:#111;
+      box-shadow:0 14px 38px rgba(139,92,246,.16),0 10px 30px rgba(255,120,0,.16);
+    }
+    .btn-primary:hover{transform:translateY(-2px);filter:brightness(1.04)}
+    .btn-secondary{
+      background:rgba(255,255,255,.04);
+      border-color:var(--line);
+      color:#fff;
+    }
+    .btn-secondary:hover{border-color:rgba(255,255,255,.18);background:rgba(255,255,255,.065)}
+
+    .hero-pills{display:flex;gap:10px;flex-wrap:wrap;color:var(--muted-2);font-size:.86rem}
+    .hero-pills span{
+      border:1px solid var(--line);
+      background:rgba(255,255,255,.03);
+      border-radius:999px;
+      padding:8px 11px;
+    }
+
+    .terminal-wrap{
+      position:relative;
+      padding:1px;
+      border-radius:28px;
+      background:linear-gradient(145deg,rgba(255,182,85,.55),rgba(255,255,255,.06),rgba(255,99,0,.45));
+      box-shadow:var(--shadow),0 0 70px rgba(255,115,0,.10);
+    }
+
+    .terminal{
+      position:relative;
+      overflow:hidden;
+      border-radius:27px;
+      min-height:515px;
+      background:
+        radial-gradient(circle at 80% 10%,rgba(255,126,0,.10),transparent 32%),
+        linear-gradient(180deg,#0c1119,#090d13);
+    }
+
+    .terminal-head{
+      height:54px;
+      border-bottom:1px solid var(--line);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      padding:0 18px;
+      color:var(--muted-2);
+      font-size:.82rem;
+    }
+
+    .lights{display:flex;gap:7px}
+    .lights i{width:9px;height:9px;border-radius:50%;background:#3a414b}
+    .lights i:first-child{background:#ff7d42}
+    .lights i:nth-child(2){background:#ffbd4a}
+    .lights i:nth-child(3){background:#5bd49b}
+
+    .terminal-body{padding:26px;font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:.9rem}
+    .code-line{display:flex;gap:10px;line-height:1.7;color:#c7cfda}
+    .prompt{color:var(--orange)}
+    .muted{color:#718092}
+    .ok{color:var(--green)}
+    .cmd{color:#f6d19f}
+    .typing::after{
+      content:"";
+      display:inline-block;
+      width:8px;height:1em;margin-left:4px;vertical-align:-2px;background:var(--orange);
+      animation:blink 1s steps(1) infinite;
+    }
+    @keyframes blink{50%{opacity:0}}
+
+    .agent-card{
+      position:absolute;
+      right:18px;
+      bottom:18px;
+      width:min(330px,calc(100% - 36px));
+      border:1px solid var(--line);
+      border-radius:18px;
+      background:rgba(16,22,32,.88);
+      backdrop-filter:blur(16px);
+      padding:16px;
+    }
+
+    .agent-top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+    .agent-title{font-weight:700}
+    .live{font-size:.72rem;color:var(--green);display:flex;align-items:center;gap:6px}
+    .live::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 10px rgba(121,230,176,.7)}
+    .task{padding:11px 12px;border:1px solid var(--line);border-radius:12px;color:#c8d0db;font-size:.8rem;margin-top:8px;background:rgba(255,255,255,.025)}
+
+    section{padding:100px 0}
+    .section-head{max-width:760px;margin-bottom:42px}
+    .kicker{color:var(--orange);font-size:.83rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px}
+    h2{
+      font-family:"Space Grotesk",sans-serif;
+      font-size:clamp(2.2rem,4.6vw,4rem);
+      line-height:1.02;
+      letter-spacing:-.04em;
+      margin-bottom:16px;
+    }
+    .section-head p{color:var(--muted);font-size:1.06rem;line-height:1.7}
+
+    .grid-3{
+      display:grid;
+      grid-template-columns:repeat(3,1fr);
+      gap:16px;
+    }
+
+    .card{
+      border:1px solid var(--line);
+      border-radius:var(--radius);
+      background:linear-gradient(180deg,rgba(17,24,36,.92),rgba(11,15,22,.92));
+      padding:24px;
+      min-height:230px;
+      position:relative;
+      overflow:hidden;
+    }
+    .card::after{
+      content:"";
+      position:absolute;
+      width:110px;height:110px;border-radius:50%;
+      right:-40px;top:-40px;
+      background:rgba(255,136,0,.07);
+      filter:blur(6px);
+    }
+    .icon{
+      width:42px;height:42px;border-radius:13px;
+      display:grid;place-items:center;
+      background:rgba(255,149,0,.10);
+      border:1px solid rgba(255,149,0,.20);
+      color:#ffbd6a;
+      margin-bottom:30px;
+      font-size:1.15rem;
+    }
+    .card h3{font-size:1.05rem;margin-bottom:10px}
+    .card p{color:var(--muted);line-height:1.62;font-size:.92rem;margin-bottom:0}
+
+    .platforms{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:16px;
+    }
+
+    .big-card{
+      border:1px solid var(--line);
+      border-radius:30px;
+      padding:34px;
+      background:
+        radial-gradient(circle at 80% 15%,rgba(255,130,0,.11),transparent 30%),
+        var(--bg-soft);
+      min-height:360px;
+    }
+
+    .chips{display:flex;flex-wrap:wrap;gap:9px;margin-top:24px}
+    .chip{padding:8px 11px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.025);color:#c6ced9;font-size:.84rem}
+
+    .flow{
+      margin-top:28px;
+      display:grid;
+      gap:12px;
+    }
+    .flow-step{
+      display:flex;
+      gap:14px;
+      align-items:flex-start;
+      padding:14px;
+      border:1px solid var(--line);
+      border-radius:16px;
+      background:rgba(255,255,255,.02);
+    }
+    .num{
+      flex:0 0 auto;
+      width:28px;height:28px;border-radius:50%;
+      display:grid;place-items:center;
+      background:#20160b;color:#ffbd6a;border:1px solid rgba(255,149,0,.25);
+      font-size:.78rem;font-weight:800;
+    }
+    .flow-step b{display:block;margin-bottom:4px}
+    .flow-step span{color:var(--muted);font-size:.88rem;line-height:1.45}
+
+    .security{
+      display:grid;
+      grid-template-columns:.9fr 1.1fr;
+      gap:30px;
+      align-items:stretch;
+    }
+
+    .security-panel{
+      border:1px solid var(--line-strong);
+      border-radius:30px;
+      padding:34px;
+      background:
+        linear-gradient(180deg,rgba(255,149,0,.06),transparent 60%),
+        var(--bg-soft);
+    }
+
+    .security-panel ul{
+      list-style:none;
+      padding:0;margin:26px 0 0;
+      display:grid;gap:13px;
+    }
+    .security-panel li{display:flex;gap:10px;color:#cbd3de;line-height:1.5}
+    .check{color:var(--green);font-weight:800}
+
+    .quote{
+      display:flex;flex-direction:column;justify-content:space-between;
+      border:1px solid var(--line);
+      border-radius:30px;
+      padding:34px;
+      background:linear-gradient(145deg,#111722,#0a0e15);
+    }
+    .quote strong{font-family:"Space Grotesk";font-size:clamp(1.9rem,3vw,3rem);line-height:1.08;letter-spacing:-.04em}
+    .quote p{color:var(--muted);line-height:1.7;margin:24px 0 0}
+
+    .cta{
+      padding:72px 0 110px;
+    }
+    .cta-box{
+      border-radius:34px;
+      padding:48px;
+      text-align:center;
+      border:1px solid rgba(255,149,0,.24);
+      background:
+        radial-gradient(circle at 50% -10%,rgba(255,168,59,.22),transparent 38%),
+        linear-gradient(180deg,#111722,#090d13);
+      box-shadow:0 20px 100px rgba(255,111,0,.07);
+    }
+    .cta-box p{max-width:710px;margin:0 auto 24px;color:var(--muted);line-height:1.7}
+
+    .download-row{
+      display:flex;justify-content:center;flex-wrap:wrap;gap:10px;margin-top:24px;
+    }
+    .download{
+      padding:12px 15px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:#dce2ea;font-size:.9rem
+    }
+
+    footer{border-top:1px solid var(--line);padding:28px 0 38px;color:var(--muted-2);font-size:.82rem}
+    .footer-inner{display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap}
+
+
+    /* Video Shelf Marquee */
+    .video-shelf-section {
+      padding: 60px 0 90px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .video-marquee-wrap {
+      position: relative;
+      width: 100%;
+      overflow: hidden;
+      mask-image: linear-gradient(to right, transparent, #000 10%, #000 90%, transparent);
+      -webkit-mask-image: linear-gradient(to right, transparent, #000 10%, #000 90%, transparent);
+      padding: 16px 0;
+      margin-bottom: 20px;
+    }
+
+    .video-marquee-track {
+      display: flex;
+      gap: 22px;
+      width: max-content;
+      animation: marquee-left 40s linear infinite;
+    }
+
+    .video-marquee-track.reverse {
+      animation: marquee-right 45s linear infinite;
+    }
+
+    .video-marquee-track:hover {
+      animation-play-state: paused;
+    }
+
+    @keyframes marquee-left {
+      0% { transform: translateX(0); }
+      100% { transform: translateX(-50%); }
+    }
+
+    @keyframes marquee-right {
+      0% { transform: translateX(-50%); }
+      100% { transform: translateX(0); }
+    }
+
+    .video-card {
+      width: 380px;
+      flex: 0 0 380px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: linear-gradient(180deg, rgba(20, 28, 42, 0.92), rgba(10, 14, 21, 0.96));
+      backdrop-filter: blur(12px);
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.4);
+      transition: transform 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease;
+    }
+
+    .video-card:hover {
+      transform: translateY(-6px) scale(1.02);
+      border-color: rgba(255, 149, 0, 0.45);
+      box-shadow: 0 22px 60px rgba(255, 120, 0, 0.22);
+    }
+
+    .video-frame {
+      position: relative;
+      aspect-ratio: 16/9;
+      background: #05070a;
+      overflow: hidden;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .video-frame iframe {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+    }
+
+    .video-info { padding: 18px 20px; }
+
+    .video-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: #ffc47a;
+      font-size: .74rem;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .video-info h3 { margin-bottom: 6px; font-size: 1.05rem; }
+    .video-info p { color: var(--muted); line-height: 1.5; font-size: .88rem; margin-bottom: 0; }
+
+    .conversion-row{
+      display:grid;
+      grid-template-columns:1.2fr .8fr;
+      gap:16px;
+      margin-top:22px;
+    }
+
+    .conversion-card{
+      border:1px solid var(--line);
+      border-radius:24px;
+      padding:24px;
+      background:rgba(255,255,255,.025);
+    }
+
+    .conversion-card.highlight{
+      border-color:rgba(255,149,0,.25);
+      background:linear-gradient(145deg,rgba(255,149,0,.09),rgba(255,255,255,.025));
+    }
+
+    .conversion-card p{color:var(--muted);line-height:1.6}
+    .mini-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+
+
+    .hero-visual{
+      position:relative;
+      min-height:560px;
+      overflow:hidden;
+      border-radius:32px;
+      border:1px solid rgba(255,255,255,.09);
+      background:#050609;
+      box-shadow:
+        0 30px 100px rgba(0,0,0,.48),
+        0 0 75px rgba(139,92,246,.09),
+        0 0 55px rgba(255,122,0,.08);
+      isolation:isolate;
+    }
+
+    .hero-visual::before{
+      content:"";
+      position:absolute;
+      inset:-1px;
+      z-index:3;
+      pointer-events:none;
+      border-radius:inherit;
+      background:linear-gradient(140deg,rgba(192,132,252,.18),transparent 28%,transparent 70%,rgba(255,149,0,.20));
+      mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+      mask-composite:exclude;
+      padding:1px;
+    }
+
+    .hero-visual img{
+      width:100%;
+      height:100%;
+      min-height:560px;
+      position:absolute;
+      inset:0;
+      object-fit:cover;
+      object-position:center center;
+      transform:scale(1.035);
+    }
+
+    .visual-shade{
+      position:absolute;
+      inset:0;
+      z-index:1;
+      background:
+        linear-gradient(180deg,rgba(4,5,8,.04),rgba(4,5,8,.05) 55%,rgba(4,5,8,.74) 100%),
+        linear-gradient(90deg,rgba(5,6,9,.24),transparent 35%);
+    }
+
+    .floating-badge{
+      position:absolute;
+      z-index:4;
+      display:flex;
+      align-items:center;
+      gap:12px;
+      max-width:310px;
+      padding:13px 15px;
+      border-radius:16px;
+      border:1px solid rgba(255,255,255,.11);
+      background:rgba(8,10,15,.70);
+      backdrop-filter:blur(15px);
+      box-shadow:0 14px 45px rgba(0,0,0,.25);
+    }
+
+    .floating-badge b{display:block;font-size:.9rem;margin-bottom:3px}
+    .floating-badge small{display:block;color:#aeb6c3;font-size:.72rem;line-height:1.35}
+    .badge-top{top:20px;right:20px}
+    .badge-bottom{bottom:20px;left:20px}
+
+    .badge-dot{
+      width:11px;height:11px;border-radius:50%;flex:0 0 auto;
+    }
+    .badge-dot.purple{background:var(--violet);box-shadow:0 0 18px rgba(192,132,252,.75)}
+    .badge-dot.orange{background:var(--orange);box-shadow:0 0 18px rgba(255,149,0,.8)}
+
+    .visual-orb-label{
+      position:absolute;
+      z-index:4;
+      right:20px;
+      bottom:20px;
+      color:rgba(255,255,255,.46);
+      font:700 .68rem "Space Grotesk",sans-serif;
+      letter-spacing:.18em;
+    }
+
+    .orb-showcase{
+      position:relative;
+      overflow:hidden;
+      min-height:560px;
+      margin-top:22px;
+      border:1px solid var(--line);
+      border-radius:32px;
+      background:#050609;
+      isolation:isolate;
+    }
+
+    .orb-showcase img{
+      position:absolute;
+      inset:0;
+      width:100%;
+      height:100%;
+      object-fit:cover;
+      object-position:center;
+      transform:scale(1.035);
+      opacity:.80;
+    }
+
+    .orb-showcase::after{
+      content:"";
+      position:absolute;
+      inset:0;
+      z-index:1;
+      background:
+        radial-gradient(circle at 50% 48%,transparent 0 22%,rgba(7,9,13,.10) 42%,rgba(7,9,13,.80) 90%),
+        linear-gradient(90deg,rgba(7,9,13,.90) 0%,rgba(7,9,13,.38) 46%,rgba(7,9,13,.28) 70%,rgba(7,9,13,.75) 100%);
+    }
+
+    .orb-content{
+      position:relative;
+      z-index:2;
+      min-height:560px;
+      display:flex;
+      flex-direction:column;
+      justify-content:center;
+      width:min(550px,100%);
+      padding:48px;
+    }
+
+    .orb-content h3{
+      font-family:"Space Grotesk",sans-serif;
+      font-size:clamp(2rem,4vw,3.55rem);
+      letter-spacing:-.045em;
+      line-height:1.02;
+      margin-bottom:18px;
+    }
+
+    .orb-content p{color:#c1c7d1;line-height:1.7;font-size:1rem}
+    .purple-text{color:#bda4ff}
+
+    .card:hover,.big-card:hover,.conversion-card:hover{
+      border-color:rgba(139,92,246,.22);
+      transform:translateY(-3px);
+      transition:.25s ease;
+    }
+
+    @media(max-width:980px){
+      .hero-grid{gap:34px}
+      .hero-visual{min-height:500px}
+      .hero-visual img{min-height:500px}
+      .orb-showcase,.orb-content{min-height:500px}
+    }
+
+    @media(max-width:640px){
+      .hero{min-height:auto;padding:48px 0 52px}
+      .hero-grid{gap:30px}
+      .eyebrow{font-size:.72rem}
+      .hero-visual{min-height:420px;border-radius:24px}
+      .hero-visual img{
+        min-height:420px;
+        object-position:61% center;
+      }
+      .floating-badge{padding:10px 12px;max-width:245px}
+      .badge-top{top:12px;right:12px}
+      .badge-bottom{left:12px;bottom:12px}
+      .visual-orb-label{display:none}
+      .orb-showcase{min-height:490px;border-radius:24px}
+      .orb-showcase img{object-position:center}
+      .orb-content{min-height:490px;padding:25px;justify-content:flex-end}
+      .orb-showcase::after{
+        background:linear-gradient(180deg,rgba(7,9,13,.08),rgba(7,9,13,.28) 38%,rgba(7,9,13,.94) 78%);
+      }
+      .section-head{margin-bottom:30px}
+      h2{font-size:clamp(2rem,10vw,3rem)}
+      .cta{padding-bottom:70px}
+    }
+
+    @media(max-width:390px){
+      h1{font-size:2.75rem}
+      .hero-pills span{font-size:.74rem}
+      .floating-badge small{font-size:.65rem}
+      .floating-badge{max-width:220px}
+      .badge-top{display:none}
+    }
+
+    @media(max-width:980px){
+      .video-card{width:310px; flex:0 0 310px}
+      .conversion-row{grid-template-columns:1fr}
+    }
+
+    @media(max-width:980px){
+      .nav-links{display:none}
+      .hero-grid,.security,.platforms{grid-template-columns:1fr}
+      .hero{padding-top:60px}
+      .terminal-wrap{max-width:720px}
+      .grid-3{grid-template-columns:repeat(2,1fr)}
+    }
+
+    @media(max-width:640px){
+      .container{width:min(calc(100% - 22px),var(--max))}
+      .nav-inner{height:66px}
+      .nav-cta{display:none}
+      h1{font-size:clamp(3rem,17vw,5rem)}
+      .hero-copy{font-size:1rem}
+      .hero-actions .btn{width:100%}
+      .grid-3{grid-template-columns:1fr}
+      section{padding:76px 0}
+      .big-card,.security-panel,.quote,.cta-box{padding:24px}
+      .terminal{min-height:480px}
+      .terminal-body{padding:18px;font-size:.78rem}
+    }
+  </style>
+</head>
+<body>
+  <nav class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="#inicio" aria-label="OSONE">
+        <span class="logo"></span>
+        <span>OSONE</span>
+      </a>
+
+      <div class="nav-links">
+        <a href="#recursos">Recursos</a>
+        <a href="#demos">Demonstrações</a>
+        <a href="#automacao">Automação</a>
+        <a href="#core">OSONE Core</a>
+        <a href="#privacidade">Privacidade</a>
+        <a href="#plataformas">Plataformas</a>
+      </div>
+
+      <a class="nav-cta" href="https://pay.kiwify.com.br/l0QNIqb" target="_blank" rel="noopener">Quero o OSONE</a>
+    </div>
+  </nav>
+
+  <main>
+    <section class="hero" id="inicio">
+      <div class="container hero-grid">
+        <div>
+          <div class="eyebrow"><span class="dot"></span> IA pessoal com ferramentas reais</div>
+          <h1>Sua IA.<br><span class="accent">Seu PC.<br>Seu controle.</span></h1>
+          <p class="hero-copy">
+            OSONE é um aplicativo de inteligência artificial para Windows, Linux e Android que combina conversa natural,
+            voz, pesquisa, automação de navegador, terminal, arquivos e integrações — usando as APIs configuradas na conta de cada usuário.
+          </p>
+
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="https://pay.kiwify.com.br/l0QNIqb" target="_blank" rel="noopener">Quero acessar o OSONE →</a>
+            <a class="btn btn-secondary" href="#demos">Ver em ação</a>
+          </div>
+
+          <div class="hero-pills">
+            <span>Windows</span>
+            <span>Linux</span>
+            <span>Android APK</span>
+            <span>BYO API Keys</span>
+          </div>
+        </div>
+
+        <div class="hero-visual" aria-label="Visual do OSONE">
+          <img src="osone-orb.jpg" alt="Esfera neural dourada e luminosa com conexões de inteligência artificial OSONE" />
+          <div class="visual-shade"></div>
+          <div class="floating-badge badge-top">
+            <span class="badge-dot purple"></span>
+            <div><b>IA multimodal</b><small>voz • texto • código • ferramentas</small></div>
+          </div>
+          <div class="floating-badge badge-bottom">
+            <span class="badge-dot orange"></span>
+            <div><b>Agent Loop</b><small>interpreta → executa → observa → continua</small></div>
+          </div>
+          <div class="visual-orb-label">OSONE CORE</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- MOVED UP: Video Shelf Section right after Hero -->
+    <section id="demos" class="video-shelf-section">
+      <div class="container">
+        <div class="section-head" style="text-align: center; margin-inline: auto;">
+          <div class="kicker">Prateleira de Demonstrações</div>
+          <h2>OSONE em ação em tempo real.</h2>
+          <p>Passe o mouse sobre qualquer amostra para pausar o movimento e interagir com os vídeos.</p>
+        </div>
+      </div>
+
+      <!-- Fileira 1: Movimento para a Esquerda -->
+      <div class="video-marquee-wrap">
+        <div class="video-marquee-track">
+          <article class="video-card">
+            <div class="video-frame">
+              <iframe src="https://www.youtube.com/embed/4LWKf-DAGEY" title="Demonstração OSONE 1" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+            </div>
+            <div class="video-info">
+              <div class="video-label">▶ Demonstração 01</div>
+              <h3>OSONE funcionando na prática</h3>
+              <p>Uma visão direta do aplicativo executando tarefas e interagindo com ferramentas.</p>
+            </div>
+          </article>
+
+          <article class="video-card">
+            <div class="video-frame">
+              <iframe src="https://www.youtube.com/embed/XX1ptFVOy04" title="Demonstração OSONE 2" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+            </div>
+            <div class="video-info">
+              <div class="video-label">▶ Demonstração 02</div>
+              <h3>Automação e interação</h3>
+              <p>Veja como a IA combina instruções, navegador e execução de ações em sequência.</p>
+            </div>
+          </article>
+
+          <article class="video-card">
+            <div class="video-frame">
+              <iframe src="https://www.youtube.com/embed/H-TYY2GcfuU" title="Demonstração OSONE 3" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+            </div>
+            <div class="video-info">
+              <div class="video-label">▶ Demonstração 03</div>
+              <h3>Mais possibilidades do OSONE</h3>
+              <p>Conheça a versatilidade e as integrações em ambiente real.</p>
+            </div>
+          </article>
+
+          <!-- Duplicados para loop contínuo -->
+          <article class="video-card">
+            <div class="video-frame">
+              <iframe src="https://www.youtube.com/embed/4LWKf-DAGEY" title="Demonstração OSONE 1" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+            </div>
+            <div class="video-info">
+              <div class="video-label">▶ Demonstração 01</div>
+              <h3>OSONE funcionando na prática</h3>
+              <p>Uma visão direta do aplicativo executando tarefas e interagindo com ferramentas.</p>
+            </div>
+          </article>
+
+          <article class="video-card">
+            <div class="video-frame">
+              <iframe src="https://www.youtube.com/embed/XX1ptFVOy04" title="Demonstração OSONE 2" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+            </div>
+            <div class="video-info">
+              <div class="video-label">▶ Demonstração 02</div>
+              <h3>Automação e interação</h3>
+              <p>Veja como a IA combina instruções, navegador e execução de ações em sequência.</p>
+            </div>
+          </article>
+
+          <article class="video-card">
+            <div class="video-frame">
+              <iframe src="https://www.youtube.com/embed/H-TYY2GcfuU" title="Demonstração OSONE 3" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+            </div>
+            <div class="video-info">
+              <div class="video-label">▶ Demonstração 03</div>
+              <h3>Mais possibilidades do OSONE</h3>
+              <p>Conheça a versatilidade e as integrações em ambiente real.</p>
+            </div>
+          </article>
+        </div>
+      </div>
+
+      <!-- Fileira 2: Movimento em sentido Direita/Inverso -->
+      <div class="video-marquee-wrap">
+        <div class="video-marquee-track reverse">
+          <article class="video-card">
+            <div class="video-frame">
+              <iframe src="https://www.youtube.com/embed/XX1ptFVOy04" title="Demonstração OSONE 2" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+            </div>
+            <div class="video-info">
+              <div class="video-label">▶ Automação de Telas</div>
+              <h3>Navegação e fluxo inteligente</h3>
+              <p>Agente interpretando a interface e executando cliques direcionados.</p>
+            </div>
+          </article>
+
+          <article class="video-card">
+            <div class="video-frame">
+              <iframe src="https://www.youtube.com/embed/H-TYY2GcfuU" title="Demonstração OSONE 3" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+            </div>
+            <div class="video-info">
+              <div class="video-label">▶ Ferramentas Conectadas</div>
+              <h3>Terminal, voz e WhatsApp</h3>
+              <p>Conexão entre múltiplos canais e comandos do sistema operacional.</p>
+            </div>
+          </article>
+
+          <article class="video-card">
+            <div class="video-frame">
+              <iframe src="https://www.youtube.com/embed/4LWKf-DAGEY" title="Demonstração OSONE 1" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+            </div>
+            <div class="video-info">
+              <div class="video-label">▶ Execução Real</div>
+              <h3>OSONE em Ação</h3>
+              <p>Exemplo de integração completa com APIs e modelos em tempo real.</p>
+            </div>
+          </article>
+
+          <!-- Duplicados para loop contínuo -->
+          <article class="video-card">
+            <div class="video-frame">
+              <iframe src="https://www.youtube.com/embed/XX1ptFVOy04" title="Demonstração OSONE 2" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+            </div>
+            <div class="video-info">
+              <div class="video-label">▶ Automação de Telas</div>
+              <h3>Navegação e fluxo inteligente</h3>
+              <p>Agente interpretando a interface e executando cliques direcionados.</p>
+            </div>
+          </article>
+
+          <article class="video-card">
+            <div class="video-frame">
+              <iframe src="https://www.youtube.com/embed/H-TYY2GcfuU" title="Demonstração OSONE 3" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+            </div>
+            <div class="video-info">
+              <div class="video-label">▶ Ferramentas Conectadas</div>
+              <h3>Terminal, voz e WhatsApp</h3>
+              <p>Conexão entre múltiplos canais e comandos do sistema operacional.</p>
+            </div>
+          </article>
+
+          <article class="video-card">
+            <div class="video-frame">
+              <iframe src="https://www.youtube.com/embed/4LWKf-DAGEY" title="Demonstração OSONE 1" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+            </div>
+            <div class="video-info">
+              <div class="video-label">▶ Execução Real</div>
+              <h3>OSONE em Ação</h3>
+              <p>Exemplo de integração completa com APIs e modelos em tempo real.</p>
+            </div>
+          </article>
+        </div>
+      </div>
+
+      <div class="container">
+        <div class="conversion-row">
+          <div class="conversion-card highlight">
+            <div class="kicker">Acesso</div>
+            <h3>Quer usar o OSONE?</h3>
+            <p>O acesso pode ser adquirido pela página oficial de pagamento na Kiwify.</p>
+            <div class="mini-actions">
+              <a class="btn btn-primary" href="https://pay.kiwify.com.br/l0QNIqb" target="_blank" rel="noopener">Comprar pela Kiwify →</a>
+            </div>
+          </div>
+
+          <div class="conversion-card">
+            <div class="kicker">Comunidade</div>
+            <h3>Entre no WhatsApp</h3>
+            <p>Acesse o grupo para acompanhar novidades, conversar sobre o OSONE e ficar perto da comunidade.</p>
+            <div class="mini-actions">
+              <a class="btn btn-secondary" href="https://chat.whatsapp.com/ES97PyxHO8j9MA9Vm2H1ui?s=cl&p=a&ilr=1" target="_blank" rel="noopener">Entrar no WhatsApp</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="recursos">
+      <div class="container">
+        <div class="section-head">
+          <div class="kicker">Mais que chatbot</div>
+          <h2>Uma IA que conversa, enxerga o fluxo e executa tarefas.</h2>
+          <p>O OSONE conecta modelos e serviços externos a ferramentas capazes de atuar no computador, navegador e canais de atendimento.</p>
+        </div>
+
+        <div class="grid-3">
+          <article class="card">
+            <div class="icon">◉</div>
+            <h3>Conversa natural e voz</h3>
+            <p>Integrações com modelos em tempo real e serviços de voz, incluindo Gemini Live, síntese via ElevenLabs e geração local com Piper.</p>
+          </article>
+
+          <article class="card">
+            <div class="icon">⌘</div>
+            <h3>Terminal e PowerShell</h3>
+            <p>Execute fluxos assistidos no terminal, interprete saídas, trabalhe com comandos e automatize tarefas repetitivas no sistema.</p>
+          </article>
+
+          <article class="card">
+            <div class="icon">▣</div>
+            <h3>Arquivos e pastas</h3>
+            <p>Abra diretórios, navegue por arquivos e conecte tarefas de análise, organização e desenvolvimento ao contexto da conversa.</p>
+          </article>
+
+          <article class="card">
+            <div class="icon">↗</div>
+            <h3>Navegador e cliques</h3>
+            <p>Automação com Playwright para clicar, navegar, preencher campos e repetir ações conforme instruções definidas pelo usuário.</p>
+          </article>
+
+          <article class="card">
+            <div class="icon">⌕</div>
+            <h3>Busca e pesquisa</h3>
+            <p>APIs de busca podem fornecer informações externas para fluxos de pesquisa, comparação, verificação e tarefas orientadas por contexto.</p>
+          </article>
+
+          <article class="card">
+            <div class="icon">WA</div>
+            <h3>WhatsApp automatizado</h3>
+            <p>Integração via Baileys para criar fluxos de atendimento, respostas automáticas e geração contínua de áudio quando configurada.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="automacao">
+      <div class="container">
+        <div class="section-head">
+          <div class="kicker">Agentes + ferramentas</div>
+          <h2>Dê a instrução. OSONE transforma intenção em uma sequência de ações.</h2>
+          <p>Em vez de apenas responder texto, o aplicativo pode combinar raciocínio do modelo, observação da interface e ferramentas locais em fluxos encadeados.</p>
+        </div>
+
+        <div class="platforms">
+          <div class="big-card">
+            <h3>Automação contínua</h3>
+            <p style="color:var(--muted);line-height:1.7">
+              O módulo de cowork/agent loop pode repetir cliques e outras ações conforme uma tarefa definida, observando o resultado de cada etapa antes de continuar.
+            </p>
+
+            <div class="flow">
+              <div class="flow-step"><div class="num">1</div><div><b>Você descreve o objetivo</b><span>Ex.: “abra o painel, procure os pedidos pendentes e organize a lista”.</span></div></div>
+              <div class="flow-step"><div class="num">2</div><div><b>OSONE escolhe ferramentas</b><span>Navegador, arquivos, terminal, voz, busca ou integrações disponíveis.</span></div></div>
+              <div class="flow-step"><div class="num">3</div><div><b>Executa e observa</b><span>Cada ação gera um novo estado que pode orientar a próxima etapa.</span></div></div>
+            </div>
+          </div>
+
+          <div class="big-card">
+            <h3>Modelos e APIs conectáveis</h3>
+            <p style="color:var(--muted);line-height:1.7">
+              A arquitetura pode usar diferentes provedores para texto, código, voz, busca e interação em tempo real. As credenciais pertencem ao próprio usuário.
+            </p>
+            <div class="chips">
+              <span class="chip">Gemini Live</span>
+              <span class="chip">Modelos Gemini</span>
+              <span class="chip">ElevenLabs</span>
+              <span class="chip">Piper TTS</span>
+              <span class="chip">APIs de busca</span>
+              <span class="chip">Baileys</span>
+              <span class="chip">Playwright</span>
+              <span class="chip">Terminal</span>
+              <span class="chip">PowerShell</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <section id="core">
+      <div class="container">
+        <div class="section-head">
+          <div class="kicker">O núcleo do OSONE</div>
+          <h2>Uma inteligência. <span class="purple-text">Muitas ferramentas.</span> Um único fluxo.</h2>
+          <p>O modelo entende a intenção, seleciona a ferramenta apropriada e transforma conversa em ação no ambiente permitido pelo usuário.</p>
+        </div>
+
+        <div class="orb-showcase">
+          <img src="osone-orb.jpg" alt="Esfera neural luminosa simbolizando conexões e ferramentas da inteligência artificial OSONE" />
+          <div class="orb-content">
+            <div class="kicker">Orquestração inteligente</div>
+            <h3>O modelo pensa.<br>A ferramenta executa.</h3>
+            <p>
+              Voz, código, navegador, arquivos, terminal, busca e automações podem trabalhar juntos.
+              Em vez de trocar de aplicativo a cada etapa, o OSONE funciona como uma camada que conecta a sua intenção aos recursos disponíveis.
+            </p>
+            <div class="chips">
+              <span class="chip">Gemini Live</span>
+              <span class="chip">Playwright</span>
+              <span class="chip">PowerShell</span>
+              <span class="chip">WhatsApp</span>
+              <span class="chip">ElevenLabs</span>
+              <span class="chip">Piper</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="privacidade">
+      <div class="container security">
+        <div class="security-panel">
+          <div class="kicker">BYO API</div>
+          <h2 style="font-size:clamp(2.1rem,4vw,3.45rem)">Você conecta suas próprias contas.</h2>
+          <p style="color:var(--muted);line-height:1.7">
+            OSONE foi pensado para um modelo em que cada pessoa configura as próprias credenciais de serviços externos.
+            Assim, o uso de modelos, voz e outras APIs fica vinculado às contas escolhidas pelo próprio usuário.
+          </p>
+          <ul>
+            <li><span class="check">✓</span><span>Credenciais configuradas individualmente</span></li>
+            <li><span class="check">✓</span><span>Escolha quais serviços integrar</span></li>
+            <li><span class="check">✓</span><span>Ferramentas locais sob controle do usuário</span></li>
+            <li><span class="check">✓</span><span>Arquitetura flexível para diferentes provedores</span></li>
+          </ul>
+        </div>
+
+        <div class="quote">
+          <div>
+            <div class="kicker">A ideia central</div>
+            <strong>Não é só uma IA que fala com você. É uma camada inteligente entre você, seus aplicativos e suas ferramentas.</strong>
+          </div>
+          <p>
+            O objetivo é reduzir o caminho entre “eu quero fazer isso” e “isso foi feito” — mantendo a pessoa no comando das permissões, integrações e credenciais.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section id="plataformas">
+      <div class="container">
+        <div class="section-head">
+          <div class="kicker">Multiplataforma</div>
+          <h2>Uma mesma ideia, em máquinas diferentes.</h2>
+          <p>OSONE foi projetado para rodar em desktop e dispositivos Android, adaptando as ferramentas disponíveis a cada ambiente.</p>
+        </div>
+
+        <div class="grid-3">
+          <article class="card">
+            <div class="icon">⊞</div>
+            <h3>Windows</h3>
+            <p>Integração com arquivos, navegador, automações do sistema, terminal e PowerShell.</p>
+          </article>
+          <article class="card">
+            <div class="icon">⌁</div>
+            <h3>Linux</h3>
+            <p>Fluxos de terminal, arquivos, browser automation e integrações configuráveis pelo usuário.</p>
+          </article>
+          <article class="card">
+            <div class="icon">⌂</div>
+            <h3>Android APK</h3>
+            <p>Acesso móvel à conversa, voz, integrações e recursos compatíveis com o ambiente Android.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="cta" id="download">
+      <div class="container">
+        <div class="cta-box">
+          <div class="eyebrow" style="margin-inline:auto"><span class="dot"></span> OSONE</div>
+          <h2>Transforme instruções em ações.</h2>
+          <p>
+            Uma IA pessoal feita para conversar, programar, pesquisar, operar ferramentas e automatizar tarefas usando os provedores que você escolher.
+          </p>
+          <div class="hero-actions" style="justify-content:center;margin-bottom:18px">
+            <a href="https://pay.kiwify.com.br/l0QNIqb" target="_blank" rel="noopener" class="btn btn-primary">
+              Quero acessar o OSONE →
+            </a>
+            <a href="https://chat.whatsapp.com/ES97PyxHO8j9MA9Vm2H1ui?s=cl&p=a&ilr=1" target="_blank" rel="noopener" class="btn btn-secondary">
+              Comunidade no WhatsApp
+            </a>
+          </div>
+          <div class="download-row">
+            <span class="download">Windows</span>
+            <span class="download">Linux</span>
+            <span class="download">Android APK</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container footer-inner">
+      <span>© <span id="year"></span> OSONE. Todos os direitos reservados.</span>
+      <span>Suas APIs. Suas permissões. Seu fluxo.</span>
+    </div>
+  </footer>
+
+  <script>
+    document.getElementById('year').textContent = new Date().getFullYear();
+
+    // Pequena animação de entrada, sem dependências externas.
+    const items = document.querySelectorAll('.card, .big-card, .security-panel, .quote, .video-card, .conversion-card, .hero-visual, .orb-showcase');
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if(entry.isIntersecting){
+          entry.target.animate(
+            [
+              {opacity:0, transform:'translateY(18px)'},
+              {opacity:1, transform:'translateY(0)'}
+            ],
+            {duration:520, easing:'cubic-bezier(.2,.8,.2,1)', fill:'both'}
+          );
+          observer.unobserve(entry.target);
+        }
+      });
+    }, {threshold:.14});
+
+    items.forEach(el => observer.observe(el));
+  </script>
+</body>
+</html>
