@@ -22,14 +22,30 @@ export function semQueryEAncora(caminho: string): string {
   return (caminho || '').split(/[?#]/)[0] || '';
 }
 
+/**
+ * O PONTO DO COMEÇO FICA. Ele é o nome do arquivo, não uma tentativa de fuga.
+ *
+ * Antes havia uma segunda limpeza aqui — `.replace(/^\.+(?=[^.])/, '')` — pensada para barrar
+ * travessia de pasta. Só que a travessia já é barrada dois passos adiante, onde os segmentos "."
+ * e ".." são jogados fora um a um; o que essa linha fazia de fato era comer o ponto de arquivos
+ * legítimos: ".gitignore" virava "gitignore", ".env.example" virava "env.example", e a pasta
+ * ".github/workflows" virava "github/workflows".
+ *
+ * O estrago passava despercebido porque nada dava erro — o arquivo aparecia na árvore com o nome
+ * quase certo. Mas um "gitignore" sem ponto não é ignorado por git nenhum, e um projeto importado
+ * do GitHub voltava com os arquivos de configuração mudos. É justamente o conjunto de arquivos que
+ * um projeto de verdade precisa ter.
+ *
+ * Um segmento feito SÓ de pontos (".", "..", "...") continua sendo descartado logo abaixo: essa é
+ * a travessia de verdade, e ela nunca passa.
+ */
 function limparSegmento(segmento: string, reserva: string): string {
   const limpo = (segmento || '')
     .replace(CARACTERES_INVALIDOS_SEGMENTO, '-')
     .replace(/[\\/]+/g, '-')
     .replace(/\s+/g, ' ')
     .trim()
-    .replace(/^\.+$/, '')
-    .replace(/^\.+(?=[^.])/, '');
+    .replace(/^\.+$/, '');
   return (limpo || reserva).slice(0, 120);
 }
 
@@ -39,7 +55,8 @@ function limparSegmento(segmento: string, reserva: string): string {
  * Exemplos:
  * - `frontend/index.html` fica `frontend/index.html`
  * - `./src/app.ts` fica `src/app.ts`
- * - `../../.env` vira `env` dentro do projeto, nunca fora dele
+ * - `.gitignore` continua `.gitignore` — o ponto faz parte do nome
+ * - `../../.env` vira `.env` DENTRO do projeto: a travessia some, o nome fica
  */
 export function normalizarCaminhoDoCode(caminho: string, reserva = 'arquivo.txt'): string {
   const cru = semQueryEAncora(caminho)

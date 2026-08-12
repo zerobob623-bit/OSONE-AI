@@ -94,6 +94,7 @@ import { useHierarchicalMemory } from './hooks/useHierarchicalMemory';
 import { usePersonaSelfRevision } from './hooks/usePersonaSelfRevision';
 import { getCounterfactualReasoningDirective, getSalienceEmpathyDirective } from './lib/cognitiveDirectives';
 import { buildCodeEditSystemInstruction, applyModelCodeResponse, pareceDocumentoIncompleto, substituirTrecho, contextoAoRedor } from './lib/codeEdits';
+import { INSTRUCAO_DE_PROJETO_MULTIARQUIVO, lerArquivosDoModelo } from './lib/projetoMultiArquivo';
 import { gerarCodigoEmFluxo } from './lib/gerarCodigoEmFluxo';
 import { useLocalAgent } from './hooks/useLocalAgent';
 import { useTikTokLive } from './hooks/useTikTokLive';
@@ -7083,7 +7084,7 @@ ${promptText}${maxEffort ? '\n\nESFORÇO MÁXIMO: capriche nos detalhes e nos ca
     aoEscrever?: (textoAcumulado: string) => void,
     /** Abandona a geração pela metade quando o usuário desiste, sem esperar o modelo terminar. */
     sinal?: AbortSignal
-  ): Promise<{ conteudo: string; resumo: string } | null> => {
+  ): Promise<{ conteudo: string; resumo: string; projetoMultiArquivo?: string } | null> => {
     if (!promptText.trim()) return null;
 
     setIsGenerating(true);
@@ -7108,9 +7109,30 @@ ${promptText}${maxEffort ? '\n\nESFORÇO MÁXIMO: capriche nos detalhes e nos ca
           referenceImages, maxEffort, aoEscrever, sinal);
       }
 
+      /**
+       * DUAS FORMAS DE RESPONDER, E A ESCOLHA É DO MODELO.
+       *
+       * O formato antigo (SEARCH/REPLACE no arquivo aberto) continua sendo o certo para a maioria
+       * dos pedidos: mexer numa função, ajustar um estilo, corrigir um bug. Ele é cirúrgico e não
+       * arrisca o resto do arquivo.
+       *
+       * O que faltava era o outro caso — "crie um app com login, listagem e um servidor" —, em que
+       * a resposta certa é um CONJUNTO de arquivos. Sem um formato para isso, o modelo fazia o que
+       * dava: ou espremia tudo num arquivo só, ou descrevia arquivos que ninguém criava.
+       */
       const systemInstruction = buildCodeEditSystemInstruction(
         "Você é o arquiteto de software de elite do OSONE Studio. Sua missão é gerar ou editar código (HTML5, CSS, JS, React, Tailwind, Python ou similar)."
-      );
+      ) + `
+
+====== QUANDO O PEDIDO É UM PROJETO, E NÃO UM ARQUIVO ======
+
+Se o pedido exige CRIAR OU MUDAR MAIS DE UM ARQUIVO — ou mexer num arquivo que não é o que está aberto —, esqueça os blocos SEARCH/REPLACE e responda no formato de projeto abaixo. Exemplos de pedido assim: "crie um app de X com login e listagem", "separe isso em componentes", "adicione um servidor", "monte a estrutura do projeto".
+
+Para pedido de UM arquivo só (ajustar uma função, corrigir um bug, mudar um estilo no arquivo aberto), continue usando SEARCH/REPLACE como sempre — é mais seguro e não mexe no resto.
+
+${INSTRUCAO_DE_PROJETO_MULTIARQUIVO}
+
+Ao montar um projeto, inclua o que ele precisa para ser um projeto de verdade e não um arquivo solto: o ponto de entrada, os componentes separados por responsabilidade, e quando fizer sentido "package.json", ".gitignore" e ".env.example" (este último só com os NOMES das variáveis, nunca com valores).`;
 
       const contentsText = currentCode.length > 20
         ? `CÓDIGO FONTE ATUAL NO REPOSITÓRIO:\n\n${currentCode}\n\nINSTRUÇÕES DO USUÁRIO PARA ALTERAÇÃO/CRIAÇÃO:\n${promptText}${referenceImages && referenceImages.length > 0 ? `\n\n(O usuário anexou ${referenceImages.length} imagem(ns) de referência visual para esta criação — use-as como inspiração de design/layout/estilo.)` : ''}${maxEffort ? '\n\nESFORÇO MÁXIMO SOLICITADO: capriche ao máximo, pense em todos os detalhes, casos extremos e refinamentos de design antes de responder. Não corte caminho nem simplifique por economia — priorize a melhor implementação possível, mesmo que leve mais tempo.' : ''}`
@@ -7211,6 +7233,27 @@ ${promptText}${maxEffort ? '\n\nESFORÇO MÁXIMO: capriche nos detalhes e nos ca
       // Rebaixar em silêncio é que era o problema; rebaixar avisando, não.
       if (data.modeloUsado && data.modeloPreferido && data.modeloUsado !== data.modeloPreferido) {
         addNotification(`ℹ️ O modelo preferido (${data.modeloPreferido}) estava indisponível — o código foi gerado por ${data.modeloUsado}.`, "info");
+      }
+
+      /**
+       * PROJETO INTEIRO TEM PRIORIDADE SOBRE ARQUIVO ÚNICO.
+       *
+       * Esta verificação vem ANTES de applyModelCodeResponse de propósito. Aquela função trata o
+       * texto como o conteúdo de UM arquivo — então, se blocos de projeto chegassem até ela, o
+       * texto com os marcadores "<<<<<<< ARQUIVO:" seria gravado cru por cima do arquivo aberto:
+       * o projeto inteiro viraria lixo dentro de um arquivo só, exatamente o resultado que este
+       * formato existe para evitar.
+       *
+       * Quem aplica é o editor, e não aqui: os arquivos são dele, e é lá que existe o histórico
+       * que torna a gravação reversível com Ctrl+Z.
+       */
+      const leituraDoProjeto = lerArquivosDoModelo(data.text);
+      if (leituraDoProjeto.arquivos.length > 0 || leituraDoProjeto.cortada) {
+        return {
+          conteudo: '',
+          resumo: `${leituraDoProjeto.arquivos.length} arquivo(s) no formato de projeto`,
+          projetoMultiArquivo: data.text
+        };
       }
 
       const { content: newContent, summary, hadFailures, respostaCortada } = applyModelCodeResponse(data.text, currentCode);

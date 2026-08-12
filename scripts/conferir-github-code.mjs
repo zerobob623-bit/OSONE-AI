@@ -48,7 +48,16 @@ console.log('  ok  merge exige confirmação explícita e usa squash');
 
 assert.match(code, /CodeGithubPanel/);
 assert.match(code, /setIsGithubPanelOpen\(true\)/);
-assert.match(code, />GitHub<\/span>/);
+/**
+ * O que importa é EXISTIR o caminho até o painel do GitHub, não o rótulo escrito ao lado do ícone.
+ *
+ * Esta linha exigia o texto ">GitHub</span>" e ficou vermelha silenciosamente quando a barra
+ * superior do CODE virou só ícones (o nome passou para o "title", que é o que aparece ao parar o
+ * mouse). Um conferidor preso à marcação exata quebra a cada ajuste visual e, pior, treina a
+ * pessoa a ignorar a suíte — que era exatamente o estado em que ele estava.
+ */
+assert.match(code, /setIsGithubPanelOpen\(true\)/);
+assert.match(code, /title=\{?["`][^"`]*GitHub/);
 console.log('  ok  painel GitHub está acessível dentro do OSONE CODE');
 
 console.log('7/7 conferências GitHub do OSONE CODE passaram.');
