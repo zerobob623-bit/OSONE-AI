@@ -856,6 +856,28 @@ export default function App() {
     }
   }, [aiDossierType]);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('home');
+  /**
+   * Pedidos ditados não podem chamar o gerador diretamente daqui.
+   *
+   * O gerador apenas DEVOLVE o código; quem conhece o arquivo aberto, cria o snapshot de Ctrl+Z e
+   * grava o resultado é o CodeWorkspace. Antes, a ferramenta de voz ignorava esse retorno: a API
+   * escrevia por alguns instantes e terminava, mas nenhum arquivo recebia o resultado. A fila
+   * atravessa a troca de aba e entrega cada pedido ao editor, um por vez.
+   */
+  const [pedidosDeVozDoCode, setPedidosDeVozDoCode] = useState<Array<{ id: string; prompt: string }>>([]);
+
+  const enfileirarPedidoDeVozDoCode = (promptRecebido: unknown): string | null => {
+    const prompt = typeof promptRecebido === 'string' ? promptRecebido.trim() : '';
+    if (!prompt) return null;
+    const id = `voz-code-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setPedidosDeVozDoCode(atuais => [...atuais, { id, prompt }]);
+    setWorkspaceMode('code');
+    return id;
+  };
+
+  const concluirPedidoDeVozDoCode = (id: string) => {
+    setPedidosDeVozDoCode(atuais => atuais.filter(pedido => pedido.id !== id));
+  };
 
   const paidFeatureLabel: Record<PaidFeature, string> = {
     cowork_browser: 'OSONE COWORK',
@@ -9153,9 +9175,15 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
               }]);
               continue;
             }
-            setWorkspaceMode('code');
+            const pedidoId = enfileirarPedidoDeVozDoCode(promptText);
+            if (!pedidoId) {
+              setChatHistory(prev => [...prev, {
+                id: Math.random().toString(36).substr(2, 9), role: 'assistant' as const,
+                content: 'Não recebi uma instrução de código. Diga novamente o que deseja criar ou alterar.'
+              }]);
+              continue;
+            }
             addNotification(`🚀 Pedido enviado para o OSONE CODE: "${promptText}"`, "success");
-            handleCodeWorkspacePrompt(promptText);
             setChatHistory(prev => [...prev, { 
               id: Math.random().toString(36).substr(2, 9), 
               role: 'assistant' as const, 
@@ -11224,9 +11252,15 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       });
                       continue;
                     }
-                    setWorkspaceMode('code');
+                    const pedidoId = enfileirarPedidoDeVozDoCode(promptText);
+                    if (!pedidoId) {
+                      responses.push({
+                        name: call.name, id: call.id,
+                        response: { error: 'A instrução de código veio vazia. Peça ao usuário para repetir.' }
+                      });
+                      continue;
+                    }
                     addNotification(`🚀 OSONE Live enviou pedido para o OSONE CODE: "${promptText}"`, "success");
-                    handleCodeWorkspacePrompt(promptText);
                     responses.push({
                       name: call.name,
                       id: call.id,
@@ -12937,6 +12971,8 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 apiKeys={apiKeys}
                 onUpdateApiKeys={(patch) => setApiKeys(prev => ({ ...prev, ...patch }))}
                 isGenerating={isGenerating}
+                comandoDeVoz={pedidosDeVozDoCode[0]}
+                aoConcluirComandoDeVoz={concluirPedidoDeVozDoCode}
               />
             </motion.div>
           ) : workspaceMode === 'canvas' ? (
