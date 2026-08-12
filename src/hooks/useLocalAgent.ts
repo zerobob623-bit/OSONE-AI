@@ -9,6 +9,7 @@ import {
 } from '../lib/agenteAutonomo';
 import { aprenderAutomacao, pistasDaAutomacao } from '../lib/historicoDoCowork';
 import { MetadadosDaCaptura, novoIdDeCaptura, validarCapturaAtual } from '../lib/capturaAtual';
+import { validarContextoDeExecucaoDoCowork } from '../lib/contextoDoCowork';
 
 /** Chave e modelo usados quando o motor precisa OLHAR a tela para achar um alvo. */
 export interface VisaoDoMotor {
@@ -1644,12 +1645,15 @@ export function useLocalAgent() {
     const { localAgentToken, visao } = opcoes;
     if (opcoes.janela !== undefined) definirJanela(opcoes.janela);
 
-    // Com a tela do agente ligada, começar sem janela é o NORMAL: ela nasce vazia, e a primeira
-    // coisa que ele faz lá é abrir alguma coisa. Sem ela, escolher a janela é obrigatório — ele
-    // vai agir na sua tela, e "em qualquer janela" não é uma resposta aceitável para isso.
-    if (!janelaRef.current && !areaRef.current?.ligada) {
-      return { error: 'Escolha em qual janela eu devo trabalhar antes de começar.' };
-    }
+    /**
+     * SEM JANELA AINDA É UMA TAREFA VÁLIDA.
+     *
+     * O agente também sabe `procurar`, `ler_pagina` e `anotar`, que não mexem no computador. A
+     * interface já permitia "pesquise e me traga com fontes" sem escolher uma janela, mas esta
+     * guarda antiga encerrava o pedido antes da primeira decisão. O laço recebe honestamente
+     * janela=null e pode pesquisar; se tentar agir na tela, fotografar/executar devolvem a falta
+     * da janela em vez de escolher uma janela qualquer e tocar no computador errado.
+     */
     if (motorParadoRef.current) {
       return { error: 'O motor de ações está PARADO por pedido seu. Retome antes de começar uma tarefa.' };
     }
@@ -1706,6 +1710,11 @@ export function useLocalAgent() {
       },
 
       executar: async (acao, args) => {
+        const contextoInseguro = validarContextoDeExecucaoDoCowork({
+          temJanela: !!janelaRef.current,
+          areaParalelaLigada: !!areaRef.current?.ligada
+        });
+        if (contextoInseguro) return { error: contextoInseguro };
         // Clicar passa pelo caminho que MEDE dentro da janela; o resto vai direto.
         if (acao === 'clicar') {
           const alvo = String(args?.alvo || '').trim();
