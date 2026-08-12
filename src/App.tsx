@@ -856,6 +856,28 @@ export default function App() {
     }
   }, [aiDossierType]);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('home');
+  /**
+   * Pedidos ditados não podem chamar o gerador diretamente daqui.
+   *
+   * O gerador apenas DEVOLVE o código; quem conhece o arquivo aberto, cria o snapshot de Ctrl+Z e
+   * grava o resultado é o CodeWorkspace. Antes, a ferramenta de voz ignorava esse retorno: a API
+   * escrevia por alguns instantes e terminava, mas nenhum arquivo recebia o resultado. A fila
+   * atravessa a troca de aba e entrega cada pedido ao editor, um por vez.
+   */
+  const [pedidosDeVozDoCode, setPedidosDeVozDoCode] = useState<Array<{ id: string; prompt: string }>>([]);
+
+  const enfileirarPedidoDeVozDoCode = (promptRecebido: unknown): string | null => {
+    const prompt = typeof promptRecebido === 'string' ? promptRecebido.trim() : '';
+    if (!prompt) return null;
+    const id = `voz-code-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setPedidosDeVozDoCode(atuais => [...atuais, { id, prompt }]);
+    setWorkspaceMode('code');
+    return id;
+  };
+
+  const concluirPedidoDeVozDoCode = (id: string) => {
+    setPedidosDeVozDoCode(atuais => atuais.filter(pedido => pedido.id !== id));
+  };
 
   const paidFeatureLabel: Record<PaidFeature, string> = {
     cowork_browser: 'OSONE COWORK',
@@ -2040,6 +2062,8 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   const [letraCantada, setLetraCantada] = useState<{ verso: string; titulo?: string } | null>(null);
   const limpezaDaLetraRef = useRef<any>(null);
   const cantandoAgoraRef = useRef(false);
+  /** Rearma o canto quando a API encerra um turno antes de terminar a letra planejada. */
+  const continuacaoDoCantoRef = useRef<any>(null);
 
   const limparRelogioDaLetra = () => {
     if (limpezaDaLetraRef.current) {
@@ -2068,6 +2092,10 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
 
   const encerrarLetraCantada = () => {
     cantandoAgoraRef.current = false;
+    if (continuacaoDoCantoRef.current) {
+      clearTimeout(continuacaoDoCantoRef.current);
+      continuacaoDoCantoRef.current = null;
+    }
     limparRelogioDaLetra();
     setLetraCantada(null);
   };
@@ -9153,9 +9181,15 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
               }]);
               continue;
             }
-            setWorkspaceMode('code');
+            const pedidoId = enfileirarPedidoDeVozDoCode(promptText);
+            if (!pedidoId) {
+              setChatHistory(prev => [...prev, {
+                id: Math.random().toString(36).substr(2, 9), role: 'assistant' as const,
+                content: 'Não recebi uma instrução de código. Diga novamente o que deseja criar ou alterar.'
+              }]);
+              continue;
+            }
             addNotification(`🚀 Pedido enviado para o OSONE CODE: "${promptText}"`, "success");
-            handleCodeWorkspacePrompt(promptText);
             setChatHistory(prev => [...prev, { 
               id: Math.random().toString(36).substr(2, 9), 
               role: 'assistant' as const, 
@@ -9701,10 +9735,13 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
         NUNCA É "ÀS VEZES": todo pedido de canto ou de som com a boca é atendido, em qualquer idioma, em
         qualquer momento da conversa, esteja o assunto anterior qual estiver. Não existe pedido de música
         "fora de hora" nem contexto sério demais para cantar. Se você atendeu uma vez, atende sempre.
-        - Ao CANTAR (só ao cantar, não ao falar), chame a ferramenta 'mostrar_letra_cantada' com o trecho que
-          está saindo da sua boca naquele instante, para que a letra apareça bonita na tela do usuário. Mande
-          UM ou DOIS versos por chamada — o que couber confortavelmente na tela — e vá chamando de novo,
-          acompanhando o que canta. Ao terminar a música, chame 'encerrar_letra_cantada'.
+        - Ao CANTAR (só ao cantar, não ao falar), planeje primeiro a LETRA INTEIRA e chame
+          'mostrar_letra_cantada' UMA ÚNICA VEZ com todos os versos. Depois da resposta da ferramenta, cante
+          a música inteira em fluxo contínuo, do primeiro ao último verso, sem novas ferramentas no meio.
+          Chamadas de ferramenta interrompem o áudio: chamar a cada verso era justamente o que fazia você
+          cantar só uma ou duas frases. Não resuma, não encurte e não pare por causa do limite de 15 palavras.
+          Se a API encerrar um turno antes do fim, o app pedirá continuação: retome exatamente do verso em que
+          parou. Só chame 'encerrar_letra_cantada' DEPOIS de realmente cantar toda a letra planejada.
         ${useElevenLabsOutput ? `- ATENÇÃO AO MOTOR DE VOZ ATUAL: neste momento sua fala está saindo por um sintetizador externo
           (ElevenLabs), que apenas LÊ texto e não reproduz melodia, assobio nem ruído de boca. Cantar agora
           sairia como fala comum. Isso não é uma limitação sua — é do canal. Diga isso em uma frase e ofereça
@@ -9845,13 +9882,13 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 },
                 {
                   name: "mostrar_letra_cantada",
-                  description: "Mostra na tela do usuário, num popup bonito no centro, o trecho da letra que você está cantando NESTE instante. Chame SEMPRE que estiver cantando, e vá chamando de novo conforme avança na música, para a letra acompanhar a sua voz. Só serve para canto — não use para fala normal.",
+                  description: "Prepara na tela a letra COMPLETA que será cantada. Chame UMA única vez antes de começar e depois cante tudo em fluxo contínuo, sem outras chamadas desta ferramenta no meio. Só serve para canto — não use para fala normal.",
                   parameters: {
                     type: Type.OBJECT,
                     properties: {
                       verso: {
                         type: Type.STRING,
-                        description: "O trecho da letra que está saindo da sua boca agora. UM ou DOIS versos apenas — o que couber confortavelmente na tela. Nunca mande a música inteira de uma vez. Escreva no MESMO idioma em que você está cantando (inglês, espanhol, japonês, o que for) — nunca traduza a letra."
+                        description: "A letra INTEIRA, do primeiro ao último verso, exatamente no idioma em que será cantada. Não resuma nem envie apenas a primeira estrofe."
                       },
                       titulo: {
                         type: Type.STRING,
@@ -11224,9 +11261,15 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       });
                       continue;
                     }
-                    setWorkspaceMode('code');
+                    const pedidoId = enfileirarPedidoDeVozDoCode(promptText);
+                    if (!pedidoId) {
+                      responses.push({
+                        name: call.name, id: call.id,
+                        response: { error: 'A instrução de código veio vazia. Peça ao usuário para repetir.' }
+                      });
+                      continue;
+                    }
                     addNotification(`🚀 OSONE Live enviou pedido para o OSONE CODE: "${promptText}"`, "success");
-                    handleCodeWorkspacePrompt(promptText);
                     responses.push({
                       name: call.name,
                       id: call.id,
@@ -11405,7 +11448,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       responses.push({
                         name: call.name,
                         id: call.id,
-                        response: { result: "Letra no ar. Continue cantando e mande o próximo verso quando chegar nele." }
+                        response: { result: "Letra completa preparada. Agora cante todos os versos em sequência, sem chamar ferramentas no meio; encerre somente depois do último verso." }
                       });
                     } else {
                       responses.push({
@@ -12123,6 +12166,27 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
               if (message.serverContent?.turnComplete) {
                 if (!isElevenLabsLiveOutput()) {
                   setIsSpeaking(false);
+                }
+                /**
+                 * O Live pode fechar uma resposta de áudio por limite interno mesmo com a música ainda
+                 * marcada como ativa. Antes isso soava como uma ou duas frases e silêncio. Enquanto o
+                 * modelo não confirmar o último verso com `encerrar_letra_cantada`, cada fim prematuro
+                 * recebe uma ordem de continuar. Não há teto artificial: parar/interromper a sessão ou a
+                 * ferramenta de encerramento cancelam esta corrente.
+                 */
+                if (cantandoAgoraRef.current && !isElevenLabsLiveOutput()) {
+                  if (continuacaoDoCantoRef.current) clearTimeout(continuacaoDoCantoRef.current);
+                  continuacaoDoCantoRef.current = setTimeout(() => {
+                    continuacaoDoCantoRef.current = null;
+                    if (!cantandoAgoraRef.current || !souAGeracaoAtual()) return;
+                    try {
+                      session.sendRealtimeInput({
+                        text: '[CONTINUAÇÃO DO CANTO] O turno de áudio terminou antes da música. Continue cantando agora, exatamente do verso em que parou. Não repita o começo, não resuma e só encerre depois do último verso da letra completa.'
+                      });
+                    } catch (erro) {
+                      console.warn('[Canto] Não foi possível pedir a continuação:', erro);
+                    }
+                  }, 450);
                 }
               }
             });
@@ -12937,6 +13001,8 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 apiKeys={apiKeys}
                 onUpdateApiKeys={(patch) => setApiKeys(prev => ({ ...prev, ...patch }))}
                 isGenerating={isGenerating}
+                comandoDeVoz={pedidosDeVozDoCode[0]}
+                aoConcluirComandoDeVoz={concluirPedidoDeVozDoCode}
               />
             </motion.div>
           ) : workspaceMode === 'canvas' ? (
@@ -14598,7 +14664,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
 
                 <p
                   key={letraCantada.verso}
-                  className="text-center font-serif italic text-xl md:text-2xl leading-relaxed text-her-ink [text-shadow:0_2px_20px_rgba(0,0,0,0.6)]"
+                  className="text-center whitespace-pre-line max-h-[52vh] overflow-y-auto custom-scrollbar font-serif italic text-xl md:text-2xl leading-relaxed text-her-ink [text-shadow:0_2px_20px_rgba(0,0,0,0.6)]"
                 >
                   {letraCantada.verso}
                 </p>
