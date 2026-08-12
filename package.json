@@ -35,6 +35,7 @@
     "test:code-voz": "node scripts/conferir-voz-code.mjs",
     "test:canto": "node scripts/conferir-canto-completo.mjs",
     "test:sons": "node scripts/conferir-biblioteca-sons.mjs",
+    "test:chat-code": "node scripts/conferir-chat-code.mjs",
     "test:cameras": "node scripts/conferir-cameras.mjs",
     "test:tela-inicial": "node scripts/conferir-tela-inicial.mjs",
     "test:cowork-memory": "tsx scripts/conferir-memoria-cowork.ts",

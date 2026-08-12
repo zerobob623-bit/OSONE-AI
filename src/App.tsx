@@ -866,6 +866,11 @@ export default function App() {
    * atravessa a troca de aba e entrega cada pedido ao editor, um por vez.
    */
   const [pedidosDeVozDoCode, setPedidosDeVozDoCode] = useState<Array<{ id: string; prompt: string }>>([]);
+  const [contextoDoChatCodeParaVoz, setContextoDoChatCodeParaVoz] = useState('');
+  const contextoDoChatCodeParaVozRef = useRef('');
+  useEffect(() => {
+    contextoDoChatCodeParaVozRef.current = contextoDoChatCodeParaVoz;
+  }, [contextoDoChatCodeParaVoz]);
 
   const enfileirarPedidoDeVozDoCode = (promptRecebido: unknown): string | null => {
     const prompt = typeof promptRecebido === 'string' ? promptRecebido.trim() : '';
@@ -7129,6 +7134,9 @@ ${promptText}${maxEffort ? '\n\nESFORÇO MÁXIMO: capriche nos detalhes e nos ca
     sinal?: AbortSignal
   ): Promise<{ conteudo: string; resumo: string; projetoMultiArquivo?: string } | null> => {
     if (!promptText.trim()) return null;
+    // Defesa em profundidade: montar a aba não basta. Uma chamada programática ou evento antigo
+    // também precisa respeitar o mesmo entitlement Pro usado pelo menu e pela voz.
+    if (!requestPaidFeature('osone_code')) return null;
 
     setIsGenerating(true);
     try {
@@ -7363,6 +7371,32 @@ Ao montar um projeto, inclua o que ele precisa para ser um projeto de verdade e 
     } finally {
       setIsGenerating(false);
     }
+  };
+
+  const handleCodeChatRequest = async (
+    pergunta: string,
+    contextoDoProjeto: string,
+    historico: Array<{ role: 'user' | 'assistant'; content: string }>
+  ): Promise<string | null> => {
+    if (!pergunta.trim() || !requestPaidFeature('osone_code')) return null;
+
+    const conversaRecente = historico.slice(-16).map(mensagem =>
+      `${mensagem.role === 'user' ? 'USUÁRIO' : 'ASSISTENTE'}: ${mensagem.content}`
+    ).join('\n');
+    const response = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...montarConfigDaApiDoOsoneCode(),
+        systemInstruction: `Você é o parceiro de engenharia do chat do OSONE CODE. Analise somente o retrato real do projeto fornecido. Converse em português claro, cite arquivos e funções quando útil, explique alterações já existentes e proponha próximos passos. Esta sessão é estritamente consultiva: NÃO devolva blocos SEARCH/REPLACE, NÃO finja que editou arquivos e nunca diga que uma alteração foi aplicada. Se faltarem dados, diga exatamente o que não está no retrato.`,
+        prompt: `${contextoDoProjeto}\n\nCONVERSA ANTERIOR:\n${conversaRecente || '(início da conversa)'}\n\nPERGUNTA DO USUÁRIO:\n${pergunta}`,
+        unrestricted: true
+      })
+    });
+    const data = await response.json().catch(() => ({} as any));
+    if (!response.ok) throw new Error(data?.error || 'Falha ao consultar o chat do OSONE CODE.');
+    if (!data?.text?.trim()) throw new Error('O modelo respondeu vazio no chat do OSONE CODE.');
+    return data.text.trim();
   };
 
   const handleAnalyzeCode = async (codeToAnalyze = workspaceText) => {
@@ -9858,6 +9892,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
         - Se o usuário disser "Feche a aba", "Volte para o início" ou "Sair da aba", chame 'close_workspace_tab' ou 'switch_workspace_mode' com mode 'home'.
         - PEDIDOS DE JOGOS E CÓDIGOS PARA O OSONE CODE SEM DIGITAR:
           Quando o usuário solicitar por voz para o OSONE CODE gerar um jogo, aplicativo ou modificação de código (ex: "OSONE, crie um jogo da velha no OSONE CODE" ou "Gere um jogo de nave space invader"), chame IMEDIATAMENTE a ferramenta 'send_code_prompt' informando a instrução em texto no parâmetro 'prompt'. A ferramenta abrirá o OSONE CODE automaticamente e iniciará a geração do código/jogo sem o usuário precisar digitar nada!
+          Quando ele fizer uma PERGUNTA sobre o projeto ou sobre a conversa da sessão Conversar do OSONE CODE, não mande editar: chame 'get_osone_code_chat_context', leia o contexto retornado e responda em voz alta com base nele. Nunca tente obter ou revelar esse contexto quando a ferramenta recusar por falta do plano Pro.
 
         CONTEXTO:
         - Workspace: ${workspaceMode}
@@ -10255,6 +10290,14 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       }
                     },
                     required: ["prompt"]
+                  }
+                },
+                {
+                  name: "get_osone_code_chat_context",
+                  description: "Lê o projeto aberto e a conversa recente da sessão Conversar do OSONE CODE para responder por voz sobre código, arquitetura, decisões e alterações. Recurso exclusivo do plano Pro; chame antes de responder qualquer pergunta por voz sobre o chat do OSONE CODE.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {}
                   }
                 },
                 {
@@ -11307,6 +11350,22 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       name: call.name,
                       id: call.id,
                       response: { result: "Aba fechada com sucesso. O usuário retornou para a tela inicial." }
+                    });
+                  } else if (call.name === "get_osone_code_chat_context") {
+                    if (!requestPaidFeature('osone_code')) {
+                      responses.push({
+                        name: call.name, id: call.id,
+                        response: { error: 'O chat do OSONE CODE requer o plano Pro e seu contexto não foi disponibilizado.' }
+                      });
+                      continue;
+                    }
+                    const contexto = contextoDoChatCodeParaVozRef.current.trim();
+                    responses.push({
+                      name: call.name,
+                      id: call.id,
+                      response: contexto
+                        ? { result: contexto }
+                        : { error: 'Abra o OSONE CODE e a sessão Conversar ao menos uma vez para carregar o contexto do projeto.' }
                     });
                   } else if (call.name === "send_code_prompt") {
                     const promptText = (call.args as any).prompt as string;
@@ -13065,6 +13124,8 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
               <CodeWorkspace 
                 onClose={() => setWorkspaceMode('home')}
                 onGenerateCodeRequest={handleCodeWorkspacePrompt}
+                onCodeChatRequest={handleCodeChatRequest}
+                onCodeChatContextChange={setContextoDoChatCodeParaVoz}
                 onStartLiveVoice={() => startLiveSession()}
                 apiKeys={apiKeys}
                 onUpdateApiKeys={(patch) => setApiKeys(prev => ({ ...prev, ...patch }))}

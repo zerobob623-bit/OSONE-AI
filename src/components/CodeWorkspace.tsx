@@ -525,6 +525,13 @@ export interface AlvoDaGeracao {
   trechoSelecionado?: { inicio: number; fim: number; texto: string };
 }
 
+export interface MensagemDoChatCode {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  createdAt: number;
+}
+
 export const CodeWorkspace: React.FC<{
   onClose?: () => void;
   /**
@@ -550,6 +557,14 @@ export const CodeWorkspace: React.FC<{
      */
   ) => Promise<{ conteudo: string; resumo: string; projetoMultiArquivo?: string } | null>;
   onStartLiveVoice?: () => void;
+  /** Conversa sobre o projeto sem aplicar qualquer alteração nos arquivos. */
+  onCodeChatRequest?: (
+    pergunta: string,
+    contextoDoProjeto: string,
+    historico: MensagemDoChatCode[]
+  ) => Promise<string | null>;
+  /** Mantém a voz informada sobre o projeto e a conversa vistos nesta aba. */
+  onCodeChatContextChange?: (contexto: string) => void;
   apiKeys?: ApiKeys;
   onUpdateApiKeys?: (patch: Partial<ApiKeys>) => void;
   isGenerating?: boolean;
@@ -558,7 +573,7 @@ export const CodeWorkspace: React.FC<{
   /** Remove da fila somente depois que o editor terminou de aplicar (ou relatar a falha). */
   aoConcluirComandoDeVoz?: (id: string) => void;
 }> = ({ onClose, onGenerateCodeRequest, onStartLiveVoice, apiKeys, onUpdateApiKeys, isGenerating,
-  comandoDeVoz, aoConcluirComandoDeVoz }) => {
+  comandoDeVoz, aoConcluirComandoDeVoz, onCodeChatRequest, onCodeChatContextChange }) => {
   // 5 PROJECTS MANAGEMENT
   const [projects, setProjects] = useState<OSONEProject[]>(() => {
     try {
@@ -774,6 +789,17 @@ export const CodeWorkspace: React.FC<{
   const [viewLayout, setViewLayout] = useState<'split' | 'editor' | 'preview'>('split');
   const [showRepoSidebar, setShowRepoSidebar] = useState<boolean>(true);
   const [promptInput, setPromptInput] = useState<string>('');
+  const [sessaoDaIa, setSessaoDaIa] = useState<'implementar' | 'conversar'>('implementar');
+  const [perguntaDoChat, setPerguntaDoChat] = useState('');
+  const [chatRespondendo, setChatRespondendo] = useState(false);
+  const [chatPorProjeto, setChatPorProjeto] = useState<Record<string, MensagemDoChatCode[]>>(() => {
+    try {
+      const salvo = JSON.parse(localStorage.getItem('osone_code_chat_v1') || '{}');
+      return salvo && typeof salvo === 'object' ? salvo : {};
+    } catch {
+      return {};
+    }
+  });
   const [copied, setCopied] = useState<boolean>(false);
   const [editingFileNameId, setEditingFileNameId] = useState<string | null>(null);
   const [editingFileNameText, setEditingFileNameText] = useState<string>('');
@@ -826,6 +852,32 @@ export const CodeWorkspace: React.FC<{
    */
   const filesRef = useRef(files);
   filesRef.current = files;
+  const mensagensDoChat = chatPorProjeto[activeProjectId] || [];
+  const chatFimRef = useRef<HTMLDivElement>(null);
+
+  const montarContextoDoProjetoParaChat = () => {
+    const cabecalho = `PROJETO: ${activeProjectName}\nARQUIVO ABERTO: ${activeFile?.name || 'nenhum'}\n`;
+    return cabecalho + filesRef.current.map(arquivo =>
+      `\n===== ARQUIVO: ${arquivo.name} =====\n${arquivo.content}`
+    ).join('\n');
+  };
+
+  // O histórico pertence ao projeto, assim como os arquivos: trocar de projeto nunca mistura
+  // decisões e explicações de bases de código diferentes.
+  useEffect(() => {
+    localStorage.setItem('osone_code_chat_v1', JSON.stringify(chatPorProjeto));
+  }, [chatPorProjeto]);
+
+  useEffect(() => {
+    const conversa = mensagensDoChat.slice(-20).map(m =>
+      `${m.role === 'user' ? 'USUÁRIO' : 'OSONE CODE'}: ${m.content}`
+    ).join('\n');
+    onCodeChatContextChange?.(`${montarContextoDoProjetoParaChat()}\n\nCONVERSA RECENTE DO OSONE CODE:\n${conversa || '(sem mensagens)'}`);
+  }, [activeProjectId, activeProjectName, activeFile?.name, files, chatPorProjeto, onCodeChatContextChange]);
+
+  useEffect(() => {
+    if (sessaoDaIa === 'conversar') chatFimRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [mensagensDoChat.length, chatRespondendo, sessaoDaIa]);
 
   // Auto-dismiss notification banner
   useEffect(() => {
@@ -2009,6 +2061,49 @@ Responda APENAS um array JSON de 4 strings. Exemplo do formato:
         : 'A geração não devolveu código. Seu pedido continua na caixa para você tentar de novo.',
       type: 'error'
     });
+  };
+
+  const enviarPerguntaDoChat = async () => {
+    const pergunta = perguntaDoChat.trim();
+    if (!pergunta || chatRespondendo || !onCodeChatRequest) return;
+
+    const mensagem: MensagemDoChatCode = {
+      id: `code-chat-user-${Date.now()}`,
+      role: 'user',
+      content: pergunta,
+      createdAt: Date.now()
+    };
+    const historicoAnterior = mensagensDoChat;
+    setPerguntaDoChat('');
+    setChatRespondendo(true);
+    setChatPorProjeto(atual => ({
+      ...atual,
+      [activeProjectId]: [...(atual[activeProjectId] || []), mensagem]
+    }));
+
+    try {
+      const resposta = await onCodeChatRequest(pergunta, montarContextoDoProjetoParaChat(), historicoAnterior);
+      if (!resposta?.trim()) {
+        setPerguntaDoChat(pergunta);
+        setNotificationBanner({ message: 'O chat não recebeu resposta. A pergunta voltou para o campo.', type: 'error' });
+        return;
+      }
+      const mensagemDaIa: MensagemDoChatCode = {
+        id: `code-chat-assistant-${Date.now()}`,
+        role: 'assistant',
+        content: resposta.trim(),
+        createdAt: Date.now()
+      };
+      setChatPorProjeto(atual => ({
+        ...atual,
+        [activeProjectId]: [...(atual[activeProjectId] || []), mensagemDaIa]
+      }));
+    } catch (erro: any) {
+      setPerguntaDoChat(pergunta);
+      setNotificationBanner({ message: erro?.message || 'Não foi possível conversar sobre o projeto.', type: 'error' });
+    } finally {
+      setChatRespondendo(false);
+    }
   };
 
   const processandoComandoDeVozRef = useRef(false);
@@ -3877,6 +3972,73 @@ FORMATO OBRIGATÓRIO (JSON estrito):
       {/* AI Code Assistant Footer Prompt Box */}
       <div className="border-t border-white/5 bg-[#090b10] p-2 sm:p-3 shrink-0 overflow-hidden">
         <div className="w-full max-w-6xl mx-auto space-y-2 min-w-0">
+          <div className="flex items-center justify-between gap-2">
+            <div className="inline-flex rounded-xl border border-white/10 bg-black/40 p-1" role="tablist" aria-label="Sessão do OSONE CODE">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={sessaoDaIa === 'implementar'}
+                onClick={() => setSessaoDaIa('implementar')}
+                className={cn('flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-mono transition-colors', sessaoDaIa === 'implementar' ? 'bg-cyan-500 text-black font-bold' : 'text-zinc-400 hover:text-white')}
+              >
+                <Terminal size={12} /> Implementar
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={sessaoDaIa === 'conversar'}
+                onClick={() => setSessaoDaIa('conversar')}
+                className={cn('flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-mono transition-colors', sessaoDaIa === 'conversar' ? 'bg-violet-500 text-white font-bold' : 'text-zinc-400 hover:text-white')}
+              >
+                <MessageSquare size={12} /> Conversar
+              </button>
+            </div>
+            <span className="hidden sm:block text-[10px] font-mono text-zinc-500">
+              {sessaoDaIa === 'implementar' ? 'A IA pode alterar os arquivos' : 'Somente análise — nenhum arquivo será alterado'}
+            </span>
+          </div>
+
+          {sessaoDaIa === 'conversar' && (
+            <div className="rounded-2xl border border-violet-500/20 bg-violet-950/10 overflow-hidden">
+              <div className="max-h-56 min-h-28 overflow-y-auto p-3 space-y-2" aria-live="polite">
+                {mensagensDoChat.length === 0 && (
+                  <div className="flex gap-2 text-xs text-zinc-400 font-mono">
+                    <Bot size={16} className="text-violet-400 shrink-0" />
+                    <p>Eu já consigo ler os arquivos de <strong className="text-zinc-200">{activeProjectName}</strong>. Pergunte como o projeto funciona, o que mudou, onde está um erro ou qual seria o próximo passo. Nesta sessão eu explico, mas não edito.</p>
+                  </div>
+                )}
+                {mensagensDoChat.map(mensagem => (
+                  <div key={mensagem.id} className={cn('flex', mensagem.role === 'user' ? 'justify-end' : 'justify-start')}>
+                    <div className={cn('max-w-[88%] rounded-2xl px-3 py-2 text-xs sm:text-sm whitespace-pre-wrap break-words', mensagem.role === 'user' ? 'bg-cyan-500 text-black' : 'bg-white/[0.06] border border-white/10 text-zinc-200')}>
+                      {mensagem.content}
+                    </div>
+                  </div>
+                ))}
+                {chatRespondendo && <div className="flex items-center gap-2 text-xs font-mono text-violet-300"><Loader2 size={13} className="animate-spin" /> Analisando o projeto…</div>}
+                <div ref={chatFimRef} />
+              </div>
+              <div className="flex gap-2 border-t border-white/5 p-2">
+                <input
+                  value={perguntaDoChat}
+                  onChange={e => setPerguntaDoChat(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) void enviarPerguntaDoChat(); }}
+                  placeholder="Pergunte sobre o código, arquitetura ou alterações…"
+                  disabled={chatRespondendo}
+                  className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-xs sm:text-sm text-white placeholder-zinc-500 outline-none focus:border-violet-500/50 font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => void enviarPerguntaDoChat()}
+                  disabled={!perguntaDoChat.trim() || chatRespondendo}
+                  className="rounded-xl bg-violet-500 hover:bg-violet-400 disabled:bg-zinc-800 disabled:text-zinc-500 px-4 py-2 text-xs font-bold text-white transition-colors"
+                >
+                  Perguntar
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className={sessaoDaIa === 'implementar' ? 'contents' : 'hidden'}>
           
           {/* AI Quick Prompts */}
           {/*
@@ -4119,6 +4281,8 @@ FORMATO OBRIGATÓRIO (JSON estrito):
                 )}
               </button>
             </div>
+          </div>
+
           </div>
 
         </div>
