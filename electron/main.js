@@ -20,6 +20,7 @@ const require = createRequire(import.meta.url);
 
 let mainWindow = null;
 let mascotWindow = null;
+let mascotOverlayEnabled = false;
 const DEFAULT_PORT = Number(process.env.PORT) || 3000;
 let logStream = null;
 
@@ -393,6 +394,7 @@ function ajustarJanelaDoMascote() {
 
 function criarJanelaDoMascote() {
   if (process.env.OSONE_MASCOT_OVERLAY === '0') return;
+  mascotOverlayEnabled = true;
   if (mascotWindow && !mascotWindow.isDestroyed()) return;
 
   const display = screen.getPrimaryDisplay();
@@ -430,6 +432,15 @@ function criarJanelaDoMascote() {
   mascotWindow.on('closed', () => {
     mascotWindow = null;
   });
+}
+
+function fecharJanelaDoMascote() {
+  mascotOverlayEnabled = false;
+  if (!mascotWindow || mascotWindow.isDestroyed()) {
+    mascotWindow = null;
+    return;
+  }
+  mascotWindow.close();
 }
 
 function setupFileLogging() {
@@ -808,7 +819,6 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
-    criarJanelaDoMascote();
   });
 
   // Rede de segurança: se por qualquer motivo a janela não tiver aparecido, mostramos assim
@@ -974,6 +984,42 @@ function publicarDiagnosticoDeLogin() {
   };
 }
 
+function publicarControleDoMascote() {
+  globalThis.__osoneMascote = {
+    estado: () => ({
+      suportado: process.env.OSONE_MASCOT_OVERLAY !== '0',
+      ativo: mascotOverlayEnabled,
+      externo: true,
+      mensagem: process.env.OSONE_MASCOT_OVERLAY === '0'
+        ? 'Mascote externo desativado por OSONE_MASCOT_OVERLAY=0.'
+        : ''
+    }),
+    definir: (ativo) => {
+      if (process.env.OSONE_MASCOT_OVERLAY === '0') {
+        return {
+        ok: false,
+        suportado: false,
+        ativo: false,
+          externo: true,
+          mensagem: 'Mascote externo desativado por OSONE_MASCOT_OVERLAY=0.'
+        };
+      }
+      if (ativo) {
+        criarJanelaDoMascote();
+      } else {
+        fecharJanelaDoMascote();
+      }
+      return {
+        ok: true,
+        suportado: true,
+        ativo: mascotOverlayEnabled,
+        externo: true,
+        mensagem: ativo ? 'Mascote ativado.' : 'Mascote ocultado.'
+      };
+    }
+  };
+}
+
 function publicarControleDeAtualizacao() {
   globalThis.__osoneAtualizador = {
     estado: () => ({ ...estadoDaAtualizacao }),
@@ -1119,6 +1165,7 @@ app.whenReady().then(async () => {
   screen.on('display-removed', ajustarJanelaDoMascote);
   // O controle vai para o ar ANTES do servidor: é ele que o servidor procura ao responder as
   // rotas de atualização, e um servidor que suba primeiro não encontraria nada.
+  publicarControleDoMascote();
   publicarControleDeAtualizacao();
   publicarDiagnosticoDeLogin();
   await startBackendServer();
