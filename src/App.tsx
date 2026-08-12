@@ -106,7 +106,7 @@ import { resolveAudioUrl, deleteAudio } from './lib/audioDb';
 import { auth, googleProvider, signInWithPopup, signOut, onAuthStateChanged, db, doc, setDoc, getDoc, OperationType, handleFirestoreError, isFirebaseFullyConfigured, firebaseConfigFaltando, explicarErroDeLogin } from './firebase';
 import { TelaDeEntrada } from './components/TelaDeEntrada';
 import { LegalConsentGate } from './components/LegalConsentGate';
-import { OsoneMascotCompanion } from './components/OsoneMascotCompanion';
+import { OsoneMascotCompanion, type AtividadeDoMascote } from './components/OsoneMascotCompanion';
 
 import { HomeWorkspaceSection } from './components/HomeWorkspaceSection';
 import { useSubscription } from './hooks/useSubscription';
@@ -12664,6 +12664,20 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
     setReferenceImages(prev => prev.filter((_, i) => i !== index));
   };
 
+  const atividadeDoMascote: AtividadeDoMascote =
+    liveState.status === 'error'
+      ? 'error'
+      : isSpeaking
+        ? 'speaking'
+        : (isGenerating || isAnalyzingCode || isTranscribing || isModelSearching || liveState.status === 'connecting')
+          ? 'thinking'
+          : summonedAba === workspaceMode
+            ? 'summoned'
+            : (liveState.status === 'connected' || isElevenLabsLiveActive)
+              ? 'listening'
+              : 'idle';
+  const alvoDoMascote = summonedAba === workspaceMode ? getFriendlyModeName(workspaceMode) : undefined;
+
   /**
    * PORTA DE ENTRADA — daqui não se passa sem conta Google.
    *
@@ -14808,7 +14822,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         )}
       </AnimatePresence>
 
-      <OsoneMascotCompanion />
+      <OsoneMascotCompanion brain={{ atividade: atividadeDoMascote, alvo: alvoDoMascote }} />
 
       {/* GLOBAL CHAMAR OSONE FLOATING BUTTON FOR NON-HOME PAGES/TABS */}
       {/* Fora do CODE: lá ele flutuaria bem em cima da fileira direita de ferramentas da aba,

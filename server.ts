@@ -5106,6 +5106,15 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
     return res.json(controle.definir(Boolean(req.body?.ativo)));
   });
 
+  app.post("/api/mascote/sinal", (req, res) => {
+    if (!somenteDaPropriaMaquina(req, res, 'O mascote externo do OSONE')) return;
+    const controle = controleDoMascote();
+    if (!controle) {
+      return res.json({ ok: true, externo: false, mensagem: 'Sinal aplicado somente no mascote dentro da página.' });
+    }
+    return res.json(controle.sinal(req.body || {}));
+  });
+
   app.get("/api/atualizacao/estado", (req, res) => {
     if (!somenteDaPropriaMaquina(req, res)) return;
     const controle = controleDeAtualizacao();
