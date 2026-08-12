@@ -20,7 +20,8 @@
     "electron": "electron .",
     "build:desktop": "npm run build && electron-builder --win --linux",
     "release": "npm run build && electron-builder --win --linux --publish always",
-    "build:vercel": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=server-build/server.cjs",
+    "build:vercel": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=server-build/server.cjs && node scripts/conferir-build-vercel.mjs",
+    "test:vercel-runtime": "node scripts/conferir-build-vercel.mjs",
     "test:billing": "tsx scripts/conferir-billing.ts",
     "test:stripe-config": "tsx scripts/conferir-stripe-config.ts",
     "test:legal": "node scripts/conferir-legal.mjs",
@@ -32,10 +33,7 @@
     "test:code-modulos": "node scripts/conferir-preview-modulos.mjs",
     "test:code-enxame": "node scripts/conferir-enxame-code.mjs",
     "test:code-voz": "node scripts/conferir-voz-code.mjs",
-codex/analise-o-codigo-do-osone-euib7b
     "test:canto": "node scripts/conferir-canto-completo.mjs",
-
- main
     "test:cameras": "node scripts/conferir-cameras.mjs",
     "test:tela-inicial": "node scripts/conferir-tela-inicial.mjs",
     "test:cowork-memory": "tsx scripts/conferir-memoria-cowork.ts",

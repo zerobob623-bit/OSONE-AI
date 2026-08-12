@@ -127,6 +127,7 @@ Este documento registra todas as funcionalidades, rotas e módulos ativos no eco
 - **Rotas de API REST**: Provedor de endpoints para agente local, handoff de sessão, buscas, geolocalização e proxies.
 - **Servidor WebSocket (`ws`)**: Gerenciador de conexões bidirecionais simultâneas.
 - **Integração com Vite**: Suporte a middleware dev e serving estático de produção em `/dist`.
+- **Build serverless autoverificável na Vercel**: `npm run build:vercel` não termina apenas porque Vite/esbuild geraram arquivos; ele carrega `server-build/server.cjs` com `VERCEL=1` e exige que `/api/health` responda como função serverless. Import ausente, export incompatível ou inicialização quebrada agora reprova o próprio deploy antes de chegar a `FUNCTION_INVOCATION_FAILED`. Conferidor isolado: `npm run test:vercel-runtime` após gerar o bundle.
 
 ---
 
