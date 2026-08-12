@@ -20,8 +20,8 @@
     "path": "./android-release.jks",
     "alias": "osone"
   },
-  "appVersionCode": 10405,
-  "appVersion": "1.4.5",
+  "appVersionCode": 10406,
+  "appVersion": "1.4.6",
   "shortcuts": [],
   "generatorApp": "@bubblewrap/cli",
   "webManifestUrl": "https://osone-ai-six.vercel.app/manifest.json",
