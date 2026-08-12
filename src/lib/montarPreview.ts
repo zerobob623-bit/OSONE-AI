@@ -5,6 +5,7 @@ import {
   nomeBaseDoCaminho,
   resolverCaminhoRelativo
 } from './caminhosDoCode';
+import { montarPreviewDeModulos, precisaDeModulos } from './previewDeModulos';
 
 /**
  * MONTA A PÁGINA DO PREVIEW A PARTIR DO PROJETO INTEIRO.
@@ -144,6 +145,40 @@ export function montarPreview(
   const abertoEhPagina = !!arquivoAberto && (/\.html?$/i.test(arquivoAberto.name || '') || arquivoAberto.language === 'html');
 
   const pagina = abertoEhPagina ? arquivoAberto : paginaPrincipal(lista);
+
+  /**
+   * PROJETO DE MÓDULOS TEM CAMINHO PRÓPRIO — e ele vem primeiro.
+   *
+   * Toda a montagem abaixo trabalha embutindo <link> e <script src>: resolve HTML, CSS e JS soltos,
+   * e não tem o que fazer com "import { Header } from './components/Header'". Um projeto React de
+   * vários arquivos passava por aqui inteiro e chegava ao iframe como tela em branco — o navegador
+   * não sabe o que é "react", não lê TSX, e não tem node_modules para consultar.
+   *
+   * A verificação vem ANTES de tudo porque os dois caminhos são excludentes, e porque a página do
+   * projeto (quando existe) é reaproveitada lá dentro: é nela que está a <div id="root"> que o app
+   * espera encontrar.
+   */
+  if (precisaDeModulos(lista)) {
+    const cssDoProjeto = lista
+      .filter(f => /\.css$/i.test(f.name || '') || f.language === 'css')
+      .map(f => (f.id === arquivoAberto?.id ? arquivoAberto.content : f.content) || '')
+      .join('\n\n');
+
+    const montado = montarPreviewDeModulos(lista, {
+      paginaHtml: pagina ? ((pagina.id === arquivoAberto?.id ? arquivoAberto.content : pagina.content) || '') : null,
+      cssEmbutido: cssDoProjeto
+    });
+
+    // Erro aqui (ciclo entre módulos, entrada não encontrada) precisa APARECER. Cair de volta na
+    // montagem antiga mostraria uma tela em branco sem motivo, que é o comportamento que este
+    // caminho existe para acabar.
+    if (montado.erro) {
+      return `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;background:#12060a;color:#ffb4b4;font:13px/1.6 ui-monospace,monospace;padding:16px">`
+        + `<strong>O projeto não pôde ser montado</strong><br><br>${montado.erro.replace(/</g, '&lt;')}</body></html>`;
+    }
+    return montado.html;
+  }
+
   if (!pagina) return arquivoAberto?.content || '';
 
   // O conteúdo do arquivo ABERTO tem prioridade sobre a cópia guardada na lista: durante a
