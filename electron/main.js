@@ -227,7 +227,7 @@ function htmlDoMascoteOsone() {
     transform: rotate(45deg);
   }
 
-  .speak .bubble, .point-right .bubble, .point-up .bubble, .point-down .bubble {
+  .speak .bubble, .point-right .bubble, .point-up .bubble, .point-down .bubble, .show-bubble .bubble {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
@@ -360,22 +360,24 @@ function htmlDoMascoteOsone() {
   </div>
 </div>
 <script>
-  const states = ['idle', 'walk', 'speak', 'point-right', 'look', 'point-up', 'jump', 'point-down'];
-  const phrases = [
-    'Estou olhando junto.',
-    'Posso apontar o proximo passo.',
-    'Esse botao parece importante.',
-    'Quando voce chama, eu venho.',
-    'Fico por fora da janela para ajudar sem cobrir o app.'
-  ];
   const mascot = document.getElementById('mascot');
   const bubble = document.getElementById('bubble');
-  let index = 0;
+  let ultimoSinal = 0;
+  let idleIndex = 0;
+  const posesPermitidas = new Set(['idle', 'walk', 'speak', 'point-right', 'look', 'point-up', 'jump', 'point-down']);
+  window.osoneMascoteSetState = (payload) => {
+    ultimoSinal = Date.now();
+    const pose = posesPermitidas.has(payload?.pose) ? payload.pose : 'idle';
+    const fala = String(payload?.fala || '').slice(0, 120);
+    mascot.className = 'mascot ' + pose + (fala ? ' show-bubble' : '');
+    bubble.textContent = fala;
+  };
   setInterval(() => {
-    index += 1;
-    mascot.className = 'mascot ' + states[index % states.length];
-    bubble.textContent = phrases[index % phrases.length];
-  }, 3300);
+    if (Date.now() - ultimoSinal < 5000) return;
+    idleIndex += 1;
+    mascot.className = 'mascot ' + (idleIndex % 3 === 0 ? 'walk' : 'idle');
+    bubble.textContent = '';
+  }, 4200);
 </script>
 </body>
 </html>`;
@@ -441,6 +443,23 @@ function fecharJanelaDoMascote() {
     return;
   }
   mascotWindow.close();
+}
+
+function sinalizarMascote(sinal = {}) {
+  if (!mascotOverlayEnabled || !mascotWindow || mascotWindow.isDestroyed()) {
+    return { ok: false, ativo: mascotOverlayEnabled };
+  }
+  const payload = {
+    pose: String(sinal.pose || 'idle').slice(0, 32),
+    fala: String(sinal.fala || '').slice(0, 160),
+    atividade: String(sinal.atividade || 'idle').slice(0, 32),
+    alvo: String(sinal.alvo || '').slice(0, 80)
+  };
+  mascotWindow.webContents.executeJavaScript(
+    `window.osoneMascoteSetState && window.osoneMascoteSetState(${JSON.stringify(payload)})`,
+    true
+  ).catch(() => {});
+  return { ok: true, ativo: true };
 }
 
 function setupFileLogging() {
@@ -1016,6 +1035,9 @@ function publicarControleDoMascote() {
         externo: true,
         mensagem: ativo ? 'Mascote ativado.' : 'Mascote ocultado.'
       };
+    },
+    sinal: (sinal) => {
+      return sinalizarMascote(sinal);
     }
   };
 }

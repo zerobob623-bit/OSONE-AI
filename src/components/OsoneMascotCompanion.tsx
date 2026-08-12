@@ -1,15 +1,18 @@
 import React, { useEffect, useState } from 'react';
 
 const estados = ['idle', 'speak', 'point-right', 'walk', 'point-up', 'jump', 'point-down', 'look'] as const;
-const falas = [
-  'Estou olhando junto.',
-  'Esse canto merece atenção.',
-  'Posso apontar o próximo passo.',
-  'Quando precisar, eu venho ate voce.',
-  'No app instalado eu fico fora da janela.'
-];
-
 type EstadoDoMascote = typeof estados[number];
+export type AtividadeDoMascote = 'idle' | 'listening' | 'thinking' | 'speaking' | 'summoned' | 'error';
+
+type EstadoDoCerebroDoMascote = {
+  atividade: AtividadeDoMascote;
+  alvo?: string;
+};
+
+type OsoneMascotCompanionProps = {
+  brain: EstadoDoCerebroDoMascote;
+};
+
 const STORAGE_KEY = 'osone_mascot_active';
 
 const estaNoElectron = () => {
@@ -17,12 +20,29 @@ const estaNoElectron = () => {
   return /Electron/i.test(navigator.userAgent);
 };
 
-export function OsoneMascotCompanion() {
+const estadoVisualDoCerebro = (brain: EstadoDoCerebroDoMascote): { pose: EstadoDoMascote; fala: string } => {
+  switch (brain.atividade) {
+    case 'speaking':
+      return { pose: 'speak', fala: 'Estou falando agora.' };
+    case 'thinking':
+      return { pose: 'look', fala: 'Estou pensando no proximo passo.' };
+    case 'listening':
+      return { pose: 'look', fala: 'Estou te ouvindo.' };
+    case 'summoned':
+      return { pose: 'point-right', fala: brain.alvo ? `Estou sintonizado em ${brain.alvo}.` : 'Estou olhando essa area.' };
+    case 'error':
+      return { pose: 'point-down', fala: 'Algo falhou aqui. Vou te mostrar.' };
+    default:
+      return { pose: 'idle', fala: '' };
+  }
+};
+
+export function OsoneMascotCompanion({ brain }: OsoneMascotCompanionProps) {
   const [ativo, setAtivo] = useState(false);
   const [overlayExterno, setOverlayExterno] = useState(false);
   const [sincronizando, setSincronizando] = useState(false);
   const [estado, setEstado] = useState<EstadoDoMascote>('idle');
-  const [fala, setFala] = useState(falas[0]);
+  const [fala, setFala] = useState('');
 
   useEffect(() => {
     const salvo = localStorage.getItem(STORAGE_KEY) === '1';
@@ -50,15 +70,32 @@ export function OsoneMascotCompanion() {
   }, []);
 
   useEffect(() => {
-    if (!ativo) return;
+    if (!ativo || brain.atividade !== 'idle') return;
     let indice = 0;
     const timer = window.setInterval(() => {
       indice += 1;
-      setEstado(estados[indice % estados.length]);
-      setFala(falas[indice % falas.length]);
-    }, 3800);
+      setEstado(indice % 3 === 0 ? 'walk' : 'idle');
+      setFala('');
+    }, 5200);
     return () => window.clearInterval(timer);
-  }, [ativo]);
+  }, [ativo, brain.atividade]);
+
+  useEffect(() => {
+    if (!ativo) return;
+    const visual = estadoVisualDoCerebro(brain);
+    setEstado(visual.pose);
+    setFala(visual.fala);
+    fetch('/api/mascote/sinal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        atividade: brain.atividade,
+        pose: visual.pose,
+        fala: visual.fala,
+        alvo: brain.alvo || ''
+      })
+    }).catch(() => null);
+  }, [ativo, brain.atividade, brain.alvo]);
 
   const alternarMascote = async () => {
     const proximo = !ativo;
@@ -94,7 +131,7 @@ export function OsoneMascotCompanion() {
         type="button"
         onClick={alternarMascote}
         className={`osone-mascot-toggle ${ativo ? 'osone-mascot-toggle-active' : ''}`}
-        title={ativo ? 'Ocultar mascote do OSONE' : 'Ativar mascote do OSONE'}
+        title={ativo ? 'Ocultar mascote do OSONE' : 'Ativar mascote controlado pelo OSONE'}
         aria-pressed={ativo}
         disabled={sincronizando}
       >
@@ -103,7 +140,7 @@ export function OsoneMascotCompanion() {
 
       {mostrarMascoteNaPagina && (
         <div className="osone-mascot-web-layer" aria-hidden="true">
-          <div className={`osone-mascot osone-mascot-${estado}`}>
+          <div className={`osone-mascot osone-mascot-${estado} ${fala ? 'osone-mascot-has-message' : ''}`}>
             <div className="osone-mascot-bubble">{fala}</div>
             <div className="osone-mascot-shadow" />
             <div className="osone-mascot-body">

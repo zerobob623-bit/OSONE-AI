@@ -480,6 +480,11 @@
   transform: rotate(45deg);
 }
 
+.osone-mascot-has-message .osone-mascot-bubble {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
 .osone-mascot-speak .osone-mascot-mouth {
   left: 37px;
   top: 62px;
