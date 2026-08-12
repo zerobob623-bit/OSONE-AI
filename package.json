@@ -32,7 +32,10 @@
     "test:code-modulos": "node scripts/conferir-preview-modulos.mjs",
     "test:code-enxame": "node scripts/conferir-enxame-code.mjs",
     "test:code-voz": "node scripts/conferir-voz-code.mjs",
+codex/analise-o-codigo-do-osone-euib7b
     "test:canto": "node scripts/conferir-canto-completo.mjs",
+
+ main
     "test:cameras": "node scripts/conferir-cameras.mjs",
     "test:tela-inicial": "node scripts/conferir-tela-inicial.mjs",
     "test:cowork-memory": "tsx scripts/conferir-memoria-cowork.ts",
