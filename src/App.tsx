@@ -88,6 +88,7 @@ import { NotificationToast, NotificationType } from './components/NotificationTo
 import { MemoryBookEntry } from './types';
 import osoneOrbImage from './assets/images/osone_constellation_orb_1782154846239.jpg';
 import { SoundEffect, DrawingObject, User } from './types';
+import { normalizarBibliotecaDeSons, validarAudioDaBiblioteca } from './lib/bibliotecaDeSons';
 import { INTIMATE_QUESTIONS } from './constants/osoneConstants';
 import { useTuyaSmartHome } from './hooks/useTuyaSmartHome';
 import { useHierarchicalMemory } from './hooks/useHierarchicalMemory';
@@ -856,6 +857,33 @@ export default function App() {
     }
   }, [aiDossierType]);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('home');
+  /**
+   * Pedidos ditados não podem chamar o gerador diretamente daqui.
+   *
+   * O gerador apenas DEVOLVE o código; quem conhece o arquivo aberto, cria o snapshot de Ctrl+Z e
+   * grava o resultado é o CodeWorkspace. Antes, a ferramenta de voz ignorava esse retorno: a API
+   * escrevia por alguns instantes e terminava, mas nenhum arquivo recebia o resultado. A fila
+   * atravessa a troca de aba e entrega cada pedido ao editor, um por vez.
+   */
+  const [pedidosDeVozDoCode, setPedidosDeVozDoCode] = useState<Array<{ id: string; prompt: string }>>([]);
+  const [contextoDoChatCodeParaVoz, setContextoDoChatCodeParaVoz] = useState('');
+  const contextoDoChatCodeParaVozRef = useRef('');
+  useEffect(() => {
+    contextoDoChatCodeParaVozRef.current = contextoDoChatCodeParaVoz;
+  }, [contextoDoChatCodeParaVoz]);
+
+  const enfileirarPedidoDeVozDoCode = (promptRecebido: unknown): string | null => {
+    const prompt = typeof promptRecebido === 'string' ? promptRecebido.trim() : '';
+    if (!prompt) return null;
+    const id = `voz-code-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setPedidosDeVozDoCode(atuais => [...atuais, { id, prompt }]);
+    setWorkspaceMode('code');
+    return id;
+  };
+
+  const concluirPedidoDeVozDoCode = (id: string) => {
+    setPedidosDeVozDoCode(atuais => atuais.filter(pedido => pedido.id !== id));
+  };
 
   const paidFeatureLabel: Record<PaidFeature, string> = {
     cowork_browser: 'OSONE COWORK',
@@ -1426,13 +1454,27 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
       const saved = localStorage.getItem('osone_sound_library');
       if (saved) {
         const parsed = JSON.parse(saved);
-        return Array.isArray(parsed) ? parsed : DEFAULT_SOUNDS;
+        return Array.isArray(parsed) ? normalizarBibliotecaDeSons(parsed) : normalizarBibliotecaDeSons(DEFAULT_SOUNDS);
       }
     } catch (e) {
       console.error("Failed to parse sound library:", e);
     }
-    return DEFAULT_SOUNDS;
+    return normalizarBibliotecaDeSons(DEFAULT_SOUNDS);
   });
+
+  const instalarAudioNaBiblioteca = (proposta: Partial<SoundEffect>): { ok: boolean; mensagem: string } => {
+    const validacao = validarAudioDaBiblioteca(proposta);
+    if ('erro' in validacao) return { ok: false, mensagem: validacao.erro };
+    if (soundLibraryRef.current.some(s => s.url === validacao.audio.url || s.name.toLowerCase() === validacao.audio.name.toLowerCase())) {
+      return { ok: false, mensagem: 'Esse áudio já existe na biblioteca.' };
+    }
+    const descricao = `${validacao.audio.name}\nTipo: ${validacao.audio.tipo}\nCategoria: ${validacao.audio.category}\nFonte: ${validacao.audio.origem || validacao.audio.url}`;
+    if (!window.confirm(`Adicionar este áudio à Biblioteca OSONE?\n\n${descricao}`)) {
+      return { ok: false, mensagem: 'O usuário cancelou a instalação do áudio.' };
+    }
+    setSoundLibrary(prev => [...prev, { ...validacao.audio, id: `osone-audio-${Date.now()}` }]);
+    return { ok: true, mensagem: `“${validacao.audio.name}” foi adicionado como ${validacao.audio.tipo}.` };
+  };
 
   useEffect(() => {
     localStorage.setItem('osone_sound_library', JSON.stringify(soundLibrary));
@@ -2040,6 +2082,8 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   const [letraCantada, setLetraCantada] = useState<{ verso: string; titulo?: string } | null>(null);
   const limpezaDaLetraRef = useRef<any>(null);
   const cantandoAgoraRef = useRef(false);
+  /** Rearma o canto quando a API encerra um turno antes de terminar a letra planejada. */
+  const continuacaoDoCantoRef = useRef<any>(null);
 
   const limparRelogioDaLetra = () => {
     if (limpezaDaLetraRef.current) {
@@ -2068,6 +2112,10 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
 
   const encerrarLetraCantada = () => {
     cantandoAgoraRef.current = false;
+    if (continuacaoDoCantoRef.current) {
+      clearTimeout(continuacaoDoCantoRef.current);
+      continuacaoDoCantoRef.current = null;
+    }
     limparRelogioDaLetra();
     setLetraCantada(null);
   };
@@ -7086,6 +7134,9 @@ ${promptText}${maxEffort ? '\n\nESFORÇO MÁXIMO: capriche nos detalhes e nos ca
     sinal?: AbortSignal
   ): Promise<{ conteudo: string; resumo: string; projetoMultiArquivo?: string } | null> => {
     if (!promptText.trim()) return null;
+    // Defesa em profundidade: montar a aba não basta. Uma chamada programática ou evento antigo
+    // também precisa respeitar o mesmo entitlement Pro usado pelo menu e pela voz.
+    if (!requestPaidFeature('osone_code')) return null;
 
     setIsGenerating(true);
     try {
@@ -7320,6 +7371,32 @@ Ao montar um projeto, inclua o que ele precisa para ser um projeto de verdade e 
     } finally {
       setIsGenerating(false);
     }
+  };
+
+  const handleCodeChatRequest = async (
+    pergunta: string,
+    contextoDoProjeto: string,
+    historico: Array<{ role: 'user' | 'assistant'; content: string }>
+  ): Promise<string | null> => {
+    if (!pergunta.trim() || !requestPaidFeature('osone_code')) return null;
+
+    const conversaRecente = historico.slice(-16).map(mensagem =>
+      `${mensagem.role === 'user' ? 'USUÁRIO' : 'ASSISTENTE'}: ${mensagem.content}`
+    ).join('\n');
+    const response = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...montarConfigDaApiDoOsoneCode(),
+        systemInstruction: `Você é o parceiro de engenharia do chat do OSONE CODE. Analise somente o retrato real do projeto fornecido. Converse em português claro, cite arquivos e funções quando útil, explique alterações já existentes e proponha próximos passos. Esta sessão é estritamente consultiva: NÃO devolva blocos SEARCH/REPLACE, NÃO finja que editou arquivos e nunca diga que uma alteração foi aplicada. Se faltarem dados, diga exatamente o que não está no retrato.`,
+        prompt: `${contextoDoProjeto}\n\nCONVERSA ANTERIOR:\n${conversaRecente || '(início da conversa)'}\n\nPERGUNTA DO USUÁRIO:\n${pergunta}`,
+        unrestricted: true
+      })
+    });
+    const data = await response.json().catch(() => ({} as any));
+    if (!response.ok) throw new Error(data?.error || 'Falha ao consultar o chat do OSONE CODE.');
+    if (!data?.text?.trim()) throw new Error('O modelo respondeu vazio no chat do OSONE CODE.');
+    return data.text.trim();
   };
 
   const handleAnalyzeCode = async (codeToAnalyze = workspaceText) => {
@@ -8166,6 +8243,34 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
               description: "Filtrar por categoria específica (ex: 'musica', 'synth', 'ambient', 'epic', 'funny') (opcional)."
             }
           }
+        }
+      });
+
+      functionDeclarations.push({
+        name: "install_sound_library_item",
+        description: "Propõe adicionar um áudio REAL à Biblioteca OSONE. Use quando o usuário pedir para implementar/adicionar um efeito, música ou ambiente e você já tiver uma URL HTTPS direta de arquivo de áudio. A tela valida tipo/categoria e pede confirmação humana; nunca anuncie instalação antes da resposta desta ferramenta.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            name: { type: Type.STRING, description: "Nome fiel ao áudio, sem afirmar que é outro som." },
+            tipo: { type: Type.STRING, enum: ["efeito", "musica", "ambiente"] },
+            category: { type: Type.STRING, enum: ["comico", "terror", "suspense", "interface", "magia", "impacto", "natureza", "ambiente", "musica"] },
+            url: { type: Type.STRING, description: "URL HTTPS direta terminando em MP3/WAV/OGG/M4A/AAC/FLAC. Não use página HTML, YouTube ou URL inventada." },
+            origem: { type: Type.STRING, description: "Autor, site e licença/proveniência conhecida. Não invente licença." }
+          },
+          required: ["name", "tipo", "category", "url", "origem"]
+        }
+      });
+
+      functionDeclarations.push({
+        name: "search_freesound_catalog",
+        description: "Pesquisa fontes reais no catálogo Freesound antes de instalar um novo áudio. Use primeiro quando o usuário não fornecer uma URL. Retorna preview direto, duração, autor, licença e categoria; depois proponha um resultado com install_sound_library_item.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            query: { type: Type.STRING, description: "Descrição objetiva do som, preferencialmente em inglês." },
+            tipo: { type: Type.STRING, enum: ["effect", "music", "ambient"] }
+          }, required: ["query", "tipo"]
         }
       });
 
@@ -9064,6 +9169,19 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
               role: 'assistant' as const,
               content: `*Busca na Biblioteca de Sons OSONE:* (fração de resultados)\n\n${resultsStr}\n\n*Você pode reproduzir qualquer um destes sons pedindo para mim ou clicando nele na aba de Sons.*`
             }]);
+          } else if (call.name === "install_sound_library_item") {
+            const resultado = instalarAudioNaBiblioteca(call.args as Partial<SoundEffect>);
+            addNotification(resultado.mensagem, resultado.ok ? 'success' : 'error');
+            setChatHistory(prev => [...prev, {
+              id: Math.random().toString(36).slice(2), role: 'assistant' as const,
+              content: resultado.ok ? `✅ ${resultado.mensagem}` : `⚠️ ${resultado.mensagem}`
+            }]);
+          } else if (call.name === "search_freesound_catalog") {
+            const params = new URLSearchParams({ q: String((call.args as any).query || ''), category: String((call.args as any).tipo || 'effect'), page_size: '8' });
+            const resposta = await fetch(`/api/library/search?${params}`);
+            const dados = await resposta.json().catch(() => ({}));
+            const itens = (dados.results || []).slice(0, 8).map((s: any) => ({ name: s.name, url: s.previewUrl, duration: s.duration, author: s.username, license: s.license, category: s.category }));
+            setChatHistory(prev => [...prev, { id: Math.random().toString(36).slice(2), role: 'assistant' as const, content: resposta.ok ? `Encontrei ${itens.length} fonte(s) reais no Freesound para avaliar.` : `Não consegui pesquisar o Freesound: ${dados.error || resposta.status}` }]);
           } else if (call.name === 'export_to_excel') {
             const { fileName, data } = call.args as any;
             try {
@@ -9153,9 +9271,15 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
               }]);
               continue;
             }
-            setWorkspaceMode('code');
+            const pedidoId = enfileirarPedidoDeVozDoCode(promptText);
+            if (!pedidoId) {
+              setChatHistory(prev => [...prev, {
+                id: Math.random().toString(36).substr(2, 9), role: 'assistant' as const,
+                content: 'Não recebi uma instrução de código. Diga novamente o que deseja criar ou alterar.'
+              }]);
+              continue;
+            }
             addNotification(`🚀 Pedido enviado para o OSONE CODE: "${promptText}"`, "success");
-            handleCodeWorkspacePrompt(promptText);
             setChatHistory(prev => [...prev, { 
               id: Math.random().toString(36).substr(2, 9), 
               role: 'assistant' as const, 
@@ -9701,10 +9825,13 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
         NUNCA É "ÀS VEZES": todo pedido de canto ou de som com a boca é atendido, em qualquer idioma, em
         qualquer momento da conversa, esteja o assunto anterior qual estiver. Não existe pedido de música
         "fora de hora" nem contexto sério demais para cantar. Se você atendeu uma vez, atende sempre.
-        - Ao CANTAR (só ao cantar, não ao falar), chame a ferramenta 'mostrar_letra_cantada' com o trecho que
-          está saindo da sua boca naquele instante, para que a letra apareça bonita na tela do usuário. Mande
-          UM ou DOIS versos por chamada — o que couber confortavelmente na tela — e vá chamando de novo,
-          acompanhando o que canta. Ao terminar a música, chame 'encerrar_letra_cantada'.
+        - Ao CANTAR (só ao cantar, não ao falar), planeje primeiro a LETRA INTEIRA e chame
+          'mostrar_letra_cantada' UMA ÚNICA VEZ com todos os versos. Depois da resposta da ferramenta, cante
+          a música inteira em fluxo contínuo, do primeiro ao último verso, sem novas ferramentas no meio.
+          Chamadas de ferramenta interrompem o áudio: chamar a cada verso era justamente o que fazia você
+          cantar só uma ou duas frases. Não resuma, não encurte e não pare por causa do limite de 15 palavras.
+          Se a API encerrar um turno antes do fim, o app pedirá continuação: retome exatamente do verso em que
+          parou. Só chame 'encerrar_letra_cantada' DEPOIS de realmente cantar toda a letra planejada.
         ${useElevenLabsOutput ? `- ATENÇÃO AO MOTOR DE VOZ ATUAL: neste momento sua fala está saindo por um sintetizador externo
           (ElevenLabs), que apenas LÊ texto e não reproduz melodia, assobio nem ruído de boca. Cantar agora
           sairia como fala comum. Isso não é uma limitação sua — é do canal. Diga isso em uma frase e ofereça
@@ -9765,6 +9892,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
         - Se o usuário disser "Feche a aba", "Volte para o início" ou "Sair da aba", chame 'close_workspace_tab' ou 'switch_workspace_mode' com mode 'home'.
         - PEDIDOS DE JOGOS E CÓDIGOS PARA O OSONE CODE SEM DIGITAR:
           Quando o usuário solicitar por voz para o OSONE CODE gerar um jogo, aplicativo ou modificação de código (ex: "OSONE, crie um jogo da velha no OSONE CODE" ou "Gere um jogo de nave space invader"), chame IMEDIATAMENTE a ferramenta 'send_code_prompt' informando a instrução em texto no parâmetro 'prompt'. A ferramenta abrirá o OSONE CODE automaticamente e iniciará a geração do código/jogo sem o usuário precisar digitar nada!
+          Quando ele fizer uma PERGUNTA sobre o projeto ou sobre a conversa da sessão Conversar do OSONE CODE, não mande editar: chame 'get_osone_code_chat_context', leia o contexto retornado e responda em voz alta com base nele. Nunca tente obter ou revelar esse contexto quando a ferramenta recusar por falta do plano Pro.
 
         CONTEXTO:
         - Workspace: ${workspaceMode}
@@ -9845,13 +9973,13 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 },
                 {
                   name: "mostrar_letra_cantada",
-                  description: "Mostra na tela do usuário, num popup bonito no centro, o trecho da letra que você está cantando NESTE instante. Chame SEMPRE que estiver cantando, e vá chamando de novo conforme avança na música, para a letra acompanhar a sua voz. Só serve para canto — não use para fala normal.",
+                  description: "Prepara na tela a letra COMPLETA que será cantada. Chame UMA única vez antes de começar e depois cante tudo em fluxo contínuo, sem outras chamadas desta ferramenta no meio. Só serve para canto — não use para fala normal.",
                   parameters: {
                     type: Type.OBJECT,
                     properties: {
                       verso: {
                         type: Type.STRING,
-                        description: "O trecho da letra que está saindo da sua boca agora. UM ou DOIS versos apenas — o que couber confortavelmente na tela. Nunca mande a música inteira de uma vez. Escreva no MESMO idioma em que você está cantando (inglês, espanhol, japonês, o que for) — nunca traduza a letra."
+                        description: "A letra INTEIRA, do primeiro ao último verso, exatamente no idioma em que será cantada. Não resuma nem envie apenas a primeira estrofe."
                       },
                       titulo: {
                         type: Type.STRING,
@@ -10162,6 +10290,14 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       }
                     },
                     required: ["prompt"]
+                  }
+                },
+                {
+                  name: "get_osone_code_chat_context",
+                  description: "Lê o projeto aberto e a conversa recente da sessão Conversar do OSONE CODE para responder por voz sobre código, arquitetura, decisões e alterações. Recurso exclusivo do plano Pro; chame antes de responder qualquer pergunta por voz sobre o chat do OSONE CODE.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {}
                   }
                 },
                 {
@@ -11215,6 +11351,22 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       id: call.id,
                       response: { result: "Aba fechada com sucesso. O usuário retornou para a tela inicial." }
                     });
+                  } else if (call.name === "get_osone_code_chat_context") {
+                    if (!requestPaidFeature('osone_code')) {
+                      responses.push({
+                        name: call.name, id: call.id,
+                        response: { error: 'O chat do OSONE CODE requer o plano Pro e seu contexto não foi disponibilizado.' }
+                      });
+                      continue;
+                    }
+                    const contexto = contextoDoChatCodeParaVozRef.current.trim();
+                    responses.push({
+                      name: call.name,
+                      id: call.id,
+                      response: contexto
+                        ? { result: contexto }
+                        : { error: 'Abra o OSONE CODE e a sessão Conversar ao menos uma vez para carregar o contexto do projeto.' }
+                    });
                   } else if (call.name === "send_code_prompt") {
                     const promptText = (call.args as any).prompt as string;
                     if (!requestPaidFeature('osone_code')) {
@@ -11224,9 +11376,15 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       });
                       continue;
                     }
-                    setWorkspaceMode('code');
+                    const pedidoId = enfileirarPedidoDeVozDoCode(promptText);
+                    if (!pedidoId) {
+                      responses.push({
+                        name: call.name, id: call.id,
+                        response: { error: 'A instrução de código veio vazia. Peça ao usuário para repetir.' }
+                      });
+                      continue;
+                    }
                     addNotification(`🚀 OSONE Live enviou pedido para o OSONE CODE: "${promptText}"`, "success");
-                    handleCodeWorkspacePrompt(promptText);
                     responses.push({
                       name: call.name,
                       id: call.id,
@@ -11405,7 +11563,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       responses.push({
                         name: call.name,
                         id: call.id,
-                        response: { result: "Letra no ar. Continue cantando e mande o próximo verso quando chegar nele." }
+                        response: { result: "Letra completa preparada. Agora cante todos os versos em sequência, sem chamar ferramentas no meio; encerre somente depois do último verso." }
                       });
                     } else {
                       responses.push({
@@ -12081,6 +12239,18 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       id: call.id,
                       response: { result: `Busca bem sucedida. Encontrados ${results.length} resultados.`, sounds: results }
                     });
+                  } else if (call.name === "install_sound_library_item") {
+                    const resultado = instalarAudioNaBiblioteca(call.args as Partial<SoundEffect>);
+                    responses.push({
+                      name: call.name, id: call.id,
+                      response: resultado.ok ? { result: resultado.mensagem } : { error: resultado.mensagem }
+                    });
+                  } else if (call.name === "search_freesound_catalog") {
+                    const params = new URLSearchParams({ q: String(call.args.query || ''), category: String(call.args.tipo || 'effect'), page_size: '8' });
+                    const resposta = await fetch(`/api/library/search?${params}`);
+                    const dados = await resposta.json().catch(() => ({}));
+                    const itens = (dados.results || []).slice(0, 8).map((s: any) => ({ name: s.name, url: s.previewUrl, duration: s.duration, author: s.username, license: s.license, category: s.category }));
+                    responses.push({ name: call.name, id: call.id, response: resposta.ok ? { result: itens } : { error: dados.error || `HTTP ${resposta.status}` } });
                   }
                 }
 
@@ -12123,6 +12293,27 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
               if (message.serverContent?.turnComplete) {
                 if (!isElevenLabsLiveOutput()) {
                   setIsSpeaking(false);
+                }
+                /**
+                 * O Live pode fechar uma resposta de áudio por limite interno mesmo com a música ainda
+                 * marcada como ativa. Antes isso soava como uma ou duas frases e silêncio. Enquanto o
+                 * modelo não confirmar o último verso com `encerrar_letra_cantada`, cada fim prematuro
+                 * recebe uma ordem de continuar. Não há teto artificial: parar/interromper a sessão ou a
+                 * ferramenta de encerramento cancelam esta corrente.
+                 */
+                if (cantandoAgoraRef.current && !isElevenLabsLiveOutput()) {
+                  if (continuacaoDoCantoRef.current) clearTimeout(continuacaoDoCantoRef.current);
+                  continuacaoDoCantoRef.current = setTimeout(() => {
+                    continuacaoDoCantoRef.current = null;
+                    if (!cantandoAgoraRef.current || !souAGeracaoAtual()) return;
+                    try {
+                      session.sendRealtimeInput({
+                        text: '[CONTINUAÇÃO DO CANTO] O turno de áudio terminou antes da música. Continue cantando agora, exatamente do verso em que parou. Não repita o começo, não resuma e só encerre depois do último verso da letra completa.'
+                      });
+                    } catch (erro) {
+                      console.warn('[Canto] Não foi possível pedir a continuação:', erro);
+                    }
+                  }, 450);
                 }
               }
             });
@@ -12933,10 +13124,14 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
               <CodeWorkspace 
                 onClose={() => setWorkspaceMode('home')}
                 onGenerateCodeRequest={handleCodeWorkspacePrompt}
+                onCodeChatRequest={handleCodeChatRequest}
+                onCodeChatContextChange={setContextoDoChatCodeParaVoz}
                 onStartLiveVoice={() => startLiveSession()}
                 apiKeys={apiKeys}
                 onUpdateApiKeys={(patch) => setApiKeys(prev => ({ ...prev, ...patch }))}
                 isGenerating={isGenerating}
+                comandoDeVoz={pedidosDeVozDoCode[0]}
+                aoConcluirComandoDeVoz={concluirPedidoDeVozDoCode}
               />
             </motion.div>
           ) : workspaceMode === 'canvas' ? (
@@ -12983,7 +13178,11 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 sounds={soundLibrary}
                 playingUrl={playingSoundUrl}
                 apiKeys={apiKeys}
-                onAddSound={(s) => setSoundLibrary(prev => [...prev, { ...s, id: Math.random().toString(36).substr(2, 9) } as SoundEffect])}
+                onAddSound={(s) => {
+                  const validacao = validarAudioDaBiblioteca(s);
+                  if ('audio' in validacao) setSoundLibrary(prev => [...prev, { ...validacao.audio, id: Math.random().toString(36).substr(2, 9) }]);
+                  else addNotification(validacao.erro, 'error');
+                }}
                 onUpdateSound={(id, updated) => setSoundLibrary(prev => prev.map(s => s.id === id ? { ...s, ...updated } : s))}
                 onRemoveSound={async (id) => {
                   const soundToRemove = soundLibrary.find(s => s.id === id);
@@ -13000,7 +13199,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   if (confirm('Tem certeza que deseja restaurar os sons padrão? Isso manterá seus sons personalizados se você os adicionou manualmente.')) {
                     setSoundLibrary(prev => {
                       const newLibrary = [...prev];
-                      DEFAULT_SOUNDS.forEach(def => {
+                      normalizarBibliotecaDeSons(DEFAULT_SOUNDS).forEach(def => {
                         if (!newLibrary.some(s => s.url === def.url)) {
                           newLibrary.push(def);
                         }
@@ -14598,7 +14797,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
 
                 <p
                   key={letraCantada.verso}
-                  className="text-center font-serif italic text-xl md:text-2xl leading-relaxed text-her-ink [text-shadow:0_2px_20px_rgba(0,0,0,0.6)]"
+                  className="text-center whitespace-pre-line max-h-[52vh] overflow-y-auto custom-scrollbar font-serif italic text-xl md:text-2xl leading-relaxed text-her-ink [text-shadow:0_2px_20px_rgba(0,0,0,0.6)]"
                 >
                   {letraCantada.verso}
                 </p>

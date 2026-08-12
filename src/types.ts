@@ -120,6 +120,8 @@ export interface SoundEffect {
   name: string;
   category: string;
   url: string;
+  tipo?: 'efeito' | 'musica' | 'ambiente';
+  origem?: string;
 }
 
 export interface Character {
@@ -203,5 +205,4 @@ export interface ChatSession {
   createdAt: number;
   messages: Message[];
 }
-
 
