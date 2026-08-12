@@ -63,6 +63,8 @@ export const ACOES_DO_AGENTE = [
   // 12 voltas, então o que ele leu na volta 3 já saiu do contexto na volta 15 — e ele termina
   // escrevendo de memória, com a confiança de quem leu. O caderno prende cada fato à sua fonte.
   'procurar', 'ler_pagina', 'anotar',
+  // Confirma no disco que um download realmente terminou. Um clique no navegador não prova isso.
+  'verificar_download',
   'concluir', 'desistir'
 ] as const;
 export type AcaoDoAgente = typeof ACOES_DO_AGENTE[number];
@@ -169,6 +171,7 @@ AÇÕES:
 - "procurar" { "consulta": "..." } — PESQUISA NA WEB sem abrir navegador. Devolve uma lista de resultados com título e endereço. Use para descobrir ONDE está a informação. Não mexe no computador e não aparece na tela do usuário.
 - "ler_pagina" { "url": "https://..." } — LÊ O TEXTO de um endereço sem abrir navegador. Devolve a página inteira em texto, não só o pedaço que caberia na tela. É o jeito CERTO de trazer dado de página pública: uma chamada em vez de dez cliques.
 - "anotar" { "fato": "...", "fonte": "https://..." } — guarda um fato no seu caderno, preso ao endereço de onde veio. ANOTE ENQUANTO LÊ, não no fim: o que você leu há várias voltas sai do seu histórico, e o que não foi anotado você não terá mais. Em "fato" escreva a informação completa e literal (o número, o nome, a data), não um resumo do tipo "achei o preço".
+- "verificar_download" { "nomeContem": "parte opcional do nome do arquivo" } — compara a pasta Downloads com o começo da tarefa e só confirma quando existe arquivo NOVO e já finalizado. Use obrigatoriamente depois de clicar em Salvar/Download/Baixar. Enquanto não confirmar, o download é uma ETAPA EM ANDAMENTO: espere ou resolva o diálogo, não abandone para tentar outro caminho.
 - "concluir" { "resposta": "..." } — a tarefa está feita. Em "resposta", escreva o RESULTADO para o usuário: se ele pediu uma informação (um número, uma análise, o que apareceu no gráfico), a resposta é essa informação, escrita por extenso, lida da tela.
 - "desistir" { "motivo": "..." } — só quando não há como prosseguir. Diga o que impede.
 
@@ -176,9 +179,11 @@ REGRAS:
 - O CONTEXTO diz qual é o SISTEMA desta máquina e o nome REAL de cada pasta do usuário. Use exatamente o que está lá: caminho de Windows num Linux (ou o contrário) não funciona, e "Downloads" e "downloads" são pastas DIFERENTES no Linux. Não invente caminho, não escreva o nome de um programa no meio de um caminho, e nunca use caminho relativo — sempre o caminho completo que aparece no contexto.
 - "pensamento" é obrigatório e em português: diga o que você ESTÁ VENDO na foto e por que age assim. É o que o usuário lê enquanto você trabalha.
 - OLHE A FOTO ANTES DE DECIDIR. Não repita a ação anterior se a tela não mudou — se não mudou, o que você tentou não funcionou; tente outro caminho.
+- O CHECKUP DE ETAPAS no contexto é a sua memória operacional. Tudo marcado [FEITO] não deve ser refeito. Continue da etapa [EM ANDAMENTO] até confirmá-la; só volte a uma etapa feita se a foto atual mostrar uma CONTRADIÇÃO concreta, e escreva essa contradição no pensamento.
 - Se aparecer algo que não estava previsto (aviso de cookies, login, pop-up, atualização), RESOLVA e siga. É para isso que você decide olhando.
 - Quando a opção exata NÃO estiver visível, NÃO fique clicando no mesmo alvo nem olhando parado. Faça exploração segura, como uma pessoa faria: procure campo de busca, menu de três pontos/⋮/More/Mais, botão de download, compartilhar/exportar, menu de perfil/engrenagem, abas laterais, rolagem curta, ou "clique_direito" sobre a imagem/card/item. Cada exploração precisa ter um motivo no "pensamento" e deve ser reversível/baixo risco.
 - Para baixar imagem/arquivo/mídia: antes de insistir no botão "Salvar" da página, tente nesta ordem quando fizer sentido na foto: botão/ícone de download visível; menu de três pontos do item; "clique_direito" no item/imagem para abrir opções; rolar ou abrir a imagem em tamanho real; só então procurar "Salvar imagem como", "Download", "Baixar" ou equivalente no menu. Não clique repetidamente na própria imagem se isso não abriu opções.
+- DOWNLOAD SÓ TERMINA NO DISCO: depois do clique final, use "verificar_download". Não use "concluir" porque viu uma notificação, nem troque de estratégia enquanto houver diálogo de salvar, indicador de progresso ou arquivo parcial.
 - O RÓTULO DO BOTÃO É O QUE ESTÁ ESCRITO NA TELA, NÃO A PALAVRA DO PEDIDO. Quase nunca existe um botão com o nome exato da tarefa. "Baixar" costuma aparecer como "Salvar", "Save", "Download", "Exportar" ou só um ícone de seta para baixo; "enviar" costuma aparecer como "Abrir", "Open", "Adicionar", "Anexar", "Carregar", "Upload", "Publicar" ou "Selecionar". LEIA os rótulos que estão na foto e escolha o que FAZ a mesma coisa. Só conclua que a opção não existe depois de ter lido o que existe.
 - DIÁLOGO DE ARQUIVO DO SISTEMA NÃO É POP-UP PARA FECHAR. Quando aparece a janela do sistema para escolher ou salvar arquivo (lista de pastas de um lado, arquivos do outro, campo de nome, dois botões num canto), o botão que CONFIRMA leva o nome da ação do SISTEMA, nunca o nome do seu objetivo: "Abrir", "Open", "Salvar", "Save", "Selecionar", "Escolher", "OK". Se o usuário pediu para ENVIAR um arquivo e essa janela apareceu pedindo para escolher um, o caminho é: selecionar o arquivo e clicar em "Abrir". NUNCA clique no X nem em "Cancelar" e NUNCA aperte Escape dentro de um diálogo de arquivo — isso joga fora tudo o que você já andou e devolve você ao começo do mesmo ciclo.
 - FECHAR O QUE VOCÊ ACABOU DE ABRIR É ANDAR PARA TRÁS. Se a sua ação anterior fez aparecer uma janela, um menu, um painel ou um diálogo, a próxima ação é USAR o que apareceu — não fechá-lo para tentar o mesmo caminho de novo. Fechar e recomeçar é o ciclo que mais faz uma tarefa falhar: você volta para a tela de onde saiu e toma a mesma decisão outra vez, para sempre. Escape e "fechar" servem para aviso de cookie, propaganda e notificação que apareceram SOZINHOS, não para o que você mesmo abriu.
@@ -367,11 +372,11 @@ const ACOES_QUE_ENCERRAM = new Set(['concluir', 'desistir']);
  * pagamento, o filtro pega, porque aí a ação é "clicar" e não "ler_pagina".
  */
 const ACOES_INTERNAS = new Set([
-  'esperar', 'trocar_janela', 'concluir', 'desistir', 'procurar', 'ler_pagina', 'anotar'
+  'esperar', 'trocar_janela', 'concluir', 'desistir', 'procurar', 'ler_pagina', 'anotar', 'verificar_download'
 ]);
 
 /** As que leem a internet: não mudam a tela, e por isso saem do laço antes da parte de olhar. */
-const ACOES_DA_WEB = new Set(['procurar', 'ler_pagina', 'anotar']);
+const ACOES_DA_WEB = new Set(['procurar', 'ler_pagina', 'anotar', 'verificar_download']);
 /** Ações aceitas pelo laço, inclusive as que são traduzidas antes de chegar ao agente local. */
 const ACOES_VALIDAS_DO_LACO = new Set<string>(ACOES_DO_AGENTE);
 
@@ -418,6 +423,8 @@ export interface DependenciasDoAgente extends DependenciasDaEspera {
   procurar?: (consulta: string) => Promise<{ resultados?: Array<{ titulo: string; url: string }>; error?: string }>;
   /** Lê o texto de um endereço, sem navegador. */
   lerPagina?: (url: string) => Promise<{ texto?: string; error?: string }>;
+  /** Confere a pasta Downloads contra o retrato tirado antes da tarefa começar. */
+  verificarDownload?: (nomeContem?: string) => Promise<{ arquivosNovos?: string[]; pendentes?: string[]; error?: string }>;
   /**
    * PARA DE AGIR E ESTUDA A TELA — chamado só quando o laço trava.
    *
@@ -454,6 +461,9 @@ export async function trabalharAteConcluir(
   let falhasSeguidas = 0;
   let repeticoes = 0;
   let assinaturaDaDecisaoAnterior = '';
+  // A assinatura da tela posterior é a prova ligada a cada etapa. Se o modelo pedir exatamente a
+  // mesma ação enquanto essa prova ainda estiver na tela, a etapa continua feita e não é refeita.
+  const etapasConfirmadas = new Map<string, AssinaturaDaTela | null>();
 
   const anotacoes: AnotacaoDoAgente[] = [];
 
@@ -596,6 +606,17 @@ export async function trabalharAteConcluir(
 
     // ====== TERMINOU? ======
     if (ACOES_QUE_ENCERRAM.has(decisao.acao)) {
+      const tarefaDeDownload = /\b(baixar|download|salvar (?:a |uma |o |um )?(?:imagem|foto|arquivo|m[ií]dia|v[ií]deo|[aá]udio))\b/i.test(objetivo);
+      const downloadConfirmado = voltas.some(v => v.acao === 'verificar_download' && v.ok);
+      if (decisao.acao === 'concluir' && tarefaDeDownload && !downloadConfirmado) {
+        const aviso = 'NÃO CONCLUÍ: a tarefa pede um download, mas nenhum arquivo novo foi confirmado no disco. Use verificar_download e continue da etapa em andamento.';
+        registrar({
+          indice: i, pensamento: decisao.pensamento, acao: decisao.acao, args: decisao.args,
+          ok: false, relato: aviso, erro: aviso, duracaoMs: deps.agora() - comecouAVolta,
+          mudancaDaTela: 0, foto: foto || undefined
+        });
+        continue;
+      }
       const texto = String(decisao.args?.resposta || decisao.args?.motivo || decisao.pensamento).trim();
       registrar({
         indice: i, pensamento: decisao.pensamento, acao: decisao.acao, args: decisao.args, ok: decisao.acao === 'concluir',
@@ -643,6 +664,21 @@ export async function trabalharAteConcluir(
       repeticoes = 0;
     }
     assinaturaDaDecisaoAnterior = assinaturaDaDecisao;
+
+    const telaDaConfirmacao = etapasConfirmadas.get(assinaturaDaDecisao);
+    // `abrir` possui uma trava mais específica logo abaixo, que normaliza URLs e orienta a trocar
+    // de janela. Deixá-la cair nesta trava genérica apagaria justamente essa orientação útil.
+    const acaoNaturalmenteRepetivel = ['abrir', 'esperar', 'rolar', 'digitar', 'tecla', 'procurar', 'ler_pagina', 'anotar', 'verificar_download'].includes(decisao.acao);
+    if (!acaoNaturalmenteRepetivel && etapasConfirmadas.has(assinaturaDaDecisao) &&
+        diferencaEntreTelas(telaDaConfirmacao || null, assinaturaDaTela) < LIMIAR_DE_TELA_REPETIDA) {
+      const aviso = `ETAPA JÁ FEITA: não repeti "${decisao.pensamento}" porque a tela ainda confirma o resultado anterior. Continue da próxima etapa; só volte se uma captura nova contradisser este estado.`;
+      registrar({
+        indice: i, pensamento: decisao.pensamento, acao: decisao.acao, args: decisao.args,
+        ok: false, relato: aviso, erro: aviso, duracaoMs: deps.agora() - comecouAVolta,
+        mudancaDaTela: 0, foto: foto || undefined
+      });
+      continue;
+    }
 
     /**
      * ====== O CICLO QUE A TRAVA ACIMA NÃO PEGA ======
@@ -734,7 +770,22 @@ export async function trabalharAteConcluir(
       // laço insiste para sempre sem ninguém notar.
       let resultado: { ok: boolean; relato: string; erro?: string };
 
-      if (decisao.acao === 'anotar') {
+      if (decisao.acao === 'verificar_download') {
+        if (!deps.verificarDownload) {
+          resultado = { ok: false, relato: 'Não consigo conferir a pasta Downloads nesta sessão.', erro: 'verificador de download indisponível' };
+        } else {
+          const nome = String(decisao.args?.nomeContem || '').trim();
+          const r: { arquivosNovos?: string[]; pendentes?: string[]; error?: string } =
+            await deps.verificarDownload(nome).catch((e: any) => ({ error: e?.message || String(e) }));
+          resultado = r.error
+            ? { ok: false, relato: `Download ainda não confirmado: ${r.error}`, erro: r.error }
+            : r.pendentes?.length
+              ? { ok: false, relato: `Download ainda em andamento: ${r.pendentes.join(', ')}. Espere e verifique novamente; não troque de estratégia.`, erro: 'download parcial' }
+              : r.arquivosNovos?.length
+                ? { ok: true, relato: `Download confirmado no disco: ${r.arquivosNovos.join(', ')}` }
+                : { ok: false, relato: 'Nenhum arquivo novo apareceu em Downloads. Continue a etapa atual; não anuncie conclusão.', erro: 'arquivo não apareceu' };
+        }
+      } else if (decisao.acao === 'anotar') {
         const fato = String(decisao.args?.fato || '').trim();
         const fonte = String(decisao.args?.fonte || '').trim();
         if (!fato) {
@@ -797,9 +848,12 @@ export async function trabalharAteConcluir(
         ok: resultado.ok, relato: resultado.relato, erro: resultado.erro,
         duracaoMs: deps.agora() - comecouAVolta, mudancaDaTela: 0
       });
-      falhasSeguidas = resultado.ok ? 0 : falhasSeguidas + 1;
+      // Arquivo ainda não apareceu não é falha nem autorização para abandonar a estratégia: é a
+      // mesma etapa em andamento. O próximo ciclo olha a tela e pode esperar ou concluir o diálogo.
+      const etapaAindaEmAndamento = decisao.acao === 'verificar_download';
+      falhasSeguidas = resultado.ok || etapaAindaEmAndamento ? 0 : falhasSeguidas + 1;
 
-      if (!resultado.ok && falhasSeguidas >= limites.maxFalhasSeguidas) {
+      if (!resultado.ok && !etapaAindaEmAndamento && falhasSeguidas >= limites.maxFalhasSeguidas) {
         return encerrar('falhas-seguidas',
           `Parei depois de ${falhasSeguidas} falhas seguidas pesquisando ou lendo página. A última: ${resultado.erro}`);
       }
@@ -892,6 +946,7 @@ export async function trabalharAteConcluir(
       relato: resumirResultado(decisao, resposta, naoMudou),
       duracaoMs: deps.agora() - comecouAVolta, mudancaDaTela, foto: foto || undefined
     });
+    etapasConfirmadas.set(assinaturaDaDecisao, assinaturaDaTela);
   }
 
   return encerrar('teto-de-voltas',
