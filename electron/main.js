@@ -77,134 +77,92 @@ function htmlDoMascoteOsone() {
     position: absolute;
     left: 26px;
     bottom: 34px;
-    width: 152px;
-    height: 190px;
+    width: 176px;
+    height: 200px;
     transform-origin: 50% 100%;
     animation: travel 34s linear infinite;
   }
 
   .mascot {
     position: absolute;
-    left: 18px;
+    left: 10px;
     bottom: 10px;
-    width: 132px;
-    height: 136px;
-    transform-origin: 50% 100%;
-    animation: breathe 2.6s ease-in-out infinite;
+    width: 156px;
+    height: 164px;
   }
 
-  .body {
-    position: absolute;
-    left: 14px;
-    top: 18px;
-    width: 104px;
-    height: 88px;
-    border-radius: 52% 52% 48% 48%;
-    background:
-      radial-gradient(circle at 34% 28%, rgba(255,255,255,.34), transparent 14%),
-      radial-gradient(circle at 66% 68%, rgba(151,61,0,.28), transparent 33%),
-      linear-gradient(145deg, #ffb133 0%, #ff861f 48%, #f06a12 100%);
-    border: 1px solid rgba(110,47,0,.45);
-    box-shadow: inset -10px -13px 18px rgba(129,47,0,.24), inset 7px 8px 14px rgba(255,219,114,.34), 0 14px 26px rgba(0,0,0,.38);
+  .mascot svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    filter: drop-shadow(0 14px 20px rgba(0,0,0,.34));
   }
 
-  .shadow {
-    position: absolute;
-    left: 21px;
-    bottom: 2px;
-    width: 90px;
-    height: 18px;
-    border-radius: 50%;
-    background: radial-gradient(ellipse at center, rgba(0,0,0,.42), rgba(0,0,0,0));
-    filter: blur(1px);
+  .mascot svg g,
+  .mascot svg path,
+  .mascot svg rect,
+  .mascot svg circle,
+  .mascot svg ellipse { transform-box: view-box; }
+
+  .figura {
+    transform-origin: 100px 190px;
+    animation: breathe 3.4s ease-in-out infinite;
   }
 
-  .eye {
-    position: absolute;
-    top: 38px;
-    width: 23px;
-    height: 25px;
-    border-radius: 50%;
-    background: #fff7e8;
-    border: 2px solid rgba(94,48,10,.55);
-    box-shadow: inset 0 -2px 0 rgba(0,0,0,.13);
-    animation: blink 6.2s ease-in-out infinite;
+  .cabeca {
+    transform-origin: 100px 145px;
+    transition: transform 300ms ease;
   }
 
-  .eye.left { left: 28px; }
-  .eye.right { right: 28px; }
-  .eye::after {
-    content: "";
-    position: absolute;
-    left: 8px;
-    top: 7px;
-    width: 9px;
-    height: 10px;
-    border-radius: 50%;
-    background: radial-gradient(circle at 35% 28%, #fff 0 18%, #24140c 24% 100%);
-    transition: transform 260ms ease;
-  }
+  .shadow { transform-origin: 100px 194px; }
+
+  .eye { animation: blink 5.8s ease-in-out infinite; }
+  .eye.left { transform-origin: 79px 80px; }
+  .eye.right { transform-origin: 121px 80px; }
+  .pupil { transition: transform 240ms ease; }
 
   .brow {
-    position: absolute;
-    top: 31px;
-    width: 20px;
-    height: 5px;
-    border-radius: 999px;
-    border-top: 3px solid rgba(112,55,11,.7);
+    fill: none;
+    stroke: #93481a;
+    stroke-width: 7.5;
+    stroke-linecap: round;
+    transition: transform 240ms ease;
   }
 
-  .brow.left { left: 29px; transform: rotate(-13deg); }
-  .brow.right { right: 28px; transform: rotate(13deg); }
+  .brow.left { transform-origin: 80px 49px; }
+  .brow.right { transform-origin: 120px 49px; }
 
   .mouth {
-    position: absolute;
-    left: 46px;
-    top: 69px;
-    width: 16px;
-    height: 8px;
-    border-radius: 0 0 999px 999px;
-    border-bottom: 3px solid #4e230d;
-    transition: all 220ms ease;
+    fill: none;
+    stroke: #4e2109;
+    stroke-width: 5.5;
+    stroke-linecap: round;
+    transition: opacity 180ms ease;
   }
 
-  .arm, .leg {
-    position: absolute;
-    display: block;
-    background: linear-gradient(180deg, #ff941f, #de5f0d);
-    border: 1px solid rgba(113,48,0,.28);
-    box-shadow: inset 3px 4px 5px rgba(255,201,88,.24);
-    transform-origin: 50% 8px;
+  .mouth-open {
+    opacity: 0;
+    transform-origin: 100px 117px;
+    transition: opacity 180ms ease;
   }
 
-  .arm {
-    top: 70px;
-    width: 20px;
-    height: 38px;
-    border-radius: 999px 999px 15px 15px;
-  }
-
-  .arm.left { left: 4px; transform: rotate(21deg); }
-  .arm.right { right: 4px; transform: rotate(-21deg); }
-  .leg {
-    top: 91px;
-    width: 24px;
-    height: 38px;
-    border-radius: 999px 999px 16px 16px;
-  }
-
-  .leg.left { left: 34px; transform: rotate(6deg); }
-  .leg.right { right: 34px; transform: rotate(-6deg); }
+  .arm, .leg { transition: transform 280ms ease; }
+  .arm.left { transform-origin: 49px 104px; transform: rotate(13deg); }
+  .arm.right { transform-origin: 151px 104px; transform: rotate(-13deg); }
+  .leg.left { transform-origin: 87px 132px; transform: rotate(4deg); }
+  .leg.right { transform-origin: 113px 132px; transform: rotate(-4deg); }
+  .finger { opacity: 0; transition: opacity 200ms ease; }
 
   .bubble {
     position: absolute;
-    left: 78px;
-    bottom: 144px;
+    left: 104px;
+    bottom: 148px;
     width: 164px;
     min-height: 40px;
-    padding: 9px 10px;
-    border-radius: 8px;
-    background: rgba(13,12,11,.88);
+    padding: 9px 11px;
+    border-radius: 12px;
+    background: rgba(13,12,11,.9);
     border: 1px solid rgba(255,137,45,.34);
     color: #fff7e8;
     font: 700 10px/1.35 Inter, system-ui, sans-serif;
@@ -232,51 +190,41 @@ function htmlDoMascoteOsone() {
     transform: translateY(0) scale(1);
   }
 
-  .speak .mouth {
-    left: 43px;
-    top: 66px;
-    width: 22px;
-    height: 18px;
-    border: 3px solid #4e230d;
-    border-radius: 50%;
-    background: radial-gradient(circle at 50% 66%, #ffb17d 0 22%, #3b170c 24% 100%);
-    animation: talk 340ms ease-in-out infinite;
-  }
+  .speak .mouth { opacity: 0; }
+  .speak .mouth-open { opacity: 1; animation: talk 360ms ease-in-out infinite; }
+  .speak .brow.left { transform: translateY(-3px) rotate(-3deg); }
+  .speak .brow.right { transform: translateY(-3px) rotate(3deg); }
 
-  .point-right .arm.right {
-    width: 66px;
-    height: 18px;
-    right: -44px;
-    top: 64px;
-    border-radius: 999px;
-    transform: rotate(-6deg);
-  }
+  .point-right .arm.right { transform: rotate(-88deg); }
+  .point-up .arm.right { transform: rotate(-150deg); }
+  .point-down .arm.right { transform: rotate(-38deg); }
+  .point-right .arm.right .finger,
+  .point-up .arm.right .finger,
+  .point-down .arm.right .finger { opacity: 1; }
 
-  .point-up .arm.right {
-    width: 18px;
-    height: 58px;
-    right: 21px;
-    top: 24px;
-    transform: rotate(33deg);
-  }
+  .point-right .pupil { transform: translate(5px, 0); }
+  .point-up .pupil { transform: translate(3px, -5px); }
+  .point-down .pupil { transform: translate(3px, 5px); }
+  .look .pupil { transform: translate(4px, 2px); }
 
-  .point-down .arm.right {
-    width: 18px;
-    height: 50px;
-    right: 6px;
-    top: 78px;
-    transform: rotate(-120deg);
-  }
+  .look .cabeca { transform: rotate(-4deg); }
+  .look .brow.left { transform: translateY(-4px); }
+  .look .brow.right { transform: translateY(-2px); }
+  .point-down .brow.left { transform: translateY(2px) rotate(9deg); }
+  .point-down .brow.right { transform: translateY(2px) rotate(-9deg); }
 
-  .walk .leg.left { animation: legLeft 520ms ease-in-out infinite; }
-  .walk .leg.right { animation: legRight 520ms ease-in-out infinite; }
-  .walk .arm.left { animation: armLeft 520ms ease-in-out infinite; }
-  .walk .arm.right { animation: armRight 520ms ease-in-out infinite; }
-  .jump { animation: jump 1s cubic-bezier(.2,.9,.2,1) infinite; }
+  .walk .leg.left { animation: legLeft 620ms ease-in-out infinite; }
+  .walk .leg.right { animation: legRight 620ms ease-in-out infinite; }
+  .walk .arm.left { animation: armLeft 620ms ease-in-out infinite; }
+  .walk .arm.right { animation: armRight 620ms ease-in-out infinite; }
+  .walk .figura { animation: bob 620ms ease-in-out infinite; }
+
+  .jump .figura { animation: jump 1s cubic-bezier(.2,.9,.2,1) infinite; }
   .jump .shadow { animation: shadowJump 1s cubic-bezier(.2,.9,.2,1) infinite; }
-  .look .eye::after, .point-right .eye::after { transform: translateX(3px); }
-  .point-up .eye::after { transform: translateY(-3px); }
-  .point-down .eye::after { transform: translateY(3px); }
+  .jump .arm.left { transform: rotate(48deg); }
+  .jump .arm.right { transform: rotate(-48deg); }
+  .jump .leg.left { transform: rotate(16deg); }
+  .jump .leg.right { transform: rotate(-16deg); }
 
   @keyframes travel {
     0% { transform: translateX(0) scaleX(1); }
@@ -293,43 +241,48 @@ function htmlDoMascoteOsone() {
 
   @keyframes breathe {
     0%, 100% { transform: translateY(0) scale(1); }
-    50% { transform: translateY(-4px) scale(1.015, .99); }
+    50% { transform: translateY(-3px) scale(1.015, .985); }
+  }
+
+  @keyframes bob {
+    0%, 100% { transform: translateY(0) rotate(-1.5deg); }
+    50% { transform: translateY(-3px) rotate(1.5deg); }
   }
 
   @keyframes blink {
-    0%, 45%, 49%, 100% { transform: scaleY(1); }
-    47% { transform: scaleY(.08); }
+    0%, 42%, 47%, 100% { transform: scaleY(1); }
+    44.5% { transform: scaleY(.08); }
   }
 
   @keyframes talk {
-    0%, 100% { transform: scaleY(.76); }
-    50% { transform: scaleY(1.12); }
+    0%, 100% { transform: scale(1, .7); }
+    50% { transform: scale(1.04, 1.15); }
   }
 
   @keyframes legLeft {
-    0%, 100% { transform: rotate(20deg) translateY(0); }
-    50% { transform: rotate(-18deg) translateY(2px); }
+    0%, 100% { transform: rotate(22deg); }
+    50% { transform: rotate(-16deg); }
   }
 
   @keyframes legRight {
-    0%, 100% { transform: rotate(-18deg) translateY(2px); }
-    50% { transform: rotate(20deg) translateY(0); }
+    0%, 100% { transform: rotate(-16deg); }
+    50% { transform: rotate(22deg); }
   }
 
   @keyframes armLeft {
-    0%, 100% { transform: rotate(-18deg); }
-    50% { transform: rotate(28deg); }
+    0%, 100% { transform: rotate(-10deg); }
+    50% { transform: rotate(34deg); }
   }
 
   @keyframes armRight {
-    0%, 100% { transform: rotate(28deg); }
-    50% { transform: rotate(-18deg); }
+    0%, 100% { transform: rotate(10deg); }
+    50% { transform: rotate(-34deg); }
   }
 
   @keyframes jump {
     0%, 100% { transform: translateY(0) scale(1); }
-    45% { transform: translateY(-28px) scale(.98, 1.04); }
-    72% { transform: translateY(3px) scale(1.06, .94); }
+    45% { transform: translateY(-28px) scale(.97, 1.05); }
+    72% { transform: translateY(3px) scale(1.07, .93); }
   }
 
   @keyframes shadowJump {
@@ -344,18 +297,92 @@ function htmlDoMascoteOsone() {
   <div class="walker">
     <div id="mascot" class="mascot idle">
       <div id="bubble" class="bubble">Estou olhando junto.</div>
-      <div class="shadow"></div>
-      <div class="body">
-        <span class="brow left"></span>
-        <span class="brow right"></span>
-        <span class="eye left"></span>
-        <span class="eye right"></span>
-        <span class="mouth"></span>
-        <span class="arm left"></span>
-        <span class="arm right"></span>
-        <span class="leg left"></span>
-        <span class="leg right"></span>
-      </div>
+      <svg viewBox="0 0 200 210" role="presentation" focusable="false">
+        <defs>
+          <radialGradient id="osoneCorpo" cx="34%" cy="26%" r="82%">
+            <stop offset="0%" stop-color="#FFD693"/>
+            <stop offset="30%" stop-color="#FDB054"/>
+            <stop offset="68%" stop-color="#F58824"/>
+            <stop offset="100%" stop-color="#DB620F"/>
+          </radialGradient>
+          <radialGradient id="osoneVolume" cx="38%" cy="30%" r="74%">
+            <stop offset="60%" stop-color="#8C3A00" stop-opacity="0"/>
+            <stop offset="100%" stop-color="#8C3A00" stop-opacity="0.4"/>
+          </radialGradient>
+          <linearGradient id="osoneMembro" x1="0.15" y1="0" x2="0.85" y2="1">
+            <stop offset="0%" stop-color="#FDB761"/>
+            <stop offset="100%" stop-color="#E06B12"/>
+          </linearGradient>
+          <radialGradient id="osoneOlho" cx="42%" cy="32%" r="74%">
+            <stop offset="0%" stop-color="#FFFFFF"/>
+            <stop offset="100%" stop-color="#F7E4C6"/>
+          </radialGradient>
+          <radialGradient id="osoneChao" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="#000000" stop-opacity="0.45"/>
+            <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+
+        <ellipse class="shadow" cx="100" cy="194" rx="56" ry="10" fill="url(#osoneChao)"/>
+
+        <g class="figura">
+          <g class="leg left">
+            <rect x="77" y="120" width="21" height="58" rx="10.5" fill="url(#osoneMembro)"/>
+            <ellipse cx="81" cy="177" rx="16" ry="10" fill="url(#osoneMembro)"/>
+          </g>
+          <g class="leg right">
+            <rect x="102" y="120" width="21" height="58" rx="10.5" fill="url(#osoneMembro)"/>
+            <ellipse cx="119" cy="177" rx="16" ry="10" fill="url(#osoneMembro)"/>
+          </g>
+
+          <g class="arm left">
+            <rect x="40" y="96" width="19" height="50" rx="9.5" fill="url(#osoneMembro)"/>
+            <ellipse cx="49.5" cy="145" rx="12" ry="11" fill="url(#osoneMembro)"/>
+            <ellipse class="finger" cx="49.5" cy="157" rx="5.4" ry="7.4" fill="url(#osoneMembro)"/>
+          </g>
+          <g class="arm right">
+            <rect x="141" y="96" width="19" height="50" rx="9.5" fill="url(#osoneMembro)"/>
+            <ellipse cx="150.5" cy="145" rx="12" ry="11" fill="url(#osoneMembro)"/>
+            <ellipse class="finger" cx="150.5" cy="157" rx="5.4" ry="7.4" fill="url(#osoneMembro)"/>
+          </g>
+
+          <g class="cabeca">
+            <circle cx="100" cy="92" r="60" fill="url(#osoneCorpo)"/>
+            <circle cx="100" cy="92" r="60" fill="url(#osoneVolume)"/>
+            <ellipse cx="84" cy="47" rx="18" ry="8" fill="#FFFFFF" opacity="0.26" transform="rotate(-18 84 47)"/>
+            <ellipse cx="58" cy="107" rx="12" ry="7.5" fill="#F0501B" opacity="0.2"/>
+            <ellipse cx="142" cy="107" rx="12" ry="7.5" fill="#F0501B" opacity="0.2"/>
+
+            <g class="eye left">
+              <ellipse cx="79" cy="80" rx="19" ry="21.5" fill="url(#osoneOlho)" stroke="#B4712F" stroke-width="1.4" stroke-opacity="0.45"/>
+              <g class="pupil">
+                <circle cx="81" cy="84" r="10.6" fill="#7C4519"/>
+                <circle cx="81" cy="84" r="6.6" fill="#241209"/>
+                <circle cx="77.6" cy="80" r="3.6" fill="#FFFFFF" opacity="0.95"/>
+                <circle cx="84.4" cy="87.6" r="1.8" fill="#FFFFFF" opacity="0.6"/>
+              </g>
+            </g>
+            <g class="eye right">
+              <ellipse cx="121" cy="80" rx="19" ry="21.5" fill="url(#osoneOlho)" stroke="#B4712F" stroke-width="1.4" stroke-opacity="0.45"/>
+              <g class="pupil">
+                <circle cx="119" cy="84" r="10.6" fill="#7C4519"/>
+                <circle cx="119" cy="84" r="6.6" fill="#241209"/>
+                <circle cx="115.6" cy="80" r="3.6" fill="#FFFFFF" opacity="0.95"/>
+                <circle cx="122.4" cy="87.6" r="1.8" fill="#FFFFFF" opacity="0.6"/>
+              </g>
+            </g>
+
+            <path class="brow left" d="M65 54 Q80 45 95 52"/>
+            <path class="brow right" d="M105 52 Q120 45 135 54"/>
+
+            <path class="mouth" d="M85 111 Q100 126 115 111"/>
+            <g class="mouth-open">
+              <ellipse cx="100" cy="117" rx="15" ry="12.5" fill="#46200C"/>
+              <ellipse cx="100" cy="126" rx="8.5" ry="5.5" fill="#FF8080"/>
+            </g>
+          </g>
+        </g>
+      </svg>
     </div>
   </div>
 </div>
