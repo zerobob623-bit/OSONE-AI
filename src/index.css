@@ -373,7 +373,10 @@
 .osone-mascot-eye-left { transform-origin: 79px 80px; }
 .osone-mascot-eye-right { transform-origin: 121px 80px; }
 
+/* As pupilas seguem o cursor pelas variaveis que o componente atualiza. As poses
+   com olhar proprio (apontar, pensar) tem prioridade por serem mais especificas. */
 .osone-mascot-pupil {
+  transform: translate(var(--osone-pupila-x, 0px), var(--osone-pupila-y, 0px));
   transition: transform 240ms ease;
 }
 
@@ -393,7 +396,12 @@
   stroke: #4e2109;
   stroke-width: 5.5;
   stroke-linecap: round;
-  transition: opacity 180ms ease;
+  transform-origin: 100px 111px;
+  transition: opacity 180ms ease, transform 200ms ease;
+}
+
+.osone-mascot-cheek {
+  transition: opacity 220ms ease;
 }
 
 .osone-mascot-mouth-open {
@@ -468,6 +476,53 @@
   transform: translateY(0) scale(1);
 }
 
+/* Reacao ao mouse: ele para, abre um sorrisao, cora e acena. */
+.osone-mascot-cumprimentando .osone-mascot-figura {
+  animation: osone-mascot-cumprimento 760ms ease-in-out infinite;
+}
+
+.osone-mascot-cumprimentando .osone-mascot-arm-right {
+  animation: osone-mascot-aceno 520ms ease-in-out infinite;
+}
+
+.osone-mascot-cumprimentando .osone-mascot-arm-left {
+  transform: rotate(34deg);
+}
+
+.osone-mascot-cumprimentando .osone-mascot-mouth {
+  transform: scale(1.28);
+}
+
+.osone-mascot-cumprimentando .osone-mascot-cheek {
+  opacity: 0.42;
+}
+
+.osone-mascot-cumprimentando .osone-mascot-brow-left {
+  transform: translateY(-5px) rotate(-4deg);
+}
+
+.osone-mascot-cumprimentando .osone-mascot-brow-right {
+  transform: translateY(-5px) rotate(4deg);
+}
+
+/* Gestos comandados pelo OSONE. O braco aponta em qualquer angulo, e nao so
+   nas tres direcoes fixas das poses. */
+.osone-mascot-apontando .osone-mascot-arm-right {
+  transform: rotate(var(--osone-braco, -88deg));
+}
+
+.osone-mascot-apontando .osone-mascot-arm-right .osone-mascot-finger {
+  opacity: 1;
+}
+
+.osone-mascot-acenando .osone-mascot-arm-right {
+  animation: osone-mascot-aceno 520ms ease-in-out infinite;
+}
+
+.osone-mascot-acenando .osone-mascot-figura {
+  animation: osone-mascot-cumprimento 760ms ease-in-out infinite;
+}
+
 /* Poses */
 .osone-mascot-speak .osone-mascot-mouth { opacity: 0; }
 
@@ -537,6 +592,18 @@
 @keyframes osone-mascot-breathe {
   0%, 100% { transform: translateY(0) scale(1); }
   50% { transform: translateY(-3px) scale(1.015, 0.985); }
+}
+
+@keyframes osone-mascot-cumprimento {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  25% { transform: translateY(-11px) scale(0.97, 1.05); }
+  55% { transform: translateY(0) scale(1.06, 0.94); }
+  78% { transform: translateY(-4px) scale(1, 1); }
+}
+
+@keyframes osone-mascot-aceno {
+  0%, 100% { transform: rotate(-124deg); }
+  50% { transform: rotate(-158deg); }
 }
 
 @keyframes osone-mascot-bob {

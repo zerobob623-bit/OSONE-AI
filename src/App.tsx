@@ -106,13 +106,35 @@ import { resolveAudioUrl, deleteAudio } from './lib/audioDb';
 import { auth, googleProvider, signInWithPopup, signOut, onAuthStateChanged, db, doc, setDoc, getDoc, OperationType, handleFirestoreError, isFirebaseFullyConfigured, firebaseConfigFaltando, explicarErroDeLogin } from './firebase';
 import { TelaDeEntrada } from './components/TelaDeEntrada';
 import { LegalConsentGate } from './components/LegalConsentGate';
-import { OsoneMascotCompanion, type AtividadeDoMascote } from './components/OsoneMascotCompanion';
+import {
+  OsoneMascotCompanion,
+  EVENTO_DE_COMANDO_DO_MASCOTE,
+  type AtividadeDoMascote,
+  type AcaoDoMascote,
+  type ComandoDoMascote
+} from './components/OsoneMascotCompanion';
 
 import { HomeWorkspaceSection } from './components/HomeWorkspaceSection';
 import { useSubscription } from './hooks/useSubscription';
 import { minimumPlanForFeature, paidFeatureForWorkspace, PaidFeature } from './lib/planos';
 
 const OSONE_CODE_BEST_MODEL = "gemini-3.6-flash";
+
+/* O modelo pode mandar qualquer coisa nos argumentos, entao o comando do mascote
+   passa por aqui antes de virar movimento na tela. */
+const ACOES_DO_MASCOTE: AcaoDoMascote[] = ['andar', 'apontar', 'tchau', 'pular', 'olhar', 'parar'];
+
+const comandoDoMascote = (args: any): ComandoDoMascote => {
+  const pedida = String(args?.acao || '').toLowerCase().trim();
+  const acao = (ACOES_DO_MASCOTE as string[]).includes(pedida) ? (pedida as AcaoDoMascote) : 'parar';
+  const naTela = (valor: any) => (Number.isFinite(Number(valor)) ? Math.min(1, Math.max(0, Number(valor))) : undefined);
+  return {
+    acao,
+    x: naTela(args?.x),
+    y: naTela(args?.y),
+    fala: String(args?.fala || '').slice(0, 80)
+  };
+};
 
 const WritingStudioSection = React.lazy(() =>
   import('./components/WritingStudioSection').then(module => ({ default: module.WritingStudioSection }))
@@ -8142,6 +8164,23 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
             },
             required: ["location"]
           }
+        },
+        {
+          name: "controlar_mascote",
+          description: "Comanda o mascote do OSONE na tela do usuário: faz ele andar até um ponto, apontar para qualquer lugar da tela, dar tchau, pular ou olhar para algo. Use para mostrar visualmente onde está o que você está explicando, para comemorar ou para se despedir. O mascote só aparece se o usuário tiver ativado.",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              acao: {
+                type: Type.STRING,
+                description: "andar (caminha até o ponto), apontar (aponta o braço para o ponto), tchau (acena), pular (comemora), olhar (olha para o ponto) ou parar (volta a passear sozinho)."
+              },
+              x: { type: Type.NUMBER, description: "Posição horizontal do ponto na tela, de 0 (extrema esquerda) a 1 (extrema direita)." },
+              y: { type: Type.NUMBER, description: "Posição vertical do ponto na tela, de 0 (topo) a 1 (base)." },
+              fala: { type: Type.STRING, description: "Frase bem curta para o balão do mascote (opcional)." }
+            },
+            required: ["acao"]
+          }
         }
       ];
 
@@ -8879,6 +8918,9 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
                 content: `🗺️ Sintonizei o mapa do OSONE integrado em **${title}**.` 
               }]);
             }
+          } else if (call.name === 'controlar_mascote') {
+            const comando = comandoDoMascote(call.args as any);
+            window.dispatchEvent(new CustomEvent(EVENTO_DE_COMANDO_DO_MASCOTE, { detail: comando }));
           } else if (call.name === 'open_map_workspace') {
             const loc = (call.args as any).location;
             setMapSearchQuery(loc);
@@ -10024,6 +10066,23 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       title: { type: Type.STRING, description: "Um título amigável para o que está sendo aberto." }
                     },
                     required: ["url"]
+                  }
+                },
+                {
+                  name: "controlar_mascote",
+                  description: "Comanda o mascote do OSONE na tela do usuário: faz ele andar até um ponto, apontar para qualquer lugar da tela, dar tchau, pular ou olhar para algo. Use para mostrar visualmente onde está o que você está explicando, para comemorar ou para se despedir. O mascote só aparece se o usuário tiver ativado.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      acao: {
+                        type: Type.STRING,
+                        description: "andar (caminha até o ponto), apontar (aponta o braço para o ponto), tchau (acena), pular (comemora), olhar (olha para o ponto) ou parar (volta a passear sozinho)."
+                      },
+                      x: { type: Type.NUMBER, description: "Posição horizontal do ponto na tela, de 0 (extrema esquerda) a 1 (extrema direita)." },
+                      y: { type: Type.NUMBER, description: "Posição vertical do ponto na tela, de 0 (topo) a 1 (base)." },
+                      fala: { type: Type.STRING, description: "Frase bem curta para o balão do mascote (opcional)." }
+                    },
+                    required: ["acao"]
                   }
                 },
                 {
@@ -11407,6 +11466,14 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       name: call.name,
                       id: call.id,
                       response: { result: "Notificação exibida." }
+                    });
+                  } else if (call.name === 'controlar_mascote') {
+                    const comando = comandoDoMascote(call.args as any);
+                    window.dispatchEvent(new CustomEvent(EVENTO_DE_COMANDO_DO_MASCOTE, { detail: comando }));
+                    responses.push({
+                      name: call.name,
+                      id: call.id,
+                      response: { result: `Mascote comandado: ${comando.acao}.` }
                     });
                   } else if (call.name === 'open_map_workspace') {
                     const loc = (call.args as any).location;
