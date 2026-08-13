@@ -290,181 +290,150 @@
 .osone-mascot-toggle-face::after {
   content: "";
   position: absolute;
-  top: 14px;
-  width: 5px;
-  height: 6px;
+  top: 11px;
+  width: 9px;
+  height: 11px;
   border-radius: 50%;
-  background: #3a1c0d;
-  box-shadow: 0 0 0 2px rgba(255,255,255,0.62);
+  background:
+    radial-gradient(circle at 34% 26%, #ffffff 0 26%, transparent 27%),
+    radial-gradient(circle at 50% 50%, #241209 0 58%, #7c4519 59% 100%);
+  box-shadow: 0 0 0 2.5px #fff7e8;
 }
 
-.osone-mascot-toggle-face::before { left: 12px; }
-.osone-mascot-toggle-face::after { right: 12px; }
+.osone-mascot-toggle-face::before { left: 8px; }
+.osone-mascot-toggle-face::after { right: 8px; }
 
 .osone-mascot-toggle::after {
   content: "";
   position: absolute;
-  left: 14px;
+  left: 13px;
   top: 24px;
-  width: 10px;
-  height: 5px;
+  width: 12px;
+  height: 7px;
   border-radius: 0 0 999px 999px;
-  border-bottom: 2px solid #3a1c0d;
+  border-bottom: 2.5px solid #4e2109;
 }
 
 .osone-mascot {
   position: absolute;
-  left: 18px;
-  bottom: 10px;
-  width: 132px;
-  height: 136px;
-  transform-origin: 50% 100%;
-  animation: osone-mascot-breathe 2.6s ease-in-out infinite;
+  left: 8px;
+  bottom: 6px;
+  width: 156px;
+  height: 164px;
 }
 
-.osone-mascot-body {
-  position: absolute;
-  left: 14px;
-  top: 18px;
-  width: 104px;
-  height: 88px;
-  border-radius: 52% 52% 48% 48%;
-  background:
-    radial-gradient(circle at 34% 28%, rgba(255,255,255,0.34), transparent 14%),
-    radial-gradient(circle at 66% 68%, rgba(151,61,0,0.28), transparent 33%),
-    linear-gradient(145deg, #ffb133 0%, #ff861f 48%, #f06a12 100%);
-  border: 1px solid rgba(110, 47, 0, 0.45);
-  box-shadow:
-    inset -10px -13px 18px rgba(129, 47, 0, 0.24),
-    inset 7px 8px 14px rgba(255, 219, 114, 0.34),
-    0 14px 26px rgba(0, 0, 0, 0.38);
+.osone-mascot-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  filter: drop-shadow(0 14px 20px rgba(0, 0, 0, 0.34));
+}
+
+.osone-mascot-svg g,
+.osone-mascot-svg path,
+.osone-mascot-svg rect,
+.osone-mascot-svg circle,
+.osone-mascot-svg ellipse {
+  transform-box: view-box;
+}
+
+.osone-mascot-figura {
+  transform-origin: 100px 190px;
+  animation: osone-mascot-breathe 3.4s ease-in-out infinite;
+}
+
+.osone-mascot-cabeca {
+  transform-origin: 100px 145px;
+  transition: transform 300ms ease;
+}
+
+.osone-mascot-shadow {
+  transform-origin: 100px 194px;
 }
 
 .osone-mascot-eye {
-  position: absolute;
-  top: 38px;
-  width: 23px;
-  height: 25px;
-  border-radius: 50%;
-  background: #fff7e8;
-  border: 2px solid rgba(94, 48, 10, 0.55);
-  box-shadow: inset 0 -2px 0 rgba(0,0,0,0.13);
-  animation: osone-mascot-blink 6.2s ease-in-out infinite;
+  animation: osone-mascot-blink 5.8s ease-in-out infinite;
 }
 
-.osone-mascot-eye-left { left: 28px; }
-.osone-mascot-eye-right { right: 28px; }
+.osone-mascot-eye-left { transform-origin: 79px 80px; }
+.osone-mascot-eye-right { transform-origin: 121px 80px; }
 
-.osone-mascot-eye span {
-  position: absolute;
-  left: 8px;
-  top: 7px;
-  width: 9px;
-  height: 10px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 28%, #fff 0 18%, #24140c 24% 100%);
-  transition: transform 260ms ease;
+.osone-mascot-pupil {
+  transition: transform 240ms ease;
 }
 
 .osone-mascot-brow {
-  position: absolute;
-  top: 31px;
-  width: 20px;
-  height: 5px;
-  border-radius: 999px;
-  border-top: 3px solid rgba(112, 55, 11, 0.7);
+  fill: none;
+  stroke: #93481a;
+  stroke-width: 7.5;
+  stroke-linecap: round;
+  transition: transform 240ms ease;
 }
 
-.osone-mascot-brow-left {
-  left: 29px;
-  transform: rotate(-13deg);
-}
-
-.osone-mascot-brow-right {
-  right: 28px;
-  transform: rotate(13deg);
-}
+.osone-mascot-brow-left { transform-origin: 80px 49px; }
+.osone-mascot-brow-right { transform-origin: 120px 49px; }
 
 .osone-mascot-mouth {
-  position: absolute;
-  left: 46px;
-  top: 69px;
-  width: 16px;
-  height: 8px;
-  border-radius: 0 0 999px 999px;
-  border-bottom: 3px solid #4e230d;
-  transition: all 220ms ease;
+  fill: none;
+  stroke: #4e2109;
+  stroke-width: 5.5;
+  stroke-linecap: round;
+  transition: opacity 180ms ease;
+}
+
+.osone-mascot-mouth-open {
+  opacity: 0;
+  transform-origin: 100px 117px;
+  transition: opacity 180ms ease;
 }
 
 .osone-mascot-arm,
 .osone-mascot-leg {
-  position: absolute;
-  display: block;
-  background: linear-gradient(180deg, #ff941f, #de5f0d);
-  border: 1px solid rgba(113, 48, 0, 0.28);
-  box-shadow: inset 3px 4px 5px rgba(255, 201, 88, 0.24);
-  transform-origin: 50% 8px;
-}
-
-.osone-mascot-arm {
-  top: 70px;
-  width: 20px;
-  height: 38px;
-  border-radius: 999px 999px 15px 15px;
+  transition: transform 280ms ease;
 }
 
 .osone-mascot-arm-left {
-  left: 4px;
-  transform: rotate(21deg);
+  transform-origin: 49px 104px;
+  transform: rotate(13deg);
 }
 
 .osone-mascot-arm-right {
-  right: 4px;
-  transform: rotate(-21deg);
-}
-
-.osone-mascot-leg {
-  top: 91px;
-  width: 24px;
-  height: 38px;
-  border-radius: 999px 999px 16px 16px;
+  transform-origin: 151px 104px;
+  transform: rotate(-13deg);
 }
 
 .osone-mascot-leg-left {
-  left: 34px;
-  transform: rotate(6deg);
+  transform-origin: 87px 132px;
+  transform: rotate(4deg);
 }
 
 .osone-mascot-leg-right {
-  right: 34px;
-  transform: rotate(-6deg);
+  transform-origin: 113px 132px;
+  transform: rotate(-4deg);
 }
 
-.osone-mascot-shadow {
-  position: absolute;
-  left: 21px;
-  bottom: 2px;
-  width: 90px;
-  height: 18px;
-  border-radius: 50%;
-  background: radial-gradient(ellipse at center, rgba(0,0,0,0.42), rgba(0,0,0,0));
-  filter: blur(1px);
-  transform-origin: 50% 50%;
+.osone-mascot-finger {
+  opacity: 0;
+  transition: opacity 200ms ease;
 }
 
 .osone-mascot-bubble {
   position: absolute;
-  left: 62px;
-  bottom: 128px;
-  width: 150px;
-  min-height: 40px;
-  padding: 9px 10px;
-  border-radius: 8px;
-  background: rgba(13, 12, 11, 0.9);
+  left: 96px;
+  bottom: 142px;
+  width: 152px;
+  padding: 9px 11px;
+  border-radius: 12px;
+  background: rgba(13, 12, 11, 0.92);
   border: 1px solid rgba(255, 137, 45, 0.34);
   color: #fff7e8;
   font: 700 10px/1.35 "Outfit", "Inter", sans-serif;
-  box-shadow: 0 16px 34px rgba(0,0,0,0.34);
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.34);
+  opacity: 0;
+  transform: translateY(8px) scale(0.96);
+  transform-origin: 12% 100%;
+  transition: opacity 260ms ease, transform 260ms ease;
 }
 
 .osone-mascot-bubble::after {
@@ -485,118 +454,116 @@
   transform: translateY(0) scale(1);
 }
 
-.osone-mascot-speak .osone-mascot-mouth {
-  left: 43px;
-  top: 66px;
-  width: 22px;
-  height: 18px;
-  border: 3px solid #4e230d;
-  border-radius: 50%;
-  background: radial-gradient(circle at 50% 66%, #ffb17d 0 22%, #3b170c 24% 100%);
-  animation: osone-mascot-talk 340ms ease-in-out infinite;
+/* Poses */
+.osone-mascot-speak .osone-mascot-mouth { opacity: 0; }
+
+.osone-mascot-speak .osone-mascot-mouth-open {
+  opacity: 1;
+  animation: osone-mascot-talk 360ms ease-in-out infinite;
 }
 
-.osone-mascot-point-right .osone-mascot-arm-right {
-  width: 66px;
-  height: 18px;
-  right: -44px;
-  top: 64px;
-  border-radius: 999px;
-  transform: rotate(-6deg);
+.osone-mascot-speak .osone-mascot-brow-left { transform: translateY(-3px) rotate(-3deg); }
+.osone-mascot-speak .osone-mascot-brow-right { transform: translateY(-3px) rotate(3deg); }
+
+.osone-mascot-point-right .osone-mascot-arm-right { transform: rotate(-88deg); }
+.osone-mascot-point-up .osone-mascot-arm-right { transform: rotate(-150deg); }
+.osone-mascot-point-down .osone-mascot-arm-right { transform: rotate(-38deg); }
+
+.osone-mascot-point-right .osone-mascot-arm-right .osone-mascot-finger,
+.osone-mascot-point-up .osone-mascot-arm-right .osone-mascot-finger,
+.osone-mascot-point-down .osone-mascot-arm-right .osone-mascot-finger {
+  opacity: 1;
 }
 
-.osone-mascot-point-up .osone-mascot-arm-right {
-  width: 18px;
-  height: 58px;
-  right: 21px;
-  top: 24px;
-  transform: rotate(33deg);
-}
+.osone-mascot-point-right .osone-mascot-pupil { transform: translate(5px, 0); }
+.osone-mascot-point-up .osone-mascot-pupil { transform: translate(3px, -5px); }
+.osone-mascot-point-down .osone-mascot-pupil { transform: translate(3px, 5px); }
+.osone-mascot-look .osone-mascot-pupil { transform: translate(4px, 2px); }
 
-.osone-mascot-point-down .osone-mascot-arm-right {
-  width: 18px;
-  height: 50px;
-  right: 6px;
-  top: 78px;
-  transform: rotate(-120deg);
-}
+.osone-mascot-look .osone-mascot-cabeca { transform: rotate(-4deg); }
+.osone-mascot-look .osone-mascot-brow-left { transform: translateY(-4px); }
+.osone-mascot-look .osone-mascot-brow-right { transform: translateY(-2px); }
+
+.osone-mascot-point-down .osone-mascot-brow-left { transform: translateY(2px) rotate(9deg); }
+.osone-mascot-point-down .osone-mascot-brow-right { transform: translateY(2px) rotate(-9deg); }
 
 .osone-mascot-walk .osone-mascot-leg-left {
-  animation: osone-mascot-leg-left 520ms ease-in-out infinite;
+  animation: osone-mascot-leg-left 620ms ease-in-out infinite;
 }
 
 .osone-mascot-walk .osone-mascot-leg-right {
-  animation: osone-mascot-leg-right 520ms ease-in-out infinite;
+  animation: osone-mascot-leg-right 620ms ease-in-out infinite;
 }
 
 .osone-mascot-walk .osone-mascot-arm-left {
-  animation: osone-mascot-arm-left 520ms ease-in-out infinite;
+  animation: osone-mascot-arm-left 620ms ease-in-out infinite;
 }
 
 .osone-mascot-walk .osone-mascot-arm-right {
-  animation: osone-mascot-arm-right 520ms ease-in-out infinite;
+  animation: osone-mascot-arm-right 620ms ease-in-out infinite;
 }
 
-.osone-mascot-jump {
-  animation: osone-mascot-jump 1s cubic-bezier(.2,.9,.2,1) infinite;
+.osone-mascot-walk .osone-mascot-figura {
+  animation: osone-mascot-bob 620ms ease-in-out infinite;
+}
+
+.osone-mascot-jump .osone-mascot-figura {
+  animation: osone-mascot-jump 1s cubic-bezier(.2, .9, .2, 1) infinite;
 }
 
 .osone-mascot-jump .osone-mascot-shadow {
-  animation: osone-mascot-shadow-jump 1s cubic-bezier(.2,.9,.2,1) infinite;
+  animation: osone-mascot-shadow-jump 1s cubic-bezier(.2, .9, .2, 1) infinite;
 }
 
-.osone-mascot-look .osone-mascot-eye span,
-.osone-mascot-point-right .osone-mascot-eye span {
-  transform: translateX(3px);
-}
-
-.osone-mascot-point-up .osone-mascot-eye span {
-  transform: translateY(-3px);
-}
-
-.osone-mascot-point-down .osone-mascot-eye span {
-  transform: translateY(3px);
-}
+.osone-mascot-jump .osone-mascot-arm-left { transform: rotate(48deg); }
+.osone-mascot-jump .osone-mascot-arm-right { transform: rotate(-48deg); }
+.osone-mascot-jump .osone-mascot-leg-left { transform: rotate(16deg); }
+.osone-mascot-jump .osone-mascot-leg-right { transform: rotate(-16deg); }
 
 @keyframes osone-mascot-breathe {
   0%, 100% { transform: translateY(0) scale(1); }
-  50% { transform: translateY(-4px) scale(1.015, 0.99); }
+  50% { transform: translateY(-3px) scale(1.015, 0.985); }
+}
+
+@keyframes osone-mascot-bob {
+  0%, 100% { transform: translateY(0) rotate(-1.5deg); }
+  50% { transform: translateY(-3px) rotate(1.5deg); }
 }
 
 @keyframes osone-mascot-blink {
-  0%, 45%, 49%, 100% { transform: scaleY(1); }
-  47% { transform: scaleY(0.08); }
+  0%, 42%, 47%, 100% { transform: scaleY(1); }
+  44.5% { transform: scaleY(0.08); }
 }
 
 @keyframes osone-mascot-talk {
-  0%, 100% { transform: scaleY(0.76); }
-  50% { transform: scaleY(1.12); }
+  0%, 100% { transform: scale(1, 0.7); }
+  50% { transform: scale(1.04, 1.15); }
 }
 
 @keyframes osone-mascot-leg-left {
-  0%, 100% { transform: rotate(20deg) translateY(0); }
-  50% { transform: rotate(-18deg) translateY(2px); }
+  0%, 100% { transform: rotate(22deg); }
+  50% { transform: rotate(-16deg); }
 }
 
 @keyframes osone-mascot-leg-right {
-  0%, 100% { transform: rotate(-18deg) translateY(2px); }
-  50% { transform: rotate(20deg) translateY(0); }
+  0%, 100% { transform: rotate(-16deg); }
+  50% { transform: rotate(22deg); }
 }
 
 @keyframes osone-mascot-arm-left {
-  0%, 100% { transform: rotate(-18deg); }
-  50% { transform: rotate(28deg); }
+  0%, 100% { transform: rotate(-10deg); }
+  50% { transform: rotate(34deg); }
 }
 
 @keyframes osone-mascot-arm-right {
-  0%, 100% { transform: rotate(28deg); }
-  50% { transform: rotate(-18deg); }
+  0%, 100% { transform: rotate(10deg); }
+  50% { transform: rotate(-34deg); }
 }
 
 @keyframes osone-mascot-jump {
   0%, 100% { transform: translateY(0) scale(1); }
-  45% { transform: translateY(-28px) scale(0.98, 1.04); }
-  72% { transform: translateY(3px) scale(1.06, 0.94); }
+  45% { transform: translateY(-28px) scale(0.97, 1.05); }
+  72% { transform: translateY(3px) scale(1.07, 0.93); }
 }
 
 @keyframes osone-mascot-shadow-jump {

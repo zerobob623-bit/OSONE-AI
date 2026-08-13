@@ -15,6 +15,99 @@ type OsoneMascotCompanionProps = {
 
 const STORAGE_KEY = 'osone_mascot_active';
 
+/* Arte do mascote: bolinha fofa e carismatica, com olhos grandes, sobrancelhas
+   expressivas, bracinhos de macarrao e pezinhos arredondados. */
+function ArteDoMascote() {
+  return (
+    <svg className="osone-mascot-svg" viewBox="0 0 200 210" role="presentation" focusable="false">
+      <defs>
+        <radialGradient id="osoneCorpo" cx="34%" cy="26%" r="82%">
+          <stop offset="0%" stopColor="#FFD693" />
+          <stop offset="30%" stopColor="#FDB054" />
+          <stop offset="68%" stopColor="#F58824" />
+          <stop offset="100%" stopColor="#DB620F" />
+        </radialGradient>
+        <radialGradient id="osoneVolume" cx="38%" cy="30%" r="74%">
+          <stop offset="60%" stopColor="#8C3A00" stopOpacity="0" />
+          <stop offset="100%" stopColor="#8C3A00" stopOpacity="0.4" />
+        </radialGradient>
+        <linearGradient id="osoneMembro" x1="0.15" y1="0" x2="0.85" y2="1">
+          <stop offset="0%" stopColor="#FDB761" />
+          <stop offset="100%" stopColor="#E06B12" />
+        </linearGradient>
+        <radialGradient id="osoneOlho" cx="42%" cy="32%" r="74%">
+          <stop offset="0%" stopColor="#FFFFFF" />
+          <stop offset="100%" stopColor="#F7E4C6" />
+        </radialGradient>
+        <radialGradient id="osoneChao" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stopColor="#000000" stopOpacity="0.45" />
+          <stop offset="100%" stopColor="#000000" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+
+      <ellipse className="osone-mascot-shadow" cx="100" cy="194" rx="56" ry="10" fill="url(#osoneChao)" />
+
+      <g className="osone-mascot-figura">
+        <g className="osone-mascot-leg osone-mascot-leg-left">
+          <rect x="77" y="120" width="21" height="58" rx="10.5" fill="url(#osoneMembro)" />
+          <ellipse cx="81" cy="177" rx="16" ry="10" fill="url(#osoneMembro)" />
+        </g>
+        <g className="osone-mascot-leg osone-mascot-leg-right">
+          <rect x="102" y="120" width="21" height="58" rx="10.5" fill="url(#osoneMembro)" />
+          <ellipse cx="119" cy="177" rx="16" ry="10" fill="url(#osoneMembro)" />
+        </g>
+
+        <g className="osone-mascot-arm osone-mascot-arm-left">
+          <rect x="40" y="96" width="19" height="50" rx="9.5" fill="url(#osoneMembro)" />
+          <ellipse cx="49.5" cy="145" rx="12" ry="11" fill="url(#osoneMembro)" />
+          <ellipse className="osone-mascot-finger" cx="49.5" cy="157" rx="5.4" ry="7.4" fill="url(#osoneMembro)" />
+        </g>
+        <g className="osone-mascot-arm osone-mascot-arm-right">
+          <rect x="141" y="96" width="19" height="50" rx="9.5" fill="url(#osoneMembro)" />
+          <ellipse cx="150.5" cy="145" rx="12" ry="11" fill="url(#osoneMembro)" />
+          <ellipse className="osone-mascot-finger" cx="150.5" cy="157" rx="5.4" ry="7.4" fill="url(#osoneMembro)" />
+        </g>
+
+        <g className="osone-mascot-cabeca">
+          <circle cx="100" cy="92" r="60" fill="url(#osoneCorpo)" />
+          <circle cx="100" cy="92" r="60" fill="url(#osoneVolume)" />
+          <ellipse cx="84" cy="47" rx="18" ry="8" fill="#FFFFFF" opacity="0.26" transform="rotate(-18 84 47)" />
+          <ellipse cx="58" cy="107" rx="12" ry="7.5" fill="#F0501B" opacity="0.2" />
+          <ellipse cx="142" cy="107" rx="12" ry="7.5" fill="#F0501B" opacity="0.2" />
+
+          <g className="osone-mascot-eye osone-mascot-eye-left">
+            <ellipse cx="79" cy="80" rx="19" ry="21.5" fill="url(#osoneOlho)" stroke="#B4712F" strokeWidth="1.4" strokeOpacity="0.45" />
+            <g className="osone-mascot-pupil">
+              <circle cx="81" cy="84" r="10.6" fill="#7C4519" />
+              <circle cx="81" cy="84" r="6.6" fill="#241209" />
+              <circle cx="77.6" cy="80" r="3.6" fill="#FFFFFF" opacity="0.95" />
+              <circle cx="84.4" cy="87.6" r="1.8" fill="#FFFFFF" opacity="0.6" />
+            </g>
+          </g>
+          <g className="osone-mascot-eye osone-mascot-eye-right">
+            <ellipse cx="121" cy="80" rx="19" ry="21.5" fill="url(#osoneOlho)" stroke="#B4712F" strokeWidth="1.4" strokeOpacity="0.45" />
+            <g className="osone-mascot-pupil">
+              <circle cx="119" cy="84" r="10.6" fill="#7C4519" />
+              <circle cx="119" cy="84" r="6.6" fill="#241209" />
+              <circle cx="115.6" cy="80" r="3.6" fill="#FFFFFF" opacity="0.95" />
+              <circle cx="122.4" cy="87.6" r="1.8" fill="#FFFFFF" opacity="0.6" />
+            </g>
+          </g>
+
+          <path className="osone-mascot-brow osone-mascot-brow-left" d="M65 54 Q80 45 95 52" />
+          <path className="osone-mascot-brow osone-mascot-brow-right" d="M105 52 Q120 45 135 54" />
+
+          <path className="osone-mascot-mouth" d="M85 111 Q100 126 115 111" />
+          <g className="osone-mascot-mouth-open">
+            <ellipse cx="100" cy="117" rx="15" ry="12.5" fill="#46200C" />
+            <ellipse cx="100" cy="126" rx="8.5" ry="5.5" fill="#FF8080" />
+          </g>
+        </g>
+      </g>
+    </svg>
+  );
+}
+
 const estaNoElectron = () => {
   if (typeof navigator === 'undefined') return false;
   return /Electron/i.test(navigator.userAgent);
@@ -162,22 +255,7 @@ export function OsoneMascotCompanion({ brain }: OsoneMascotCompanionProps) {
         <div className="osone-mascot-web-layer" aria-hidden="true">
           <div className={`osone-mascot osone-mascot-${estado} ${fala ? 'osone-mascot-has-message' : ''}`}>
             <div className="osone-mascot-bubble">{fala}</div>
-            <div className="osone-mascot-shadow" />
-            <div className="osone-mascot-body">
-              <span className="osone-mascot-brow osone-mascot-brow-left" />
-              <span className="osone-mascot-brow osone-mascot-brow-right" />
-              <span className="osone-mascot-eye osone-mascot-eye-left">
-                <span />
-              </span>
-              <span className="osone-mascot-eye osone-mascot-eye-right">
-                <span />
-              </span>
-              <span className="osone-mascot-mouth" />
-              <span className="osone-mascot-arm osone-mascot-arm-left" />
-              <span className="osone-mascot-arm osone-mascot-arm-right" />
-              <span className="osone-mascot-leg osone-mascot-leg-left" />
-              <span className="osone-mascot-leg osone-mascot-leg-right" />
-            </div>
+            <ArteDoMascote />
           </div>
         </div>
       )}
