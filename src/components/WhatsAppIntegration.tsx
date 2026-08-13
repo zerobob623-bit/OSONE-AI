@@ -66,11 +66,15 @@ interface ContactItem {
 
 export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: string }) {
   // Config state
+  // Estes valores são apenas o que a tela mostra ENQUANTO a configuração verdadeira não chega do
+  // servidor — e por isso são iguais aos padrões do servidor. Quando divergiam (o painel nascia
+  // com onlyKnownContacts: true e o servidor com false), qualquer salvamento feito antes da
+  // resposta do GET gravava o padrão do painel por cima do que estava valendo de verdade.
   const [config, setConfig] = useState<WhatsAppConfig>({
     enabled: false,
     geminiApiKey: '',
     sendAudioReplies: true,
-    onlyKnownContacts: true,
+    onlyKnownContacts: false,
     requireTriggerCommand: true,
     triggerCommand: '/osone',
     ttsEngine: 'gemini',
@@ -78,6 +82,14 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
     elevenLabsApiKey: '',
     elevenLabsVoiceId: ''
   });
+  /**
+   * A configuração acima é chute até o servidor responder. Sem saber a diferença, o painel
+   * mostrava o chute como se fosse a verdade e, pior, gravava esse chute no servidor no primeiro
+   * clique — foi assim que desligar o "/osone" desligava o robô inteiro junto.
+   */
+  const [configCarregada, setConfigCarregada] = useState(false);
+  /** Erro de leitura/gravação da configuração, mostrado na tela em vez de morrer no console. */
+  const [configErro, setConfigErro] = useState<string | null>(null);
   const [waConnectionStatus, setWaConnectionStatus] = useState<string>('desconectado');
 
   // UI States
@@ -152,16 +164,42 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
     }
   };
 
+  /**
+   * Explica em português o que impediu o painel de falar com o OSONE ZAP.
+   *
+   * O 403 é o caso mais comum e o mais confuso de todos: as rotas do ZAP só aceitam pedidos
+   * feitos do PRÓPRIO computador onde o OSONE roda (ou com WHATSAPP_ACCESS_TOKEN). Abrindo o
+   * painel pelo celular ou por um túnel, TODOS os ajustes eram recusados em silêncio — o
+   * interruptor voltava sozinho e o robô continuava exigindo o "/osone" para sempre.
+   */
+  const explicarFalhaDeConfig = (status: number, detalhe?: string): string => {
+    if (status === 403) {
+      return 'O OSONE ZAP só aceita ajustes feitos NO PRÓPRIO COMPUTADOR onde o OSONE está rodando (ou com um WHATSAPP_ACCESS_TOKEN configurado no servidor). Nada foi alterado: o robô continua com os ajustes anteriores.';
+    }
+    if (status === 501 || status === 503) {
+      return 'O OSONE ZAP não está disponível neste servidor (a integração do WhatsApp só roda no computador/instalação local). Nada foi alterado.';
+    }
+    return `O servidor do OSONE recusou o pedido (erro ${status}). Nada foi alterado.${detalhe ? ` Detalhe: ${detalhe.slice(0, 200)}` : ''}`;
+  };
+
   // Load backend configurations, logs, knowledge base, conversations and contacts
   const fetchConfig = async () => {
     try {
       const res = await fetch('/api/whatsapp/config');
-      if (res.ok) {
-        const data = await res.json();
-        setConfig(data);
+      if (!res.ok) {
+        const detalhe = await res.text().catch(() => '');
+        setConfigCarregada(false);
+        setConfigErro(`Não foi possível ler as configurações do OSONE ZAP. ${explicarFalhaDeConfig(res.status, detalhe)}`);
+        return;
       }
-    } catch (e) {
+      const data = await res.json();
+      setConfig(data);
+      setConfigCarregada(true);
+      setConfigErro(null);
+    } catch (e: any) {
       console.error("Erro ao carregar configuração do WhatsApp:", e);
+      setConfigCarregada(false);
+      setConfigErro(`Não foi possível falar com o servidor do OSONE para ler as configurações do ZAP (${e?.message || e}). O que aparece na tela abaixo ainda não é o que está valendo no robô.`);
     }
   };
 
@@ -310,26 +348,68 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
     setActiveTab('history');
   };
 
+  /**
+   * Salva APENAS o que o usuário acabou de mexer.
+   *
+   * Antes, cada clique mandava a configuração INTEIRA que estava na tela. Parece inofensivo, e
+   * não é: o painel só lê a configuração do servidor uma vez, ao abrir. Se essa leitura falhar
+   * (o OSONE ainda subindo, painel aberto pelo celular e recusado com 403, rede caindo), a tela
+   * fica com os valores de partida — e o primeiro clique grava esses valores por cima de tudo.
+   *
+   * Foi exatamente esse o defeito relatado: ao DESLIGAR o "/osone", o mesmo pedido levava junto
+   * "enabled: false" e "onlyKnownContacts: true" da tela, desligando o robô e ligando o filtro
+   * de contatos. O usuário mexia num interruptor e três mudavam — resultado: em vez de responder
+   * todo mundo, o robô não respondia mais ninguém.
+   *
+   * O servidor já trata cada campo ausente como "não mexer nisso", então mandar só o campo
+   * alterado é seguro e faz o clique significar exatamente o que ele diz.
+   */
   const handleSaveConfig = async (updatedConfig?: Partial<WhatsAppConfig>) => {
+    // Sem argumento é o botão "Salvar Ajustes", dono apenas dos campos digitados nesta aba.
+    // Os interruptores salvam sozinhos, cada um mandando só o seu próprio campo.
+    const alteracoes: Partial<WhatsAppConfig> = updatedConfig ?? {
+      geminiApiKey: config.geminiApiKey,
+      ttsEngine: config.ttsEngine,
+      elevenLabsApiKey: config.elevenLabsApiKey,
+      elevenLabsVoiceId: config.elevenLabsVoiceId
+    };
+
+    // Enquanto não soubermos o que está valendo no robô, qualquer gravação é um chute gravado
+    // por cima de ajustes reais. Melhor não salvar nada e dizer o porquê.
+    if (!configCarregada) {
+      setConfigErro('Nada foi salvo: o painel ainda não conseguiu ler a configuração que está valendo no OSONE ZAP, e gravar agora apagaria os ajustes atuais do robô. Toque em "Tentar de novo" para ler a configuração antes de mexer nos ajustes.');
+      fetchConfig();
+      return;
+    }
+
     setIsSaving(true);
-    const toSave = { ...config, ...updatedConfig };
     try {
       const res = await fetch('/api/whatsapp/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(toSave),
+        body: JSON.stringify(alteracoes),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setConfig(data.config);
-        // O servidor recusa uma "chave" que claramente não é uma, para não deixar o valor bom
-        // ser sobrescrito. Se isso acontecer, o usuário precisa saber — calar aqui recriaria
-        // justamente o problema silencioso que esta proteção existe para evitar.
-        if (data.avisoChave) alert(`OSONE ZAP — chave não alterada\n\n${data.avisoChave}`);
-        fetchLogs();
+      if (!res.ok) {
+        const detalhe = await res.text().catch(() => '');
+        setConfigErro(`O ajuste NÃO foi salvo. ${explicarFalhaDeConfig(res.status, detalhe)}`);
+        // Volta a mostrar o que o robô realmente tem, para o interruptor não ficar exibindo uma
+        // mudança que nunca aconteceu.
+        fetchConfig();
+        return;
       }
-    } catch (e) {
+      const data = await res.json();
+      setConfig(data.config);
+      setConfigCarregada(true);
+      setConfigErro(null);
+      // O servidor recusa uma "chave" que claramente não é uma, para não deixar o valor bom
+      // ser sobrescrito. Se isso acontecer, o usuário precisa saber — calar aqui recriaria
+      // justamente o problema silencioso que esta proteção existe para evitar.
+      if (data.avisoChave) alert(`OSONE ZAP — chave não alterada\n\n${data.avisoChave}`);
+      fetchLogs();
+    } catch (e: any) {
       console.error("Falha ao salvar configuração:", e);
+      setConfigErro(`O ajuste NÃO foi salvo: falha ao falar com o servidor do OSONE (${e?.message || e}). O robô continua com os ajustes anteriores.`);
+      fetchConfig();
     } finally {
       setIsSaving(false);
     }
@@ -484,10 +564,10 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
             </div>
             <button
               onClick={() => handleSaveConfig({ enabled: !config.enabled })}
-              disabled={isSaving}
-              className={`p-2 rounded-xl transition-all cursor-pointer ${
-                config.enabled 
-                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/30' 
+              disabled={isSaving || !configCarregada}
+              className={`p-2 rounded-xl transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                config.enabled
+                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/30'
                   : 'bg-zinc-800 text-zinc-500 border border-zinc-700 hover:text-white'
               }`}
             >
@@ -496,6 +576,25 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
           </div>
         </div>
       </div>
+
+      {/* Falha ao ler/gravar a configuração: aparece em qualquer aba, porque enquanto ela existe
+          NENHUM interruptor do painel corresponde ao que o robô está fazendo de verdade. */}
+      {configErro && (
+        <div className="px-6 md:px-8 pt-4 shrink-0">
+          <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center gap-3 justify-between p-4 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-200">
+            <p className="text-xs leading-relaxed">
+              <span className="font-bold">Ajustes do OSONE ZAP fora de sincronia. </span>
+              {configErro}
+            </p>
+            <button
+              onClick={() => fetchConfig()}
+              className="shrink-0 px-4 py-2 rounded-xl bg-red-500/20 border border-red-500/40 text-xs font-bold text-red-100 hover:bg-red-500/30 transition-colors cursor-pointer"
+            >
+              Tentar de novo
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Sticky Navigation Tabs Header */}
       <div className="sticky top-0 z-30 bg-[#0c0d10]/95 backdrop-blur-xl border-b border-white/10 shadow-2xl py-3 px-6 md:px-8">
@@ -1292,7 +1391,8 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
 
                 <button
                   onClick={() => handleSaveConfig({ enabled: !config.enabled })}
-                  className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${
+                  disabled={isSaving || !configCarregada}
+                  className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
                     config.enabled ? 'bg-emerald-500' : 'bg-zinc-800'
                   }`}
                 >
@@ -1365,7 +1465,8 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
 
                   <button
                     onClick={() => handleSaveConfig({ requireTriggerCommand: !config.requireTriggerCommand })}
-                    className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer shrink-0 ${
+                    disabled={isSaving || !configCarregada}
+                    className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed ${
                       config.requireTriggerCommand ? 'bg-emerald-500' : 'bg-zinc-800'
                     }`}
                   >
@@ -1419,7 +1520,8 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
 
                 <button
                   onClick={() => handleSaveConfig({ onlyKnownContacts: !config.onlyKnownContacts })}
-                  className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer shrink-0 ${
+                  disabled={isSaving || !configCarregada}
+                  className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed ${
                     config.onlyKnownContacts ? 'bg-emerald-500' : 'bg-zinc-800'
                   }`}
                 >
@@ -1442,7 +1544,8 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
 
                 <button
                   onClick={() => handleSaveConfig({ sendAudioReplies: !config.sendAudioReplies })}
-                  className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer shrink-0 ${
+                  disabled={isSaving || !configCarregada}
+                  className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed ${
                     config.sendAudioReplies ? 'bg-emerald-500' : 'bg-zinc-800'
                   }`}
                 >
@@ -1539,7 +1642,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
               <div className="pt-4 border-t border-white/10 flex justify-end">
                 <button
                   onClick={() => handleSaveConfig()}
-                  disabled={isSaving}
+                  disabled={isSaving || !configCarregada}
                   className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-600 hover:to-green-600 text-black font-bold text-xs transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
                 >
                   {isSaving ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
