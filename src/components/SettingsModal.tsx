@@ -4,6 +4,7 @@ import { X, Cpu, Palette, Key, Info, Activity, CheckCircle2, AlertCircle, Loader
 import { cn } from '../lib/utils';
 import { ApiKeys, OrbStyle, AppTheme, AIProfile, VoiceModulation } from '../types';
 import { PERSONAS, Persona } from './PersonaSwitcher';
+import { auth } from '../firebase';
 
 const VOICE_DETAILS = [
   { id: 'Kore', name: 'Kore', desc: 'Feminina • Doce, expressiva e natural', category: 'Femininas' },
@@ -22,8 +23,7 @@ type ConnectionStatus = 'idle' | 'testing' | 'connected' | 'error';
  * Ficam aqui, e não vindos do servidor, porque naquele cenário ele responde 403 sem lista.
  */
 const VARIAVEIS_POR_GRUPO: Record<string, string[]> = {
-  'TUYA_': ['TUYA_CLIENT_ID', 'TUYA_CLIENT_SECRET', 'TUYA_BASE_URL', 'TUYA_USER_UID'],
-  'GOOGLE_HOME_': ['GOOGLE_HOME_CLIENT_ID', 'GOOGLE_HOME_CLIENT_SECRET']
+  'TUYA_': ['TUYA_CLIENT_ID', 'TUYA_CLIENT_SECRET', 'TUYA_BASE_URL', 'TUYA_USER_UID']
 };
 
 export const SettingsModal = ({ 
@@ -102,6 +102,7 @@ export const SettingsModal = ({
 
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('idle');
   const [connectionMessage, setConnectionMessage] = useState('');
+  const [googlePairing, setGooglePairing] = useState<{ code: string; expiresAt: number; deviceCount: number } | null>(null);
   const [elVerificationStatus, setElVerificationStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [elVerificationMessage, setElVerificationMessage] = useState('');
   const [geminiVerificationStatus, setGeminiVerificationStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
@@ -368,30 +369,32 @@ export const SettingsModal = ({
    * que não achava nenhum aparelho. Agora o resultado vem do diagnóstico de ponta a ponta, que
    * para no primeiro elo que falta e diz o que fazer nele.
    */
-  const handleTestConnection = async () => {
+  const ativarGoogleHomeNoInstalavel = async () => {
     setConnectionStatus('testing');
-    setConnectionMessage('Conferindo credenciais, conta Tuya e vínculo do Google...');
-
+    setConnectionMessage('Validando sua conta Tuya na ponte segura do OSONE...');
+    setGooglePairing(null);
     try {
-      const res = await fetch('/api/google-home/diagnostico');
+      const firebaseUser = auth?.currentUser;
+      if (!firebaseUser?.getIdToken) throw new Error('Entre com sua conta Google no OSONE antes de ativar.');
+      const firebaseToken = await firebaseUser.getIdToken();
+      const res = await fetch('/api/google-home/cloud/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ firebaseToken })
+      });
       const data = await res.json().catch(() => null);
-      if (!data) {
-        setConnectionStatus('error');
-        setConnectionMessage('O servidor respondeu algo que não dá para ler em /api/google-home/diagnostico.');
-        return;
-      }
-      setConnectionStatus(data.ok ? 'connected' : 'error');
-      setConnectionMessage([data.resumo, data.comoResolver].filter(Boolean).join(' '));
-    } catch (error) {
+      if (!res.ok) throw new Error(data?.error || 'A ponte pública não aceitou a ativação.');
+      setGooglePairing({
+        code: String(data.code || ''),
+        expiresAt: Number(data.expiresAt || 0),
+        deviceCount: Number(data.deviceCount || 0)
+      });
+      setConnectionStatus('connected');
+      setConnectionMessage(`${Number(data.deviceCount || 0)} aparelho(s) preparados. Use o código abaixo no vínculo do Google Home; ele vale por 10 minutos.`);
+    } catch (error: any) {
       setConnectionStatus('error');
-      setConnectionMessage('Falha de rede ao consultar /api/google-home/diagnostico.');
+      setConnectionMessage(error?.message || String(error));
     }
-  };
-
-  const googleHomeUrls = {
-    authorize: `${typeof window !== 'undefined' ? window.location.origin : ''}/api/google-home/authorize`,
-    token: `${typeof window !== 'undefined' ? window.location.origin : ''}/api/google-home/token`,
-    fulfillment: `${typeof window !== 'undefined' ? window.location.origin : ''}/api/google-home/fulfillment`
   };
 
   /**
@@ -1858,10 +1861,10 @@ export const SettingsModal = ({
                       DA TUYA, então sem aquela conta este cartão não teria o que oferecer. A ordem
                       na tela é a ordem em que as coisas precisam ser feitas.
                     */}
-                    <div className="p-6 bg-sky-500/5 border border-sky-500/20 rounded-[2rem] space-y-4">
+                    <div className="p-6 bg-sky-500/5 border border-sky-500/20 rounded-lg space-y-4">
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex items-center gap-3">
-                          <div className="p-3 bg-sky-500/10 rounded-2xl text-sky-400">
+                          <div className="p-3 bg-sky-500/10 rounded-lg text-sky-400">
                             <Home size={22} />
                           </div>
                           <div>
@@ -1875,30 +1878,21 @@ export const SettingsModal = ({
                           connectionStatus === 'error' ? "bg-amber-500/10 text-amber-300 border-amber-500/20" :
                           "bg-sky-500/10 text-sky-300 border-sky-500/20"
                         )}>
-                          {connectionStatus === 'connected' ? "Vinculado" : connectionStatus === 'error' ? "Pendente" : "Opcional"}
+                          {googlePairing ? "Código pronto" : connectionStatus === 'error' ? "Pendente" : "Opcional"}
                         </span>
                       </div>
 
                       <p className="text-xs text-her-muted leading-relaxed font-light">
-                        <strong className="text-sky-300">Pode deixar em branco.</strong> O OSONE já comanda a casa
-                        sozinho pela Tuya, acima — no painel, no chat e por voz. Isto aqui abre uma porta a MAIS:
-                        falar com uma caixinha do Google e o comando chegar até o OSONE (Google → OSONE → Tuya →
-                        aparelhos). O Assistente recebe os mesmos aparelhos, com liga/desliga, brilho e cor conforme
-                        cada um aceita; fechaduras nunca entram. O painel completo está na
-                        aba <strong className="text-sky-300">OSONE HOME &gt; Google Home</strong>.
+                        Use os aparelhos da sua conta Tuya pelo Google Assistente. A ponte segura do OSONE funciona
+                        pela internet mesmo quando este computador estiver desligado; fechaduras nunca são expostas.
                       </p>
-
-                      {blocoDeCredenciais(
-                        'GOOGLE_HOME_',
-                        <>Este par é <strong className="text-sky-300">inventado por você</strong> — não é emitido pelo Google. Preencha aqui e cole exatamente os mesmos valores em Account Linking, no seu projeto do Actions on Google.</>
-                      )}
 
                       <button
                         type="button"
-                        onClick={handleTestConnection}
+                        onClick={ativarGoogleHomeNoInstalavel}
                         disabled={connectionStatus === 'testing'}
                         className={cn(
-                          "w-full py-3 rounded-2xl text-[10px] uppercase tracking-[0.2em] font-bold transition-all flex items-center justify-center gap-2 cursor-pointer",
+                          "w-full py-3 rounded-lg text-[10px] uppercase tracking-[0.2em] font-bold transition-all flex items-center justify-center gap-2 cursor-pointer",
                           connectionStatus === 'testing' ? "bg-white/5 text-her-muted" :
                           connectionStatus === 'connected' ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30" :
                           connectionStatus === 'error' ? "bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25" :
@@ -1908,19 +1902,19 @@ export const SettingsModal = ({
                         {connectionStatus === 'testing' ? (
                           <>
                             <Loader2 size={14} className="animate-spin" />
-                            Conferindo a ponte...
+                            Preparando a ponte...
                           </>
                         ) : (
                           <>
-                            <Activity size={14} />
-                            Conferir credenciais, Tuya e vínculo
+                            <Home size={14} />
+                            Ativar no Google Home
                           </>
                         )}
                       </button>
 
                       {connectionStatus !== 'idle' && connectionMessage && (
                         <div className={cn(
-                          "p-4 rounded-2xl text-[11px] flex items-start gap-2 border leading-relaxed",
+                          "p-4 rounded-lg text-[11px] flex items-start gap-2 border leading-relaxed",
                           connectionStatus === 'connected' ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20" :
                           connectionStatus === 'error' ? "bg-amber-500/10 text-amber-200 border-amber-500/20" :
                           "bg-white/5 text-her-muted border-white/10"
@@ -1932,70 +1926,28 @@ export const SettingsModal = ({
                         </div>
                       )}
 
-                      <div className="bg-black/20 p-4 rounded-2xl space-y-2.5 border border-white/5">
-                        <div className="flex items-center gap-2">
-                          <Info size={13} className="text-sky-400" />
-                          <span className="text-[9px] font-bold uppercase tracking-widest text-her-ink">URLs para o Account Linking</span>
-                        </div>
-                        {([
-                          { label: 'Authorization URL', value: googleHomeUrls.authorize },
-                          { label: 'Token URL', value: googleHomeUrls.token },
-                          { label: 'Fulfillment URL', value: googleHomeUrls.fulfillment }
-                        ]).map((item) => (
-                          <div key={item.label} className="space-y-1">
-                            <span className="text-[9px] uppercase tracking-wider text-her-muted/60 font-bold">{item.label}</span>
-                            <div className="flex items-center gap-2">
-                              <code className="flex-1 text-[10px] font-mono text-her-ink/80 bg-black/40 px-3 py-2 rounded-xl truncate">{item.value}</code>
-                              <button
-                                type="button"
-                                onClick={() => navigator.clipboard?.writeText(item.value)}
-                                className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-her-muted hover:text-white transition-all shrink-0 cursor-pointer"
-                                title="Copiar"
-                              >
-                                <Copy size={12} />
-                              </button>
+                      {googlePairing && (
+                        <div className="bg-black/30 p-4 rounded-lg border border-emerald-500/25 space-y-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <span className="text-[9px] uppercase tracking-widest text-emerald-300/70 font-bold">Código de vínculo</span>
+                              <div className="text-2xl font-mono font-bold text-white mt-1">{googlePairing.code}</div>
                             </div>
+                            <button
+                              type="button"
+                              onClick={() => navigator.clipboard?.writeText(googlePairing.code)}
+                              className="p-2.5 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-300 transition-colors"
+                              title="Copiar código"
+                            >
+                              <Copy size={16} />
+                            </button>
                           </div>
-                        ))}
-                        <p className="text-[10px] text-amber-400/80 leading-relaxed pt-1">
-                          ⚠️ Vale só para ESTE vínculo: o Google precisa alcançar o OSONE de fora e não entra em
-                          localhost, então estas URLs pedem o OSONE publicado num domínio (ex: Vercel) ou exposto
-                          por um túnel. <strong>Seus aparelhos não dependem disso</strong> — painel, chat e voz do
-                          OSONE falam com a Tuya direto desta máquina, inclusive em localhost.
-                        </p>
-                      </div>
-
-                      <div className="bg-black/20 p-4 rounded-2xl space-y-2 border border-white/5">
-                        <div className="flex items-center gap-2">
-                          <Info size={13} className="text-sky-400" />
-                          <span className="text-[9px] font-bold uppercase tracking-widest text-her-ink">Guia de Configuração</span>
+                          <p className="text-[10px] text-zinc-400 leading-relaxed">
+                            No celular, abra Google Home &gt; Adicionar dispositivo &gt; Funciona com Google Home &gt;
+                            OSONE. Digite este código quando a tela de autorização abrir.
+                          </p>
                         </div>
-                        <ul className="space-y-2 text-[10px] text-her-muted/60 leading-relaxed list-none pl-1">
-                          <li className="flex gap-2 border-l border-white/10 pl-3">
-                            <span className="text-sky-400 font-bold">01</span>
-                            Crie um projeto em console.actions.google.com e escolha "Smart Home".
-                          </li>
-                          <li className="flex gap-2 border-l border-white/10 pl-3">
-                            <span className="text-sky-400 font-bold">02</span>
-                            Em "Account Linking", cole as 3 URLs acima e um Client ID/Secret inventados por você.
-                          </li>
-                          <li className="flex gap-2 border-l border-white/10 pl-3">
-                            {/* Este passo mandava definir variável de ambiente e reiniciar o OSONE —
-                                instrução que já não valia e que, no app instalado, era impossível de
-                                cumprir: não existe .env para abrir. Os campos estão logo acima. */}
-                            <span className="text-sky-400 font-bold">03</span>
-                            Cole esse MESMO par nos dois campos deste cartão e clique em Salvar. Passa a valer na hora, sem reiniciar.
-                          </li>
-                          <li className="flex gap-2 border-l border-white/10 pl-3">
-                            <span className="text-sky-400 font-bold">04</span>
-                            Habilite a "HomeGraph API" no projeto do Google Cloud vinculado.
-                          </li>
-                          <li className="flex gap-2 border-l border-white/10 pl-3">
-                            <span className="text-sky-400 font-bold">05</span>
-                            No app Google Home do celular: + → Configurar dispositivo → "Funciona com o Google" → procure seu projeto de teste e autorize na tela que o OSONE abrir.
-                          </li>
-                        </ul>
-                      </div>
+                      )}
                     </div>
                   </motion.div>
                 )}
@@ -2121,5 +2073,3 @@ export const SettingsModal = ({
     </AnimatePresence>
   );
 };
-
-

@@ -12,6 +12,18 @@ import {
   recursosDosDps
 } from './lib/tuyaDispositivos';
 
+export interface GoogleHomeDeviceBackend {
+  getTuyaDevices(): Promise<any>;
+  getDeviceStatus(deviceId: string): Promise<any>;
+  sendDeviceCommand(deviceId: string, commands: Array<{ code: string; value: any }>): Promise<any>;
+}
+
+const backendLocal: GoogleHomeDeviceBackend = {
+  getTuyaDevices: () => getTuyaDevices(),
+  getDeviceStatus,
+  sendDeviceCommand
+};
+
 /**
  * Ponte real entre o Google Assistant/Google Home e os dispositivos Tuya já conectados no
  * OSONE. Implementa o fluxo OAuth de vínculo de conta e o webhook de fulfillment do Google
@@ -272,8 +284,8 @@ export interface MapaParaGoogle {
  * a confirmação que existe no resto do sistema não era nem consultada. Cair no padrão SWITCH
  * era o bastante para abrir esse buraco sozinho.
  */
-export async function mapearAparelhosParaGoogle(): Promise<MapaParaGoogle> {
-  const devices = await getTuyaDevices();
+export async function mapearAparelhosParaGoogle(backend: GoogleHomeDeviceBackend = backendLocal): Promise<MapaParaGoogle> {
+  const devices = await backend.getTuyaDevices();
   const lista: any[] = Array.isArray(devices) ? devices : [];
 
   const expostos: AparelhoParaGoogle[] = [];
@@ -295,7 +307,7 @@ export async function mapearAparelhosParaGoogle(): Promise<MapaParaGoogle> {
     let dps: any[] = Array.isArray(d?.status) ? d.status : [];
     if (dps.length === 0) {
       try {
-        const st = await getDeviceStatus(d.id);
+        const st = await backend.getDeviceStatus(d.id);
         dps = Array.isArray(st) ? st : [];
       } catch (err: any) {
         ignorados.push({ id: d.id, nome, motivo: `Não foi possível ler o que este aparelho aceita (${err?.message || err}).` });
@@ -329,8 +341,8 @@ export async function mapearAparelhosParaGoogle(): Promise<MapaParaGoogle> {
   return { expostos, ignorados };
 }
 
-export async function handleSync(): Promise<any> {
-  const { expostos } = await mapearAparelhosParaGoogle();
+export async function handleSync(backend: GoogleHomeDeviceBackend = backendLocal): Promise<any> {
+  const { expostos } = await mapearAparelhosParaGoogle(backend);
   return {
     devices: expostos.map(a => {
       const dispositivo: any = {
@@ -353,14 +365,14 @@ export async function handleSync(): Promise<any> {
   };
 }
 
-export async function handleQuery(deviceIds: string[]): Promise<any> {
+export async function handleQuery(deviceIds: string[], backend: GoogleHomeDeviceBackend = backendLocal): Promise<any> {
   const devices: Record<string, any> = {};
 
   for (const id of deviceIds) {
     try {
       // Estado lido do aparelho AGORA: o QUERY é justamente a pergunta "como está neste
       // instante", e um interruptor apertado na parede não passa por lugar nenhum daqui.
-      const status = await getDeviceStatus(id);
+      const status = await backend.getDeviceStatus(id);
       const recursos = recursosDosDps(Array.isArray(status) ? status : []);
 
       if (!recursos.liga) {
@@ -421,7 +433,10 @@ function acaoDoComandoDoGoogle(comando: string, params: any):
   return null;
 }
 
-export async function handleExecute(commands: Array<{ devices: Array<{ id: string }>; execution: Array<{ command: string; params?: any }> }>): Promise<any> {
+export async function handleExecute(
+  commands: Array<{ devices: Array<{ id: string }>; execution: Array<{ command: string; params?: any }> }>,
+  backend: GoogleHomeDeviceBackend = backendLocal
+): Promise<any> {
   const commandResults: any[] = [];
 
   // Um levantamento só para a requisição inteira, e é ele que autoriza: aparelho que não está
@@ -431,7 +446,7 @@ export async function handleExecute(commands: Array<{ devices: Array<{ id: strin
   let mapa: MapaParaGoogle | null = null;
   let erroDoMapa = '';
   try {
-    mapa = await mapearAparelhosParaGoogle();
+    mapa = await mapearAparelhosParaGoogle(backend);
   } catch (err: any) {
     erroDoMapa = String(err?.message || err);
     console.error('[Google Home] Não foi possível levantar os aparelhos da conta Tuya:', erroDoMapa);
@@ -476,7 +491,7 @@ export async function handleExecute(commands: Array<{ devices: Array<{ id: strin
         }
 
         try {
-          await sendDeviceCommand(device.id, montagem.comandos);
+          await backend.sendDeviceCommand(device.id, montagem.comandos);
           commandResults.push({ ids: [device.id], status: 'SUCCESS', states: { online: true, ...traduzido.estado } });
         } catch (err: any) {
           // Antes qualquer falha virava "deviceOffline", escondendo erro de credencial ou de

@@ -49,6 +49,18 @@ import {
   handleDisconnect as googleHomeDisconnect
 } from "./src/googleHomeService";
 import { registerBillingApi, registerBillingWebhook } from "./src/billingService";
+import { verifyFirebaseBearer } from "./src/firebaseAdminService";
+import {
+  backendForGoogleHomeUser,
+  exchangeCloudToken,
+  googleHomeCloudConfiguration,
+  googleHomeCloudStatus,
+  issueCloudAuthCode,
+  issuePairingCode,
+  registerGoogleHomeUser,
+  revokeGoogleHomeUser,
+  userForAccessToken
+} from "./src/googleHomeCloudService";
 
 dotenv.config();
 // Antes de qualquer checagem: o que o usuário preencheu pela tela entra no ambiente aqui, senão a
@@ -6459,6 +6471,88 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
   // dispositivos Tuya reais já usados pelo painel/chat do OSONE. A configuração externa no
   // Actions on Google Console (criar o projeto, colar estas URLs, publicar em teste) só pode
   // ser feita pelo próprio usuário — aqui só existe o código do lado do servidor.
+  const googleHomePublicUrl = (): string => {
+    const value = String(process.env.OSONE_HOME_PUBLIC_URL || 'https://osone-ai-six.vercel.app').trim().replace(/\/+$/, '');
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'https:' || /^(localhost|127\.|\[?::1)/.test(parsed.hostname)) {
+      throw new Error('OSONE_HOME_PUBLIC_URL precisa ser um endereço público HTTPS.');
+    }
+    return parsed.origin;
+  };
+
+  const cloudError = (res: express.Response, err: any) => {
+    const status = Number(err?.status) || 500;
+    if (status >= 500) console.error('[Google Home Cloud]', err);
+    return res.status(status).json({ error: status >= 500 ? 'A ponte pública do Google Home falhou.' : err?.message });
+  };
+
+  /**
+   * O instalável envia as credenciais direto do servidor local para a ponte oficial. O segredo
+   * nunca volta para o React e o Google passa a controlar a Tuya mesmo com o computador fechado.
+   */
+  app.post('/api/google-home/cloud/configure', async (req, res) => {
+    if (!somenteDaPropriaMaquina(req, res, 'A ativação do Google Home no instalável')) return;
+    if (isVercel) return res.status(400).json({ error: 'Esta rota deve ser chamada pelo OSONE instalado.' });
+    try {
+      const firebaseToken = String(req.body?.firebaseToken || '');
+      if (!firebaseToken) return res.status(401).json({ error: 'Entre com sua conta OSONE antes de ativar.' });
+      const credentials = {
+        clientId: String(process.env.TUYA_CLIENT_ID || ''),
+        clientSecret: String(process.env.TUYA_CLIENT_SECRET || ''),
+        baseUrl: String(process.env.TUYA_BASE_URL || 'https://openapi.tuyaus.com'),
+        userUid: String(process.env.TUYA_USER_UID || '')
+      };
+      const base = googleHomePublicUrl();
+      const registerResponse = await fetch(`${base}/api/google-home/cloud/register`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${firebaseToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credentials })
+      });
+      const registration: any = await registerResponse.json().catch(() => null);
+      if (!registerResponse.ok) return res.status(registerResponse.status).json({ error: registration?.error || 'A ponte pública recusou as credenciais Tuya.' });
+
+      const pairingResponse = await fetch(`${base}/api/google-home/cloud/pairing-code`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${firebaseToken}` }
+      });
+      const pairing: any = await pairingResponse.json().catch(() => null);
+      if (!pairingResponse.ok) return res.status(pairingResponse.status).json({ error: pairing?.error || 'Não foi possível gerar o código de vínculo.' });
+      return res.json({ ...registration, ...pairing, publicUrl: base });
+    } catch (err: any) {
+      return cloudError(res, err);
+    }
+  });
+
+  app.post('/api/google-home/cloud/register', async (req, res) => {
+    if (!isVercel) return res.status(404).json({ error: 'Registro disponível apenas na ponte pública.' });
+    try {
+      const user = await verifyFirebaseBearer(String(req.headers.authorization || ''));
+      return res.json(await registerGoogleHomeUser(user.uid, req.body?.credentials || {}));
+    } catch (err: any) {
+      return cloudError(res, err);
+    }
+  });
+
+  app.post('/api/google-home/cloud/pairing-code', async (req, res) => {
+    if (!isVercel) return res.status(404).json({ error: 'Pareamento disponível apenas na ponte pública.' });
+    try {
+      const user = await verifyFirebaseBearer(String(req.headers.authorization || ''));
+      return res.json(await issuePairingCode(user.uid));
+    } catch (err: any) {
+      return cloudError(res, err);
+    }
+  });
+
+  app.get('/api/google-home/cloud/status', async (req, res) => {
+    if (!isVercel) return res.status(404).json({ error: 'Estado disponível apenas na ponte pública.' });
+    try {
+      const user = await verifyFirebaseBearer(String(req.headers.authorization || ''));
+      return res.json(await googleHomeCloudStatus(user.uid));
+    } catch (err: any) {
+      return cloudError(res, err);
+    }
+  });
+
   /**
    * O estado do Google Home tem DOIS degraus, e a tela precisa dos dois: o par client_id/secret
    * preenchido aqui, e a conta do Google efetivamente vinculada pelo app do celular. Quem
@@ -6467,7 +6561,8 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
    * para não quebrar quem já lia esta rota.
    */
   app.get("/api/google-home/status", (req, res) => {
-    res.json({ ...checkGoogleHomeConfig(), ...lerEstadoDoVinculo() });
+    if (isVercel) return res.json({ ...googleHomeCloudConfiguration(), cloud: true });
+    return res.json({ ...checkGoogleHomeConfig(), ...lerEstadoDoVinculo(), cloud: false });
   });
 
   /**
@@ -6521,24 +6616,36 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
 
     const params = new URLSearchParams({
       redirect_uri: redirect_uri as string,
-      state: (state as string) || ""
+      state: (state as string) || "",
+      client_id: String(client_id),
+      cloud: isVercel ? '1' : '0'
     });
     res.redirect(`/google-home-consent.html?${params.toString()}`);
   });
 
   // Chamado pela tela de consentimento quando o usuário clica em "Autorizar". Gera o código
   // de autorização e redireciona de volta para o Google com ele.
-  app.post("/api/google-home/approve", (req, res) => {
+  app.post("/api/google-home/approve", async (req, res) => {
     const { redirect_uri, state } = req.body || {};
     if (!redirect_uri || typeof redirect_uri !== "string" || !isRedirectUriDoGoogle(redirect_uri)) {
       return res.status(400).json({ error: "redirect_uri é obrigatório e precisa ser um domínio de OAuth do Google." });
     }
-    const code = issueAuthCode();
-    const params = new URLSearchParams({ code, state: state || "" });
-    return res.json({ redirectTo: `${redirect_uri}?${params.toString()}` });
+    try {
+      const code = isVercel
+        ? await issueCloudAuthCode({
+            pairingCode: String(req.body?.pairing_code || ''),
+            clientId: String(req.body?.client_id || ''),
+            redirectUri: redirect_uri
+          })
+        : issueAuthCode();
+      const params = new URLSearchParams({ code, state: state || "" });
+      return res.json({ redirectTo: `${redirect_uri}?${params.toString()}` });
+    } catch (err: any) {
+      return cloudError(res, err);
+    }
   });
 
-  app.post("/api/google-home/token", (req, res) => {
+  app.post("/api/google-home/token", async (req, res) => {
     try {
       const body = req.body || {};
       const authHeader = req.headers["authorization"] || "";
@@ -6553,13 +6660,17 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
         clientSecret = secret;
       }
 
-      const tokens = exchangeToken({
+      const tokenParams = {
         grantType: body.grant_type,
         code: body.code,
         refreshToken: body.refresh_token,
+        redirectUri: body.redirect_uri,
         clientId: clientId || "",
         clientSecret: clientSecret || ""
-      });
+      };
+      const tokens = isVercel
+        ? await exchangeCloudToken(tokenParams)
+        : exchangeToken(tokenParams);
 
       res.json(tokens);
     } catch (err: any) {
@@ -6573,34 +6684,37 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
     try {
       const authHeader = (req.headers["authorization"] || "").toString();
       const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-      if (!isValidAccessToken(token)) {
+      const cloudUserId = isVercel ? await userForAccessToken(token) : null;
+      if (isVercel ? !cloudUserId : !isValidAccessToken(token)) {
         return res.status(401).json({ error: "Token de acesso inválido, expirado ou ausente." });
       }
+      const deviceBackend = cloudUserId ? await backendForGoogleHomeUser(cloudUserId) : undefined;
 
       const { requestId, inputs } = req.body || {};
       const input = Array.isArray(inputs) ? inputs[0] : null;
       const intent = input?.intent;
 
       if (intent === "action.devices.SYNC") {
-        const result = await googleHomeSync();
-        return res.json({ requestId, payload: { agentUserId: "osone-user", ...result } });
+        const result = await googleHomeSync(deviceBackend);
+        return res.json({ requestId, payload: { agentUserId: cloudUserId || "osone-user", ...result } });
       }
 
       if (intent === "action.devices.QUERY") {
         const deviceIds = (input.payload?.devices || []).map((d: any) => d.id);
-        const result = await googleHomeQuery(deviceIds);
+        const result = await googleHomeQuery(deviceIds, deviceBackend);
         return res.json({ requestId, payload: result });
       }
 
       if (intent === "action.devices.EXECUTE") {
-        const result = await googleHomeExecute(input.payload?.commands || []);
+        const result = await googleHomeExecute(input.payload?.commands || [], deviceBackend);
         return res.json({ requestId, payload: result });
       }
 
       if (intent === "action.devices.DISCONNECT") {
         // Revoga de verdade. Antes a resposta era um {} vazio e os tokens continuavam válidos
         // aqui: desvincular pelo celular não cortava acesso nenhum.
-        googleHomeDisconnect();
+        if (cloudUserId) await revokeGoogleHomeUser(cloudUserId);
+        else googleHomeDisconnect();
         return res.json({ requestId, payload: {} });
       }
 
