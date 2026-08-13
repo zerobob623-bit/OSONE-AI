@@ -2485,12 +2485,18 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     // Grava em disco para que a escolha sobreviva a reinícios do OSONE.
     saveWhatsAppConfig();
 
+    // O log conta o estado das TRÊS travas que decidem quem é respondido, e não só se o chatbot
+    // está ligado. Quem desligava o comando "/osone" esperando que o robô passasse a responder
+    // todo mundo, e continuava sem resposta nenhuma, não tinha como descobrir aqui que outra
+    // trava (o robô desligado, ou o filtro de contatos) era a responsável pelo silêncio.
     whatsappLogs.unshift({
       id: Math.random().toString(36).substring(2, 11),
       timestamp: Date.now(),
       type: "info",
       sender: "Sistema",
-      message: `Configurações salvas: Chatbot ${whatsappConfig.enabled ? "Ativado" : "Desativado"}.`
+      message: `Configurações salvas: Chatbot ${whatsappConfig.enabled ? "Ativado" : "DESATIVADO (não responde ninguém)"}`
+        + ` | Comando de ativação: ${whatsappConfig.requireTriggerCommand ? `exigido ("${whatsappConfig.triggerCommand}")` : "desligado (responde qualquer mensagem)"}`
+        + ` | Filtro de contatos: ${whatsappConfig.onlyKnownContacts ? "LIGADO (só responde números cadastrados)" : "desligado (qualquer número passa)"}.`
     });
     
     // Devolve a configuração sem as chaves, pelo mesmo motivo do GET: o que não trafega de
