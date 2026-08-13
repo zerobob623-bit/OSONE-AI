@@ -1,4 +1,5 @@
 node_modules
+.osone-models/
 dist
 dist-desktop
 server-build

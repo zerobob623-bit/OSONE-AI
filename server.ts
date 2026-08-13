@@ -673,10 +673,10 @@ Comentário de @${user}: "${text}"`;
     // IA ler só o pedido em si.
     requireTriggerCommand: true,
     triggerCommand: "/osone",
-    // "local" usa o Piper, que roda na própria máquina: qualidade um pouco menor, mas sem cota,
-    // sem chave e sem custo. As outras duas são de nuvem e podem esgotar.
-    ttsEngine: "gemini" as "gemini" | "elevenlabs" | "local",
+    // Supertonic e Piper rodam na própria máquina: sem cota, sem chave e sem custo.
+    ttsEngine: "gemini" as "gemini" | "elevenlabs" | "supertonic" | "local",
     ttsVoice: "Kore",
+    supertonicVoice: "F1" as "F1" | "M1",
     elevenLabsApiKey: "",
     elevenLabsVoiceId: ""
   };
@@ -962,18 +962,46 @@ Responda em português do Brasil, de forma natural para leitura no WhatsApp (sem
    * mensagens de voz e imagens chegam aqui como transcrição/descrição gerada pela IA (com um
    * prefixo tipo "[Mensagem de voz do cliente]: ..."), então exigir o comando no início faria o
    * gatilho nunca funcionar por áudio; e é comum a pessoa escrever "oi, /osone me ajuda".
+   *
+   * Áudio tem uma diferença humana: ninguém fala "barra osone" naturalmente. Quando o comando
+   * configurado é o padrão "/osone", aceitamos também as grafias fonéticas que apareceram
+   * em transcrições reais ("osone", "ozone", "ozoni", "ozzone" e "osoni"), removendo só a
+   * chamada e mantendo o pedido real para a IA responder. Isso não afrouxa comandos personalizados.
    */
   function matchTriggerCommand(text: string): { triggered: boolean; cleanedText: string } {
     const trigger = (whatsappConfig.triggerCommand || "").trim().toLowerCase();
     if (!trigger) return { triggered: true, cleanedText: text };
 
-    const idx = text.toLowerCase().indexOf(trigger);
-    if (idx === -1) return { triggered: false, cleanedText: text };
-
-    const cleaned = (text.slice(0, idx) + text.slice(idx + trigger.length))
+    const limparDepoisDoGatilho = (valor: string) => valor
       .replace(/\s{2,}/g, " ")
+      .replace(/^\[(?:mensagem de voz|áudio)[^\]]*\]:?\s*$/i, "")
       .trim();
-    return { triggered: true, cleanedText: cleaned };
+
+    const lower = text.toLowerCase();
+    const idx = lower.indexOf(trigger);
+    if (idx !== -1) {
+      return {
+        triggered: true,
+        cleanedText: limparDepoisDoGatilho(text.slice(0, idx) + text.slice(idx + trigger.length))
+      };
+    }
+
+    const comandoPadrao = trigger.replace(/[^\p{L}\p{N}]+/gu, "");
+    if (comandoPadrao === "osone") {
+      // O Gemini transcreve o mesmo nome de maneiras diferentes conforme voz, sotaque e ruído.
+      // O limite por palavra impede que a sequência seja encontrada dentro de outra palavra.
+      const falado = text.match(/(^|[^\p{L}\p{N}])(?:osone|osoni|ozone|ozoni|ozzone)(?=$|[^\p{L}\p{N}])/iu);
+      if (falado?.index !== undefined) {
+        const inicio = falado.index + falado[1].length;
+        const palavra = falado[0].slice(falado[1].length);
+        return {
+          triggered: true,
+          cleanedText: limparDepoisDoGatilho(text.slice(0, inicio) + text.slice(inicio + palavra.length))
+        };
+      }
+    }
+
+    return { triggered: false, cleanedText: text };
   }
 
   function buildSalesPrompt(senderJid: string, senderName?: string): string {
@@ -1223,6 +1251,65 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   }
 
   /**
+   * Supertonic 3 é a voz neural local principal: português, natural, sem chave e sem cota.
+   * Os quase 400 MB são baixados somente no primeiro uso para não inflar o repositório nem o
+   * instalador. A instância ONNX fica em memória depois disso; recarregá-la em toda frase seria
+   * muito mais lento do que a própria síntese.
+   */
+  let supertonicCarregado: Promise<any> | null = null;
+  let filaSupertonic: Promise<unknown> = Promise.resolve();
+
+  async function carregarSupertonic(): Promise<any> {
+    if (supertonicCarregado) return supertonicCarregado;
+    supertonicCarregado = (async () => {
+      const assets = await import("./src/lib/supertonic-assets.mjs");
+      const runtime = await import("./src/lib/supertonic-runtime.mjs");
+      const pasta = await assets.garantirAssetsSupertonic();
+      const tts = await runtime.loadTextToSpeech(path.join(pasta, "onnx"), false);
+      return { pasta, runtime, tts };
+    })().catch((erro) => {
+      // Permite tentar novamente depois de uma queda de internet ou arquivo incompleto.
+      supertonicCarregado = null;
+      throw erro;
+    });
+    return supertonicCarregado;
+  }
+
+  async function sintetizarComSupertonic(texto: string, voz = "F1"): Promise<Buffer | null> {
+    const frase = stripVocalTags(texto).slice(0, 900);
+    if (!frase) return null;
+    const vozSegura = voz === "M1" ? "M1" : "F1";
+
+    const executar = async (): Promise<Buffer | null> => {
+      const saida = path.join(os.tmpdir(), `osone-supertonic-${crypto.randomBytes(6).toString("hex")}.wav`);
+      try {
+        const { pasta, runtime, tts } = await carregarSupertonic();
+        const estilo = runtime.loadVoiceStyle([path.join(pasta, "voice_styles", `${vozSegura}.json`)]);
+        // Seis passos preservam naturalidade sem tornar a resposta pesada demais em CPUs antigas.
+        const resultado = await tts.call(frase, "pt", estilo, 6, 1.06);
+        const limite = Math.floor(tts.sampleRate * resultado.duration[0]);
+        runtime.writeWavFile(saida, resultado.wav.slice(0, limite), tts.sampleRate);
+        const wav = fs.readFileSync(saida);
+        if (wav.length <= 44) throw new Error("o modelo devolveu áudio vazio");
+        console.log(`[VOZ NATURAL] Supertonic ${vozSegura} gerou ${(wav.length / 1024).toFixed(0)} KB localmente.`);
+        return wav;
+      } catch (erro: any) {
+        console.error(`[VOZ NATURAL] Falha no Supertonic: ${erro?.message || erro}`);
+        ultimoErroTts = `Voz natural local: ${erro?.message || erro}`;
+        return null;
+      } finally {
+        fs.unlink(saida, () => {});
+      }
+    };
+
+    // Uma sessão ONNX por vez evita duas respostas competindo por CPU/memória e vozes se
+    // atropelando quando COWORK e WhatsApp pedem áudio ao mesmo tempo.
+    const atual = filaSupertonic.then(executar, executar);
+    filaSupertonic = atual.then(() => undefined, () => undefined);
+    return atual;
+  }
+
+  /**
    * Traduz o erro cru da API de voz numa frase que explique o que fazer.
    *
    * A API devolve um bloco de JSON de vários milhares de caracteres para dizer coisas simples
@@ -1293,9 +1380,10 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   }
 
   type OpcoesDeVoz = {
-    engine?: "gemini" | "elevenlabs" | "local";
+    engine?: "gemini" | "elevenlabs" | "supertonic" | "local";
     geminiApiKey?: string;
     voice?: string;
+    supertonicVoice?: "F1" | "M1";
     elevenLabsApiKey?: string;
     elevenLabsVoiceId?: string;
     /** Uso interno: marca a chamada de revezamento, para não repetir a troca de motor em ciclo. */
@@ -1326,6 +1414,16 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     const limpo = stripVocalTags((text || "").trim());
     if (!limpo) return null;
 
+    // Quem escolheu Piper explicitamente continua no Piper. Nos demais motores, a rede de
+    // segurança prioritária agora é a voz neural natural, e o Piper permanece como último plano.
+    const wavNatural = opts.engine === "local"
+      ? null
+      : await sintetizarComSupertonic(limpo, opts.supertonicVoice || "F1");
+    if (wavNatural) {
+      ultimoErroTts = "";
+      return { buffer: wavNatural, mimeType: "audio/wav", extension: "wav" };
+    }
+
     const wavLocal = await sintetizarComVozLocal(limpo);
     if (wavLocal) {
       ultimoErroTts = "";
@@ -1339,7 +1437,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   async function sintetizarPelaNuvem(text: string, opts: OpcoesDeVoz): Promise<AudioSintetizado | null> {
     // Voz local escolhida de propósito: não passa pela nuvem. Devolver null aqui já basta —
     // quem chamou cai direto no Piper, sem gastar cota de nenhum serviço no caminho.
-    if (opts.engine === "local") return null;
+    if (opts.engine === "local" || opts.engine === "supertonic") return null;
     const cleanText = (text || "").trim();
     if (!cleanText) return null;
 
@@ -1689,7 +1787,20 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     let promptBody = body;
     if (whatsappConfig.requireTriggerCommand) {
       const { triggered, cleanedText } = matchTriggerCommand(body);
-      if (!triggered) return; // conversa normal entre humanos: o robô fica quieto, sem poluir os logs
+      if (!triggered) {
+        // O silêncio continua sendo o comportamento correto numa conversa entre humanos, mas o
+        // painel precisa explicar por que a mensagem recebida não virou resposta. Sem este registro,
+        // um erro de transcrição do nome parecia defeito total da auto-resposta.
+        whatsappLogs.unshift({
+          id: Math.random().toString(36).substring(2, 11),
+          timestamp: Date.now(),
+          type: "info",
+          sender,
+          message: `Mensagem recebida, mas ignorada porque não continha o comando "${whatsappConfig.triggerCommand}" nem uma variação falada reconhecida de OSONE.`
+        });
+        if (whatsappLogs.length > 100) whatsappLogs.pop();
+        return;
+      }
       // Mensagem que era só o comando, sem pergunta junto ("/osone"): trata como um "oi",
       // senão o modelo receberia uma string vazia e responderia qualquer coisa.
       promptBody = cleanedText || "Olá!";
@@ -1785,6 +1896,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
           engine: whatsappConfig.ttsEngine,
           geminiApiKey: geminiApiKeyToUse,
           voice: whatsappConfig.ttsVoice,
+          supertonicVoice: whatsappConfig.supertonicVoice,
           elevenLabsApiKey: whatsappConfig.elevenLabsApiKey,
           elevenLabsVoiceId: whatsappConfig.elevenLabsVoiceId
         });
@@ -2272,6 +2384,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
         engine: whatsappConfig.ttsEngine,
         geminiApiKey: apiKey,
         voice: whatsappConfig.ttsVoice,
+        supertonicVoice: whatsappConfig.supertonicVoice,
         elevenLabsApiKey: whatsappConfig.elevenLabsApiKey,
         elevenLabsVoiceId: whatsappConfig.elevenLabsVoiceId
       });
@@ -2433,7 +2546,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
   });
 
   app.post("/api/whatsapp/config", (req, res) => {
-    const { enabled, geminiApiKey, sendAudioReplies, onlyKnownContacts, requireTriggerCommand, triggerCommand, ttsEngine, ttsVoice, elevenLabsApiKey, elevenLabsVoiceId } = req.body;
+    const { enabled, geminiApiKey, sendAudioReplies, onlyKnownContacts, requireTriggerCommand, triggerCommand, ttsEngine, ttsVoice, supertonicVoice, elevenLabsApiKey, elevenLabsVoiceId } = req.body;
 
     if (enabled !== undefined) whatsappConfig.enabled = enabled;
     // trim() obrigatório: copiar a chave do console do Google costuma trazer junto um espaço ou
@@ -2470,8 +2583,9 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
     if (typeof triggerCommand === "string" && triggerCommand.trim()) {
       whatsappConfig.triggerCommand = triggerCommand.trim();
     }
-    if (ttsEngine === "gemini" || ttsEngine === "elevenlabs" || ttsEngine === "local") whatsappConfig.ttsEngine = ttsEngine;
+    if (ttsEngine === "gemini" || ttsEngine === "elevenlabs" || ttsEngine === "supertonic" || ttsEngine === "local") whatsappConfig.ttsEngine = ttsEngine;
     if (ttsVoice !== undefined) whatsappConfig.ttsVoice = ttsVoice;
+    if (supertonicVoice === "F1" || supertonicVoice === "M1") whatsappConfig.supertonicVoice = supertonicVoice;
     // Mesma regra da chave do Gemini: vazio mantém o que já existe.
     if (req.body.removerElevenLabsApiKey === true) {
       whatsappConfig.elevenLabsApiKey = "";
@@ -3650,6 +3764,7 @@ Retorne SOMENTE o objeto JSON conforme o esquema.
         engine, 
         clientApiKey, 
         voice, 
+        supertonicVoice,
         elevenLabsApiKey, 
         elevenLabsVoiceId,
         elevenLabsStability,
@@ -3667,6 +3782,30 @@ Retorne SOMENTE o objeto JSON conforme o esquema.
       const cleanText = text.trim();
 	      if (!cleanText) {
 	        return res.status(400).json({ error: "O texto está vazio." });
+	      }
+
+	      // VOZ NEURAL LOCAL (SUPERTONIC) — português natural, sem chave e sem cota. No primeiro
+	      // uso baixa o modelo uma vez; se ele falhar, o Piper preserva a narração.
+	      if (engine === "supertonic") {
+	        const wavNatural = await sintetizarComSupertonic(
+	          stripVocalTags(cleanText),
+	          supertonicVoice === "M1" ? "M1" : "F1"
+	        );
+	        if (wavNatural) {
+	          res.setHeader("Content-Type", "audio/wav");
+	          res.setHeader("Content-Disposition", "inline; filename=osone-voz-natural.wav");
+	          res.setHeader("X-TTS-Mode", "supertonic");
+	          return res.send(wavNatural);
+	        }
+	        const wavReserva = await sintetizarComVozLocal(stripVocalTags(cleanText));
+	        if (wavReserva) {
+	          res.setHeader("Content-Type", "audio/wav");
+	          res.setHeader("X-TTS-Mode", "piper-fallback");
+	          return res.send(wavReserva);
+	        }
+	        return res.status(503).json({
+	          error: `${ultimoErroTts || "A voz natural local não pôde ser carregada."} Confira a internet no primeiro uso ou rode 'npm run baixar-voz-natural'.`
+	        });
 	      }
 
 	      // VOZ LOCAL (PIPER) — usada pela narração operacional do COWORK e como opção sem cota.

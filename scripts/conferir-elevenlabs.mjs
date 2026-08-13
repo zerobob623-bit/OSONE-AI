@@ -58,8 +58,10 @@ console.log('  ok  ElevenLabs usa Gemini Live como sessão contínua, fala incre
 assert.match(features, /ElevenLabs Streaming TTS/);
 console.log('  ok  recurso ElevenLabs continua registrado no FEATURES.md');
 
-assert.match(cowork, /type MotorNarracaoCowork = 'piper' \| 'elevenlabs'/);
+assert.match(cowork, /type MotorNarracaoCowork = 'supertonic-feminina' \| 'supertonic-masculina' \| 'piper' \| 'elevenlabs'/);
 assert.match(cowork, /engine: 'elevenlabs'/);
+assert.match(cowork, /<option value="supertonic-feminina">Natural local · feminina<\/option>/);
+assert.match(cowork, /<option value="supertonic-masculina">Natural local · masculina<\/option>/);
 assert.match(cowork, /<option value="piper">Piper local<\/option>/);
 assert.match(cowork, /<option value="elevenlabs">ElevenLabs<\/option>/);
 assert.doesNotMatch(cowork, /speechSynthesis|SpeechSynthesisUtterance|CHAVE_DA_VOZ_NARRACAO|vozesDisponiveis|Navegador reserva/);
@@ -68,6 +70,6 @@ assert.match(app, /elevenLabsVoiceId=\{getActiveElevenLabsVoiceId\(\)\}/);
 assert.match(features, /não usa mais `speechSynthesis`\/voz Google como fallback no COWORK/);
 assert.match(features, /cada pedaço de transcrição da resposta é enviado incrementalmente/);
 assert.match(features, /permite interrupção real sem esperar timeout/);
-console.log('  ok  COWORK oferece só Piper/ElevenLabs e não volta para voz Google/navegador');
+console.log('  ok  COWORK oferece Supertonic/Piper/ElevenLabs e não volta para voz Google/navegador');
 
 console.log('7/7 conferências ElevenLabs passaram.');

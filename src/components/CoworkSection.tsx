@@ -78,8 +78,10 @@ interface CoworkSectionProps {
 
 const CAIXA = "rounded-3xl border border-white/[0.06] bg-white/[0.02]";
 const CHAVE_DA_NARRACAO = 'osone_cowork_narracao';
-const CHAVE_DO_MOTOR_NARRACAO = 'osone_cowork_motor_narracao';
-type MotorNarracaoCowork = 'piper' | 'elevenlabs';
+// v2 migra quem estava no antigo padrão Piper para a nova voz neural. Depois da primeira
+// escolha, a preferência volta a ser preservada normalmente.
+const CHAVE_DO_MOTOR_NARRACAO = 'osone_cowork_motor_narracao_v2';
+type MotorNarracaoCowork = 'supertonic-feminina' | 'supertonic-masculina' | 'piper' | 'elevenlabs';
 
 const ELEVENLABS_API_KEY_ID_MESSAGE = "A chave da ElevenLabs salva parece ser o ID da chave, não a API Key secreta. Gere ou rotacione a chave e cole a chave completa que começa com sk_.";
 
@@ -105,8 +107,9 @@ const definirNarracao = (ligada: boolean): void => {
 const lerMotorNarracao = (): MotorNarracaoCowork => {
   try {
     const valor = localStorage.getItem(CHAVE_DO_MOTOR_NARRACAO);
-    return valor === 'elevenlabs' ? 'elevenlabs' : 'piper';
-  } catch { return 'piper'; }
+    if (valor === 'supertonic-feminina' || valor === 'supertonic-masculina' || valor === 'piper' || valor === 'elevenlabs') return valor;
+    return 'supertonic-feminina';
+  } catch { return 'supertonic-feminina'; }
 };
 
 const salvarMotorNarracao = (motor: MotorNarracaoCowork): void => {
@@ -252,6 +255,7 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
   const audioNarracaoRef = useRef<HTMLAudioElement | null>(null);
   const urlAudioNarracaoRef = useRef<string | null>(null);
   const piperIndisponivelRef = useRef(false);
+  const supertonicIndisponivelRef = useRef(false);
   const elevenLabsIndisponivelRef = useRef(false);
 
   useEffect(() => {
@@ -339,6 +343,23 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
     await tocarAudioDaNarracao(blob, prioridade);
   };
 
+  const narrarComSupertonic = async (frase: string, voz: 'F1' | 'M1', prioridade = false) => {
+    const resposta = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: frase, engine: 'supertonic', supertonicVoice: voz })
+    });
+    if (!resposta.ok) {
+      const erro = await resposta.json().catch(() => null);
+      throw new Error(erro?.error || `Voz natural retornou HTTP ${resposta.status}`);
+    }
+    if (resposta.headers.get('X-TTS-Mode') === 'piper-fallback') {
+      onNotification('A voz natural não pôde ser carregada agora; o Piper assumiu esta fala. Confira a internet no primeiro uso.', 'info');
+    }
+    const blob = await resposta.blob();
+    await tocarAudioDaNarracao(blob, prioridade);
+  };
+
   const narrarComElevenLabs = async (frase: string, prioridade = false) => {
     const validacaoChave = validarChaveElevenLabsParaUso(elevenLabsApiKey);
     if (!validacaoChave.ok) {
@@ -368,18 +389,26 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
   };
 
   const nomeDoMotorNarracao = (motor: MotorNarracaoCowork) =>
-    motor === 'piper' ? 'Piper' : 'ElevenLabs';
+    motor === 'piper' ? 'Piper'
+      : motor === 'elevenlabs' ? 'ElevenLabs'
+      : motor === 'supertonic-masculina' ? 'Voz natural masculina'
+      : 'Voz natural feminina';
 
   const motorIndisponivel = (motor: MotorNarracaoCowork) =>
-    motor === 'piper' ? piperIndisponivelRef.current : elevenLabsIndisponivelRef.current;
+    motor === 'piper' ? piperIndisponivelRef.current
+      : motor === 'elevenlabs' ? elevenLabsIndisponivelRef.current
+      : supertonicIndisponivelRef.current;
 
   const marcarMotorIndisponivel = (motor: MotorNarracaoCowork) => {
     if (motor === 'piper') piperIndisponivelRef.current = true;
-    else elevenLabsIndisponivelRef.current = true;
+    else if (motor === 'elevenlabs') elevenLabsIndisponivelRef.current = true;
+    else supertonicIndisponivelRef.current = true;
   };
 
   const narrarComMotor = (motor: MotorNarracaoCowork, frase: string, prioridade = false) =>
-    motor === 'piper' ? narrarComPiper(frase, prioridade) : narrarComElevenLabs(frase, prioridade);
+    motor === 'piper' ? narrarComPiper(frase, prioridade)
+      : motor === 'elevenlabs' ? narrarComElevenLabs(frase, prioridade)
+      : narrarComSupertonic(frase, motor === 'supertonic-masculina' ? 'M1' : 'F1', prioridade);
 
   const narrar = (
     texto: string,
@@ -393,8 +422,12 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
     if (!prioridade && Date.now() - ultimaNarracaoRef.current < 2200) return;
     ultimaNarracaoRef.current = Date.now();
 
-    const motorReserva: MotorNarracaoCowork = motorPreferido === 'piper' ? 'elevenlabs' : 'piper';
-    const motores = [motorPreferido, motorReserva].filter(
+    const reservas: MotorNarracaoCowork[] = motorPreferido === 'elevenlabs'
+      ? ['supertonic-feminina', 'piper']
+      : motorPreferido === 'piper'
+        ? ['supertonic-feminina', 'elevenlabs']
+        : ['piper', 'elevenlabs'];
+    const motores = [motorPreferido, ...reservas].filter(
       (motor): motor is MotorNarracaoCowork => !motorIndisponivel(motor)
     );
 
@@ -413,7 +446,7 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
         }
       }
       onNotification(
-        `Narração do COWORK sem áudio: Piper e ElevenLabs não responderam (${ultimoErro instanceof Error ? ultimoErro.message : 'erro desconhecido'}).`,
+        `Narração do COWORK sem áudio: voz natural, Piper e ElevenLabs não responderam (${ultimoErro instanceof Error ? ultimoErro.message : 'erro desconhecido'}).`,
         'error'
       );
     })();
@@ -424,10 +457,16 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
     setMotorNarracao(motor);
     if (motor === 'piper') piperIndisponivelRef.current = false;
     if (motor === 'elevenlabs') elevenLabsIndisponivelRef.current = false;
+    if (motor.startsWith('supertonic')) supertonicIndisponivelRef.current = false;
+    if (motor.startsWith('supertonic')) {
+      onNotification('Voz natural selecionada. No primeiro uso, o OSONE prepara cerca de 400 MB uma única vez; depois ela funciona localmente e sem cota.', 'info');
+    }
     narrar(
       motor === 'piper'
         ? 'Vou usar a voz local Piper enquanto trabalho no COWORK.'
-        : 'Vou usar ElevenLabs para narrar o guia do COWORK.',
+        : motor === 'elevenlabs'
+          ? 'Vou usar ElevenLabs para narrar o guia do COWORK.'
+          : `Vou usar a voz natural ${motor === 'supertonic-masculina' ? 'masculina' : 'feminina'} enquanto trabalho no COWORK.`,
       true,
       true,
       motor
@@ -649,6 +688,8 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
             title="Escolher o motor da narração do COWORK"
             className="max-w-[190px] h-9 rounded-full border border-cyan-500/20 bg-cyan-500/[0.06] px-3 text-[11px] text-cyan-100 outline-none hover:bg-cyan-500/10 focus:border-cyan-500/40"
           >
+            <option value="supertonic-feminina">Natural local · feminina</option>
+            <option value="supertonic-masculina">Natural local · masculina</option>
             <option value="piper">Piper local</option>
             <option value="elevenlabs">ElevenLabs</option>
           </select>

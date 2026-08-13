@@ -41,8 +41,9 @@ interface WhatsAppConfig {
   // sempre vazios e o que o painel exibe vem destes resumos.
   geminiApiKeyInfo?: { configurada: boolean; tamanho: number; previa: string };
   elevenLabsApiKeyInfo?: { configurada: boolean; tamanho: number; previa: string };
-  ttsEngine: 'gemini' | 'elevenlabs' | 'local';
+  ttsEngine: 'gemini' | 'elevenlabs' | 'supertonic' | 'local';
   ttsVoice: string;
+  supertonicVoice: 'F1' | 'M1';
   elevenLabsApiKey: string;
   elevenLabsVoiceId: string;
 }
@@ -79,6 +80,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
     triggerCommand: '/osone',
     ttsEngine: 'gemini',
     ttsVoice: 'Kore',
+    supertonicVoice: 'F1',
     elevenLabsApiKey: '',
     elevenLabsVoiceId: ''
   });
@@ -370,6 +372,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
     const alteracoes: Partial<WhatsAppConfig> = updatedConfig ?? {
       geminiApiKey: config.geminiApiKey,
       ttsEngine: config.ttsEngine,
+      supertonicVoice: config.supertonicVoice,
       elevenLabsApiKey: config.elevenLabsApiKey,
       elevenLabsVoiceId: config.elevenLabsVoiceId
     };
@@ -1458,7 +1461,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                     <h4 className="text-xs font-bold text-white">Só responder quando chamarem o OSONE</h4>
                     <p className="text-[11px] text-zinc-400 mt-0.5">
                       {config.requireTriggerCommand
-                        ? `O robô fica quieto até alguém escrever "${config.triggerCommand}" na mensagem — como quem diz "ei, OSONE, me responde aqui". Suas conversas normais seguem sem interrupção.`
+                        ? `O robô fica quieto até alguém escrever "${config.triggerCommand}" ou falar "OSONE" num áudio. Variações fonéticas comuns da transcrição também são reconhecidas.`
                         : 'ATENÇÃO: o robô responde a TODA mensagem recebida, inclusive no meio de conversas suas com outras pessoas.'}
                     </p>
                   </div>
@@ -1499,7 +1502,8 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                     />
                     <p className="text-[10px] text-zinc-500 mt-1">
                       Funciona em qualquer parte da mensagem, sem diferenciar maiúsculas. O comando é
-                      removido antes de a IA ler o pedido. Vale também para áudios: basta falar o comando.
+                      removido antes de a IA ler o pedido. No padrão "/osone", áudio também aceita a
+                      chamada natural "OSONE" e variações transcritas como "Ozone", "Ozoni" ou "Ozzone".
                     </p>
                   </div>
                 )}
@@ -1538,7 +1542,8 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                 <div>
                   <h4 className="text-xs font-bold text-white">Responder também por áudio</h4>
                   <p className="text-[11px] text-zinc-400 mt-0.5">
-                    Além do texto, envia a resposta como mensagem de voz gerada por IA.
+                    Além do texto, envia a resposta como mensagem de voz gerada por IA. Áudios recebidos
+                    são transcritos e entram na conversa como pedido normal.
                   </p>
                 </div>
 
@@ -1563,9 +1568,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                   <label className="block text-xs font-bold text-white mb-1.5">
                     Motor de Voz para as Respostas em Áudio
                   </label>
-                  {/* Três colunas desde que virou três motores: num grid de duas, o terceiro
-                      botão caía sozinho numa linha nova, com uma célula vazia ao lado. */}
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
                     <button
                       onClick={() => setConfig({ ...config, ttsEngine: 'gemini' })}
                       className={`px-3.5 py-2.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
@@ -1587,6 +1590,16 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                       ElevenLabs
                     </button>
                     <button
+                      onClick={() => setConfig({ ...config, ttsEngine: 'supertonic' })}
+                      className={`px-3.5 py-2.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                        config.ttsEngine === 'supertonic'
+                          ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+                          : 'bg-white/5 border-white/10 text-zinc-400'
+                      }`}
+                    >
+                      Natural local
+                    </button>
+                    <button
                       onClick={() => setConfig({ ...config, ttsEngine: 'local' })}
                       className={`px-3.5 py-2.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
                         config.ttsEngine === 'local'
@@ -1594,15 +1607,33 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                           : 'bg-white/5 border-white/10 text-zinc-400'
                       }`}
                     >
-                      Voz Local
+                      Piper reserva
                     </button>
                   </div>
 
                   <p className="text-[10px] text-zinc-500 mt-2">
-                    {config.ttsEngine === 'local'
-                      ? 'A voz roda no próprio computador: sem cota, sem chave e sem custo, mas um pouco menos natural que as de nuvem. Precisa ter sido instalada com "npm run baixar-voz".'
+                    {config.ttsEngine === 'supertonic'
+                      ? 'Supertonic 3 roda no próprio computador, em português, sem cota e sem cobrança. No primeiro uso baixa aproximadamente 400 MB; depois funciona localmente. Se falhar, o Piper assume.'
+                      : config.ttsEngine === 'local'
+                      ? 'Piper é a voz local mais leve e funciona como reserva sem cota. Para prepará-la, rode "npm run baixar-voz".'
                       : 'Se a cota deste motor acabar, o OSONE tenta os outros sozinho e, por último, a voz local — assim o áudio nunca deixa de sair.'}
                   </p>
+
+                  {config.ttsEngine === 'supertonic' && (
+                    <div className="mt-3">
+                      <label className="block text-[10px] uppercase tracking-wider text-zinc-500 mb-1.5">
+                        Voz natural
+                      </label>
+                      <select
+                        value={config.supertonicVoice}
+                        onChange={(e) => setConfig({ ...config, supertonicVoice: e.target.value as 'F1' | 'M1' })}
+                        className="w-full px-3.5 py-2.5 bg-zinc-950 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500/50"
+                      >
+                        <option value="F1">Feminina natural</option>
+                        <option value="M1">Masculina natural</option>
+                      </select>
+                    </div>
+                  )}
 
                   {config.ttsEngine === 'elevenlabs' && (
                     <div className="mt-3 space-y-2.5">

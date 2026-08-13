@@ -1,7 +1,7 @@
 {
   "name": "osone-app",
   "private": true,
-  "version": "1.4.9",
+  "version": "1.5.0",
   "description": "OSONE G5 - Sistema Operacional Neural",
   "author": "OSONE",
   "type": "module",
@@ -28,6 +28,7 @@
     "test:zap-gatilho": "node scripts/conferir-zap-gatilho.mjs",
     "test:google-home": "node scripts/conferir-google-home.mjs && node scripts/conferir-google-home-cloud.mjs",
     "test:elevenlabs": "node scripts/conferir-elevenlabs.mjs",
+    "test:voz-natural": "node scripts/conferir-voz-natural.mjs",
     "test:github-code": "node scripts/conferir-github-code.mjs",
     "test:code-layout": "node scripts/conferir-layout-code.mjs",
     "test:code-fullstack": "node scripts/conferir-fullstack-code.mjs",
@@ -53,11 +54,13 @@
     "android:build": "cd android && npx bubblewrap build --manifest=twa-manifest.json --skipPwaValidation",
     "publicar": "node scripts/publicar.mjs",
     "baixar-voz": "node scripts/baixar-piper.mjs",
+    "baixar-voz-natural": "node scripts/baixar-supertonic.mjs",
     "preview": "vite preview",
     "clean": "rm -rf dist dist-desktop server-build",
     "lint": "tsc --noEmit"
   },
   "build": {
+    "afterPack": "scripts/after-pack.cjs",
     "appId": "com.osone.app",
     "productName": "OSONE G5",
     "copyright": "Copyright © 2026 OSONE",
@@ -69,6 +72,7 @@
       "electron/**/*",
       "build/**/*",
       "src/documentos_osone/**/*",
+      "docs/THIRD_PARTY_NOTICES.md",
       "vendor/**/*",
       "package.json",
       "node_modules/**/*",
@@ -79,6 +83,7 @@
     ],
     "asarUnpack": [
       "**/node_modules/ffmpeg-static/**",
+      "**/node_modules/onnxruntime-node/**",
       "vendor/piper/**"
     ],
     "publish": {
@@ -134,6 +139,7 @@
     "leaflet": "^1.9.4",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
+    "onnxruntime-node": "^1.27.0",
     "pino": "^9.14.0",
     "qrcode": "^1.5.4",
     "react": "^19.0.0",
