@@ -138,6 +138,33 @@ const registrar = (nome, passou, detalhe) => {
         porta('Comando de ativação').detalhe);
     }
 
+    // 4.1) Em áudio, a pessoa fala "OSONE" — ela não fala "barra osone". O servidor precisa
+    // reconhecer essa chamada natural quando o comando padrão continua sendo "/osone".
+    {
+      const { porta } = await diagnosticar('5511987654321', '[Mensagem de voz do cliente]: osone qual é o plano plus?');
+      registrar('áudio transcrito aceita "osone" falado como gatilho do comando padrão',
+        porta('Comando de ativação').passa === true && /qual é o plano plus/.test(porta('Comando de ativação').detalhe),
+        porta('Comando de ativação').detalhe);
+    }
+
+    // 4.2) Alguns transcritores podem ouvir o nome como "Ozone"; também aceitamos essa grafia
+    // só no comando padrão, para a conversa por áudio não morrer por uma transcrição fonética.
+    {
+      const { porta } = await diagnosticar('5511987654321', '[Mensagem de voz do cliente]: Ozone me responde por áudio');
+      registrar('áudio transcrito aceita "Ozone" como variação fonética de OSONE',
+        porta('Comando de ativação').passa === true && /me responde por áudio/.test(porta('Comando de ativação').detalhe),
+        porta('Comando de ativação').detalhe);
+    }
+
+    // 4.3) Estas duas grafias vieram de transcrições reais do WhatsApp. Elas precisam acionar
+    // o robô, ou a mesma pessoa funciona num áudio e fica sem resposta no seguinte.
+    for (const [grafia, pedido] of [['Ozoni', 'você está aí?'], ['Ozzone', 'me explica o plano pro']]) {
+      const { porta } = await diagnosticar('5511987654321', `[Mensagem de voz do cliente]: ${grafia}, ${pedido}`);
+      registrar(`áudio transcrito aceita "${grafia}" como variação fonética de OSONE`,
+        porta('Comando de ativação').passa === true && porta('Comando de ativação').detalhe.includes(pedido),
+        porta('Comando de ativação').detalhe);
+    }
+
     // 5) O log de configurações precisa contar quem está calando o robô.
     {
       await salvar({ enabled: false });
