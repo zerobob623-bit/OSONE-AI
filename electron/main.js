@@ -437,7 +437,7 @@ function htmlDoMascoteOsone() {
   let gesto = '';
   let sobComando = false;
   let timersDoComando = [];
-  let posicao = { x: 0, y: 0 };
+  let posicao = { x: 0, y: 0, escala: 1 };
   let timerPasseio = 0;
   let timerChegada = 0;
 
@@ -447,23 +447,53 @@ function htmlDoMascoteOsone() {
       + (gesto ? ' ' + gesto : '');
   }
 
-  function areaDoPasseio() {
+  // A janela cobre todos os monitores; o mapa das telas chega do processo principal.
+  let telas = null;
+  window.osoneMascoteTelas = (lista) => {
+    telas = Array.isArray(lista) && lista.length ? lista : null;
+  };
+
+  function listaDeTelas() {
+    return telas || [{ x: 0, y: 0, largura: innerWidth, altura: innerHeight }];
+  }
+
+  // O chao de cada monitor e a base dele, e nao a base da janela inteira.
+  function pousarEm(tela, faixaX, profundidade) {
+    const profundidadeMax = Math.max(1, tela.altura * FATIA_DE_PROFUNDIDADE - 60);
+    const alturaDoChao = tela.y + tela.altura - Math.min(profundidade, profundidadeMax) - 24;
     return {
-      largura: Math.max(0, innerWidth - walker.offsetWidth - 24),
-      profundidade: Math.max(0, innerHeight * FATIA_DE_PROFUNDIDADE - 60)
+      x: tela.x + faixaX,
+      y: Math.max(0, innerHeight - 34 - alturaDoChao),
+      escala: 1 - REDUCAO_NO_FUNDO * Math.min(1, profundidade / profundidadeMax)
     };
   }
 
-  function escalaDaProfundidade(y) {
-    const profundidade = areaDoPasseio().profundidade;
-    if (profundidade <= 0) return 1;
-    return 1 - REDUCAO_NO_FUNDO * Math.min(1, y / profundidade);
+  function sortearDestino() {
+    const lista = listaDeTelas();
+    // Monitor maior, mais visitas.
+    const total = lista.reduce((soma, t) => soma + t.largura, 0);
+    let sorteio = Math.random() * total;
+    let tela = lista[lista.length - 1];
+    for (let i = 0; i < lista.length; i++) {
+      sorteio -= lista[i].largura;
+      if (sorteio <= 0) { tela = lista[i]; break; }
+    }
+    const faixaX = Math.random() * Math.max(0, tela.largura - walker.offsetWidth - 24);
+    return pousarEm(tela, faixaX, Math.random() * Math.max(0, tela.altura * FATIA_DE_PROFUNDIDADE - 60));
   }
 
-  function posicionar(x, y, duracao) {
-    posicao = { x: x, y: y };
+  // Comando do OSONE: o ponto vem de 0 a 1 sobre tudo o que existe de tela.
+  function pontoNaTela(xNorm, yNorm) {
+    const x = entre(xNorm, 0, 1) * Math.max(0, innerWidth - walker.offsetWidth - 24);
+    const y = Math.max(0, innerHeight - 34 - entre(yNorm, 0, 1) * innerHeight);
+    const profundidadeMax = Math.max(1, innerHeight * FATIA_DE_PROFUNDIDADE);
+    return { x: x, y: y, escala: 1 - REDUCAO_NO_FUNDO * Math.min(1, y / profundidadeMax) };
+  }
+
+  function posicionar(x, y, escala, duracao) {
+    posicao = { x: x, y: y, escala: escala };
     walker.style.transitionDuration = duracao + 'ms';
-    walker.style.transform = 'translate3d(' + x + 'px, ' + (-y) + 'px, 0) scale(' + escalaDaProfundidade(y) + ')';
+    walker.style.transform = 'translate3d(' + x + 'px, ' + (-y) + 'px, 0) scale(' + escala + ')';
   }
 
   // Para onde estiver quando o OSONE assumir o controle, sem teletransporte.
@@ -472,7 +502,7 @@ function htmlDoMascoteOsone() {
     clearTimeout(timerChegada);
     const matriz = new DOMMatrixReadOnly(getComputedStyle(walker).transform);
     if (!isFinite(matriz.m41) || !isFinite(matriz.m42)) return;
-    posicao = { x: matriz.m41, y: -matriz.m42 };
+    posicao = { x: matriz.m41, y: -matriz.m42, escala: matriz.a || 1 };
     walker.style.transitionDuration = '0ms';
     walker.style.transform = matriz.toString();
   }
@@ -482,13 +512,12 @@ function htmlDoMascoteOsone() {
       timerPasseio = setTimeout(passear, 1600);
       return;
     }
-    const area = areaDoPasseio();
-    const destino = { x: Math.random() * area.largura, y: Math.random() * area.profundidade };
+    const destino = sortearDestino();
     const distancia = Math.hypot(destino.x - posicao.x, destino.y - posicao.y);
     const duracao = Math.min(12000, Math.max(1200, (distancia / VELOCIDADE) * 1000));
 
     espelhado = destino.x < posicao.x;
-    posicionar(destino.x, destino.y, duracao);
+    posicionar(destino.x, destino.y, destino.escala, duracao);
     bubble.textContent = '';
     aplicarClasses('walk', false);
 
@@ -551,14 +580,12 @@ function htmlDoMascoteOsone() {
     sobComando = true;
 
     if (acao === 'andar') {
-      const area = areaDoPasseio();
-      const alvoX = entre(isFinite(comando.x) ? comando.x : 0.5, 0, 1) * area.largura;
-      const alvoY = (1 - entre(isFinite(comando.y) ? comando.y : 0.95, 0, 1)) * area.profundidade;
-      const distancia = Math.hypot(alvoX - posicao.x, alvoY - posicao.y);
+      const alvo = pontoNaTela(isFinite(comando.x) ? comando.x : 0.5, isFinite(comando.y) ? comando.y : 0.95);
+      const distancia = Math.hypot(alvo.x - posicao.x, alvo.y - posicao.y);
       const duracao = Math.min(12000, Math.max(1200, (distancia / VELOCIDADE) * 1000));
       gesto = '';
-      espelhado = alvoX < posicao.x;
-      posicionar(alvoX, alvoY, duracao);
+      espelhado = alvo.x < posicao.x;
+      posicionar(alvo.x, alvo.y, alvo.escala, duracao);
       aplicarClasses('walk', Boolean(bubble.textContent));
       timersDoComando.push(setTimeout(() => {
         aplicarClasses('idle', Boolean(bubble.textContent));
@@ -601,11 +628,10 @@ function htmlDoMascoteOsone() {
   };
 
   addEventListener('resize', () => {
-    const area = areaDoPasseio();
-    const x = Math.min(posicao.x, area.largura);
-    const y = Math.min(posicao.y, area.profundidade);
+    const x = Math.min(posicao.x, Math.max(0, innerWidth - walker.offsetWidth - 24));
+    const y = Math.min(posicao.y, Math.max(0, innerHeight - walker.offsetHeight));
     if (x === posicao.x && y === posicao.y) return;
-    posicionar(x, y, 400);
+    posicionar(x, y, posicao.escala, 400);
   });
 
   let quadro = 0;
@@ -645,15 +671,41 @@ function htmlDoMascoteOsone() {
 </html>`;
 }
 
+/* O mascote anda pelo PC todo, e nao so pelo monitor principal: a janela cobre
+   o retangulo que engloba todas as telas. */
+function areaDeTodasAsTelas() {
+  const telas = screen.getAllDisplays();
+  const esquerda = Math.min(...telas.map(t => t.bounds.x));
+  const topo = Math.min(...telas.map(t => t.bounds.y));
+  const direita = Math.max(...telas.map(t => t.bounds.x + t.bounds.width));
+  const base = Math.max(...telas.map(t => t.bounds.y + t.bounds.height));
+  return { x: esquerda, y: topo, width: direita - esquerda, height: base - topo };
+}
+
+/* Entre monitores de alturas diferentes sobram cantos que nao existem em tela
+   nenhuma. A pagina recebe o mapa das telas para nao passear no vazio. */
+function telasParaOverlay() {
+  const area = areaDeTodasAsTelas();
+  return screen.getAllDisplays().map(tela => ({
+    x: tela.bounds.x - area.x,
+    y: tela.bounds.y - area.y,
+    largura: tela.bounds.width,
+    altura: tela.bounds.height
+  }));
+}
+
+function avisarTelasAoMascote() {
+  if (!mascotWindow || mascotWindow.isDestroyed()) return;
+  mascotWindow.webContents.executeJavaScript(
+    `window.osoneMascoteTelas && window.osoneMascoteTelas(${JSON.stringify(telasParaOverlay())})`,
+    true
+  ).catch(() => {});
+}
+
 function ajustarJanelaDoMascote() {
   if (!mascotWindow || mascotWindow.isDestroyed()) return;
-  const display = screen.getPrimaryDisplay();
-  mascotWindow.setBounds({
-    x: display.bounds.x,
-    y: display.bounds.y,
-    width: display.bounds.width,
-    height: display.bounds.height
-  });
+  mascotWindow.setBounds(areaDeTodasAsTelas());
+  avisarTelasAoMascote();
 }
 
 function criarJanelaDoMascote() {
@@ -661,12 +713,12 @@ function criarJanelaDoMascote() {
   mascotOverlayEnabled = true;
   if (mascotWindow && !mascotWindow.isDestroyed()) return;
 
-  const display = screen.getPrimaryDisplay();
+  const area = areaDeTodasAsTelas();
   mascotWindow = new BrowserWindow({
-    x: display.bounds.x,
-    y: display.bounds.y,
-    width: display.bounds.width,
-    height: display.bounds.height,
+    x: area.x,
+    y: area.y,
+    width: area.width,
+    height: area.height,
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
@@ -687,6 +739,12 @@ function criarJanelaDoMascote() {
 
   mascotWindow.setIgnoreMouseEvents(true, { forward: true });
   mascotWindow.setAlwaysOnTop(true, 'screen-saver');
+  // Acompanha o usuario nas outras areas de trabalho e por cima de apps em tela cheia.
+  try {
+    mascotWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  } catch (_) {
+    // Em plataformas que nao suportam, a janela segue valendo na area atual.
+  }
   mascotWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlDoMascoteOsone())}`);
   mascotWindow.once('ready-to-show', () => {
     if (!mascotWindow || mascotWindow.isDestroyed()) return;
