@@ -354,7 +354,7 @@ O schema JSON deve ser rigorosamente o seguinte:
         },
         body: JSON.stringify({
           clientApiKey: effectiveKey,
-          model: apiKeys.geminiModel || 'gemini-3.6-flash',
+          model: apiKeys.geminiModel || 'gemini-3.7-flash',
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           responseMimeType: 'application/json'
         })
@@ -460,7 +460,7 @@ Responda APENAS em formato JSON válido:
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           clientApiKey: effectiveKey,
-          model: apiKeys.geminiModel || 'gemini-3.6-flash',
+          model: apiKeys.geminiModel || 'gemini-3.7-flash',
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           responseMimeType: 'application/json'
         })
@@ -609,7 +609,7 @@ Responda RIGOROSAMENTE com um objeto JSON puro, sem textos adicionais, seguindo 
         },
         body: JSON.stringify({
           clientApiKey: effectiveKey,
-          model: apiKeys.geminiModel || 'gemini-3.6-flash',
+          model: apiKeys.geminiModel || 'gemini-3.7-flash',
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           responseMimeType: 'application/json'
         })

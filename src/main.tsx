@@ -68,13 +68,13 @@ const customFetch = async function (input: RequestInfo | URL, init?: RequestInit
 
       if (useFallback) {
         let clientApiKey = "";
-        let geminiModel = "gemini-3.6-flash";
+        let geminiModel = "gemini-3.7-flash";
         try {
           const stored = localStorage.getItem("osone_api_keys");
           if (stored) {
             const parsed = JSON.parse(stored);
             clientApiKey = parsed.gemini || "";
-            geminiModel = parsed.geminiModel || "gemini-3.6-flash";
+            geminiModel = parsed.geminiModel || "gemini-3.7-flash";
           }
         } catch (_) {}
 
@@ -98,6 +98,10 @@ const customFetch = async function (input: RequestInfo | URL, init?: RequestInit
           try {
             if (isGeminiVerifyProxy) {
               const verifyApiKey = reqBody.geminiApiKey || clientApiKey;
+              // O aperto de mão continua no 3.6-flash de propósito, mesmo com o 3.7 sendo o padrão
+              // do app: aqui a pergunta é "esta chave é válida?", e não "esta chave já tem o modelo
+              // mais novo?". Testar num modelo recém-lançado faria uma chave boa ser reprovada só
+              // por ainda não ter o 3.7 liberado — e a conversa em si já cai sozinha para o 3.6.
               const directRes = await originalFetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${verifyApiKey.trim()}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },

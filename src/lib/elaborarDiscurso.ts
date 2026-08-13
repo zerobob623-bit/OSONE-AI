@@ -208,7 +208,7 @@ export async function elaborarDiscurso(opcoes: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       clientApiKey: opcoes.chaveGemini || '',
-      model: opcoes.modelo || 'gemini-3.6-flash',
+      model: opcoes.modelo || 'gemini-3.7-flash',
       contents: [{ role: 'user', parts: [{ text: montarPedidoDeElaboracao(transcricao) }] }],
       config: { responseMimeType: 'application/json', temperature: 0.9 }
     })

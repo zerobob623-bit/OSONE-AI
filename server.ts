@@ -191,7 +191,7 @@ async function startServer() {
       msg.toLowerCase().includes("temporary") ||
       msg.toLowerCase().includes("temporarily")
     ) {
-      return "O modelo da API do Gemini está temporariamente congestionado com alta demanda global (Erro 503 / UNAVAILABLE). Por favor, aguarde alguns segundos e clique em enviar novamente, ou selecione outro modelo (como gemini-3.6-flash ou gemini-3.5-flash-lite) nas Configurações (ícone de engrenagem no cabeçalho superior) para obter respostas mais estáveis.";
+      return "O modelo da API do Gemini está temporariamente congestionado com alta demanda global (Erro 503 / UNAVAILABLE). Por favor, aguarde alguns segundos e clique em enviar novamente, ou selecione outro modelo (como gemini-3.7-flash, gemini-3.6-flash ou gemini-3.5-flash-lite) nas Configurações (ícone de engrenagem no cabeçalho superior) para obter respostas mais estáveis.";
     }
     /**
      * MODELO QUE NÃO EXISTE PARA ESTA CHAVE.
@@ -3428,7 +3428,7 @@ Retorne SOMENTE o objeto JSON conforme o esquema.
 
       // Call Gemini with structured JSON response config and fallbacks
       const response = await generateContentWithFallback(ai, {
-        model: "gemini-3.6-flash",
+        model: "gemini-3.7-flash",
         contents: { parts },
         config: {
           responseMimeType: "application/json",
@@ -4192,11 +4192,14 @@ ${processedChunk}`;
      * avisa na tela — a preocupação sempre foi com o rebaixamento SILENCIOSO, e essa parte
      * continua valendo.
      */
+    // O 3.7-flash lidera a fila por ser o mais novo da linha Flash, e o 3.6-flash vem logo atrás de
+    // propósito: se a chave do usuário ainda não tiver o 3.7 liberado (modelo recém-lançado, cota
+    // gratuita liberada aos poucos), a resposta sai pelo 3.6 sem o usuário perceber tropeço.
     const modelsToTry = allowDowngrade
-      ? [primaryModel, "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash"]
+      ? [primaryModel, "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash"]
       // O modelo que o usuário configurou nos Ajustes entra depois dos preferidos: é o único que
       // se sabe que funciona com a chave dele. Os 'lite' vêm por último, como fundo de poço.
-      : [primaryModel, "gemini-3.6-flash", "gemini-3.5-flash", options?.modeloDeReserva || "",
+      : [primaryModel, "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", options?.modeloDeReserva || "",
          "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"].filter(Boolean);
 
     const unicos = Array.from(new Set(modelsToTry));
@@ -4210,7 +4213,7 @@ ${processedChunk}`;
 
   // Helper to run content generation with automated fallbacks
   async function generateContentWithFallback(ai: GoogleGenAI, params: { model: string; contents: any; config?: any }, options?: { allowDowngrade?: boolean; modeloDeReserva?: string }) {
-    const primaryModel = params.model || "gemini-3.6-flash";
+    const primaryModel = params.model || "gemini-3.7-flash";
     // Alguns fluxos (ex: geração de código no OSONE CODE) não podem aceitar em silêncio um
     // modelo "lite" mais fraco no lugar do pedido — a qualidade do código cairia sem o usuário
     // saber o motivo. Quando allowDowngrade é false, insiste só no modelo pedido (com mais
@@ -4606,7 +4609,7 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
     params: { model: string; contents: any; config?: any },
     options?: { allowDowngrade?: boolean; modeloDeReserva?: string }
   ): Promise<{ fluxo: any; modeloUsado: string }> {
-    const primaryModel = params.model || "gemini-3.6-flash";
+    const primaryModel = params.model || "gemini-3.7-flash";
     const candidatos = listarModelosCandidatos(primaryModel, options);
     const tentativasPorModelo = options?.allowDowngrade === false ? 4 : 2;
 
@@ -4661,11 +4664,12 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
 
   // Helper to run content stream generation with automated fallbacks
   async function generateContentStreamWithFallback(ai: GoogleGenAI, params: { model: string; contents: any; config?: any }) {
-    const primaryModel = params.model || "gemini-3.6-flash";
+    const primaryModel = params.model || "gemini-3.7-flash";
 
     // Tiered candidates using standard highly-available Gemini 3.x models
     const modelsToTry = [
       primaryModel,
+      "gemini-3.7-flash",
       "gemini-3.6-flash",
       "gemini-3.5-flash-lite",
       "gemini-3.1-flash-lite",
@@ -4705,7 +4709,7 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
     throw lastError;
   }
 
-  // POST endpoint for high-quality, server-run intelligence completion using gemini-3.6-flash
+  // POST endpoint for high-quality, server-run intelligence completion using gemini-3.7-flash
   app.post("/api/chat-intel", async (req, res) => {
     try {
       const { historyContents, systemInstruction, clientApiKey } = req.body;
@@ -4725,7 +4729,7 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
       });
 
       const response = await generateContentWithFallback(ai, {
-        model: "gemini-3.6-flash",
+        model: "gemini-3.7-flash",
         contents: historyContents,
         config: {
           maxOutputTokens: 250,
@@ -4766,7 +4770,7 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
       res.setHeader("X-Accel-Buffering", "no");
 
       const responseStream = await generateContentStreamWithFallback(ai, {
-        model: "gemini-3.6-flash",
+        model: "gemini-3.7-flash",
         contents: historyContents,
         config: {
           maxOutputTokens: 250,
@@ -4788,7 +4792,7 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
     }
   });
 
-  // Generic and robust POST endpoint for server-side Gemini 3.6-flash content generation.
+  // Generic and robust POST endpoint for server-side Gemini 3.7-flash content generation.
   // Também é o motor usado pelo OSONE CODE (geração/edição de código, Hunter, Enxame/Swarm) —
   // essas chamadas mandam "unrestricted: true" para tirar as travas de qualidade: nunca cair
   // silenciosamente para um modelo mais fraco, sempre usar o raciocínio máximo e afrouxar os
@@ -4840,7 +4844,7 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
         }
       });
 
-      const selectedModel = model || "gemini-3.6-flash";
+      const selectedModel = model || "gemini-3.7-flash";
 
       const config: any = {};
       if (systemInstruction) config.systemInstruction = systemInstruction;
@@ -5002,7 +5006,7 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
         httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
       });
 
-      const selectedModel = model || "gemini-3.6-flash";
+      const selectedModel = model || "gemini-3.7-flash";
       const config: any = {};
       if (systemInstruction) config.systemInstruction = systemInstruction;
       if (responseMimeType) config.responseMimeType = responseMimeType;
@@ -5354,7 +5358,7 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
 
       const prompt = "Transcreva literalmente, em português do Brasil, a fala presente neste áudio. Responda APENAS com a transcrição, sem comentários, sem resumo e sem markdown. Preserve nomes próprios quando possível. Se não houver fala inteligível, responda apenas com: [áudio incompreensível]";
       const resposta = await generateContentWithFallback(ai, {
-        model: model || "gemini-3.6-flash",
+        model: model || "gemini-3.7-flash",
         contents: [{
           role: "user",
           parts: [
@@ -5373,7 +5377,7 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
       return res.json({
         ok: true,
         transcricao,
-        modeloUsado: (resposta as any).__modeloUsado || model || "gemini-3.6-flash"
+        modeloUsado: (resposta as any).__modeloUsado || model || "gemini-3.7-flash"
       });
     } catch (err: any) {
       console.error("Erro ao transcrever áudio do OSONE HEAR:", err);
@@ -5401,7 +5405,7 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
         }
       });
 
-      const selectedModel = model || "gemini-3.6-flash";
+      const selectedModel = model || "gemini-3.7-flash";
       const response = await generateContentWithFallback(ai, {
         model: selectedModel,
         contents: contents,
@@ -6283,7 +6287,7 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
       }
 
       const response = await generateContentWithFallback(ai, {
-        model: "gemini-3.6-flash",
+        model: "gemini-3.7-flash",
         contents: { parts: [imagePart, { text: promptText }] },
         config: config
       });
@@ -7089,7 +7093,7 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
       3. **Dica Pro**: Uma dica rápida para manter as senhas protegidas ou sobre como testar de forma simulada.`;
 
       const response = await generateContentWithFallback(ai, {
-        model: "gemini-3.6-flash",
+        model: "gemini-3.7-flash",
         contents: prompt,
         config: {
           systemInstruction: "Você é um Engenheiro de API de Software experiente, empático e de linguagem extremamente clara e acessível."

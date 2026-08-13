@@ -119,7 +119,7 @@ import { HomeWorkspaceSection } from './components/HomeWorkspaceSection';
 import { useSubscription } from './hooks/useSubscription';
 import { minimumPlanForFeature, paidFeatureForWorkspace, PaidFeature } from './lib/planos';
 
-const OSONE_CODE_BEST_MODEL = "gemini-3.6-flash";
+const OSONE_CODE_BEST_MODEL = "gemini-3.7-flash";
 
 /* O modelo pode mandar qualquer coisa nos argumentos, entao o comando do mascote
    passa por aqui antes de virar movimento na tela. */
@@ -1820,7 +1820,7 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
         elevenLabsStyle: 0.0,
         elevenLabsSpeakerBoost: true,
         elevenLabsModel: 'eleven_multilingual_v2',
-        geminiModel: 'gemini-3.6-flash',
+        geminiModel: 'gemini-3.7-flash',
       });
       localStorage.setItem('osone_v4_factory_restored_v2_clean', 'true');
     }
@@ -1870,7 +1870,7 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
       elevenLabsStyle: 0.0,
       elevenLabsSpeakerBoost: true,
       elevenLabsModel: 'eleven_multilingual_v2',
-      geminiModel: 'gemini-3.6-flash',
+      geminiModel: 'gemini-3.7-flash',
       localAgentToken: '',
       osoneCodeProvider: 'gemini',
       osoneCodeOpenAiApiKey: '',
@@ -1885,8 +1885,19 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
         // Gemini 2.5 foi removido do OSONE: qualquer preferência salva anteriormente com esse
         // modelo é migrada automaticamente para o melhor modelo disponível, sem exigir ação do usuário.
         if ((merged.geminiModel as string) === 'gemini-2.5-flash') {
-          merged.geminiModel = 'gemini-3.6-flash';
+          merged.geminiModel = 'gemini-3.7-flash';
         }
+
+        // O 3.6-flash era o PADRÃO de fábrica até agora: quem tem ele salvo quase sempre nunca
+        // escolheu modelo nenhum, e ficaria preso a um modelo velho para sempre. A subida para o
+        // 3.7-flash (sucessor direto) acontece UMA ÚNICA VEZ, marcada aqui — quem depois escolher
+        // o 3.6 de propósito nos Ajustes continua nele, porque a migração não roda de novo.
+        // Escolhas por modelos 'lite' nunca são tocadas: quem pediu leveza continua leve.
+        if ((merged.geminiModel as string) === 'gemini-3.6-flash' &&
+            !localStorage.getItem('osone_migracao_gemini_37')) {
+          merged.geminiModel = 'gemini-3.7-flash';
+        }
+        localStorage.setItem('osone_migracao_gemini_37', 'true');
         return merged;
       }
     } catch (e) {
@@ -1913,7 +1924,7 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: "gemini-3.6-flash",
+            model: "gemini-3.7-flash",
             contents: [{ role: 'user', parts: [{ text: "ping" }] }],
             config: { maxOutputTokens: 1 }
           })
@@ -5156,7 +5167,7 @@ ${isBad
                 id: 'useGemini-file',
                 name: 'useGemini.ts',
                 type: 'file',
-                content: 'import { useState } from "react";\nimport { GoogleGenAI } from "@google/genai";\n\nexport function useGemini() {\n  const [loading, setLoading] = useState(false);\n  const [response, setResponse] = useState("");\n  const [error, setError] = useState<string | null>(null);\n\n  const generateContent = async (prompt: string, apiKey: string) => {\n    if (!apiKey) {\n      setError("API Key is required");\n      return;\n    }\n    \n    setLoading(true);\n    setError(null);\n    \n    try {\n      const ai = new GoogleGenAI({ apiKey });\n      const result = await ai.models.generateContent({\n        model: "gemini-3.6-flash",\n        contents: prompt,\n      });\n      \n      setResponse(result.text || "");\n    } catch (err: any) {\n      setError(err.message || "An error occurred");\n    } finally {\n      setLoading(false);\n    }\n  };\n\n  return { generateContent, response, loading, error };\n}'
+                content: 'import { useState } from "react";\nimport { GoogleGenAI } from "@google/genai";\n\nexport function useGemini() {\n  const [loading, setLoading] = useState(false);\n  const [response, setResponse] = useState("");\n  const [error, setError] = useState<string | null>(null);\n\n  const generateContent = async (prompt: string, apiKey: string) => {\n    if (!apiKey) {\n      setError("API Key is required");\n      return;\n    }\n    \n    setLoading(true);\n    setError(null);\n    \n    try {\n      const ai = new GoogleGenAI({ apiKey });\n      const result = await ai.models.generateContent({\n        model: "gemini-3.7-flash",\n        contents: prompt,\n      });\n      \n      setResponse(result.text || "");\n    } catch (err: any) {\n      setError(err.message || "An error occurred");\n    } finally {\n      setLoading(false);\n    }\n  };\n\n  return { generateContent, response, loading, error };\n}'
               }
             ]
           },
@@ -7521,7 +7532,7 @@ ${workspaceText}`;
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           clientApiKey: effectiveApiKey,
-          model: apiKeys.geminiModel || "gemini-3.6-flash",
+          model: apiKeys.geminiModel || "gemini-3.7-flash",
           prompt: userContentPayload,
           systemInstruction,
           responseMimeType: "application/json"
@@ -9546,7 +9557,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
           } else if (call.name === 'osone_cowork') {
             const { objetivo, passos } = call.args as any;
             const rel: any = requestPaidFeature('cowork_browser')
-              ? await executarCowork(passos || [], apiKeys.localAgentToken, false, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.6-flash' })
+              ? await executarCowork(passos || [], apiKeys.localAgentToken, false, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.7-flash' })
               : { error: 'OSONE COWORK requer o plano Plus ou Pro. Nenhuma ação foi executada no navegador.' };
 
             if (rel?.error) {
@@ -9572,7 +9583,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
               }]);
             }
           } else if (['controlar_pc', 'organize_folder_plan', 'organize_folder_execute'].includes(call.name)) {
-            const agentRes = await executeLocalAgentCall(call.name, call.args, apiKeys.localAgentToken, false, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.6-flash' });
+            const agentRes = await executeLocalAgentCall(call.name, call.args, apiKeys.localAgentToken, false, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.7-flash' });
             // 'capturar_tela' devolve uma imagem base64 potencialmente grande demais para virar
             // texto no chat (JSON.stringify jogaria megabytes de base64 na tela) — vira uma
             // mensagem com imageUrl, igual às demais imagens já exibidas no chat.
@@ -11268,7 +11279,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   } else if (call.name === "osone_cowork") {
                     const { passos } = call.args as any;
                     const rel: any = requestPaidFeature('cowork_browser')
-                      ? await executarCowork(passos || [], apiKeys.localAgentToken, true, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.6-flash' })
+                      ? await executarCowork(passos || [], apiKeys.localAgentToken, true, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.7-flash' })
                       : { error: 'OSONE COWORK requer o plano Plus ou Pro. Nenhuma ação foi executada no navegador.' };
                     if (rel?.error) {
                       addNotification(rel.error, 'error');
@@ -11293,7 +11304,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       });
                     }
                   } else if (['controlar_pc', 'organize_folder_plan', 'organize_folder_execute'].includes(call.name)) {
-                    const agentRes = await executeLocalAgentCall(call.name, call.args, apiKeys.localAgentToken, true, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.6-flash' });
+                    const agentRes = await executeLocalAgentCall(call.name, call.args, apiKeys.localAgentToken, true, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.7-flash' });
                     if (agentRes.error) {
                       addNotification(agentRes.error, 'error');
                       responses.push({ name: call.name, id: call.id, response: { error: agentRes.error } });
@@ -13503,7 +13514,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
             >
               <OsoneHearPanel
                 chaveGemini={apiKeys.gemini || ''}
-                modeloGemini={apiKeys.geminiModel || 'gemini-3.6-flash'}
+                modeloGemini={apiKeys.geminiModel || 'gemini-3.7-flash'}
                 onNotification={addNotification}
               />
             </motion.div>
@@ -13549,7 +13560,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 onBack={() => setWorkspaceMode('home')}
                 localAgentToken={apiKeys.localAgentToken || ''}
                 chaveGemini={apiKeys.gemini || ''}
-                modeloGemini={apiKeys.geminiModel || 'gemini-3.6-flash'}
+                modeloGemini={apiKeys.geminiModel || 'gemini-3.7-flash'}
                 elevenLabsApiKey={apiKeys.elevenLabsApiKey || ''}
                 elevenLabsVoiceId={getActiveElevenLabsVoiceId()}
                 elevenLabsStability={apiKeys.elevenLabsStability}
@@ -13563,7 +13574,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 definirJanela={definirJanela}
                 onTrabalhar={(objetivo, janela, aoCapturar) => trabalharNoObjetivo(objetivo, {
                   localAgentToken: apiKeys.localAgentToken,
-                  visao: { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.6-flash' },
+                  visao: { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.7-flash' },
                   janela,
                   aoCapturar
                 })}

@@ -258,7 +258,7 @@ async function procurarNaWeb(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         clientApiKey: visao?.chaveGemini || undefined,
-        model: visao?.modeloGemini || 'gemini-3.6-flash',
+        model: visao?.modeloGemini || 'gemini-3.7-flash',
         contents: [{ role: 'user', parts: [{ text: `Pesquise na web: ${consulta}` }] }],
         config: { tools: [{ googleSearch: {} }] }
       })
@@ -424,7 +424,7 @@ async function chamarModeloComAFoto(opcoes: {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         clientApiKey: opcoes.visao?.chaveGemini || undefined,
-        model: opcoes.visao?.modeloGemini || 'gemini-3.6-flash',
+        model: opcoes.visao?.modeloGemini || 'gemini-3.7-flash',
         contents: [{ role: 'user', parts: opcoes.partes }],
         config: {
           systemInstruction: opcoes.instrucao,
@@ -981,7 +981,7 @@ export function useLocalAgent() {
               captura.image,
               captura.mimeType || 'image/png',
               visao?.chaveGemini || '',
-              visao?.modeloGemini || 'gemini-3.6-flash'
+              visao?.modeloGemini || 'gemini-3.7-flash'
             );
 
             if (!visto.encontrado || !visto.alvo) {
@@ -1587,7 +1587,7 @@ export function useLocalAgent() {
 
     const visto = await mirarPorVisao(
       alvoDescrito, foto.imagem, 'image/png',
-      visao?.chaveGemini || '', visao?.modeloGemini || 'gemini-3.6-flash'
+      visao?.chaveGemini || '', visao?.modeloGemini || 'gemini-3.7-flash'
     );
     if (!visto.encontrado || !visto.alvo) {
       return { error: `Não achei "${alvoDescrito}" nesta janela: ${visto.motivo}` };
