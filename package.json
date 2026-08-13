@@ -39,6 +39,7 @@
     "test:chat-code": "node scripts/conferir-chat-code.mjs",
     "test:cameras": "node scripts/conferir-cameras.mjs",
     "test:tela-inicial": "node scripts/conferir-tela-inicial.mjs",
+    "test:franqueza": "node scripts/conferir-franqueza.mjs",
     "test:cowork-memory": "tsx scripts/conferir-memoria-cowork.ts",
     "test:cowork-checkup": "tsx scripts/conferir-checkup-cowork.ts",
     "test:cowork-performance": "node scripts/conferir-desempenho-cowork.mjs",
