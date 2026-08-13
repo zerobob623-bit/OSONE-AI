@@ -77,18 +77,16 @@ function htmlDoMascoteOsone() {
     position: absolute;
     left: 26px;
     bottom: 34px;
-    width: 176px;
-    height: 200px;
+    width: 156px;
+    height: 164px;
     transform-origin: 50% 100%;
-    animation: travel 34s linear infinite;
+    transition: transform 0ms linear;
+    will-change: transform;
   }
 
   .mascot {
     position: absolute;
-    left: 10px;
-    bottom: 10px;
-    width: 156px;
-    height: 164px;
+    inset: 0;
   }
 
   .mascot svg {
@@ -97,7 +95,10 @@ function htmlDoMascoteOsone() {
     height: 100%;
     overflow: visible;
     filter: drop-shadow(0 14px 20px rgba(0,0,0,.34));
+    transition: transform 200ms ease;
   }
+
+  .espelhado svg { transform: scaleX(-1); }
 
   .mascot svg g,
   .mascot svg path,
@@ -226,19 +227,6 @@ function htmlDoMascoteOsone() {
   .jump .leg.left { transform: rotate(16deg); }
   .jump .leg.right { transform: rotate(-16deg); }
 
-  @keyframes travel {
-    0% { transform: translateX(0) scaleX(1); }
-    16% { transform: translateX(calc(100vw - 230px)) scaleX(1); }
-    19% { transform: translateX(calc(100vw - 230px)) scaleX(-1); }
-    34% { transform: translateX(22vw) scaleX(-1); }
-    39% { transform: translateX(22vw) scaleX(1); }
-    54% { transform: translateX(62vw) scaleX(1); }
-    59% { transform: translateX(62vw) scaleX(-1); }
-    78% { transform: translateX(6vw) scaleX(-1); }
-    82% { transform: translateX(6vw) scaleX(1); }
-    100% { transform: translateX(0) scaleX(1); }
-  }
-
   @keyframes breathe {
     0%, 100% { transform: translateY(0) scale(1); }
     50% { transform: translateY(-3px) scale(1.015, .985); }
@@ -294,7 +282,7 @@ function htmlDoMascoteOsone() {
 </head>
 <body>
 <div class="stage">
-  <div class="walker">
+  <div id="walker" class="walker">
     <div id="mascot" class="mascot idle">
       <div id="bubble" class="bubble">Estou olhando junto.</div>
       <svg viewBox="0 0 200 210" role="presentation" focusable="false">
@@ -389,22 +377,96 @@ function htmlDoMascoteOsone() {
 <script>
   const mascot = document.getElementById('mascot');
   const bubble = document.getElementById('bubble');
-  let ultimoSinal = 0;
-  let idleIndex = 0;
+  const walker = document.getElementById('walker');
   const posesPermitidas = new Set(['idle', 'walk', 'speak', 'point-right', 'look', 'point-up', 'jump', 'point-down']);
+
+  // Passeio: o mascote caminha pela tela inteira. O eixo Y vira profundidade,
+  // entao quem esta mais ao fundo aparece um pouco menor.
+  const VELOCIDADE = 130;
+  const FATIA_DE_PROFUNDIDADE = 0.42;
+  const REDUCAO_NO_FUNDO = 0.3;
+  const semMovimento = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  let ultimoSinal = 0;
+  let espelhado = false;
+  let posicao = { x: 0, y: 0 };
+  let timerPasseio = 0;
+  let timerChegada = 0;
+
+  function aplicarClasses(pose, temFala) {
+    mascot.className = 'mascot ' + pose + (temFala ? ' show-bubble' : '') + (espelhado ? ' espelhado' : '');
+  }
+
+  function areaDoPasseio() {
+    return {
+      largura: Math.max(0, innerWidth - walker.offsetWidth - 24),
+      profundidade: Math.max(0, innerHeight * FATIA_DE_PROFUNDIDADE - 60)
+    };
+  }
+
+  function escalaDaProfundidade(y) {
+    const profundidade = areaDoPasseio().profundidade;
+    if (profundidade <= 0) return 1;
+    return 1 - REDUCAO_NO_FUNDO * Math.min(1, y / profundidade);
+  }
+
+  function posicionar(x, y, duracao) {
+    posicao = { x: x, y: y };
+    walker.style.transitionDuration = duracao + 'ms';
+    walker.style.transform = 'translate3d(' + x + 'px, ' + (-y) + 'px, 0) scale(' + escalaDaProfundidade(y) + ')';
+  }
+
+  // Para onde estiver quando o OSONE assumir o controle, sem teletransporte.
+  function congelarPasseio() {
+    clearTimeout(timerPasseio);
+    clearTimeout(timerChegada);
+    const matriz = new DOMMatrixReadOnly(getComputedStyle(walker).transform);
+    if (!isFinite(matriz.m41) || !isFinite(matriz.m42)) return;
+    posicao = { x: matriz.m41, y: -matriz.m42 };
+    walker.style.transitionDuration = '0ms';
+    walker.style.transform = matriz.toString();
+  }
+
+  function passear() {
+    if (Date.now() - ultimoSinal < 5000) {
+      timerPasseio = setTimeout(passear, 1600);
+      return;
+    }
+    const area = areaDoPasseio();
+    const destino = { x: Math.random() * area.largura, y: Math.random() * area.profundidade };
+    const distancia = Math.hypot(destino.x - posicao.x, destino.y - posicao.y);
+    const duracao = Math.min(12000, Math.max(1200, (distancia / VELOCIDADE) * 1000));
+
+    espelhado = destino.x < posicao.x;
+    posicionar(destino.x, destino.y, duracao);
+    bubble.textContent = '';
+    aplicarClasses('walk', false);
+
+    timerChegada = setTimeout(() => {
+      aplicarClasses('idle', false);
+      timerPasseio = setTimeout(passear, 1800 + Math.random() * 3400);
+    }, duracao);
+  }
+
   window.osoneMascoteSetState = (payload) => {
     ultimoSinal = Date.now();
     const pose = posesPermitidas.has(payload?.pose) ? payload.pose : 'idle';
     const fala = String(payload?.fala || '').slice(0, 120);
-    mascot.className = 'mascot ' + pose + (fala ? ' show-bubble' : '');
+    congelarPasseio();
+    aplicarClasses(pose, Boolean(fala));
     bubble.textContent = fala;
+    if (!semMovimento) timerPasseio = setTimeout(passear, 5200);
   };
-  setInterval(() => {
-    if (Date.now() - ultimoSinal < 5000) return;
-    idleIndex += 1;
-    mascot.className = 'mascot ' + (idleIndex % 3 === 0 ? 'walk' : 'idle');
-    bubble.textContent = '';
-  }, 4200);
+
+  addEventListener('resize', () => {
+    const area = areaDoPasseio();
+    const x = Math.min(posicao.x, area.largura);
+    const y = Math.min(posicao.y, area.profundidade);
+    if (x === posicao.x && y === posicao.y) return;
+    posicionar(x, y, 400);
+  });
+
+  if (!semMovimento) timerPasseio = setTimeout(passear, 900);
 </script>
 </body>
 </html>`;

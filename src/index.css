@@ -224,13 +224,23 @@
    fica fora da janela em um overlay transparente do Electron. */
 .osone-mascot-web-layer {
   position: fixed;
-  left: max(18px, env(safe-area-inset-left));
-  bottom: max(58px, env(safe-area-inset-bottom));
-  width: 180px;
-  height: 210px;
+  inset: 0;
   z-index: 58;
   pointer-events: none;
+  overflow: hidden;
   contain: layout style paint;
+}
+
+/* Quem caminha pela tela e esta camada; o mascote em si so cuida das poses. */
+.osone-mascot-andarilho {
+  position: absolute;
+  left: max(12px, env(safe-area-inset-left));
+  bottom: max(52px, env(safe-area-inset-bottom));
+  width: 156px;
+  height: 164px;
+  transform-origin: 50% 100%;
+  transition: transform 0ms linear;
+  will-change: transform;
 }
 
 .osone-mascot-toggle {
@@ -316,10 +326,7 @@
 
 .osone-mascot {
   position: absolute;
-  left: 8px;
-  bottom: 6px;
-  width: 156px;
-  height: 164px;
+  inset: 0;
 }
 
 .osone-mascot-svg {
@@ -328,6 +335,13 @@
   height: 100%;
   overflow: visible;
   filter: drop-shadow(0 14px 20px rgba(0, 0, 0, 0.34));
+  transition: transform 200ms ease;
+}
+
+/* Andando para a esquerda ele vira de frente para o caminho. So a arte espelha,
+   o balao de fala continua legivel. */
+.osone-mascot-espelhado .osone-mascot-svg {
+  transform: scaleX(-1);
 }
 
 .osone-mascot-svg g,
@@ -573,11 +587,9 @@
 }
 
 @media (max-width: 720px) {
-  .osone-mascot-web-layer {
-    width: 126px;
-    height: 154px;
-    transform: scale(0.76);
-    transform-origin: left bottom;
+  .osone-mascot-andarilho {
+    width: 118px;
+    height: 124px;
   }
 
   .osone-mascot-bubble {
@@ -586,6 +598,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .osone-mascot-andarilho,
   .osone-mascot,
   .osone-mascot *,
   .osone-mascot::before,
