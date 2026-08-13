@@ -3043,10 +3043,9 @@ const handleWindowFocus = async (req: Request, res: Response) => {
 /**
  * GET /window/capture?id=... — a foto de UMA janela, e não da tela inteira.
  *
- * A janela é trazida para frente antes da foto. Não é um efeito colateral indesejado: uma janela
- * atrás de outra é fotografada com a outra por cima (ou com lixo de buffer, dependendo do
- * compositor), e uma foto errada é pior do que nenhuma — ela leva o agente a decidir sobre o que
- * não está lá.
+ * Por padrão a janela é trazida para frente antes da foto. Capturas internas de estabilização
+ * podem enviar `focus=0&geometry=0`: elas acontecem logo depois de uma ação já focada, servem só
+ * para comparar pixels e não precisam pagar outro redesenho nem relistar todas as janelas.
  */
 const handleWindowCapture = async (req: Request, res: Response) => {
   const id = String(req.query?.id || '').trim();
@@ -3055,14 +3054,20 @@ const handleWindowCapture = async (req: Request, res: Response) => {
   }
 
   const platform = process.platform;
+  const deveFocar = String(req.query?.focus ?? '1') !== '0';
+  const deveMedirGeometria = String(req.query?.geometry ?? '1') !== '0';
   const tmpFile = path.join(os.tmpdir(), `osone-janela-${crypto.randomBytes(6).toString('hex')}.png`);
   try {
-    await focarJanela(id).catch(() => { /* segue: em alguns gerenciadores a foto ainda sai certa */ });
-    // Um instante para o gerenciador de janelas terminar de trazer a janela e redesenhar. Sem
-    // isto a foto pega a transição, que é justamente o quadro em que nada está no lugar.
-    await new Promise(r => setTimeout(r, 250));
+    if (deveFocar) {
+      await focarJanela(id).catch(() => { /* segue: em alguns gerenciadores a foto ainda sai certa */ });
+      // Só a captura que realmente pediu foco espera o gerenciador redesenhar. As fotos internas
+      // de estabilização já começam depois da espera adaptativa e não podem pagar 250ms cada uma.
+      await new Promise(r => setTimeout(r, 250));
+    }
 
-    const geometria = await geometriaDaJanela(id);
+    let geometria = (platform === 'win32' || deveMedirGeometria)
+      ? await geometriaDaJanela(id)
+      : null;
 
     if (platform === 'linux') {
       try {
@@ -3070,6 +3075,7 @@ const handleWindowCapture = async (req: Request, res: Response) => {
       } catch (err: any) {
         // Sem ImageMagick, recorta a janela da tela inteira: precisa da geometria, mas funciona
         // com qualquer ferramenta de captura já instalada.
+        if (!geometria) geometria = await geometriaDaJanela(id);
         if (!geometria) throw err;
         await runShell(`scrot -o "${tmpFile}" && convert "${tmpFile}" -crop ${geometria.width}x${geometria.height}+${geometria.x}+${geometria.y} +repage "${tmpFile}"`, 15000, USER_HOME_DIR, ambienteGrafico());
       }

@@ -1529,7 +1529,8 @@ export function useLocalAgent() {
    */
   const fotografarJanelaDeTrabalho = async (
     localAgentToken?: string,
-    aoCapturar?: (frame: CapturaConfirmada) => void
+    aoCapturar?: (frame: CapturaConfirmada) => void,
+    opcoes: { garantirFoco?: boolean; medirGeometria?: boolean } = {}
   ): Promise<{ imagem: string; janela: JanelaDeTrabalho } | null> => {
     const janela = janelaRef.current;
     if (!janela) {
@@ -1546,8 +1547,11 @@ export function useLocalAgent() {
       };
     }
     try {
+      const garantirFoco = opcoes.garantirFoco !== false;
+      const medirGeometria = opcoes.medirGeometria !== false;
       const dados = await pedirCapturaAtual(
-        `/api/agent/window/capture?id=${encodeURIComponent(janela.id)}`,
+        `/api/agent/window/capture?id=${encodeURIComponent(janela.id)}` +
+          `&focus=${garantirFoco ? '1' : '0'}&geometry=${medirGeometria ? '1' : '0'}`,
         localAgentToken, aoCapturar
       );
       if (!dados?.image) return null;
@@ -1694,8 +1698,15 @@ export function useLocalAgent() {
     // base e seria impossível provar que nasceu durante esta tarefa.
     const downloadsNoInicio = new Set(await listarDownloads().catch(() => []));
 
+    let primeiraAssinatura = true;
     const fotografar = async () => {
-      const f = await fotografarJanelaDeTrabalho(localAgentToken, opcoes.aoCapturar);
+      const f = await fotografarJanelaDeTrabalho(localAgentToken, opcoes.aoCapturar, {
+        // A primeira foto estabelece a referência da tarefa e garante a janela certa. As seguintes
+        // vêm após uma decisão/ação que já focou a janela e servem só para comparar pixels.
+        garantirFoco: primeiraAssinatura,
+        medirGeometria: false
+      });
+      if (f) primeiraAssinatura = false;
       return f ? await assinaturaDaImagem(f.imagem) : null;
     };
 
@@ -1706,7 +1717,12 @@ export function useLocalAgent() {
       cancelado: () => motorParadoRef.current,
 
       fotografarJanela: async () => {
-        const f = await fotografarJanelaDeTrabalho(localAgentToken, opcoes.aoCapturar);
+        const f = await fotografarJanelaDeTrabalho(localAgentToken, opcoes.aoCapturar, {
+          garantirFoco: true,
+          // A decisão aponta semanticamente. A geometria exata só é necessária se ela decidir
+          // clicar, quando clicarNaJanela fotografa e mede novamente no instante do clique.
+          medirGeometria: false
+        });
         return f ? f.imagem : null;
       },
 
@@ -1777,18 +1793,32 @@ export function useLocalAgent() {
          * como parte de abrir, medida comparando as janelas de antes e as de depois.
          */
         if (acao === 'abrir') {
-          const antes = new Set((await listarJanelas(localAgentToken)).map(j => j.id));
+          const janelasAntes = await listarJanelas(localAgentToken);
+          const antes = new Map(janelasAntes.map(j => [j.id, j]));
+          const idDaJanelaAnterior = janelaRef.current?.id;
           const r = await executeLocalAgentCall('controlar_pc', { acao, ...args }, localAgentToken, false, visao);
           if (r?.error) return r;
 
-          for (let tentativa = 0; tentativa < 6; tentativa++) {
-            // Um programa que estava fechado leva segundos para desenhar a primeira janela.
-            await new Promise(res => setTimeout(res, 900));
+          // Olha cedo para não transformar uma abertura rápida em 900ms de espera obrigatória, mas
+          // mantém mais de cinco segundos de alcance para programas pesados em computadores lentos.
+          const intervalosDeSondagem = [250, 450, 700, 1000, 1500, 1500];
+          for (const intervalo of intervalosDeSondagem) {
+            await new Promise(res => setTimeout(res, intervalo));
             const agora = await listarJanelas(localAgentToken);
             const nova = agora.find(j => !antes.has(j.id));
             if (nova) {
               definirJanela(nova);
               return { ...r, resumo: `Abri e passei a olhar a janela "${nova.titulo}".` };
+            }
+
+            // Navegadores e gerenciadores de arquivo frequentemente reutilizam a mesma janela. O
+            // ID não muda, mas o título muda assim que a nova aba/pasta assume o conteúdo.
+            const atualizada = idDaJanelaAnterior
+              ? agora.find(j => j.id === idDaJanelaAnterior && j.titulo !== antes.get(j.id)?.titulo)
+              : undefined;
+            if (atualizada) {
+              definirJanela(atualizada);
+              return { ...r, resumo: `Abri e passei a olhar a janela atualizada "${atualizada.titulo}".` };
             }
           }
           /**

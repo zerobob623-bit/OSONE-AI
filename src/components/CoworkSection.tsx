@@ -221,13 +221,13 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
   /**
    * A TELA DO AGENTE AO VIVO, SEM VOCÊ PRECISAR SAIR DAQUI.
    *
-   * Este laço de um em um segundo só é aceitável porque a tela do agente vive na memória:
-   * fotografá-la não disputa nada com o que você está fazendo. Fotografar a SUA tela nesse ritmo
-   * seria o contrário — por isso, quando a área paralela está desligada, a imagem continua vindo
-   * uma vez por ação, e não continuamente.
+   * Parado, o preview consulta a área em ritmo baixo. Trabalhando, o próprio motor já fotografa a
+   * tela para decidir e estabilizar cada ação; manter este segundo laço junto disparava dois
+   * processos de captura concorrentes, aumentava CPU/disco e às vezes fazia o frame operacional
+   * ser descartado como antigo. Nesse período o quadro usa as fotos do relatório do motor.
    */
   useEffect(() => {
-    if (!areaParalela?.ligada) return;
+    if (!areaParalela?.ligada || trabalhando) return;
     let vivo = true;
     let emVoo = false;
     const puxar = async () => {
@@ -238,8 +238,7 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
       emVoo = false;
     };
     puxar();
-    // Mais rápido enquanto ele trabalha (é quando há o que ver), mais devagar quando está parado.
-    const t = setInterval(puxar, trabalhando ? 1000 : 4000);
+    const t = setInterval(puxar, 4000);
     return () => { vivo = false; clearInterval(t); };
   }, [areaParalela?.ligada, trabalhando]);
 
@@ -502,7 +501,10 @@ export const CoworkSection: React.FC<CoworkSectionProps> = ({
    * ele tirou ao agir. As duas são honestas sobre o que são — uma é "agora", a outra é "o que ele
    * viu no último passo" — e a legenda abaixo do quadro diz qual das duas está ali.
    */
-  const ultimaFoto = fotoDaArea || [...voltas].reverse().find(v => v.foto)?.foto;
+  const ultimaFotoDoTrabalho = [...voltas].reverse().find(v => v.foto)?.foto;
+  const ultimaFoto = trabalhando
+    ? (ultimaFotoDoTrabalho || fotoDaArea)
+    : (fotoDaArea || ultimaFotoDoTrabalho);
 
   const comecar = async (texto?: string) => {
     const alvo = (texto ?? objetivo).trim();
