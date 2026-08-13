@@ -104,6 +104,21 @@ const paraCodigo = (reserva = '') =>
     lista.join(' → '));
 }
 
+// ====== 4.1) O 3.7-FLASH ENTROU, E O 3.6 FICOU LOGO ATRÁS COMO REDE ======
+// O 3.7-flash é recém-lançado: numa chave que ainda não o enxerga, a chamada volta com 404 ou sem
+// cota. Se o 3.6 não estivesse imediatamente atrás, o pedido cairia direto para um 'lite' — a
+// resposta sairia bem pior sem nenhum motivo visível para quem está na tela.
+{
+  for (const rebaixa of [true, false]) {
+    const lista = listarModelosCandidatos('gemini-3.7-flash',
+      { allowDowngrade: rebaixa, modeloDeReserva: '' });
+    const pos37 = lista.indexOf('gemini-3.7-flash');
+    const pos36 = lista.indexOf('gemini-3.6-flash');
+    registrar(`o 3.6-flash é o degrau seguinte do 3.7-flash (allowDowngrade: ${rebaixa})`,
+      pos37 === 0 && pos36 === 1, lista.join(' → '));
+  }
+}
+
 // ====== 5) "ESTÁ DEMORANDO MUITO": quem recusou sai da frente da fila ======
 {
   modelosIndisponiveis.clear();

@@ -128,7 +128,7 @@ async function callGeminiJson(apiKey: string, model: string, systemPrompt: strin
   return JSON.parse(clean);
 }
 
-export function useHierarchicalMemory(userId: string, apiKey: string, model: string = 'gemini-3.6-flash') {
+export function useHierarchicalMemory(userId: string, apiKey: string, model: string = 'gemini-3.7-flash') {
   const [state, setState] = useState<HierarchicalMemoryState>(() => loadState(userId || 'guest'));
   const isConsolidatingRef = useRef(false);
   const stateRef = useRef(state);

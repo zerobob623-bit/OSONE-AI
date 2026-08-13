@@ -141,7 +141,7 @@ export const OsoneHearPanel: React.FC<{
           audioBase64,
           mimeType: audio.type || 'audio/webm',
           clientApiKey: chaveGemini || '',
-          model: modeloGemini || 'gemini-3.6-flash'
+          model: modeloGemini || 'gemini-3.7-flash'
         })
       });
       const dados = await resposta.json().catch(() => null);

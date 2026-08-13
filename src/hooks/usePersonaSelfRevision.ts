@@ -109,7 +109,7 @@ export function usePersonaSelfRevision(
   userId: string,
   apiKey: string,
   addNotification: (msg: string, type: 'success' | 'info' | 'error') => void,
-  model: string = 'gemini-3.6-flash'
+  model: string = 'gemini-3.7-flash'
 ) {
   const [state, setState] = useState<PersonaSelfRevisionState>(() => loadState(userId || 'guest'));
   const isRevisingRef = useRef(false);

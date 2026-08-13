@@ -757,19 +757,34 @@ export const SettingsModal = ({
                         <Cpu size={12} className="text-her-accent" />
                         <label className="block text-[9px] uppercase tracking-[0.2em] text-her-muted font-bold">Modelo de Inteligência</label>
                       </div>
-                      <div className="grid grid-cols-3 gap-2 bg-white/[0.01] border border-white/[0.05] p-1.5 rounded-2xl">
+                      <div className="grid grid-cols-2 gap-2 bg-white/[0.01] border border-white/[0.05] p-1.5 rounded-2xl">
+                        <button
+                          type="button"
+                          onClick={() => setKeys({ ...keys, geminiModel: 'gemini-3.7-flash' })}
+                          className={cn(
+                            "py-2.5 px-2 rounded-xl text-[11px] font-semibold tracking-wide transition-all duration-300 flex items-center justify-center gap-1.5",
+                            (keys.geminiModel === 'gemini-3.7-flash' || !keys.geminiModel)
+                              ? "bg-white/[0.08] text-white shadow-lg border border-white/[0.1] font-bold"
+                              : "text-her-muted hover:text-white/80 hover:bg-white/[0.03] border border-transparent font-medium"
+                          )}
+                        >
+                          Gemini 3.7 Flash
+                          {(keys.geminiModel === 'gemini-3.7-flash' || !keys.geminiModel) && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-her-accent animate-pulse" />
+                          )}
+                        </button>
                         <button
                           type="button"
                           onClick={() => setKeys({ ...keys, geminiModel: 'gemini-3.6-flash' })}
                           className={cn(
                             "py-2.5 px-2 rounded-xl text-[11px] font-semibold tracking-wide transition-all duration-300 flex items-center justify-center gap-1.5",
-                            (keys.geminiModel === 'gemini-3.6-flash' || !keys.geminiModel)
+                            keys.geminiModel === 'gemini-3.6-flash'
                               ? "bg-white/[0.08] text-white shadow-lg border border-white/[0.1] font-bold"
                               : "text-her-muted hover:text-white/80 hover:bg-white/[0.03] border border-transparent font-medium"
                           )}
                         >
                           Gemini 3.6 Flash
-                          {(keys.geminiModel === 'gemini-3.6-flash' || !keys.geminiModel) && (
+                          {keys.geminiModel === 'gemini-3.6-flash' && (
                             <span className="w-1.5 h-1.5 rounded-full bg-her-accent animate-pulse" />
                           )}
                         </button>
@@ -805,7 +820,7 @@ export const SettingsModal = ({
                         </button>
                       </div>
                       <p className="mt-3 text-[10px] text-her-muted/40 italic leading-relaxed">
-                        Escolha o modelo de inteligência preferencial para geração de código, sugestão de melhorias e chats integrados do OSONE.
+                        Escolha o modelo de inteligência preferencial para geração de código, sugestão de melhorias e chats integrados do OSONE. O padrão é o Gemini 3.7 Flash, o mais recente da linha Flash (a mesma família gratuita do 3.6 e do 3.5). Se a sua chave ainda não enxergar o 3.7, o OSONE cai sozinho para o 3.6 Flash sem interromper a conversa.
                       </p>
                     </div>
 
