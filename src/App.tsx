@@ -94,6 +94,7 @@ import { useTuyaSmartHome } from './hooks/useTuyaSmartHome';
 import { useHierarchicalMemory } from './hooks/useHierarchicalMemory';
 import { usePersonaSelfRevision } from './hooks/usePersonaSelfRevision';
 import { getCounterfactualReasoningDirective, getSalienceEmpathyDirective } from './lib/cognitiveDirectives';
+import { getFranquezaDirective } from './lib/franquezaJarvis';
 import { buildCodeEditSystemInstruction, applyModelCodeResponse, pareceDocumentoIncompleto, substituirTrecho, contextoAoRedor } from './lib/codeEdits';
 import { INSTRUCAO_DE_PROJETO_MULTIARQUIVO, lerArquivosDoModelo } from './lib/projetoMultiArquivo';
 import { gerarCodigoEmFluxo } from './lib/gerarCodigoEmFluxo';
@@ -4592,6 +4593,12 @@ Sua resposta DEVE ser estritamente um objeto JSON válido e NADA MAIS.`;
           let systemInstruction = `${profileInstruction}
           PERSONALIDADE ATUAL: ${selectedPersona.instructions}`;
 
+          // A franqueza vale para TODA persona, não só a 'osone': o modo Zen concorda de forma
+          // serena, o Cientista concorda com jargão, o Sarcástico concorda depois da piada. O
+          // tom muda, a bajulação é a mesma. Aqui entra a versão curta porque esta chamada só
+          // produz uma saudação de duas frases.
+          systemInstruction += getFranquezaDirective('compacto');
+
           if (selectedPersona.id === 'osone') {
             systemInstruction += `\n\n[SISTEMA DE EVOLUÇÃO NEURO-ADAPTATIVA DO OSONE ATIVO]:
 Seu alinhamento comportamental atual está na seguinte escala de afinidade evolutiva com o usuário:
@@ -8778,6 +8785,8 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
 
           PERSONALIDADE ATUAL: ${selectedPersona.instructions}`;
 
+      activeSystemInstruction += getFranquezaDirective('completo');
+
       activeSystemInstruction += `\n\n${buildMemoryContextBlock()}`;
 
       if (selectedPersona.id === 'osone') {
@@ -9943,6 +9952,11 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
         ${memoryContext}
         Aja com base nas memórias: ${recentChatContext}
         `;
+
+        // Versão curta: por voz a resposta tem teto de 15 palavras e o prompt já é enorme. O
+        // modo tradutor simultâneo fica de fora de propósito — lá o OSONE é intérprete, não
+        // interlocutor, e não tem posição própria para sustentar.
+        liveSystemInstruction += getFranquezaDirective('compacto');
       }
 
       if (customSkill) {
