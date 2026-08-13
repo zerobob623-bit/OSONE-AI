@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 const estados = ['idle', 'speak', 'point-right', 'walk', 'point-up', 'jump', 'point-down', 'look'] as const;
 type EstadoDoMascote = typeof estados[number];
@@ -14,6 +14,19 @@ type OsoneMascotCompanionProps = {
 };
 
 const STORAGE_KEY = 'osone_mascot_active';
+
+/* Passeio: o mascote caminha pela tela inteira. O eixo Y e usado como profundidade,
+   entao quem esta mais ao fundo aparece um pouco menor. */
+const VELOCIDADE_DO_PASSEIO = 130; // pixels por segundo
+const FATIA_DE_PROFUNDIDADE = 0.42; // quanto da altura da tela ele percorre
+const REDUCAO_NO_FUNDO = 0.3; // o quanto ele encolhe no ponto mais distante
+const DURACAO_MINIMA = 1200;
+const DURACAO_MAXIMA = 12000;
+
+const preferReduzirMovimento = () => {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+};
 
 /* Arte do mascote: bolinha fofa e carismatica, com olhos grandes, sobrancelhas
    expressivas, bracinhos de macarrao e pezinhos arredondados. */
@@ -137,6 +150,9 @@ export function OsoneMascotCompanion({ brain }: OsoneMascotCompanionProps) {
   const [sincronizando, setSincronizando] = useState(false);
   const [estado, setEstado] = useState<EstadoDoMascote>('idle');
   const [fala, setFala] = useState('');
+  const [espelhado, setEspelhado] = useState(false);
+  const andarilhoRef = useRef<HTMLDivElement | null>(null);
+  const posicaoRef = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
     const salvo = localStorage.getItem(STORAGE_KEY) === '1';
@@ -172,16 +188,93 @@ export function OsoneMascotCompanion({ brain }: OsoneMascotCompanionProps) {
     };
   }, []);
 
+  const areaDoPasseio = useCallback(() => {
+    const largura = andarilhoRef.current?.offsetWidth || 156;
+    return {
+      largura: Math.max(0, window.innerWidth - largura - 24),
+      profundidade: Math.max(0, window.innerHeight * FATIA_DE_PROFUNDIDADE - 60)
+    };
+  }, []);
+
+  const escalaDaProfundidade = useCallback((y: number) => {
+    const { profundidade } = areaDoPasseio();
+    if (profundidade <= 0) return 1;
+    return 1 - REDUCAO_NO_FUNDO * Math.min(1, y / profundidade);
+  }, [areaDoPasseio]);
+
+  const posicionar = useCallback((x: number, y: number, duracao: number) => {
+    const el = andarilhoRef.current;
+    if (!el) return;
+    posicaoRef.current = { x, y };
+    el.style.transitionDuration = `${duracao}ms`;
+    el.style.transform = `translate3d(${x}px, ${-y}px, 0) scale(${escalaDaProfundidade(y)})`;
+  }, [escalaDaProfundidade]);
+
+  /* Para o passeio onde o mascote estiver agora, sem teletransporte, quando o
+     OSONE assume o controle (falando, ouvindo, apontando algo). */
+  const congelarPasseio = useCallback(() => {
+    const el = andarilhoRef.current;
+    if (!el || typeof DOMMatrixReadOnly === 'undefined') return;
+    const matriz = new DOMMatrixReadOnly(window.getComputedStyle(el).transform);
+    if (!Number.isFinite(matriz.m41) || !Number.isFinite(matriz.m42)) return;
+    posicaoRef.current = { x: matriz.m41, y: -matriz.m42 };
+    el.style.transitionDuration = '0ms';
+    el.style.transform = matriz.toString();
+  }, []);
+
   useEffect(() => {
-    if (!ativo || brain.atividade !== 'idle') return;
-    let indice = 0;
-    const timer = window.setInterval(() => {
-      indice += 1;
-      setEstado(indice % 3 === 0 ? 'walk' : 'idle');
+    if (!ativo || overlayExterno) return;
+    if (brain.atividade !== 'idle' || preferReduzirMovimento()) {
+      congelarPasseio();
+      return;
+    }
+
+    let vivo = true;
+    let timer = 0;
+
+    const passear = () => {
+      if (!vivo) return;
+      const { largura, profundidade } = areaDoPasseio();
+      const destino = {
+        x: Math.random() * largura,
+        y: Math.random() * profundidade
+      };
+      const distancia = Math.hypot(destino.x - posicaoRef.current.x, destino.y - posicaoRef.current.y);
+      const duracao = Math.min(DURACAO_MAXIMA, Math.max(DURACAO_MINIMA, (distancia / VELOCIDADE_DO_PASSEIO) * 1000));
+
+      setEspelhado(destino.x < posicaoRef.current.x);
+      posicionar(destino.x, destino.y, duracao);
+      setEstado('walk');
       setFala('');
-    }, 5200);
-    return () => window.clearInterval(timer);
-  }, [ativo, brain.atividade]);
+
+      timer = window.setTimeout(() => {
+        if (!vivo) return;
+        setEstado('idle');
+        timer = window.setTimeout(passear, 1800 + Math.random() * 3400);
+      }, duracao);
+    };
+
+    timer = window.setTimeout(passear, 800);
+    return () => {
+      vivo = false;
+      window.clearTimeout(timer);
+      congelarPasseio();
+    };
+  }, [ativo, overlayExterno, brain.atividade, areaDoPasseio, posicionar, congelarPasseio]);
+
+  /* Se a janela encolher, o mascote nao pode ficar preso fora da tela. */
+  useEffect(() => {
+    if (!ativo || overlayExterno) return;
+    const aoRedimensionar = () => {
+      const { largura, profundidade } = areaDoPasseio();
+      const { x, y } = posicaoRef.current;
+      const dentro = { x: Math.min(x, largura), y: Math.min(y, profundidade) };
+      if (dentro.x === x && dentro.y === y) return;
+      posicionar(dentro.x, dentro.y, 400);
+    };
+    window.addEventListener('resize', aoRedimensionar);
+    return () => window.removeEventListener('resize', aoRedimensionar);
+  }, [ativo, overlayExterno, areaDoPasseio, posicionar]);
 
   useEffect(() => {
     if (!ativo) return;
@@ -253,9 +346,13 @@ export function OsoneMascotCompanion({ brain }: OsoneMascotCompanionProps) {
 
       {mostrarMascoteNaPagina && (
         <div className="osone-mascot-web-layer" aria-hidden="true">
-          <div className={`osone-mascot osone-mascot-${estado} ${fala ? 'osone-mascot-has-message' : ''}`}>
-            <div className="osone-mascot-bubble">{fala}</div>
-            <ArteDoMascote />
+          <div className="osone-mascot-andarilho" ref={andarilhoRef}>
+            <div
+              className={`osone-mascot osone-mascot-${estado} ${fala ? 'osone-mascot-has-message' : ''} ${espelhado ? 'osone-mascot-espelhado' : ''}`}
+            >
+              <div className="osone-mascot-bubble">{fala}</div>
+              <ArteDoMascote />
+            </div>
           </div>
         </div>
       )}
