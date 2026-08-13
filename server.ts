@@ -1683,11 +1683,11 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       }
     }
 
-    // Gatilho: só responde quando chamarem o OSONE pelo comando (ex.: "/osone"). O
-    // desenvolvedor passa direto, já que no modo desenvolvedor toda mensagem dele é uma ordem
-    // ao sistema — exigir o comando dele seria só atrito.
+    // Gatilho: quando ligado, é uma trava absoluta. Qualquer remetente — inclusive o dono do
+    // sistema — precisa chamar o OSONE pelo comando (ex.: "/osone"). Quando desligado, nenhuma
+    // mensagem é filtrada por comando e o robô responde conforme os demais filtros ativos.
     let promptBody = body;
-    if (whatsappConfig.requireTriggerCommand && !isDeveloperNumber(sender)) {
+    if (whatsappConfig.requireTriggerCommand) {
       const { triggered, cleanedText } = matchTriggerCommand(body);
       if (!triggered) return; // conversa normal entre humanos: o robô fica quieto, sem poluir os logs
       // Mensagem que era só o comando, sem pergunta junto ("/osone"): trata como um "oi",
@@ -2373,14 +2373,12 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
       },
       {
         porta: "Comando de ativação",
-        passa: !whatsappConfig.requireTriggerCommand || ehDesenvolvedor || gatilho.triggered,
+        passa: !whatsappConfig.requireTriggerCommand || gatilho.triggered,
         detalhe: !whatsappConfig.requireTriggerCommand
           ? "desligado — qualquer texto passa"
-          : ehDesenvolvedor
-            ? "é o número do desenvolvedor, não precisa do comando"
-            : gatilho.triggered
-              ? `encontrou '${whatsappConfig.triggerCommand}'; a IA vai ler: "${gatilho.cleanedText || "Olá!"}"`
-              : `BLOQUEADO — o texto não contém '${whatsappConfig.triggerCommand}'`
+          : gatilho.triggered
+            ? `encontrou '${whatsappConfig.triggerCommand}'; a IA vai ler: "${gatilho.cleanedText || "Olá!"}"`
+            : `BLOQUEADO — o texto não contém '${whatsappConfig.triggerCommand}'`
       },
       {
         porta: "Chave do Gemini",
@@ -2835,7 +2833,7 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
 
       // Mesmo gatilho da recepção real, pelo mesmo motivo do filtro de contatos acima.
       let promptText = cleanText;
-      if (whatsappConfig.requireTriggerCommand && !isDeveloperNumber(cleanJid)) {
+      if (whatsappConfig.requireTriggerCommand) {
         const { triggered, cleanedText } = matchTriggerCommand(cleanText);
         if (!triggered) {
           whatsappLogs.unshift({
