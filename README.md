@@ -32,7 +32,7 @@ Tudo que é automação residencial vive na aba **OSONE HOME**. Ela tem quatro s
 | --- | --- |
 | **Aparelhos** | Os aparelhos reais da sua conta Tuya, com o estado lido do próprio aparelho. Liga/desliga, brilho e cor aparecem só em quem realmente os tem. |
 | **Cenas** | Guarda o estado atual dos aparelhos e o repõe depois, com comandos reais. |
-| **Google Home** | Estado do vínculo com o Assistente, as URLs para colar no Actions on Google, a lista exata do que o Assistente enxerga e o motivo de cada aparelho que ficou de fora. |
+| **Google Home** | Ativação da ponte oficial para usar os aparelhos Tuya pelo Google Assistente, sem navegador ou servidor local aberto. |
 | **Organizar PC** | Gera o script Python de organização de arquivos do computador. |
 
 O mesmo aparelho responde no painel, no chat de texto, na voz do OSONE e no Google Assistente — os quatro caminhos passam pela **mesma** tradução de comandos (`src/lib/tuyaDispositivos.ts`), então nenhum deles promete um recurso que o aparelho não tem.
@@ -64,7 +64,7 @@ Há **dois caminhos**, e o que você preenche pela tela **ganha** da variável d
 **Configurações (⚙️) > Automação**. Cada serviço tem o seu cartão, com os seus campos:
 
 - **Tuya Cloud IoT Platform** — Access ID, Access Secret, endereço da região e UID da conta.
-- **Google Home** — Client ID e Client Secret (opcional; só se você quiser comandar por voz do Google).
+- **Google Home** — depois de salvar a Tuya, clique em **Ativar no Google Home**. O Client ID e o Secret pertencem à ponte oficial e não são pedidos ao usuário do instalável.
 
 Clique em **Salvar** e pronto: **vale na hora, sem reiniciar o OSONE**. O botão "Verificar Configuração Tuya" testa a conexão de verdade ali mesmo, e o do Google Home percorre a corrente inteira (credenciais → Tuya → vínculo) e para no primeiro elo que falta.
 
@@ -123,7 +123,7 @@ Ao implantar este projeto na **Vercel**, você **NÃO** precisa enviar nenhum ar
    - `TUYA_CLIENT_SECRET`
    - `TUYA_BASE_URL` (ex: `https://openapi.tuyaus.com`)
    - `TUYA_USER_UID`
-   - *(opcional, só para o Assistente do Google: `GOOGLE_HOME_CLIENT_ID` e `GOOGLE_HOME_CLIENT_SECRET`)*
+   - `GOOGLE_HOME_CLIENT_ID`, `GOOGLE_HOME_CLIENT_SECRET` e `GOOGLE_HOME_ENCRYPTION_KEY` são definidos somente no backend oficial, não em cada instalável.
 4. Salve e **refaça o deploy** (Deployments > ⋯ > Redeploy). Variável nova só passa a valer num deploy novo — salvar e recarregar a página não basta, e é aí que a maioria conclui que a instrução não funcionou.
 
 > ⚠️ **Atenção à trava de IP da Tuya.** Se o seu projeto na Tuya tiver uma lista de IPs autorizados (*IP Whitelist* / *Allowlist*), ela não combina com a Vercel: o IP das funções serverless muda a cada execução, então nunca vai estar na lista. Nesse caso, ou remova a trava no painel da Tuya, ou rode o OSONE numa máquina de IP estável.
@@ -146,33 +146,35 @@ O OSONE lê os pontos de dados de cada aparelho e anuncia **só o que ele realme
 
 Ficam **de fora**, com o motivo visível na aba Google Home: fechaduras (regra de segurança), aparelhos sem um liga/desliga que o OSONE saiba usar (sensores e afins) e aparelhos cujo estado não foi possível ler.
 
-### Como vincular
+### Como vincular no instalável
 
-Esta parte só pode ser feita por você — criar projeto no Google não é algo que o código faça.
+1. Entre na sua conta OSONE e salve as quatro credenciais Tuya em **Ajustes > Automação**.
+2. Clique em **Ativar no Google Home**. O instalável testa a Tuya, registra a conta na ponte oficial e mostra um código de uso único válido por 10 minutos.
+3. No celular, abra Google Home > **Adicionar dispositivo > Funciona com Google Home > OSONE**.
+4. Na tela de autorização, digite o código mostrado no instalável e confirme.
 
-1. Crie um projeto em [console.actions.google.com](https://console.actions.google.com) e escolha o tipo **Smart Home**.
-2. Em **Account Linking**, invente um Client ID e um Client Secret (eles são *seus*, não emitidos pelo Google) e cole as 3 URLs que a aba **OSONE HOME > Google Home** mostra:
-   - Authorization URL: `https://SEU-DOMINIO/api/google-home/authorize`
-   - Token URL: `https://SEU-DOMINIO/api/google-home/token`
-   - Fulfillment URL: `https://SEU-DOMINIO/api/google-home/fulfillment`
-3. Cole esse mesmo par em **Configurações > Automação > Google Home** (ou defina `GOOGLE_HOME_CLIENT_ID` / `GOOGLE_HOME_CLIENT_SECRET`).
-4. Habilite a **HomeGraph API** no projeto do Google Cloud vinculado.
-5. No app Google Home do celular: **+ > Configurar dispositivo > "Funciona com o Google"**, procure seu projeto de teste e autorize.
-6. Volte à aba Google Home e clique em **Reconferir** — o cartão passa a dizer "Vinculada".
+O usuário não publica servidor, não abre porta e não cria projeto no Google. A ponte oficial usa OAuth por conta e chama a Tuya Cloud diretamente, por isso os comandos continuam funcionando com o PC desligado.
 
-> ⚠️ **Isto exige endereço público em HTTPS — e só isto.** O Google precisa *alcançar* o OSONE de fora para entregar os comandos das caixinhas, e ele não entra em `localhost` nem na sua rede local. Então o **vínculo** pede o OSONE publicado num domínio (a Vercel serve) ou exposto por um túnel (ngrok, Cloudflare Tunnel).
->
-> **Seus aparelhos não dependem disso.** O painel, o chat e a voz do OSONE falam com a Tuya direto da sua máquina — em `localhost` você controla tudo igual. Sem Google, sem Vercel, sem túnel.
+### Configuração única do backend oficial
+
+No [Google Home Developer Console](https://console.home.google.com), a integração Cloud-to-cloud do OSONE usa:
+
+- Authorization URL: `https://DOMINIO-OFICIAL/api/google-home/authorize`
+- Token URL: `https://DOMINIO-OFICIAL/api/google-home/token`
+- Fulfillment URL: `https://DOMINIO-OFICIAL/api/google-home/fulfillment`
+
+O backend precisa de Firebase Admin, `GOOGLE_HOME_CLIENT_ID`, `GOOGLE_HOME_CLIENT_SECRET`, uma `GOOGLE_HOME_ENCRYPTION_KEY` com pelo menos 32 caracteres e `OSONE_HOME_PUBLIC_URL`. Essa configuração é feita uma vez para todos os instaláveis.
 
 ### Limites conhecidos desta ponte
 
 - **Sem Report State**: quando alguém aperta o interruptor na parede, o OSONE não avisa o Google por conta própria — isso exigiria uma chave de conta de serviço do Google Cloud que só você pode emitir. Por isso os aparelhos são anunciados com `willReportState: false`, o que faz o Assistente **perguntar** o estado antes de responder, em vez de repetir um valor guardado.
 - **Sem temperatura de cor**: a Tuya não informa a faixa de Kelvin do aparelho, e mapear isso seria adivinhação. O painel também não oferece, então os dois seguem iguais.
-- **Vínculo em disco**: os tokens ficam em `google-home-tokens.json` (modo `0600`, no `.gitignore`), ao lado dos outros dados locais. Numa hospedagem com disco efêmero, o vínculo pode precisar ser refeito após um redeploy.
+- **Modo self-host legado**: continua podendo guardar tokens em `google-home-tokens.json`. Nos instaláveis oficiais, os tokens ficam associados ao UID no Firestore e sobrevivem a deploys.
 
 ### Conferindo sem aparelho nenhum
 
 ```bash
+npm run test:google-home
 node scripts/conferir-google-home.mjs   # o que o Assistente recebe e consegue mandar
 node scripts/conferir-casa.mjs          # o que o painel e o chat mandam ao aparelho
 node scripts/conferir-credenciais.mjs   # preenchimento pela tela e sigilo do segredo

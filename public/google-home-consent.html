@@ -22,17 +22,24 @@
       width: 100%;
       background: rgba(255,255,255,0.03);
       border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 24px;
+      border-radius: 8px;
       padding: 32px;
       text-align: center;
     }
     h1 { font-size: 20px; margin: 0 0 8px; }
     p { font-size: 13px; color: #a1a1aa; line-height: 1.6; }
+    label { display: block; text-align: left; margin: 22px 0 7px; font-size: 12px; color: #d4d4d8; font-weight: 700; }
+    input {
+      width: 100%; box-sizing: border-box; padding: 14px; border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.14); background: #111118; color: #fff;
+      text-align: center; font: 700 20px ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: 0; text-transform: uppercase;
+    }
     button {
       width: 100%;
       margin-top: 20px;
       padding: 14px;
-      border-radius: 14px;
+      border-radius: 8px;
       border: none;
       font-size: 13px;
       font-weight: 700;
@@ -47,9 +54,13 @@
 </head>
 <body>
   <div class="card">
-    <h1>Vincular OSONE ao Google Home</h1>
-    <p>O Google Assistant está pedindo permissão para controlar seus dispositivos conectados no OSONE (via Tuya). Autorize apenas se foi você quem iniciou esse vínculo pelo app Google Home.</p>
-    <button id="approveBtn">Autorizar</button>
+    <h1>Vincular sua conta OSONE ao Google</h1>
+    <p>Ao continuar, você autoriza o Google a consultar e controlar os aparelhos Tuya ligados à sua conta OSONE.</p>
+    <div id="pairingBlock">
+      <label for="pairingCode">Código mostrado no OSONE instalado</label>
+      <input id="pairingCode" inputmode="text" autocomplete="one-time-code" maxlength="9" placeholder="ABCD-EFGH" />
+    </div>
+    <button id="approveBtn">Concordar e vincular</button>
     <button id="cancelBtn">Cancelar</button>
     <div id="status"></div>
   </div>
@@ -57,7 +68,16 @@
     const params = new URLSearchParams(window.location.search);
     const redirectUri = params.get('redirect_uri');
     const state = params.get('state') || '';
+    const clientId = params.get('client_id') || '';
+    const cloudMode = params.get('cloud') === '1';
     const statusEl = document.getElementById('status');
+    const pairingInput = document.getElementById('pairingCode');
+    if (!cloudMode) document.getElementById('pairingBlock').style.display = 'none';
+
+    pairingInput.addEventListener('input', () => {
+      const clean = pairingInput.value.toUpperCase().replace(/[^A-Z2-9]/g, '').slice(0, 8);
+      pairingInput.value = clean.length > 4 ? clean.slice(0, 4) + '-' + clean.slice(4) : clean;
+    });
 
     document.getElementById('cancelBtn').addEventListener('click', () => {
       if (redirectUri) {
@@ -72,12 +92,22 @@
         statusEl.textContent = 'redirect_uri ausente na URL — não é possível continuar.';
         return;
       }
+      if (cloudMode && pairingInput.value.replace(/[^A-Z2-9]/g, '').length !== 8) {
+        statusEl.textContent = 'Digite o código de 8 caracteres exibido no OSONE.';
+        pairingInput.focus();
+        return;
+      }
       statusEl.textContent = 'Autorizando...';
       try {
         const res = await fetch('/api/google-home/approve', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ redirect_uri: redirectUri, state })
+          body: JSON.stringify({
+            redirect_uri: redirectUri,
+            state,
+            client_id: clientId,
+            pairing_code: pairingInput.value
+          })
         });
         const data = await res.json();
         if (!res.ok || !data.redirectTo) {
