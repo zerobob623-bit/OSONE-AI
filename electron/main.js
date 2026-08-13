@@ -121,7 +121,10 @@ function htmlDoMascoteOsone() {
   .eye { animation: blink 5.8s ease-in-out infinite; }
   .eye.left { transform-origin: 79px 80px; }
   .eye.right { transform-origin: 121px 80px; }
-  .pupil { transition: transform 240ms ease; }
+  .pupil {
+    transform: translate(var(--osone-pupila-x, 0px), var(--osone-pupila-y, 0px));
+    transition: transform 240ms ease;
+  }
 
   .brow {
     fill: none;
@@ -139,8 +142,11 @@ function htmlDoMascoteOsone() {
     stroke: #4e2109;
     stroke-width: 5.5;
     stroke-linecap: round;
-    transition: opacity 180ms ease;
+    transform-origin: 100px 111px;
+    transition: opacity 180ms ease, transform 200ms ease;
   }
+
+  .cheek { transition: opacity 220ms ease; }
 
   .mouth-open {
     opacity: 0;
@@ -191,6 +197,21 @@ function htmlDoMascoteOsone() {
     transform: translateY(0) scale(1);
   }
 
+  /* Gestos comandados pelo OSONE: o braco aponta em qualquer angulo. */
+  .apontando .arm.right { transform: rotate(var(--osone-braco, -88deg)); }
+  .apontando .arm.right .finger { opacity: 1; }
+  .acenando .arm.right { animation: aceno 520ms ease-in-out infinite; }
+  .acenando .figura { animation: cumprimento 760ms ease-in-out infinite; }
+
+  /* Reacao ao mouse: ele para, abre um sorrisao, cora e acena. */
+  .cumprimentando .figura { animation: cumprimento 760ms ease-in-out infinite; }
+  .cumprimentando .arm.right { animation: aceno 520ms ease-in-out infinite; }
+  .cumprimentando .arm.left { transform: rotate(34deg); }
+  .cumprimentando .mouth { transform: scale(1.28); }
+  .cumprimentando .cheek { opacity: .42; }
+  .cumprimentando .brow.left { transform: translateY(-5px) rotate(-4deg); }
+  .cumprimentando .brow.right { transform: translateY(-5px) rotate(4deg); }
+
   .speak .mouth { opacity: 0; }
   .speak .mouth-open { opacity: 1; animation: talk 360ms ease-in-out infinite; }
   .speak .brow.left { transform: translateY(-3px) rotate(-3deg); }
@@ -230,6 +251,18 @@ function htmlDoMascoteOsone() {
   @keyframes breathe {
     0%, 100% { transform: translateY(0) scale(1); }
     50% { transform: translateY(-3px) scale(1.015, .985); }
+  }
+
+  @keyframes cumprimento {
+    0%, 100% { transform: translateY(0) scale(1, 1); }
+    25% { transform: translateY(-11px) scale(.97, 1.05); }
+    55% { transform: translateY(0) scale(1.06, .94); }
+    78% { transform: translateY(-4px) scale(1, 1); }
+  }
+
+  @keyframes aceno {
+    0%, 100% { transform: rotate(-124deg); }
+    50% { transform: rotate(-158deg); }
   }
 
   @keyframes bob {
@@ -338,8 +371,8 @@ function htmlDoMascoteOsone() {
             <circle cx="100" cy="92" r="60" fill="url(#osoneCorpo)"/>
             <circle cx="100" cy="92" r="60" fill="url(#osoneVolume)"/>
             <ellipse cx="84" cy="47" rx="18" ry="8" fill="#FFFFFF" opacity="0.26" transform="rotate(-18 84 47)"/>
-            <ellipse cx="58" cy="107" rx="12" ry="7.5" fill="#F0501B" opacity="0.2"/>
-            <ellipse cx="142" cy="107" rx="12" ry="7.5" fill="#F0501B" opacity="0.2"/>
+            <ellipse class="cheek" cx="58" cy="107" rx="12" ry="7.5" fill="#F0501B" opacity="0.2"/>
+            <ellipse class="cheek" cx="142" cy="107" rx="12" ry="7.5" fill="#F0501B" opacity="0.2"/>
 
             <g class="eye left">
               <ellipse cx="79" cy="80" rx="19" ry="21.5" fill="url(#osoneOlho)" stroke="#B4712F" stroke-width="1.4" stroke-opacity="0.45"/>
@@ -387,14 +420,31 @@ function htmlDoMascoteOsone() {
   const REDUCAO_NO_FUNDO = 0.3;
   const semMovimento = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+  // Reacao ao mouse. A janela ignora cliques (setIgnoreMouseEvents com forward),
+  // entao o movimento do cursor chega aqui sem roubar nada de quem esta embaixo.
+  const RAIO_DO_CORPO = 0.34;
+  const ALCANCE_DO_OLHAR = 280;
+  const DESVIO_DA_PUPILA = 4.5;
+  const SAUDACOES = ['Oi!', 'Oi, oi!', 'To aqui!', 'Precisa de mim?'];
+
+  const FALAS_PADRAO = { andar: '', apontar: 'Olha ali!', tchau: 'Tchau!', pular: 'Oba!', olhar: '', parar: '' };
+  const DURACAO_DO_GESTO = { andar: 2600, apontar: 6000, tchau: 3200, pular: 3000, olhar: 4000, parar: 0 };
+  const entre = (valor, minimo, maximo) => Math.min(maximo, Math.max(minimo, valor));
+
   let ultimoSinal = 0;
   let espelhado = false;
+  let cumprimentando = false;
+  let gesto = '';
+  let sobComando = false;
+  let timersDoComando = [];
   let posicao = { x: 0, y: 0 };
   let timerPasseio = 0;
   let timerChegada = 0;
 
   function aplicarClasses(pose, temFala) {
-    mascot.className = 'mascot ' + pose + (temFala ? ' show-bubble' : '') + (espelhado ? ' espelhado' : '');
+    mascot.className = 'mascot ' + pose + (temFala ? ' show-bubble' : '')
+      + (espelhado ? ' espelhado' : '') + (cumprimentando ? ' cumprimentando' : '')
+      + (gesto ? ' ' + gesto : '');
   }
 
   function areaDoPasseio() {
@@ -428,7 +478,7 @@ function htmlDoMascoteOsone() {
   }
 
   function passear() {
-    if (Date.now() - ultimoSinal < 5000) {
+    if (cumprimentando || sobComando || Date.now() - ultimoSinal < 5000) {
       timerPasseio = setTimeout(passear, 1600);
       return;
     }
@@ -448,10 +498,102 @@ function htmlDoMascoteOsone() {
     }, duracao);
   }
 
+  function limparTimersDoComando() {
+    timersDoComando.forEach(clearTimeout);
+    timersDoComando = [];
+  }
+
+  function soltarOComando(espera) {
+    timersDoComando.push(setTimeout(() => {
+      gesto = '';
+      sobComando = false;
+      bubble.textContent = '';
+      aplicarClasses('idle', false);
+      if (!semMovimento) timerPasseio = setTimeout(passear, 900);
+    }, espera));
+  }
+
+  // Gira o braco no angulo exato do alvo e vira o mascote de frente para ele.
+  function apontarPara(alvoX, alvoY) {
+    const caixa = walker.getBoundingClientRect();
+    if (!caixa.width) return;
+    espelhado = alvoX < caixa.left + caixa.width / 2;
+    const ombroX = caixa.left + caixa.width * (espelhado ? 0.245 : 0.755);
+    const ombroY = caixa.top + caixa.height * 0.495;
+    const dx = (alvoX - ombroX) * (espelhado ? -1 : 1);
+    const angulo = Math.atan2(-dx, alvoY - ombroY) * 180 / Math.PI;
+    mascot.style.setProperty('--osone-braco', angulo.toFixed(1) + 'deg');
+
+    const olhar = Math.atan2(alvoY - (caixa.top + caixa.height * 0.44), alvoX - (caixa.left + caixa.width / 2));
+    mascot.style.setProperty('--osone-pupila-x', (Math.cos(olhar) * DESVIO_DA_PUPILA * (espelhado ? -1 : 1)).toFixed(2) + 'px');
+    mascot.style.setProperty('--osone-pupila-y', (Math.sin(olhar) * DESVIO_DA_PUPILA).toFixed(2) + 'px');
+  }
+
+  function executarComando(comando) {
+    const acao = String(comando.acao || '').toLowerCase();
+    if (!(acao in DURACAO_DO_GESTO)) return;
+
+    limparTimersDoComando();
+    clearTimeout(timerPasseio);
+    clearTimeout(timerChegada);
+    cumprimentando = false;
+    bubble.textContent = comando.fala || FALAS_PADRAO[acao];
+
+    if (acao === 'parar') {
+      gesto = '';
+      sobComando = false;
+      ultimoSinal = 0; // pedido explicito para voltar a passear: nao espera o intervalo pos-sinal
+      aplicarClasses('idle', Boolean(bubble.textContent));
+      if (!semMovimento) timerPasseio = setTimeout(passear, 900);
+      return;
+    }
+
+    sobComando = true;
+
+    if (acao === 'andar') {
+      const area = areaDoPasseio();
+      const alvoX = entre(isFinite(comando.x) ? comando.x : 0.5, 0, 1) * area.largura;
+      const alvoY = (1 - entre(isFinite(comando.y) ? comando.y : 0.95, 0, 1)) * area.profundidade;
+      const distancia = Math.hypot(alvoX - posicao.x, alvoY - posicao.y);
+      const duracao = Math.min(12000, Math.max(1200, (distancia / VELOCIDADE) * 1000));
+      gesto = '';
+      espelhado = alvoX < posicao.x;
+      posicionar(alvoX, alvoY, duracao);
+      aplicarClasses('walk', Boolean(bubble.textContent));
+      timersDoComando.push(setTimeout(() => {
+        aplicarClasses('idle', Boolean(bubble.textContent));
+        soltarOComando(DURACAO_DO_GESTO.andar);
+      }, duracao));
+      return;
+    }
+
+    if (acao === 'apontar' || acao === 'olhar') {
+      congelarPasseio();
+      apontarPara(entre(isFinite(comando.x) ? comando.x : 0.5, 0, 1) * innerWidth,
+                  entre(isFinite(comando.y) ? comando.y : 0.5, 0, 1) * innerHeight);
+      gesto = acao === 'apontar' ? 'apontando' : '';
+      aplicarClasses(acao === 'apontar' ? 'idle' : 'look', Boolean(bubble.textContent));
+      soltarOComando(DURACAO_DO_GESTO[acao]);
+      return;
+    }
+
+    congelarPasseio();
+    gesto = acao === 'tchau' ? 'acenando' : '';
+    aplicarClasses(acao === 'tchau' ? 'idle' : 'jump', Boolean(bubble.textContent));
+    soltarOComando(DURACAO_DO_GESTO[acao]);
+  }
+
   window.osoneMascoteSetState = (payload) => {
     ultimoSinal = Date.now();
+    if (payload && payload.comando && payload.comando.acao) {
+      executarComando(payload.comando);
+      return;
+    }
     const pose = posesPermitidas.has(payload?.pose) ? payload.pose : 'idle';
     const fala = String(payload?.fala || '').slice(0, 120);
+    limparTimersDoComando();
+    gesto = '';
+    sobComando = false;
     congelarPasseio();
     aplicarClasses(pose, Boolean(fala));
     bubble.textContent = fala;
@@ -465,6 +607,37 @@ function htmlDoMascoteOsone() {
     if (x === posicao.x && y === posicao.y) return;
     posicionar(x, y, 400);
   });
+
+  let quadro = 0;
+  addEventListener('mousemove', (evento) => {
+    if (quadro) return;
+    quadro = requestAnimationFrame(() => {
+      quadro = 0;
+      const caixa = walker.getBoundingClientRect();
+      if (!caixa.width) return;
+      const dx = evento.clientX - (caixa.left + caixa.width / 2);
+      const dy = evento.clientY - (caixa.top + caixa.height * 0.44);
+      const distancia = Math.hypot(dx, dy);
+
+      const forca = Math.min(1, distancia / ALCANCE_DO_OLHAR);
+      const angulo = Math.atan2(dy, dx);
+      mascot.style.setProperty('--osone-pupila-x', (Math.cos(angulo) * DESVIO_DA_PUPILA * forca * (espelhado ? -1 : 1)).toFixed(2) + 'px');
+      mascot.style.setProperty('--osone-pupila-y', (Math.sin(angulo) * DESVIO_DA_PUPILA * forca).toFixed(2) + 'px');
+
+      const emCima = distancia <= caixa.width * RAIO_DO_CORPO && !sobComando && Date.now() - ultimoSinal >= 5000;
+      if (emCima === cumprimentando) return;
+      cumprimentando = emCima;
+      if (emCima) {
+        congelarPasseio();
+        bubble.textContent = SAUDACOES[Math.floor(Math.random() * SAUDACOES.length)];
+        aplicarClasses('idle', true);
+        return;
+      }
+      bubble.textContent = '';
+      aplicarClasses('idle', false);
+      if (!semMovimento) timerPasseio = setTimeout(passear, 900);
+    });
+  }, { passive: true });
 
   if (!semMovimento) timerPasseio = setTimeout(passear, 900);
 </script>
@@ -544,6 +717,14 @@ function sinalizarMascote(sinal = {}) {
     atividade: String(sinal.atividade || 'idle').slice(0, 32),
     alvo: String(sinal.alvo || '').slice(0, 80)
   };
+  if (sinal.comando && typeof sinal.comando === 'object') {
+    payload.comando = {
+      acao: String(sinal.comando.acao || '').slice(0, 16),
+      x: Number(sinal.comando.x),
+      y: Number(sinal.comando.y),
+      fala: String(sinal.comando.fala || '').slice(0, 160)
+    };
+  }
   mascotWindow.webContents.executeJavaScript(
     `window.osoneMascoteSetState && window.osoneMascoteSetState(${JSON.stringify(payload)})`,
     true

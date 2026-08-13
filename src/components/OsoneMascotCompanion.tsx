@@ -13,6 +13,40 @@ type OsoneMascotCompanionProps = {
   brain: EstadoDoCerebroDoMascote;
 };
 
+/* Comandos que o OSONE dispara para o mascote. Os pontos vem normalizados
+   (0 a 1 da tela) para valer igual na pagina e no overlay em tela cheia. */
+export const EVENTO_DE_COMANDO_DO_MASCOTE = 'osone-mascote-comando';
+
+export type AcaoDoMascote = 'andar' | 'apontar' | 'tchau' | 'pular' | 'olhar' | 'parar';
+
+export type ComandoDoMascote = {
+  acao: AcaoDoMascote;
+  x?: number;
+  y?: number;
+  fala?: string;
+};
+
+const FALAS_PADRAO: Record<AcaoDoMascote, string> = {
+  andar: '',
+  apontar: 'Olha ali!',
+  tchau: 'Tchau!',
+  pular: 'Oba!',
+  olhar: '',
+  parar: ''
+};
+
+/* Quanto tempo o mascote segura o gesto antes de voltar a passear sozinho. */
+const DURACAO_DO_GESTO: Record<AcaoDoMascote, number> = {
+  andar: 2600,
+  apontar: 6000,
+  tchau: 3200,
+  pular: 3000,
+  olhar: 4000,
+  parar: 0
+};
+
+const entre = (valor: number, minimo: number, maximo: number) => Math.min(maximo, Math.max(minimo, valor));
+
 const STORAGE_KEY = 'osone_mascot_active';
 
 /* Passeio: o mascote caminha pela tela inteira. O eixo Y e usado como profundidade,
@@ -27,6 +61,14 @@ const preferReduzirMovimento = () => {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 };
+
+/* Reacao ao mouse. O mascote nao captura o ponteiro: ele passeia por cima da
+   interface e roubar o clique dos botoes seria pior que nao reagir. Entao a
+   gente escuta o mouse na janela e compara com onde ele esta. */
+const RAIO_DO_CORPO = 0.34; // fatia da largura do mascote que conta como "em cima"
+const ALCANCE_DO_OLHAR = 280; // ate onde os olhos seguem o cursor, em pixels
+const DESVIO_DA_PUPILA = 4.5; // deslocamento maximo da pupila, em unidades do SVG
+const SAUDACOES = ['Oi!', 'Oi, oi!', 'Tô aqui!', 'Precisa de mim?'];
 
 /* Arte do mascote: bolinha fofa e carismatica, com olhos grandes, sobrancelhas
    expressivas, bracinhos de macarrao e pezinhos arredondados. */
@@ -85,8 +127,8 @@ function ArteDoMascote() {
           <circle cx="100" cy="92" r="60" fill="url(#osoneCorpo)" />
           <circle cx="100" cy="92" r="60" fill="url(#osoneVolume)" />
           <ellipse cx="84" cy="47" rx="18" ry="8" fill="#FFFFFF" opacity="0.26" transform="rotate(-18 84 47)" />
-          <ellipse cx="58" cy="107" rx="12" ry="7.5" fill="#F0501B" opacity="0.2" />
-          <ellipse cx="142" cy="107" rx="12" ry="7.5" fill="#F0501B" opacity="0.2" />
+          <ellipse className="osone-mascot-cheek" cx="58" cy="107" rx="12" ry="7.5" fill="#F0501B" opacity="0.2" />
+          <ellipse className="osone-mascot-cheek" cx="142" cy="107" rx="12" ry="7.5" fill="#F0501B" opacity="0.2" />
 
           <g className="osone-mascot-eye osone-mascot-eye-left">
             <ellipse cx="79" cy="80" rx="19" ry="21.5" fill="url(#osoneOlho)" stroke="#B4712F" strokeWidth="1.4" strokeOpacity="0.45" />
@@ -151,8 +193,14 @@ export function OsoneMascotCompanion({ brain }: OsoneMascotCompanionProps) {
   const [estado, setEstado] = useState<EstadoDoMascote>('idle');
   const [fala, setFala] = useState('');
   const [espelhado, setEspelhado] = useState(false);
+  const [mouseEmCima, setMouseEmCima] = useState(false);
+  const [saudacao, setSaudacao] = useState('');
+  const [gesto, setGesto] = useState<'nenhum' | 'apontando' | 'acenando'>('nenhum');
+  const [sobComando, setSobComando] = useState(false);
   const andarilhoRef = useRef<HTMLDivElement | null>(null);
   const posicaoRef = useRef({ x: 0, y: 0 });
+  const espelhadoRef = useRef(false);
+  const timersDoComandoRef = useRef<number[]>([]);
 
   useEffect(() => {
     const salvo = localStorage.getItem(STORAGE_KEY) === '1';
@@ -224,7 +272,7 @@ export function OsoneMascotCompanion({ brain }: OsoneMascotCompanionProps) {
 
   useEffect(() => {
     if (!ativo || overlayExterno) return;
-    if (brain.atividade !== 'idle' || preferReduzirMovimento()) {
+    if (brain.atividade !== 'idle' || mouseEmCima || sobComando || preferReduzirMovimento()) {
       congelarPasseio();
       return;
     }
@@ -242,7 +290,8 @@ export function OsoneMascotCompanion({ brain }: OsoneMascotCompanionProps) {
       const distancia = Math.hypot(destino.x - posicaoRef.current.x, destino.y - posicaoRef.current.y);
       const duracao = Math.min(DURACAO_MAXIMA, Math.max(DURACAO_MINIMA, (distancia / VELOCIDADE_DO_PASSEIO) * 1000));
 
-      setEspelhado(destino.x < posicaoRef.current.x);
+      espelhadoRef.current = destino.x < posicaoRef.current.x;
+      setEspelhado(espelhadoRef.current);
       posicionar(destino.x, destino.y, duracao);
       setEstado('walk');
       setFala('');
@@ -260,7 +309,169 @@ export function OsoneMascotCompanion({ brain }: OsoneMascotCompanionProps) {
       window.clearTimeout(timer);
       congelarPasseio();
     };
-  }, [ativo, overlayExterno, brain.atividade, areaDoPasseio, posicionar, congelarPasseio]);
+  }, [ativo, overlayExterno, brain.atividade, mouseEmCima, sobComando, areaDoPasseio, posicionar, congelarPasseio]);
+
+  /* Comandos do OSONE: andar ate um ponto, apontar para qualquer lugar da tela,
+     dar tchau, pular. Enquanto o gesto dura, o passeio livre fica suspenso. */
+  const limparTimersDoComando = useCallback(() => {
+    timersDoComandoRef.current.forEach(window.clearTimeout);
+    timersDoComandoRef.current = [];
+  }, []);
+
+  const soltarOComando = useCallback((espera: number) => {
+    const timer = window.setTimeout(() => {
+      setGesto('nenhum');
+      setSobComando(false);
+      setFala('');
+    }, espera);
+    timersDoComandoRef.current.push(timer);
+  }, []);
+
+  /* Gira o braco no angulo exato do alvo e vira o mascote de frente para ele. */
+  const apontarPara = useCallback((alvoX: number, alvoY: number) => {
+    const el = andarilhoRef.current;
+    if (!el) return;
+    const caixa = el.getBoundingClientRect();
+    if (!caixa.width) return;
+
+    const paraEsquerda = alvoX < caixa.left + caixa.width / 2;
+    espelhadoRef.current = paraEsquerda;
+    setEspelhado(paraEsquerda);
+
+    // O braco que aponta e sempre o direito da arte; espelhado ele troca de lado.
+    const ombroX = caixa.left + caixa.width * (paraEsquerda ? 0.245 : 0.755);
+    const ombroY = caixa.top + caixa.height * 0.495;
+    const dx = (alvoX - ombroX) * (paraEsquerda ? -1 : 1);
+    const dy = alvoY - ombroY;
+    const angulo = (Math.atan2(-dx, dy) * 180) / Math.PI;
+    el.style.setProperty('--osone-braco', `${angulo.toFixed(1)}deg`);
+
+    const olhar = Math.atan2(alvoY - (caixa.top + caixa.height * 0.44), alvoX - (caixa.left + caixa.width / 2));
+    el.style.setProperty('--osone-pupila-x', `${(Math.cos(olhar) * DESVIO_DA_PUPILA * (paraEsquerda ? -1 : 1)).toFixed(2)}px`);
+    el.style.setProperty('--osone-pupila-y', `${(Math.sin(olhar) * DESVIO_DA_PUPILA).toFixed(2)}px`);
+  }, []);
+
+  const executarComando = useCallback((comando: ComandoDoMascote) => {
+    const acao = comando.acao;
+    if (!acao || !(acao in DURACAO_DO_GESTO)) return;
+
+    limparTimersDoComando();
+    setFala(comando.fala || FALAS_PADRAO[acao]);
+
+    if (acao === 'parar') {
+      setGesto('nenhum');
+      setEstado('idle');
+      setSobComando(false);
+      return;
+    }
+
+    setSobComando(true);
+
+    if (acao === 'andar') {
+      const { largura, profundidade } = areaDoPasseio();
+      const destino = {
+        x: entre(comando.x ?? 0.5, 0, 1) * largura,
+        y: (1 - entre(comando.y ?? 0.95, 0, 1)) * profundidade
+      };
+      const distancia = Math.hypot(destino.x - posicaoRef.current.x, destino.y - posicaoRef.current.y);
+      const duracao = Math.min(DURACAO_MAXIMA, Math.max(DURACAO_MINIMA, (distancia / VELOCIDADE_DO_PASSEIO) * 1000));
+
+      espelhadoRef.current = destino.x < posicaoRef.current.x;
+      setEspelhado(espelhadoRef.current);
+      setGesto('nenhum');
+      setEstado('walk');
+      posicionar(destino.x, destino.y, duracao);
+      timersDoComandoRef.current.push(window.setTimeout(() => {
+        setEstado('idle');
+        soltarOComando(DURACAO_DO_GESTO.andar);
+      }, duracao));
+      return;
+    }
+
+    if (acao === 'apontar' || acao === 'olhar') {
+      apontarPara(entre(comando.x ?? 0.5, 0, 1) * window.innerWidth, entre(comando.y ?? 0.5, 0, 1) * window.innerHeight);
+      setGesto(acao === 'apontar' ? 'apontando' : 'nenhum');
+      setEstado(acao === 'apontar' ? 'idle' : 'look');
+      soltarOComando(DURACAO_DO_GESTO[acao]);
+      return;
+    }
+
+    if (acao === 'tchau') {
+      setGesto('acenando');
+      setEstado('idle');
+      soltarOComando(DURACAO_DO_GESTO.tchau);
+      return;
+    }
+
+    setGesto('nenhum');
+    setEstado('jump');
+    soltarOComando(DURACAO_DO_GESTO.pular);
+  }, [areaDoPasseio, posicionar, apontarPara, limparTimersDoComando, soltarOComando]);
+
+  useEffect(() => {
+    if (!ativo) return;
+    const aoReceberComando = (evento: Event) => {
+      const comando = (evento as CustomEvent<ComandoDoMascote>).detail;
+      if (!comando || typeof comando.acao !== 'string') return;
+
+      if (overlayExterno && apiExternaDisponivel) {
+        fetch('/api/mascote/sinal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ atividade: brain.atividade, comando })
+        }).catch(() => null);
+        return;
+      }
+      executarComando(comando);
+    };
+
+    window.addEventListener(EVENTO_DE_COMANDO_DO_MASCOTE, aoReceberComando);
+    return () => {
+      window.removeEventListener(EVENTO_DE_COMANDO_DO_MASCOTE, aoReceberComando);
+      limparTimersDoComando();
+    };
+  }, [ativo, overlayExterno, apiExternaDisponivel, brain.atividade, executarComando, limparTimersDoComando]);
+
+  /* Os olhos seguem o cursor de longe; de perto, ele para e cumprimenta. */
+  useEffect(() => {
+    if (!ativo || overlayExterno) return;
+    let quadro = 0;
+
+    const aoMover = (evento: MouseEvent) => {
+      if (quadro) return;
+      quadro = window.requestAnimationFrame(() => {
+        quadro = 0;
+        const el = andarilhoRef.current;
+        if (!el) return;
+        const caixa = el.getBoundingClientRect();
+        if (!caixa.width) return;
+        const centro = { x: caixa.left + caixa.width / 2, y: caixa.top + caixa.height * 0.44 };
+        const dx = evento.clientX - centro.x;
+        const dy = evento.clientY - centro.y;
+        const distancia = Math.hypot(dx, dy);
+
+        setMouseEmCima(distancia <= caixa.width * RAIO_DO_CORPO);
+
+        const forca = Math.min(1, distancia / ALCANCE_DO_OLHAR);
+        const angulo = Math.atan2(dy, dx);
+        const desvioX = Math.cos(angulo) * DESVIO_DA_PUPILA * forca * (espelhadoRef.current ? -1 : 1);
+        const desvioY = Math.sin(angulo) * DESVIO_DA_PUPILA * forca;
+        el.style.setProperty('--osone-pupila-x', `${desvioX.toFixed(2)}px`);
+        el.style.setProperty('--osone-pupila-y', `${desvioY.toFixed(2)}px`);
+      });
+    };
+
+    const aoSair = () => setMouseEmCima(false);
+
+    window.addEventListener('mousemove', aoMover, { passive: true });
+    window.addEventListener('mouseleave', aoSair);
+    return () => {
+      window.removeEventListener('mousemove', aoMover);
+      window.removeEventListener('mouseleave', aoSair);
+      if (quadro) window.cancelAnimationFrame(quadro);
+      setMouseEmCima(false);
+    };
+  }, [ativo, overlayExterno]);
 
   /* Se a janela encolher, o mascote nao pode ficar preso fora da tela. */
   useEffect(() => {
@@ -298,6 +509,20 @@ export function OsoneMascotCompanion({ brain }: OsoneMascotCompanionProps) {
       }
     }).catch(() => null);
   }, [ativo, overlayExterno, apiExternaDisponivel, brain.atividade, brain.alvo]);
+
+  /* So cumprimenta quando esta livre: se o OSONE estiver falando ou apontando
+     algo, a pose dele manda. */
+  const cumprimentando = mouseEmCima && brain.atividade === 'idle' && !sobComando && !overlayExterno;
+
+  useEffect(() => {
+    if (!cumprimentando) return;
+    setEstado('idle');
+    setSaudacao(SAUDACOES[Math.floor(Math.random() * SAUDACOES.length)]);
+    return () => setSaudacao('');
+  }, [cumprimentando]);
+
+  /* A fala do OSONE manda; a saudacao do mouse so preenche o silencio. */
+  const textoDoBalao = fala || saudacao;
 
   const alternarMascote = async () => {
     const proximo = !ativo;
@@ -348,9 +573,9 @@ export function OsoneMascotCompanion({ brain }: OsoneMascotCompanionProps) {
         <div className="osone-mascot-web-layer" aria-hidden="true">
           <div className="osone-mascot-andarilho" ref={andarilhoRef}>
             <div
-              className={`osone-mascot osone-mascot-${estado} ${fala ? 'osone-mascot-has-message' : ''} ${espelhado ? 'osone-mascot-espelhado' : ''}`}
+              className={`osone-mascot osone-mascot-${estado} ${textoDoBalao ? 'osone-mascot-has-message' : ''} ${espelhado ? 'osone-mascot-espelhado' : ''} ${cumprimentando ? 'osone-mascot-cumprimentando' : ''} ${gesto === 'apontando' ? 'osone-mascot-apontando' : ''} ${gesto === 'acenando' ? 'osone-mascot-acenando' : ''}`}
             >
-              <div className="osone-mascot-bubble">{fala}</div>
+              <div className="osone-mascot-bubble">{textoDoBalao}</div>
               <ArteDoMascote />
             </div>
           </div>
