@@ -4,7 +4,7 @@ import http from 'node:http';
 import path from 'node:path';
 import Stripe from 'stripe';
 import handler from '../api/billing';
-import { billingResultUrl, classifySubscriptions, pixPeriodEnd, validatePixCheckout, validateStripePrice } from '../src/billingService';
+import { billingResultUrl, classifySubscriptions, invoiceConfirmsExpectedPayment, pixPeriodEnd, validatePixCheckout, validateStripePrice } from '../src/billingService';
 import { abrirPagamento, type AmbienteDePagamento } from '../src/lib/abrirPagamento';
 import { minimumPlanForFeature, OSONE_PLANS, paidFeatureForWorkspace, planHasFeature } from '../src/lib/planos';
 
@@ -156,6 +156,21 @@ try {
   assert.equal(pixPeriodEnd(new Date('2026-08-08T12:00:00Z'), 'year').toISOString(), '2027-08-08T12:00:00.000Z');
   console.log('  ok  PIX só libera após confirmação, no valor exato, por um mês ou um ano');
 
+  const faturaPlusMensal = (overrides: Record<string, unknown> = {}) => ({
+    status: 'paid',
+    paid: true,
+    currency: 'brl',
+    amount_paid: 3990,
+    lines: { data: [{ price: { id: 'price_plus_month' } }] },
+    ...overrides
+  }) as any;
+  assert.equal(invoiceConfirmsExpectedPayment(faturaPlusMensal(), 'plus', 'month', 'price_plus_month'), true);
+  assert.equal(invoiceConfirmsExpectedPayment(faturaPlusMensal({ amount_paid: 0 }), 'plus', 'month', 'price_plus_month'), false);
+  assert.equal(invoiceConfirmsExpectedPayment(faturaPlusMensal({ amount_paid: 2000 }), 'plus', 'month', 'price_plus_month'), false);
+  assert.equal(invoiceConfirmsExpectedPayment(faturaPlusMensal({ currency: 'usd' }), 'plus', 'month', 'price_plus_month'), false);
+  assert.equal(invoiceConfirmsExpectedPayment(faturaPlusMensal({ lines: { data: [{ price: { id: 'price_errado' } }] } }), 'plus', 'month', 'price_plus_month'), false);
+  console.log('  ok  cartão só libera plano com fatura paga, BRL, preço certo e sem cobrança zerada');
+
   // Cartão recusado na primeira cobrança deixava uma assinatura `incomplete` que era lida como
   // assinatura válida: o cliente recebia 409 para sempre e nunca chegava a pagar.
   const semAssinatura = classifySubscriptions([]);
@@ -163,14 +178,16 @@ try {
   const primeiraTentativaRecusada = classifySubscriptions([{ id: 'sub_incompleta', status: 'incomplete' }]);
   assert.deepEqual(primeiraTentativaRecusada.blocking, []);
   assert.deepEqual(primeiraTentativaRecusada.stale, ['sub_incompleta']);
-  for (const status of ['active', 'trialing', 'past_due'] as const) {
+  for (const status of ['active', 'past_due'] as const) {
     const emDia = classifySubscriptions([{ id: `sub_${status}`, status }]);
     assert.deepEqual(emDia.blocking, [`sub_${status}`], `${status} deve continuar impedindo Checkout duplicado`);
     assert.deepEqual(emDia.stale, []);
   }
-  for (const status of ['canceled', 'incomplete_expired'] as const) {
+  for (const status of ['canceled'] as const) {
     assert.deepEqual(classifySubscriptions([{ id: 'sub_encerrada', status }]), { blocking: [], stale: [] });
   }
+  assert.deepEqual(classifySubscriptions([{ id: 'sub_teste_gratis', status: 'trialing' }]).stale, ['sub_teste_gratis']);
+  assert.deepEqual(classifySubscriptions([{ id: 'sub_expirada', status: 'incomplete_expired' }]).stale, ['sub_expirada']);
   assert.deepEqual(classifySubscriptions([{ id: 'sub_sem_pagamento', status: 'unpaid' }]).stale, ['sub_sem_pagamento']);
   const contaComHistorico = classifySubscriptions([
     { id: 'sub_incompleta', status: 'incomplete' },
@@ -257,4 +274,4 @@ try {
   await new Promise<void>(resolve => server.close(() => resolve()));
 }
 
-console.log('20/20 grupos de conferências de cobrança passaram.');
+console.log('21/21 grupos de conferências de cobrança passaram.');

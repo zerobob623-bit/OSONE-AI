@@ -24,6 +24,8 @@
     "test:vercel-runtime": "node scripts/conferir-build-vercel.mjs",
     "test:billing": "tsx scripts/conferir-billing.ts",
     "test:stripe-config": "tsx scripts/conferir-stripe-config.ts",
+    "stripe:auditar-clientes": "tsx scripts/auditar-clientes-stripe.ts",
+    "stripe:corrigir-webhook": "tsx scripts/corrigir-webhook-stripe.ts",
     "test:legal": "node scripts/conferir-legal.mjs",
     "test:zap-gatilho": "node scripts/conferir-zap-gatilho.mjs",
     "test:tiktok-assinatura": "node scripts/conferir-tiktok-assinatura.mjs",
