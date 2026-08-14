@@ -26,6 +26,7 @@
     "test:stripe-config": "tsx scripts/conferir-stripe-config.ts",
     "test:legal": "node scripts/conferir-legal.mjs",
     "test:zap-gatilho": "node scripts/conferir-zap-gatilho.mjs",
+    "test:tiktok-assinatura": "node scripts/conferir-tiktok-assinatura.mjs",
     "test:google-home": "node scripts/conferir-google-home.mjs && node scripts/conferir-google-home-cloud.mjs",
     "test:elevenlabs": "node scripts/conferir-elevenlabs.mjs",
     "test:voz-natural": "node scripts/conferir-voz-natural.mjs",
