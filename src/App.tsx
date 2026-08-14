@@ -9119,7 +9119,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                       clientApiKey: effectiveApiKey,
-                      model: 'gemini-3.6-flash',
+                      model: 'gemini-2.5-flash-image',
                       prompt: prompt,
                       config: {
                         numberOfImages: 1,
@@ -12235,7 +12235,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({
                               clientApiKey: effectiveApiKey,
-                              model: 'gemini-3.6-flash',
+                              model: 'gemini-2.5-flash-image',
                               prompt: prompt,
                               config: {
                                 numberOfImages: 1,
