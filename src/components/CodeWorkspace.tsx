@@ -20,6 +20,7 @@ import { montarPreview } from '../lib/montarPreview';
 import { ProblemaDoPreview, juntarProblemas, montarPedidoDeCorrecao } from '../lib/errosDoPreview';
 import { separarProjeto } from '../lib/separarArquivos';
 import { montarPacote } from '../lib/exportarProjeto';
+import { analisarFullstackDoCode, arquivosDeSuporteFullstack } from '../lib/fullstackDoCode';
 import { compararProjeto, apenasOsTrechosQueMudaram, ComparacaoDeArquivo } from '../lib/compararCodigo';
 import { caminhoDisponivel, chaveDeCaminho, nomeBaseDoCaminho, normalizarCaminhoDoCode, pastaDoCaminho } from '../lib/caminhosDoCode';
 import { GithubImportResult } from '../lib/githubDoCode';
@@ -250,10 +251,14 @@ export const versaoApi = 'v1';`
     name: 'server/api.js',
     language: 'javascript',
     content: `import express from 'express';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { nomeDoProduto, versaoApi } from '../shared/config.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const frontendPath = path.resolve(__dirname, '../frontend');
 
 app.get('/api/status', (_req, res) => {
   res.json({
@@ -262,8 +267,14 @@ app.get('/api/status', (_req, res) => {
   });
 });
 
+app.use(express.static(frontendPath));
+
+app.get('*', (_req, res) => {
+  res.sendFile(path.join(frontendPath, 'index.html'));
+});
+
 app.listen(PORT, () => {
-  console.log('API rodando em http://localhost:' + PORT);
+  console.log('Projeto rodando em http://localhost:' + PORT);
 });`
   },
   {
@@ -277,7 +288,16 @@ Estrutura sugerida:
 - \`server/\`: API/servidor para rodar fora do preview.
 - \`shared/\`: código compartilhado entre frontend e backend.
 
-O preview do OSONE CODE executa o frontend diretamente e resolve imports entre pastas. Para rodar o backend real, exporte o projeto ou publique no GitHub.`
+O preview do OSONE CODE executa o frontend diretamente e resolve imports entre pastas.
+
+Para rodar o backend real:
+
+\`\`\`bash
+npm install
+npm run dev
+\`\`\`
+
+Depois abra http://localhost:3001.`
   }
 ];
 
@@ -841,10 +861,8 @@ export const CodeWorkspace: React.FC<{
 
   const activeFile = files.find(f => f.id === activeFileId) || files[0];
   const activeProjectName = projects.find(p => p.id === activeProjectId)?.name || 'Projeto OSONE CODE';
-  const projetoTemEstruturaFullstack = useMemo(
-    () => files.some(f => /^(frontend|server|shared|src|api)\//i.test(f.name || '') || /^(server|app)\.(ts|js)$/i.test(f.name || '')),
-    [files]
-  );
+  const analiseFullstack = useMemo(() => analisarFullstackDoCode(files), [files]);
+  const projetoTemEstruturaFullstack = analiseFullstack.temFullstack;
 
   /**
    * A lista de arquivos sempre atual, para quem grava fora do ciclo de renderização.
@@ -1511,7 +1529,7 @@ export const CodeWorkspace: React.FC<{
     const atuais = filesRef.current;
     const ocupados = new Set(atuais.map(f => f.name));
     const agora = Date.now();
-    const novos = TEMPLATE_FULLSTACK_OSONE.map((arquivo, i) => {
+    const base = TEMPLATE_FULLSTACK_OSONE.map((arquivo, i) => {
       const name = caminhoDisponivel(arquivo.name, ocupados);
       ocupados.add(name);
       return {
@@ -1523,6 +1541,18 @@ export const CodeWorkspace: React.FC<{
         ...(arquivo.isMain ? { isMain: true } : {})
       } as CodeRepositoryFile;
     });
+    const suporte = arquivosDeSuporteFullstack([...atuais, ...base], activeProjectName).map((arquivo, i) => {
+      const name = caminhoDisponivel(arquivo.name, ocupados);
+      ocupados.add(name);
+      return {
+        id: `fullstack-suporte-${agora}-${i}`,
+        name,
+        language: arquivo.language,
+        content: arquivo.content,
+        updatedAt: agora
+      } as CodeRepositoryFile;
+    });
+    const novos = [...base, ...suporte];
 
     pushHistory(atuais);
     const atualizados = atuais.map(f => f.isMain ? { ...f, isMain: false } : f).concat(novos);
@@ -1530,7 +1560,64 @@ export const CodeWorkspace: React.FC<{
     const principal = novos.find(f => f.isMain) || novos[0];
     if (principal) setActiveFileId(principal.id);
     setNotificationBanner({
-      message: `Estrutura fullstack criada com ${novos.length} arquivos em frontend/, server/ e shared/.`,
+      message: `Estrutura fullstack criada com ${novos.length} arquivos, incluindo package.json para rodar com npm install && npm run dev.`,
+      type: 'success'
+    });
+  };
+
+  const prepararExecucaoFullstack = async () => {
+    const atuais = filesRef.current;
+    const projeto = projects.find(p => p.id === activeProjectId);
+    const nomeProjeto = projeto?.name || activeProjectName;
+    const analiseAtual = analisarFullstackDoCode(atuais);
+
+    if (!analiseAtual.temFullstack) {
+      criarEstruturaFullstack();
+      return;
+    }
+
+    const suporte = arquivosDeSuporteFullstack(atuais, nomeProjeto);
+    if (suporte.length > 0) {
+      pushHistory(atuais);
+      const ocupados = new Set(atuais.map(f => f.name));
+      const agora = Date.now();
+      const novos = suporte.map((arquivo, i) => {
+        const name = caminhoDisponivel(arquivo.name, ocupados);
+        ocupados.add(name);
+        return {
+          id: `fullstack-run-${agora}-${i}`,
+          name,
+          language: arquivo.language,
+          content: arquivo.content,
+          updatedAt: agora
+        } as CodeRepositoryFile;
+      });
+      const atualizados = [...atuais, ...novos];
+      setFiles(atualizados);
+      const guia = novos.find(f => chaveDeCaminho(f.name) === chaveDeCaminho('RODAR_FULLSTACK.md')) || novos[0];
+      if (guia) setActiveFileId(guia.id);
+      setIsSaved(false);
+    }
+
+    const analiseDepois = analisarFullstackDoCode([...atuais, ...suporte.map((s, i) => ({
+      id: `virtual-${i}`,
+      name: s.name,
+      language: s.language,
+      content: s.content,
+      updatedAt: Date.now()
+    }))]);
+    const comandos = `${analiseDepois.comandoInstalar}\n${analiseDepois.comandoRodar}\n# abrir: ${analiseDepois.urlLocal}`;
+    try {
+      await navigator.clipboard?.writeText(comandos);
+    } catch (e) {
+      // Copiar é conveniência; não pode transformar uma preparação correta em erro.
+    }
+
+    setShowRepoSidebar(true);
+    setNotificationBanner({
+      message: suporte.length
+        ? `Adicionei ${suporte.length} arquivo(s) de execução fullstack. Comandos copiados: npm install && npm run dev.`
+        : `Projeto fullstack já preparado. Comandos copiados: npm install && npm run dev. Abra ${analiseDepois.urlLocal}.`,
       type: 'success'
     });
   };
@@ -1890,8 +1977,12 @@ Responda APENAS um array JSON de 4 strings. Exemplo do formato:
 
       const entradaHtml = pacote.entradas.find(e => nomeBaseDoCaminho(e.caminho).toLowerCase() === 'index.html')
         || pacote.entradas.find(e => /\.html?$/i.test(e.caminho));
+      const analise = analisarFullstackDoCode(filesRef.current);
+      const dica = analise.temBackend
+        ? ' Depois de descompactar, rode npm install && npm run dev e abra http://localhost:3001.'
+        : ` Descompacte e abra ${entradaHtml?.caminho || 'o HTML principal'} no navegador.`;
       setNotificationBanner({
-        message: `${pacote.nome} baixado com ${pacote.entradas.length} arquivo(s). Descompacte e abra ${entradaHtml?.caminho || 'o HTML principal'} no navegador.`,
+        message: `${pacote.nome} baixado com ${pacote.entradas.length} arquivo(s).${dica}`,
         type: 'success'
       });
     } catch (e: any) {
@@ -3335,6 +3426,22 @@ FORMATO OBRIGATÓRIO (JSON estrito):
           <span className="hidden xl:inline text-[11px] font-mono font-bold uppercase tracking-wide">
             {projetoTemEstruturaFullstack ? 'Fullstack' : 'Criar fullstack'}
           </span>
+        </button>
+
+        <button
+          onClick={prepararExecucaoFullstack}
+          className={cn(
+            "hidden md:flex items-center gap-1.5 px-2.5 py-2 rounded-xl border transition-all shrink-0 cursor-pointer active:scale-95",
+            projetoTemEstruturaFullstack
+              ? "bg-lime-500/10 text-lime-300 border-lime-500/25 hover:bg-lime-500/20"
+              : "bg-white/[0.03] text-zinc-500 border-white/10 hover:text-white hover:bg-white/[0.06]"
+          )}
+          title={projetoTemEstruturaFullstack
+            ? "Preparar package.json, guia e comandos para rodar o fullstack fora do preview"
+            : "Criar uma estrutura fullstack antes de preparar a execução"}
+        >
+          <Terminal size={15} />
+          <span className="hidden 2xl:inline text-[11px] font-mono font-bold uppercase tracking-wide">Rodar fullstack</span>
         </button>
 
         {/* GitHub e chave da API: o "para onde publica" e o "com o que gera" */}

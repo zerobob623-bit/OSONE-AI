@@ -21,6 +21,7 @@ const workspace = ler('src/components/CodeWorkspace.tsx');
 const preview = ler('src/lib/montarPreview.ts');
 const exportador = ler('src/lib/exportarProjeto.ts');
 const caminhos = ler('src/lib/caminhosDoCode.ts');
+const fullstack = ler('src/lib/fullstackDoCode.ts');
 const features = ler('FEATURES.md');
 
 registrar('há biblioteca única para caminhos do OSONE CODE',
@@ -34,6 +35,14 @@ registrar('a UI aceita exemplos de caminhos fullstack',
     && workspace.includes('server/api.js')
     && workspace.includes('criarEstruturaFullstack'),
   'prompt e botão fullstack presentes');
+
+registrar('há preparo explícito para rodar fullstack fora do iframe',
+  workspace.includes('prepararExecucaoFullstack')
+    && workspace.includes('Rodar fullstack')
+    && fullstack.includes('montarPackageJsonFullstack')
+    && fullstack.includes('npm run dev')
+    && fullstack.includes('RODAR_FULLSTACK.md'),
+  'package.json + guia + comandos');
 
 registrar('a lista do repositório é agrupada por pasta',
   workspace.includes('agruparArquivosPorPasta')
@@ -50,8 +59,9 @@ registrar('o preview resolve caminhos relativos a partir do arquivo de origem',
 registrar('o exportador preserva pastas seguras no zip',
   exportador.includes('caminhoSeguroNoPacote')
     && exportador.includes('normalizarCaminhoDoCode')
+    && exportador.includes('arquivosDeSuporteFullstack')
     && !exportador.includes('split(/[/\\\\]/).pop()!'),
-  'sem achatar caminhos úteis');
+  'sem achatar caminhos úteis e com suporte fullstack');
 
 registrar('FEATURES.md registra o suporte fullstack',
   /fullstack/i.test(features) && /frontend\/.*server\/.*shared\//is.test(features),

@@ -1,6 +1,7 @@
 import JSZip from 'jszip';
 import { CodeRepositoryFile } from '../types';
 import { normalizarCaminhoDoCode, nomeBaseDoCaminho, chaveDeCaminho } from './caminhosDoCode';
+import { arquivosDeSuporteFullstack } from './fullstackDoCode';
 
 /**
  * Empacota o projeto num .zip que abre e roda fora do OSONE.
@@ -54,7 +55,7 @@ export interface EntradaDoPacote {
  * o segundo apagaria o primeiro dentro do zip em silêncio. Perder um arquivo na exportação é o
  * tipo de falha que só se descobre depois, ao abrir o pacote e achar que o trabalho sumiu.
  */
-export function prepararEntradas(arquivos: CodeRepositoryFile[]): EntradaDoPacote[] {
+export function prepararEntradas(arquivos: Array<Pick<CodeRepositoryFile, 'name' | 'content'>>): EntradaDoPacote[] {
   const usados = new Set<string>();
   const entradas: EntradaDoPacote[] = [];
 
@@ -87,7 +88,8 @@ export async function montarPacote(
   nomeDoProjeto: string,
   arquivos: CodeRepositoryFile[]
 ): Promise<{ nome: string; blob: Blob; entradas: EntradaDoPacote[] } | null> {
-  const entradas = prepararEntradas(arquivos).filter(e => e.conteudo.trim().length > 0);
+  const suporte = arquivosDeSuporteFullstack(arquivos, nomeDoProjeto);
+  const entradas = prepararEntradas([...arquivos, ...suporte]).filter(e => e.conteudo.trim().length > 0);
   if (entradas.length === 0) return null;
 
   const zip = new JSZip();

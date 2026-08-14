@@ -173,6 +173,22 @@ const PROJETO = [
 }
 
 {
+  const fullstack = [
+    arq('frontend/index.html', '<!doctype html><div id="root"></div>'),
+    arq('server/api.js', "import express from 'express';\nconst app = express();\napp.listen(3001);"),
+    arq('shared/config.js', "export const nome = 'OSONE';")
+  ];
+  const pacote = await montarPacote('Meu SaaS', fullstack);
+  const dentro = await abrirPacote(pacote.blob);
+  registrar('projeto fullstack exportado ganha package.json e guia de execução quando faltam',
+    !!dentro['package.json']
+      && !!dentro['RODAR_FULLSTACK.md']
+      && /npm run dev/.test(dentro['RODAR_FULLSTACK.md'])
+      && /"express"/.test(dentro['package.json']),
+    Object.keys(dentro).filter(n => /package|RODAR|frontend|server|shared/.test(n)).join(' + '));
+}
+
+{
   const enorme = 'a'.repeat(300) + '.js';
   registrar('nome absurdamente longo é encurtado, para não estourar limite de sistema de arquivos',
     nomeSeguroDeArquivo(enorme).length <= 120, `${nomeSeguroDeArquivo(enorme).length} caracteres`);
