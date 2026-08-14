@@ -264,6 +264,7 @@ try {
   assert.equal(minimumPlanForFeature('agentic_research'), 'max');
   assert.equal(paidFeatureForWorkspace('code'), 'osone_code');
   assert.equal(paidFeatureForWorkspace('research'), 'agentic_research');
+  assert.equal(paidFeatureForWorkspace('web_research'), 'agentic_research');
   assert.equal(paidFeatureForWorkspace('writing'), null);
   assert.ok(OSONE_PLANS.max.details.length >= 2);
   console.log('  ok  matriz de recursos Grátis, Plus, Pro e Max corresponde ao combinado');

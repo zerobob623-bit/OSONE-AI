@@ -54,20 +54,30 @@ const semComentarios = code
 }
 
 // ============================================================================
-// 2) O ARQUITETO PROJETA A ÁRVORE
+// 2) O ARQUITETO SEGUE O FORMATO ESCOLHIDO ANTES DE GERAR
 // ============================================================================
 {
   registrar('o Arquiteto devolve uma LISTA de arquivos, e não uma string fixa',
     /"arquivos": \[/.test(semComentarios) && /"caminho": "src\/main\.tsx"/.test(semComentarios),
     'era literalmente fileStructure: "index.html"');
 
-  registrar('jogo continua nascendo em arquivo único — é o formato certo para ele',
-    /"jogo": UM arquivo só/.test(semComentarios),
-    'a mudança não foi trocar um alvo fixo por outro');
+  registrar('a pessoa escolhe arquivo único ou árvore completa antes de criar',
+    /type FormatoProjetoDoCode = 'single' \| 'tree'/.test(semComentarios)
+      && /swarmProjectFormat/.test(semComentarios)
+      && /Arquivo único/.test(code)
+      && /Árvore completa/.test(code),
+    'o formato deixa de ser uma adivinhação do modelo');
 
-  registrar('aplicativo nasce como projeto React de vários arquivos',
-    /"aplicativo", "site" ou "ferramenta": projeto React com vários arquivos/.test(semComentarios),
-    'entrando por src/main.tsx');
+  registrar('arquivo único trava a arquitetura em index.html',
+    /"arquivo único": projete EXATAMENTE UM arquivo, "index\.html"/.test(semComentarios)
+      && /formatoEscolhido === 'single'[\s\S]{0,120}\{ caminho: 'index\.html'/.test(semComentarios),
+    'preview instantâneo para jogo/protótipo sem misturar pastas');
+
+  registrar('árvore completa trava a arquitetura em projeto React',
+    /"árvore completa": projete vários arquivos reais/.test(semComentarios)
+      && /arquivosBaseParaArvore/.test(semComentarios)
+      && /const projetoDeVariosArquivos = formatoEscolhido === 'tree'/.test(semComentarios),
+    'entrando por src/main.tsx quando a pessoa escolhe árvore');
 
   registrar('a árvore tem teto, porque cada arquivo é escrito inteiro de uma vez',
     /NO MÁXIMO 12 arquivos/.test(semComentarios),

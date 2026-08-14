@@ -123,25 +123,26 @@ export const OSONE_PLANS: Record<OsonePlanId, OsonePlan> = {
     features: ['cowork_browser', 'hear', 'osone_code', 'whatsapp', 'agentic_research'],
     highlights: [
       'Tudo do plano Pro',
-      'Pesquisa web agêntica avançada',
-      'Coleta de fontes, ida e volta entre páginas e relatório',
+      'OSONE PESQUISA com book de fontes',
+      'Coleta de fontes, conversa e Estúdio de relatórios',
       'Tarefas longas com mais autonomia',
       'Economize no plano anual'
     ],
     details: [
       {
-        title: 'Para valer o plano mais alto',
+        title: 'OSONE PESQUISA',
         items: [
-          'Pesquisa avançada com navegação entre páginas, comparação de fontes e retorno com síntese.',
-          'Fluxos mais longos para investigar, coletar dados e organizar resultados antes de responder.',
-          'Preparado para recursos premium de agentes web sem tirar a pesquisa básica do plano gratuito.'
+          'Aba exclusiva no plano Max para montar um book de fontes no estilo NotebookLM.',
+          'Pesquisa novas fontes na web, importa textos/arquivos e permite selecionar quais fontes entram no estudo.',
+          'Conversa por texto ou voz com respostas baseadas nas fontes selecionadas, com citações e aviso quando algo não estiver no material.'
         ]
       },
       {
-        title: 'Quando usar',
+        title: 'Estúdio e entregáveis',
         items: [
-          'Quando você quer que o OSONE procure, confira, compare e volte com uma análise mais completa.',
-          'Quando COWORK + CODE + ZAP não bastam e a tarefa exige investigação autônoma.'
+          'Gera relatório, tabela Markdown, dados de gráfico textual e cartões didáticos a partir das fontes.',
+          'Exporta documento Word e CSV de fontes para usar fora do OSONE.',
+          'Mantém a pesquisa básica gratuita separada; o Max concentra a pesquisa profunda, organizada e com fonte controlada.'
         ]
       }
     ]

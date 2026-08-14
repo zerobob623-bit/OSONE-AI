@@ -132,6 +132,8 @@ interface GrupoDeArquivosDoCode {
   arquivos: CodeRepositoryFile[];
 }
 
+type FormatoProjetoDoCode = 'single' | 'tree';
+
 function agruparArquivosPorPasta(arquivos: CodeRepositoryFile[]): GrupoDeArquivosDoCode[] {
   const grupos = new Map<string, CodeRepositoryFile[]>();
   for (const arquivo of arquivos || []) {
@@ -152,6 +154,23 @@ function agruparArquivosPorPasta(arquivos: CodeRepositoryFile[]): GrupoDeArquivo
       pasta,
       arquivos: [...lista].sort((a, b) => nomeBaseDoCaminho(a.name).localeCompare(nomeBaseDoCaminho(b.name), 'pt-BR'))
     }));
+}
+
+function entradaFrontendPreferidaDoCode(arquivos: CodeRepositoryFile[]): CodeRepositoryFile | undefined {
+  const porCaminho = (nome: string) =>
+    arquivos.find(f => chaveDeCaminho(f.name || '') === chaveDeCaminho(nome));
+
+  return arquivos.find(f => f.isMain && /^(frontend|public|src)\//i.test(f.name || ''))
+    || porCaminho('frontend/index.html')
+    || porCaminho('public/index.html')
+    || porCaminho('src/index.html')
+    || porCaminho('src/main.tsx')
+    || porCaminho('src/main.ts')
+    || porCaminho('src/main.jsx')
+    || porCaminho('src/main.js')
+    || porCaminho('src/App.tsx')
+    || porCaminho('src/App.jsx')
+    || arquivos.find(f => /^(frontend|public|src)\/.*index\.html?$/i.test(f.name || ''));
 }
 
 const TEMPLATE_FULLSTACK_OSONE: Array<{ name: string; language: string; content: string; isMain?: boolean }> = [
@@ -845,6 +864,7 @@ export const CodeWorkspace: React.FC<{
   // SWARM HARNESS ENGINE STATE
   const [isSwarmModalOpen, setIsSwarmModalOpen] = useState<boolean>(false);
   const [swarmPrompt, setSwarmPrompt] = useState<string>('');
+  const [swarmProjectFormat, setSwarmProjectFormat] = useState<FormatoProjetoDoCode>('single');
   const [maxHarnessIterations, setMaxHarnessIterations] = useState<number>(3);
   const [swarmStatus, setSwarmStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
   const [swarmCurrentStep, setSwarmCurrentStep] = useState<'idle' | 'pm' | 'architect' | 'coder' | 'qa' | 'assembly'>('idle');
@@ -1260,9 +1280,11 @@ export const CodeWorkspace: React.FC<{
    */
   const arquivoPrincipalId = (): string => {
     const atuais = filesRef.current;
-    const principal = atuais.find(f => f.isMain)
+    const pareceFullstack = atuais.some(f => /^(frontend|public|src|server|api|shared)\//i.test(f.name || ''))
+      || atuais.some(f => chaveDeCaminho(f.name || '') === 'package.json');
+    const principal = (pareceFullstack ? entradaFrontendPreferidaDoCode(atuais) : undefined)
+      || atuais.find(f => f.isMain)
       || atuais.find(f => chaveDeCaminho(f.name || '') === 'index.html')
-      || atuais.find(f => chaveDeCaminho(f.name || '') === 'frontend/index.html')
       || atuais.find(f => nomeBaseDoCaminho(f.name || '').toLowerCase() === 'index.html')
       || atuais.find(f => /\.html?$/i.test(f.name));
     return principal?.id || 'index.html';
@@ -1628,13 +1650,19 @@ export const CodeWorkspace: React.FC<{
       return;
     }
 
-    const entrada = filesRef.current.find(f => /^frontend\/index\.html$/i.test(f.name || ''))
-      || filesRef.current.find(f => /^src\/main\.(tsx|ts|jsx|js)$/i.test(f.name || ''))
-      || filesRef.current.find(f => /^src\/app\.(tsx|ts|jsx|js)$/i.test(f.name || ''))
+    const entrada = entradaFrontendPreferidaDoCode(filesRef.current)
       || filesRef.current.find(f => /index\.html$/i.test(f.name || ''))
       || filesRef.current[0];
 
-    if (entrada) setActiveFileId(entrada.id);
+    if (entrada) {
+      setActiveFileId(entrada.id);
+      setFiles(prev => prev.map(f => {
+        const ehHtml = /\.html?$/i.test(f.name || '') || f.language === 'html';
+        if (!ehHtml) return f;
+        return f.id === entrada.id ? { ...f, isMain: true } : { ...f, isMain: false };
+      }));
+      setIsSaved(false);
+    }
     setShowRepoSidebar(true);
     setViewLayout('split');
     setNotificationBanner({
@@ -2466,6 +2494,15 @@ ${currentCode}`;
       setSwarmLogs(prev => [...prev, { agent, message, timestamp: timeStr, type }]);
     };
 
+    const formatoEscolhido = swarmProjectFormat;
+    const nomeDoFormatoEscolhido = formatoEscolhido === 'tree' ? 'árvore completa' : 'arquivo único';
+    const arquivosBaseParaArvore: Array<{ caminho: string; papel: string }> = [
+      { caminho: 'src/main.tsx', papel: 'ponto de entrada: monta o App na div#root' },
+      { caminho: 'src/App.tsx', papel: 'tela principal, estado e roteamento leve' },
+      { caminho: 'src/components/Panel.tsx', papel: 'componente visual reutilizável' },
+      { caminho: 'src/styles.css', papel: 'estilos globais do projeto' }
+    ];
+
     const configDaApiDoCode = montarConfigDaApiDoCode();
     const controle = new AbortController();
     cancelamentoDoEnxameRef.current?.abort();
@@ -2480,7 +2517,7 @@ ${currentCode}`;
       setSwarmCurrentStep('pm');
       setSwarmProgress(15);
       setSwarmProgressText('15% - Agente de Produto entendendo o que precisa ser construído...');
-      addSwarmLog('📋 Agente de Produto', 'Analisando o pedido e escrevendo a especificação...', 'info');
+      addSwarmLog('📋 Agente de Produto', `Analisando o pedido em modo ${nomeDoFormatoEscolhido} e escrevendo a especificação...`, 'info');
 
       /**
        * ====== O ENXAME DEIXA DE SER UM GERADOR DE JOGO ======
@@ -2509,6 +2546,11 @@ PRIMEIRO, CLASSIFIQUE o que foi pedido. É a decisão mais importante desta etap
 - "site": páginas de conteúdo, apresentação, portfólio.
 - "ferramenta": uma utilidade focada (conversor, calculadora, editor).
 
+FORMATO ESCOLHIDO PELO USUÁRIO ANTES DA CRIAÇÃO:
+- ${formatoEscolhido === 'single'
+  ? '"arquivo único": tudo deve nascer em index.html para preview instantâneo.'
+  : '"árvore completa": o produto deve nascer como projeto com pastas/arquivos reais e entrada de frontend rodável no preview.'}
+
 FORMATO OBRIGATÓRIO (JSON estrito):
 {
   "tipo": "jogo" | "aplicativo" | "site" | "ferramenta",
@@ -2519,10 +2561,10 @@ FORMATO OBRIGATÓRIO (JSON estrito):
 
 Escreva "mechanics" como capacidades do usuário ("cadastrar produto", "filtrar por categoria", "pular e atirar"), nunca como nomes de arquivo ou de tecnologia.`;
 
-      const pmFallback = { tipo: 'aplicativo', gdd: swarmPrompt, mechanics: ["Interface responsiva"], requirements: ["HTML5", "CSS3 / Tailwind"] };
+      const pmFallback = { tipo: 'aplicativo', gdd: swarmPrompt, mechanics: ["Interface responsiva"], requirements: formatoEscolhido === 'single' ? ["HTML5", "CSS3 / Tailwind", "JavaScript no próprio index.html"] : ["React", "TypeScript", "CSS modular do projeto"] };
       const pmResult = await generateWithRetry({
         ...configDaApiDoCode,
-        prompt: `CONCEITO SOLICITADO PELO USUÁRIO:\n"${swarmPrompt}"`,
+        prompt: `FORMATO ESCOLHIDO PELO USUÁRIO: ${nomeDoFormatoEscolhido}\n\nCONCEITO SOLICITADO PELO USUÁRIO:\n"${swarmPrompt}"`,
         systemInstruction: pmSystemInstruction,
         responseMimeType: "application/json"
       }, 2, controle.signal);
@@ -2563,9 +2605,10 @@ Escreva "mechanics" como capacidades do usuário ("cadastrar produto", "filtrar 
       const architectSystemInstruction = `Você é o AGENTE DE ARQUITETURA (Software Architect) do OSONE CODE Swarm Engine.
 Projete a ESTRUTURA DE ARQUIVOS do produto, a partir da especificação do Agente de Produto.
 
-A regra de ouro é o TIPO do produto:
-- "jogo": UM arquivo só — "index.html" com Canvas, estilo e script juntos. É o formato certo para jogo, e o que roda melhor no preview. Não separe jogo em módulos.
-- "aplicativo", "site" ou "ferramenta": projeto React com vários arquivos, entrando por "src/main.tsx", com "src/App.tsx" e um componente por responsabilidade em "src/components/". O preview do OSONE CODE roda isso de verdade: ele resolve os imports entre os arquivos e busca as dependências (react, react-dom) automaticamente.
+A regra de ouro é o FORMATO ESCOLHIDO PELO USUÁRIO, acima até do tipo do produto:
+- ${formatoEscolhido === 'single'
+  ? '"arquivo único": projete EXATAMENTE UM arquivo, "index.html", com HTML, CSS e JavaScript juntos. Não crie package.json, src/, frontend/ nem server/.'
+  : '"árvore completa": projete vários arquivos reais. Use React/TypeScript entrando por "src/main.tsx", com "src/App.tsx" e componentes em "src/components/". O preview do OSONE CODE roda isso de verdade: resolve imports e busca react/react-dom automaticamente.'}
 
 FORMATO OBRIGATÓRIO (JSON estrito):
 {
@@ -2580,17 +2623,21 @@ FORMATO OBRIGATÓRIO (JSON estrito):
 
 Regras rígidas:
 - NO MÁXIMO 12 arquivos. Prefira menos arquivos e completos: cada um é escrito inteiro de uma vez, e um projeto grande demais chega cortado.
-- Para "jogo", "arquivos" tem UM item só: index.html.
+- Se o formato escolhido foi "arquivo único", "arquivos" tem UM item só: index.html.
+- Se o formato escolhido foi "árvore completa", "arquivos" tem no mínimo src/main.tsx e src/App.tsx.
 - Não invente pasta vazia nem arquivo sem papel claro. Cada caminho da lista vai ser escrito de verdade.
-- Use apenas bibliotecas que existem no npm e funcionam no navegador.`;
+- Use apenas bibliotecas que existem no npm e funcionam no navegador.
+- Todo elemento buscado por document.getElementById/querySelector precisa existir antes do listener, ou ter guarda contra null.`;
 
       const archFallback = {
-        arquivos: [{ caminho: 'index.html', papel: 'aplicação completa em arquivo único' }],
-        fileStructure: "index.html", gameLoopStrategy: "estado no próprio script", librariesUsed: ["Tailwind CSS"]
+        arquivos: formatoEscolhido === 'tree' ? arquivosBaseParaArvore : [{ caminho: 'index.html', papel: 'aplicação completa em arquivo único' }],
+        fileStructure: formatoEscolhido === 'tree' ? "src/main.tsx + src/App.tsx + components" : "index.html",
+        gameLoopStrategy: formatoEscolhido === 'tree' ? "estado no React" : "estado no próprio script",
+        librariesUsed: formatoEscolhido === 'tree' ? ["react", "react-dom"] : ["Tailwind CSS"]
       };
       const archResult = await generateWithRetry({
         ...configDaApiDoCode,
-        prompt: `ESPECIFICAÇÃO DO AGENTE DE PRODUTO:\n${JSON.stringify(pmParsed, null, 2)}`,
+        prompt: `FORMATO ESCOLHIDO PELO USUÁRIO: ${nomeDoFormatoEscolhido}\n\nESPECIFICAÇÃO DO AGENTE DE PRODUTO:\n${JSON.stringify(pmParsed, null, 2)}`,
         systemInstruction: architectSystemInstruction,
         responseMimeType: "application/json"
       }, 2, controle.signal);
@@ -2602,7 +2649,6 @@ Regras rígidas:
         addSwarmLog('🏗️ Agente de Arquitetura', `⚠️ Falha ao contatar o Agente de Arquitetura (${archResult.error}). Usando arquitetura padrão para não travar o Enxame.`, 'warn');
       }
       if (desistiu()) return;
-      setSwarmArchitectArtifact(archParsed);
 
       /**
        * É AQUI QUE O ENXAME ESCOLHE O FORMATO DA ENTREGA.
@@ -2614,9 +2660,29 @@ Regras rígidas:
        * A escolha é do Arquiteto, e não uma regra fixa daqui: quem sabe se o pedido pede um jogo
        * ou um app é quem leu o pedido.
        */
-      const arquivosPlanejados: Array<{ caminho: string; papel?: string }> =
+      const arquivosPlanejadosBrutos: Array<{ caminho: string; papel?: string }> =
         Array.isArray(archParsed?.arquivos) ? archParsed.arquivos.filter((a: any) => a?.caminho).slice(0, 12) : [];
-      const projetoDeVariosArquivos = arquivosPlanejados.length > 1;
+      const arquivosPlanejados: Array<{ caminho: string; papel?: string }> = formatoEscolhido === 'single'
+        ? [{ caminho: 'index.html', papel: 'aplicação completa em arquivo único' }]
+        : (arquivosPlanejadosBrutos.length > 1 ? arquivosPlanejadosBrutos : arquivosBaseParaArvore);
+      const projetoDeVariosArquivos = formatoEscolhido === 'tree';
+
+      if (formatoEscolhido === 'single') {
+        archParsed = {
+          ...archParsed,
+          arquivos: arquivosPlanejados,
+          fileStructure: 'index.html — arquivo único escolhido pelo usuário',
+          librariesUsed: Array.isArray(archParsed?.librariesUsed) ? archParsed.librariesUsed : ['Tailwind CSS']
+        };
+      } else if (arquivosPlanejadosBrutos.length <= 1) {
+        archParsed = {
+          ...archParsed,
+          arquivos: arquivosPlanejados,
+          fileStructure: 'src/main.tsx + src/App.tsx + componentes — árvore completa escolhida pelo usuário',
+          librariesUsed: ['react', 'react-dom']
+        };
+      }
+      setSwarmArchitectArtifact(archParsed);
 
       setSwarmProgress(45);
       setSwarmProgressText('45% - Arquitetura validada! Iniciando Engenharia...');
@@ -2686,6 +2752,7 @@ O projeto roda no preview do OSONE CODE, que executa módulos de verdade: os imp
 Exigências:
 - Escreva TODOS os arquivos da arquitetura, cada um inteiro.
 - A entrada monta o App numa <div id="root"> — ela já existe na página.
+- Em src/main.tsx, procure #root com segurança; se não existir, crie uma div#root antes de montar. Nunca chame addEventListener/createRoot em null.
 - Estilo com Tailwind (a classe funciona direto, sem configurar nada).
 - Design limpo e adaptado a celular e computador.
 - Nada de "resto igual" nem trecho omitido: o que você não escrever, não existe.
@@ -2696,6 +2763,7 @@ Sua missão é produzir o CÓDIGO FONTE 100% COMPLETO, FUNCIONAL E LINDO no arqu
 O código DEVE conter:
 - HTML5 completo com <head>, estilo e <script> unificados no mesmo arquivo.
 - Importação do Tailwind CSS CDN (<script src="https://cdn.tailwindcss.com"></script>) e Lucide Icons.
+- Todo id/classe usado no JavaScript precisa existir no HTML antes do script rodar; nunca chame addEventListener em elemento possivelmente null.
 - Design futurista, limpo e adaptado para telas mobile e desktop.
 - Design e interações à altura do que foi pedido${(pmParsed?.tipo || '') === 'jogo' ? ', incluindo game loop com requestAnimationFrame, pontuação, tela de início e tela de fim com botão de reiniciar, e efeitos sonoros via Web Audio API' : ''}.`;
         const coderSystemInstruction = projetoDeVariosArquivos
@@ -4303,7 +4371,8 @@ FORMATO OBRIGATÓRIO (JSON estrito):
             ) : (
               <>
                 {[
-                  { label: '🐝 Criar Jogo com Enxame Swarm', action: () => setIsSwarmModalOpen(true) },
+                  { label: '🐝 Criar com Enxame', action: () => setIsSwarmModalOpen(true) },
+                  { label: '🌳 App em árvore completa', action: () => { setSwarmProjectFormat('tree'); setIsSwarmModalOpen(true); } },
                   { label: '⚡ Gerar App HTML5 + Tailwind', prompt: 'Crie uma aplicação web completa, interativa e linda em um único arquivo HTML usando Tailwind CSS, Lucide Icons e JavaScript.' },
                   { label: '🛠️ Refatorar & Otimizar', prompt: 'Refatore o código do arquivo atual limpando a estrutura, otimizando performance e melhorando o design visual.' },
                   { label: '🔍 Corrigir BUGS', prompt: 'Examine o código atual, encontre possíveis falhas, erros de lógica ou falta de parâmetros e corrija tudo.' },
@@ -4502,6 +4571,53 @@ FORMATO OBRIGATÓRIO (JSON estrito):
               {/* Main Content Body */}
               <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar pr-1">
                 
+                {/* Formato do projeto */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {[
+                    {
+                      id: 'single' as FormatoProjetoDoCode,
+                      icon: FileCode,
+                      title: 'Arquivo único',
+                      desc: 'Gera tudo em index.html. É o caminho mais estável para jogos, protótipos e preview imediato.'
+                    },
+                    {
+                      id: 'tree' as FormatoProjetoDoCode,
+                      icon: Layers,
+                      title: 'Árvore completa',
+                      desc: 'Gera src/, componentes e estrutura real. O preview roda o frontend; backend fica pronto para exportar/rodar.'
+                    }
+                  ].map(opcao => {
+                    const Icone = opcao.icon;
+                    const ativo = swarmProjectFormat === opcao.id;
+                    return (
+                      <button
+                        key={opcao.id}
+                        type="button"
+                        onClick={() => setSwarmProjectFormat(opcao.id)}
+                        disabled={swarmStatus === 'running'}
+                        className={cn(
+                          "text-left p-3 rounded-2xl border transition-all flex items-start gap-3 disabled:opacity-60 cursor-pointer active:scale-[0.99]",
+                          ativo
+                            ? "bg-cyan-500/10 border-cyan-400/50 shadow-lg shadow-cyan-950/30"
+                            : "bg-black/40 border-white/10 hover:border-white/20 hover:bg-white/[0.04]"
+                        )}
+                        title={`Criar como ${opcao.title.toLowerCase()}`}
+                      >
+                        <span className={cn(
+                          "w-9 h-9 rounded-xl border flex items-center justify-center shrink-0",
+                          ativo ? "bg-cyan-400/15 border-cyan-400/40 text-cyan-200" : "bg-white/5 border-white/10 text-zinc-400"
+                        )}>
+                          <Icone size={17} />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-sm font-bold text-white font-mono">{opcao.title}</span>
+                          <span className="block text-[11px] text-zinc-400 leading-relaxed mt-1">{opcao.desc}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
                 {/* Textarea Goal & Presets */}
                 <div className="space-y-2">
                   <label className="text-xs font-mono text-purple-300 font-semibold uppercase tracking-wider block flex items-center justify-between">
@@ -4512,25 +4628,32 @@ FORMATO OBRIGATÓRIO (JSON estrito):
                   <textarea 
                     value={swarmPrompt}
                     onChange={(e) => setSwarmPrompt(e.target.value)}
-                    placeholder="Ex: Crie um jogo completo de nave 2D Space Shooter retrô em HTML5 Canvas. Inclua partículas de explosão, placar de recorde, múltiplos tipos de inimigos, chefão e efeitos sonoros via Web Audio API."
+                    placeholder={swarmProjectFormat === 'single'
+                      ? "Ex: Crie um jogo completo de nave 2D em um único index.html, com canvas, sons Web Audio, placar e tela de game over."
+                      : "Ex: Crie um dashboard de tarefas em árvore completa com React, componentes, filtros, cards, estado local e layout responsivo."}
                     className="w-full h-24 bg-black/60 border border-purple-500/30 focus:border-purple-400 rounded-2xl p-3 text-xs font-mono text-zinc-100 placeholder-zinc-500 outline-none resize-none leading-relaxed"
                   />
 
                   {/* Presets */}
                   <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pt-1">
                     <span className="text-[10px] font-mono text-zinc-400 shrink-0 flex items-center gap-1">
-                      <Gamepad2 size={12} className="text-purple-400" /> Presets de Jogos:
+                      <Gamepad2 size={12} className="text-purple-400" /> Presets:
                     </span>
                     {[
-                      { label: '🚀 Space Shooter 2D', prompt: 'Jogo de Nave 2D Space Shooter em HTML5 Canvas com tiros, asteroides, inimigos, sons Web Audio e placar.' },
-                      { label: '🕹️ Brick Breaker Arcade', prompt: 'Jogo Brick Breaker (Quebra-blocos) em HTML5 Canvas com power-ups, efeitos visuais, vidas e pontuação.' },
-                      { label: '🐍 Cyberpunk Snake', prompt: 'Jogo da Cobrinha (Snake) em estilização Cyberpunk com néon, partículas, comida especial e recorde salvo.' },
-                      { label: '🏎️ Racing Pseudo-3D', prompt: 'Jogo de Corrida retro pseudo-3D em HTML5 Canvas com obstáculos, contador de velocidade e sons.' },
-                      { label: '🏰 Dungeon Crawler 2D', prompt: 'Jogo RPG 2D Dungeon Crawler top-down com movimentação de personagem, monstros, baús e combate.' }
+                      { label: '🚀 Space Shooter 2D', formato: 'single' as FormatoProjetoDoCode, prompt: 'Jogo de Nave 2D Space Shooter em HTML5 Canvas com tiros, asteroides, inimigos, sons Web Audio e placar.' },
+                      { label: '🕹️ Brick Breaker Arcade', formato: 'single' as FormatoProjetoDoCode, prompt: 'Jogo Brick Breaker (Quebra-blocos) em HTML5 Canvas com power-ups, efeitos visuais, vidas e pontuação.' },
+                      { label: '🐍 Cyberpunk Snake', formato: 'single' as FormatoProjetoDoCode, prompt: 'Jogo da Cobrinha (Snake) em estilização Cyberpunk com néon, partículas, comida especial e recorde salvo.' },
+                      { label: '🏎️ Racing Pseudo-3D', formato: 'single' as FormatoProjetoDoCode, prompt: 'Jogo de Corrida retro pseudo-3D em HTML5 Canvas com obstáculos, contador de velocidade e sons.' },
+                      { label: '🏰 Dungeon Crawler 2D', formato: 'single' as FormatoProjetoDoCode, prompt: 'Jogo RPG 2D Dungeon Crawler top-down com movimentação de personagem, monstros, baús e combate.' },
+                      { label: '📊 Dashboard React', formato: 'tree' as FormatoProjetoDoCode, prompt: 'Dashboard de produtividade com cards, filtros, lista de tarefas, estatísticas, tema escuro e componentes reutilizáveis.' },
+                      { label: '🛒 Loja Fullstack', formato: 'tree' as FormatoProjetoDoCode, prompt: 'Catálogo de produtos com carrinho, filtros, tela de checkout simulada e estrutura pronta para API backend.' }
                     ].map((preset, idx) => (
                       <button
                         key={idx}
-                        onClick={() => setSwarmPrompt(preset.prompt)}
+                        onClick={() => {
+                          setSwarmProjectFormat(preset.formato);
+                          setSwarmPrompt(preset.prompt);
+                        }}
                         className="px-2.5 py-1 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 text-[10px] font-mono text-purple-200 shrink-0 transition-all"
                       >
                         {preset.label}

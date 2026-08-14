@@ -6210,7 +6210,7 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
   // POST endpoint for Google Custom Search API retrieval to prevent client-side CORS and secure credentials
   app.post("/api/search/custom", async (req, res) => {
     try {
-      const { query, key, cx } = req.body;
+      const { query, key, cx, num } = req.body;
       if (!query || typeof query !== "string") {
         return res.status(400).json({ error: "O termo de pesquisa 'query' é obrigatório." });
       }
@@ -6224,7 +6224,8 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
         });
       }
 
-      const url = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(searchKey)}&cx=${encodeURIComponent(searchCx)}&q=${encodeURIComponent(query)}`;
+      const maxResults = Math.min(10, Math.max(1, Number(num) || 10));
+      const url = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(searchKey)}&cx=${encodeURIComponent(searchCx)}&q=${encodeURIComponent(query)}&num=${maxResults}`;
       const searchRes = await fetch(url);
       
       if (!searchRes.ok) {
@@ -6243,7 +6244,7 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
   // POST endpoint for Tavily Web Search
   app.post("/api/search/tavily", async (req, res) => {
     try {
-      const { query, apiKey } = req.body;
+      const { query, apiKey, maxResults, searchDepth } = req.body;
       if (!query || typeof query !== "string") {
         return res.status(400).json({ error: "O termo de pesquisa 'query' é obrigatório." });
       }
@@ -6269,9 +6270,9 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
           // "smart" não existe na API da Tavily — os únicos valores aceitos são "basic" e
           // "advanced". Qualquer outro faz a requisição voltar como 400 Bad Request, que era
           // exatamente o erro que aparecia no console a cada busca.
-          search_depth: "basic",
+          search_depth: searchDepth === "advanced" ? "advanced" : "basic",
           include_answer: true,
-          max_results: 5
+          max_results: Math.min(20, Math.max(1, Number(maxResults) || 5))
         })
       });
 
