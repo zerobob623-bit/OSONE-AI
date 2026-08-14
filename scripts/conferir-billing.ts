@@ -13,6 +13,7 @@ const PROJECT_ROOT = path.resolve(import.meta.dirname, '..');
 const REQUIRED_ENV = [
   'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'STRIPE_PRICE_PLUS_MONTHLY',
   'STRIPE_PRICE_PLUS_YEARLY', 'STRIPE_PRICE_PRO_MONTHLY', 'STRIPE_PRICE_PRO_YEARLY',
+  'STRIPE_PRICE_MAX_MONTHLY', 'STRIPE_PRICE_MAX_YEARLY',
   'OSONE_BILLING_RETURN_URL', 'FIREBASE_SERVICE_ACCOUNT_JSON', 'GOOGLE_APPLICATION_CREDENTIALS'
 ];
 for (const name of REQUIRED_ENV) delete process.env[name];
@@ -36,8 +37,11 @@ try {
   assert.equal(directData.plans.plus.yearly, 339.90);
   assert.equal(directData.plans.pro.monthly, 69.90);
   assert.equal(directData.plans.pro.yearly, 669.90);
+  assert.equal(directData.plans.max.monthly, 119.90);
+  assert.equal(directData.plans.max.yearly, 1199.90);
   assert.equal(directData.pixEnabled, false);
-  console.log('  ok  função isolada responde à rota direta com os quatro preços');
+  assert.equal(directData.planBillingConfigured.max, false);
+  console.log('  ok  função isolada responde à rota direta com os seis preços');
 
   const rewritten = await fetch(`${base}/api/billing?path=config`);
   const rewrittenData: any = await rewritten.json();
@@ -84,7 +88,8 @@ try {
   assert.equal(configured.enabled, true);
   assert.deepEqual(configured.missing, []);
   assert.equal(configured.returnOrigin, 'https://osone.example');
-  console.log('  ok  configuração completa habilita a cobrança sem expor segredos');
+  assert.deepEqual(configured.planBillingConfigured, { plus: true, pro: true, max: false });
+  console.log('  ok  configuração completa habilita Plus/Pro sem exigir Max ainda');
 
   const noToken = await fetch(`${base}/api/billing/status`);
   assert.equal(noToken.status, 401);
@@ -147,6 +152,10 @@ try {
     active: true, currency: 'brl', unit_amount: 33990, type: 'recurring',
     recurring: { interval: 'month', interval_count: 1 } as any
   }, 'plus', 'year'), /pagamento foi bloqueado/i);
+  validateStripePrice({
+    active: true, currency: 'brl', unit_amount: 11990, type: 'recurring',
+    recurring: { interval: 'month', interval_count: 1 } as any
+  }, 'max', 'month');
   console.log('  ok  valor, moeda e periodicidade divergentes bloqueiam o Checkout');
 
   validatePixCheckout({ mode: 'payment', payment_status: 'paid', currency: 'brl', amount_total: 3990 }, 'plus', 'month');
@@ -232,6 +241,8 @@ try {
   assert.equal(OSONE_PLANS.plus.yearlyPrice, 339.90);
   assert.equal(OSONE_PLANS.pro.monthlyPrice, 69.90);
   assert.equal(OSONE_PLANS.pro.yearlyPrice, 669.90);
+  assert.equal(OSONE_PLANS.max.monthlyPrice, 119.90);
+  assert.equal(OSONE_PLANS.max.yearlyPrice, 1199.90);
   assert.equal(planHasFeature('free', 'hear'), false);
   assert.equal(planHasFeature('free', 'cowork_browser'), false);
   assert.equal(planHasFeature('free', 'whatsapp'), false);
@@ -244,10 +255,18 @@ try {
   assert.equal(planHasFeature('pro', 'cowork_browser'), true);
   assert.equal(planHasFeature('pro', 'whatsapp'), true);
   assert.equal(planHasFeature('pro', 'osone_code'), true);
+  assert.equal(planHasFeature('max', 'hear'), true);
+  assert.equal(planHasFeature('max', 'cowork_browser'), true);
+  assert.equal(planHasFeature('max', 'whatsapp'), true);
+  assert.equal(planHasFeature('max', 'osone_code'), true);
+  assert.equal(planHasFeature('max', 'agentic_research'), true);
   assert.equal(minimumPlanForFeature('osone_code'), 'pro');
+  assert.equal(minimumPlanForFeature('agentic_research'), 'max');
   assert.equal(paidFeatureForWorkspace('code'), 'osone_code');
+  assert.equal(paidFeatureForWorkspace('research'), 'agentic_research');
   assert.equal(paidFeatureForWorkspace('writing'), null);
-  console.log('  ok  matriz de recursos Grátis, Plus e Pro corresponde ao combinado');
+  assert.ok(OSONE_PLANS.max.details.length >= 2);
+  console.log('  ok  matriz de recursos Grátis, Plus, Pro e Max corresponde ao combinado');
 
   assert.equal(
     billingResultUrl('https://osone.example/app?origem=desktop#planos', 'success'),
