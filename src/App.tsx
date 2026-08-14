@@ -62,7 +62,7 @@ import {
   Layers
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { GoogleGenAI, Modality, Type } from "@google/genai";
+import { GoogleGenAI, MediaResolution, Modality, Type } from "@google/genai";
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { cn, safeJsonParse } from './lib/utils';
@@ -98,6 +98,8 @@ import { getFranquezaDirective } from './lib/franquezaJarvis';
 import { buildCodeEditSystemInstruction, applyModelCodeResponse, pareceDocumentoIncompleto, substituirTrecho, contextoAoRedor } from './lib/codeEdits';
 import { INSTRUCAO_DE_PROJETO_MULTIARQUIVO, lerArquivosDoModelo } from './lib/projetoMultiArquivo';
 import { gerarCodigoEmFluxo } from './lib/gerarCodigoEmFluxo';
+import { calcularQuadro } from './lib/qualidadeDaVisao';
+import { lerChatDaTela, montarInstrucaoDeLeitura, chaveDoComentario } from './lib/lerChatDaTela';
 import { useLocalAgent } from './hooks/useLocalAgent';
 import { useTikTokLive } from './hooks/useTikTokLive';
 import { useSensusEvolution } from './hooks/useSensusEvolution';
@@ -1180,7 +1182,16 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
     ? `TELA INTEIRA. O que você vê e o lugar onde o clique age são a mesma área, então dá para medir posição pela imagem compartilhada. Ainda assim, 'capturar_tela' é mais confiável porque traz a grade numerada.`
     : `APENAS UMA ABA/JANELA (recorte). Você PODE ver e descrever o que aparece, mas NÃO PODE tirar coordenadas daí: você estaria medindo dentro do recorte enquanto o clique age na tela inteira, e o clique cairia acima do alvo, em barra de título ou de endereço. Para clicar, chame 'capturar_tela' e meça pela grade dela. Se o usuário insistir em clicar por aqui, explique que ele precisa refazer o compartilhamento escolhendo 'Tela inteira'.`}
 
-` : ''}  DIRETRIZ - WHATSAPP (send_whatsapp_message):
+` : ''}  DIRETRIZ - LER TEXTO DA TELA EM VOZ ALTA (chat ao vivo, comentários, mensagens):
+  - Para dizer o que ALGUÉM ESCREVEU, chame 'ler_chat_ao_vivo'. Sempre. É a única fonte válida de texto da tela.
+  - NUNCA leia comentário a partir do vídeo que chega em tempo real. Aquele fluxo é comprimido para você acompanhar o que acontece, não para ler letra pequena: nele um "m" vira "rn", um nome vira outro parecido, e você diz com voz firme uma frase que ninguém escreveu. Se você está prestes a falar o que está escrito e não chamou a ferramenta naquele instante, você está adivinhando.
+  - Leia EXATAMENTE o que a ferramenta devolver em 'podem_ser_lidos', palavra por palavra, com o nome de quem escreveu como veio. Não corrija erro de digitação, não traduza, não melhore a frase, não junte dois comentários e não acrescente nenhum que não esteja na lista.
+  - NOME DE PESSOA NÃO SE CHUTA. Se o autor vier vazio, diga "alguém escreveu" — nunca escolha o nome parecido, nunca reaproveite o nome de outro comentário e nunca invente um apelido.
+  - O que vier em 'ilegiveis' é o que NÃO deu para ler. É proibido supor o que dizia. Diga que essa parte do chat está pequena ou borrada demais e peça para aumentar o zoom da janela do chat.
+  - O que vier em 'bloqueados' NÃO É LIDO, não é resumido, não é descrito e não recebe indireta. No máximo diga que preferiu não ler alguns comentários e siga em frente.
+  - LEMBRE-SE DE ONDE VOCÊ ESTÁ: numa transmissão ao vivo, tudo o que você fala sai na voz do dono do canal, para a audiência inteira, e não tem como voltar atrás. Na dúvida entre ler e não ler um comentário, não leia. Ninguém repara no comentário que ficou de fora; todo mundo repara no que não devia ter sido dito.
+
+  DIRETRIZ - WHATSAPP (send_whatsapp_message):
   - Para mandar mensagem no WhatsApp de alguém você DEVE chamar a ferramenta send_whatsapp_message. Não existe nenhuma outra forma: você não consegue enviar apenas escrevendo o texto na resposta.
   - NUNCA diga que enviou, mandou ou encaminhou uma mensagem sem ter chamado a ferramenta e recebido confirmação de sucesso dela. Se a ferramenta retornar erro (WhatsApp desconectado, número inválido, sessão caída), diga exatamente que NÃO foi enviado e qual foi o motivo. Afirmar um envio que não aconteceu é o pior erro possível aqui.
   - Para enviar áudio (mensagem de voz), chame a mesma ferramenta com asAudio: true — o texto que você escrever será convertido em voz e enviado como áudio no WhatsApp. Use alsoText: false se o usuário quiser SOMENTE o áudio, sem o texto junto.
@@ -5462,6 +5473,14 @@ ${isBad
   const screenStreamRef = useRef<MediaStream | null>(null);
   const screenIntervalRef = useRef<any>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  /**
+   * O elemento <video> que recebe o compartilhamento, guardado para poder tirar uma foto NOVA em
+   * resolução cheia na hora de ler texto. O fluxo em tempo real é comprimido para caber num
+   * WebSocket aberto o tempo todo; ler chat a partir dele é ler o borrão da compressão.
+   */
+  const screenVideoElRef = useRef<HTMLVideoElement | null>(null);
+  /** Comentários já lidos em voz alta, para o OSONE não repetir os mesmos a cada leitura. */
+  const comentariosJaLidosRef = useRef<Set<string>>(new Set());
   const voiceTranscriptRef = useRef<string>('');
   const transcriptThrottleRef = useRef<any>(null);
 
@@ -6766,11 +6785,30 @@ ${isBad
       // alvo é acertado no centro e errado para cima, caindo na barra de título ou de endereço.
       // É só uma preferência (a escolha final continua sendo do usuário), por isso a regra de
       // tirar coordenadas de 'capturar_tela' segue valendo mesmo assim.
+      /**
+       * A resolução é pedida ALTA de propósito.
+       *
+       * Sem `width`/`height`, o navegador entrega o fluxo na resolução que achar conveniente, e
+       * costuma entregar bem menos que a tela real. Como o que interessa aqui é LER — comentário
+       * de chat, nome de quem escreveu, texto de janela —, cada pixel perdido antes de a imagem
+       * existir é um pixel que nenhuma melhoria depois recupera. `ideal` (e não `exact`) porque é
+       * preferência: uma tela menor continua sendo compartilhada normalmente.
+       *
+       * O quadro por segundo é pedido BAIXO pelo mesmo motivo: vídeo de tela não precisa ser
+       * fluido, precisa ser nítido, e taxa alta só rouba banda de quem vai ler letra pequena.
+       */
       const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { displaySurface: 'monitor' } as MediaTrackConstraints
+        video: {
+          displaySurface: 'monitor',
+          width: { ideal: 2560 },
+          height: { ideal: 1440 },
+          frameRate: { ideal: 5, max: 10 }
+        } as MediaTrackConstraints
       });
       screenStreamRef.current = stream;
       setIsScreenSharing(true);
+      // Cada compartilhamento novo é um chat novo: o que foi lido antes não conta como repetido.
+      comentariosJaLidosRef.current.clear();
 
       /**
        * Descobre O QUE foi compartilhado e prende a ação dentro disso.
@@ -6797,6 +6835,7 @@ ${isBad
       const video = document.createElement('video');
       video.srcObject = stream;
       video.play();
+      screenVideoElRef.current = video;
 
       if (!canvasRef.current) {
         canvasRef.current = document.createElement('canvas');
@@ -6861,10 +6900,22 @@ ${isBad
         // quadro era enviado: o modelo dizia estar vendo a tela enquanto não recebia imagem
         // nenhuma. O ref é atualizado a cada mudança de estado e diz a verdade a qualquer hora.
         if (ctx && liveSessionRef.current && liveStateRef.current.status === 'connected') {
-          canvas.width = 640;
-          canvas.height = 480;
+          /**
+           * Era 640×480 fixo, em qualidade 0,6, para qualquer tela.
+           *
+           * O tamanho já era pequeno demais para letra de chat, mas o pior era a PROPORÇÃO: uma
+           * tela 16:9 espremida à força num quadro 4:3 encolhe 1,33× só na horizontal. Letra
+           * espremida não fica pequena, fica deformada — "m" vira "rn", "cl" vira "d" —, e o
+           * modelo, recebendo isso, lê a palavra parecida mais provável em vez da escrita. Era
+           * essa a origem de trocar palavra e nome ao ler comentários em voz alta.
+           *
+           * `calcularQuadro` preserva a proporção real e nunca amplia além da fonte.
+           */
+          const quadro = calcularQuadro(video.videoWidth, video.videoHeight, 'ambiente');
+          canvas.width = quadro.largura;
+          canvas.height = quadro.altura;
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const base64Data = canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
+          const base64Data = canvas.toDataURL('image/jpeg', quadro.qualidadeJpeg).split(',')[1];
           liveSessionRef.current.sendRealtimeInput({
             video: { data: base64Data, mimeType: 'image/jpeg' }
           });
@@ -6895,6 +6946,10 @@ ${isBad
       clearInterval(screenIntervalRef.current);
       screenIntervalRef.current = null;
     }
+    if (screenVideoElRef.current) {
+      screenVideoElRef.current.srcObject = null;
+      screenVideoElRef.current = null;
+    }
     setIsScreenSharing(false);
     // Zerado junto: deixar uma superfície registrada sem compartilhamento nenhum faria o
     // próximo começar mentindo, antes de a superfície real ser lida.
@@ -6903,6 +6958,81 @@ ${isBad
     if (liveSessionRef.current && liveStateRef.current.status === 'connected') {
       liveSessionRef.current.sendRealtimeInput({ text: "O usuário DESATIVOU o compartilhamento de tela agora." });
     }
+  };
+
+  /**
+   * LÊ O CHAT QUE ESTÁ NA TELA COMPARTILHADA — foto nova, resolução cheia, fora do diálogo.
+   *
+   * Três coisas aqui não são detalhe de implementação, são o conserto:
+   *
+   * 1. A foto é tirada AGORA, direto do <video> do compartilhamento, no tamanho nativo dele e com
+   *    compressão quase nula ('leitura'). O quadro do fluxo em tempo real, que o modelo de voz
+   *    recebe de segundo em segundo, é comprimido para caber num WebSocket contínuo — serve para
+   *    acompanhar, não para ler nome de gente.
+   * 2. A leitura acontece numa chamada SEPARADA, sem histórico de conversa, com temperatura zero
+   *    (ver `lerChatDaTela.ts`). Perguntado no meio do diálogo, o modelo conversa: completa,
+   *    resume e arredonda. Perguntado sozinho, ele transcreve.
+   * 3. O que volta para a conversa não é a lista crua: é a lista já filtrada, com a instrução do
+   *    que fazer com ela. O modelo de voz recebe o texto exato a dizer e a proibição explícita de
+   *    ler o que foi bloqueado ou adivinhar o que ficou ilegível.
+   */
+  const lerChatDaTelaCompartilhada = async (args: any): Promise<any> => {
+    const video = screenVideoElRef.current;
+    if (!video || !screenStreamRef.current) {
+      return {
+        error: 'Não há compartilhamento de tela ativo, então não existe chat para ler. Peça ao usuário para ' +
+          'clicar no botão de compartilhar tela. NÃO invente comentários e não diga o que o chat está falando.'
+      };
+    }
+    if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
+      return { error: 'A imagem do compartilhamento ainda não começou a chegar. Espere um instante e chame de novo. NÃO adivinhe o que está escrito.' };
+    }
+
+    const quadro = calcularQuadro(video.videoWidth, video.videoHeight, 'leitura');
+    const canvas = document.createElement('canvas');
+    canvas.width = quadro.largura;
+    canvas.height = quadro.altura;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return { error: 'Não foi possível preparar a imagem para leitura neste navegador.' };
+    }
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imagem = canvas.toDataURL('image/jpeg', quadro.qualidadeJpeg);
+
+    const leitura = await lerChatDaTela(
+      imagem,
+      'image/jpeg',
+      apiKeys.gemini || '',
+      apiKeys.geminiModel || 'gemini-3.7-flash',
+      {
+        jaLidos: Array.from(comentariosJaLidosRef.current),
+        ondeEstaOChat: typeof args?.onde_esta_o_chat === 'string' ? args.onde_esta_o_chat : undefined
+      }
+    );
+
+    if (!leitura.ok) {
+      return { error: leitura.motivo, instrucao: montarInstrucaoDeLeitura(leitura) };
+    }
+
+    for (const comentario of leitura.comentarios) {
+      comentariosJaLidosRef.current.add(chaveDoComentario(comentario.autor, comentario.texto));
+    }
+    // Uma live longa acumularia chave para sempre; as mais antigas já saíram da tela faz tempo.
+    if (comentariosJaLidosRef.current.size > 400) {
+      const recentes = Array.from(comentariosJaLidosRef.current).slice(-200);
+      comentariosJaLidosRef.current = new Set(recentes);
+    }
+
+    const falaveis = leitura.comentarios.filter(c => c.podeFalar);
+    return {
+      // O nome do campo é a regra: só o que está aqui pode ser dito.
+      podem_ser_lidos: falaveis.map(c => ({ autor: c.autor, texto: c.texto })),
+      bloqueados: leitura.bloqueados,
+      ilegiveis: leitura.ilegiveis,
+      instrucao: montarInstrucaoDeLeitura(leitura),
+      resolucao_lida: `${quadro.largura}x${quadro.altura}`,
+      duracaoMs: leitura.duracaoMs
+    };
   };
 
   const handleCopy = () => {
@@ -10010,6 +10140,17 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         model: "gemini-3.1-flash-live-preview",
         config: {
           responseModalities: [Modality.AUDIO],
+          /**
+           * QUANTOS TOKENS CADA QUADRO DE VÍDEO VALE PARA O MODELO.
+           *
+           * A Live API reduz o vídeo de entrada antes de ele chegar ao modelo, e cada nível é uma
+           * quantidade fixa de tokens por quadro — 64 no baixo, 256 no médio. Uma tela inteira
+           * espremida em 64 tokens não tem como conter uma linha de chat: o que sobra é a mancha
+           * geral da imagem. Mandar uma foto nítida daqui não adiantava nada enquanto ela era
+           * reduzida assim do outro lado. É o segundo estrangulamento da leitura, depois do quadro
+           * de 640×480, e o único que não dava para consertar sem esta linha.
+           */
+          mediaResolution: MediaResolution.MEDIA_RESOLUTION_HIGH,
           outputAudioTranscription: { enabled: true },
           inputAudioTranscription: { enabled: true },
           speechConfig: {
@@ -10037,6 +10178,19 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   parameters: {
                     type: Type.OBJECT,
                     properties: {}
+                  }
+                },
+                {
+                  name: "ler_chat_ao_vivo",
+                  description: "ÚNICA forma de ler comentários, chat ao vivo, mensagens ou qualquer texto pequeno que esteja na tela compartilhada. Tira uma foto nova em resolução cheia e transcreve letra por letra, dizendo o que NÃO deu para ler em vez de adivinhar, e separando o que não pode ser dito em voz alta. Chame esta ferramenta SEMPRE que for falar o que alguém escreveu — nunca leia comentário a partir do vídeo que você recebe em tempo real, que é comprimido e faz você trocar palavras e nomes. Chame de novo a cada vez que for ler o chat: ela já sabe o que você leu antes e não repete.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      onde_esta_o_chat: {
+                        type: Type.STRING,
+                        description: "Opcional. Onde na tela fica a janela de comentários, se você souber ('coluna da direita', 'lado esquerdo em cima'). Ajuda a não confundir o chat com outro texto da tela."
+                      }
+                    }
                   }
                 },
                 {
@@ -10906,13 +11060,22 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     lastFrameTime = timestamp;
                     if (!offscreenCanvas) {
                       offscreenCanvas = document.createElement('canvas');
-                      offscreenCanvas.width = 480; 
-                      offscreenCanvas.height = 360;
+                    }
+                    // 480×360 fixo deformava qualquer câmera 16:9 do mesmo jeito que o
+                    // compartilhamento deformava a tela: rosto e texto achatados na horizontal.
+                    const quadro = calcularQuadro(
+                      liveVideoRef.current.videoWidth,
+                      liveVideoRef.current.videoHeight,
+                      'ambiente'
+                    );
+                    if (offscreenCanvas.width !== quadro.largura || offscreenCanvas.height !== quadro.altura) {
+                      offscreenCanvas.width = quadro.largura;
+                      offscreenCanvas.height = quadro.altura;
                     }
                     const ctx = offscreenCanvas.getContext('2d');
                     if (ctx) {
                       ctx.drawImage(liveVideoRef.current, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-                      const base64Data = offscreenCanvas.toDataURL('image/jpeg', 0.6).split(',')[1];
+                      const base64Data = offscreenCanvas.toDataURL('image/jpeg', quadro.qualidadeJpeg).split(',')[1];
                       try {
                         liveSessionRef.current.sendRealtimeInput({
                           video: { data: base64Data, mimeType: 'image/jpeg' }
@@ -11174,6 +11337,17 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       id: call.id,
                       response: { result: "Compartilhamento de tela interrompido com sucesso." }
                     });
+                  } else if (call.name === "ler_chat_ao_vivo") {
+                    const leitura = await lerChatDaTelaCompartilhada(call.args || {});
+                    if (leitura?.ilegiveis > 0) {
+                      // O usuário precisa saber que parte do chat não está sendo lida, e por quê:
+                      // sem isso ele só percebe que faltou comentário, e não que a fonte está pequena.
+                      addNotification(
+                        `${leitura.ilegiveis} comentário(s) não estavam legíveis na tela. Aumente o zoom do chat para o OSONE conseguir ler.`,
+                        "info"
+                      );
+                    }
+                    responses.push({ name: call.name, id: call.id, response: leitura });
                   } else if (call.name === "disconnectLiveSession") {
                     responses.push({
                       name: call.name,
