@@ -163,6 +163,9 @@ const OSONEMap = React.lazy(() =>
 const RAGConnector = React.lazy(() =>
   import('./components/RAGConnector').then(module => ({ default: module.RAGConnector }))
 );
+const OsoneResearchWorkspace = React.lazy(() =>
+  import('./components/OsoneResearchWorkspace').then(module => ({ default: module.OsoneResearchWorkspace }))
+);
 const ContentCreator = React.lazy(() =>
   import('./components/ContentCreator').then(module => ({ default: module.ContentCreator }))
 );
@@ -610,6 +613,7 @@ const getFriendlyModeName = (mode: WorkspaceMode): string => {
     case 'cowork': return 'OSONE COWORK — agente que clica e digita no computador';
     case 'cameras': return 'OSONE VIGIA — câmeras de segurança ao vivo e o registro do que aconteceu';
     case 'hear': return 'OSONE HEAR — escuta ativa, transcrição do discurso e elaboração adaptativa';
+    case 'web_research': return 'OSONE PESQUISA — book de fontes, conversa e estúdio de relatórios';
     default: return String(mode);
   }
 };
@@ -897,6 +901,11 @@ export default function App() {
   useEffect(() => {
     contextoDoChatCodeParaVozRef.current = contextoDoChatCodeParaVoz;
   }, [contextoDoChatCodeParaVoz]);
+  const [contextoDaPesquisaParaVoz, setContextoDaPesquisaParaVoz] = useState('');
+  const contextoDaPesquisaParaVozRef = useRef('');
+  useEffect(() => {
+    contextoDaPesquisaParaVozRef.current = contextoDaPesquisaParaVoz;
+  }, [contextoDaPesquisaParaVoz]);
 
   const enfileirarPedidoDeVozDoCode = (promptRecebido: unknown): string | null => {
     const prompt = typeof promptRecebido === 'string' ? promptRecebido.trim() : '';
@@ -916,7 +925,7 @@ export default function App() {
     hear: 'OSONE HEAR',
     osone_code: 'OSONE CODE',
     whatsapp: 'OSONE ZAP',
-    agentic_research: 'Pesquisa agêntica avançada'
+    agentic_research: 'OSONE PESQUISA'
   };
 
   const paidFeaturePlanName = (feature: PaidFeature): string => {
@@ -9949,6 +9958,12 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
         : '';
 
       const memoryContext = buildMemoryContextBlock();
+      const contextoPesquisaAtivo = workspaceMode === 'web_research'
+        ? contextoDaPesquisaParaVozRef.current.trim()
+        : '';
+      const researchContextBlock = contextoPesquisaAtivo
+        ? `\n\nBOOK ATIVO DO OSONE PESQUISA:\n${contextoPesquisaAtivo.slice(0, 18000)}`
+        : '';
 
       let liveSystemInstruction = "";
       if (isTranslationMode) {
@@ -10084,18 +10099,23 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
           • 'canvas': Lousa e Quadro Interativo.
           • 'wellness': Saúde e Estilo.
           • 'whatsapp': OSONE ZAP (Atendimento e Auto-resposta pelo WhatsApp).
+          • 'web_research': OSONE PESQUISA — book de fontes, pesquisa web Max, conversa sobre fontes e estúdio de relatório, tabela, gráfico textual e cartões.
           • 'creator': Criador de Conteúdo Viral.
           • 'cowork': OSONE COWORK — a aba onde o usuário PEDE uma tarefa no computador ("abre o YouTube e procura tal coisa"), vê o plano de passos, aprova, e acompanha o agente clicando e digitando. Quando ele pedir uma automação no computador e quiser ACOMPANHAR o que vai ser feito antes de acontecer, abra esta aba em vez de executar direto.
         - Se o usuário disser "Abra o OSONE CODE" ou "Abra a aba de código", chame 'switch_workspace_mode' com mode 'code'.
+        - Se o usuário disser "Abra pesquisa", "OSONE PESQUISA", "Notebook", "book de fontes" ou "pesquisa Max", chame 'switch_workspace_mode' com mode 'web_research'.
         - Se o usuário disser "Abra a aba de escrita" ou "Prosa", chame 'switch_workspace_mode' com mode 'writing'.
         - Se o usuário disser "Feche a aba", "Volte para o início" ou "Sair da aba", chame 'close_workspace_tab' ou 'switch_workspace_mode' com mode 'home'.
         - PEDIDOS DE JOGOS E CÓDIGOS PARA O OSONE CODE SEM DIGITAR:
           Quando o usuário solicitar por voz para o OSONE CODE gerar um jogo, aplicativo ou modificação de código (ex: "OSONE, crie um jogo da velha no OSONE CODE" ou "Gere um jogo de nave space invader"), chame IMEDIATAMENTE a ferramenta 'send_code_prompt' informando a instrução em texto no parâmetro 'prompt'. A ferramenta abrirá o OSONE CODE automaticamente e iniciará a geração do código/jogo sem o usuário precisar digitar nada!
           Quando ele fizer uma PERGUNTA sobre o projeto ou sobre a conversa da sessão Conversar do OSONE CODE, não mande editar: chame 'get_osone_code_chat_context', leia o contexto retornado e responda em voz alta com base nele. Nunca tente obter ou revelar esse contexto quando a ferramenta recusar por falta do plano Pro ou Max.
+        - OSONE PESQUISA POR VOZ:
+          Quando ele fizer pergunta sobre fontes, book, relatório, pesquisa ou notebook da aba OSONE PESQUISA, chame 'get_osone_research_context', leia o contexto retornado e responda com base nas fontes selecionadas. Se a ferramenta recusar por falta do plano Max ou não houver fontes, diga isso claramente.
 
         CONTEXTO:
         - Workspace: ${workspaceMode}
         - Canvas: ${canvasSummary}${healthContext}
+        ${researchContextBlock}
         ${memoryContext}
         Aja com base nas memórias: ${recentChatContext}
         `;
@@ -10508,8 +10528,8 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     properties: {
                       mode: {
                         type: Type.STRING,
-                        enum: ["home", "writing", "code", "sounds", "canvas", "wellness", "whatsapp", "creator", "smarthome", "tiktok", "map", "cowork", "hear", "cameras"],
-                        description: "O modo para o qual alternar: 'writing' (Aba de Prosa e Escrita de Texto/Documentos), 'code' (Aba OSONE CODE - Programação, Desenvolvimento de Jogos e Software), 'home' (Fechar aba atual / Voltar ao Início), 'canvas' (Lousa Interativa), 'sounds' (Biblioteca de Sons), 'wellness' (Saúde), 'whatsapp' (OSONE ZAP - Atendimento pelo WhatsApp), 'cowork' (OSONE COWORK - a aba onde o usuário pede uma tarefa no computador, aprova o plano e vê o agente clicar e digitar sozinho), 'hear' (OSONE HEAR - escuta ativa que transcreve um discurso falado e depois o organiza; abra quando o usuário pedir para ouvir, gravar, transcrever, anotar uma reunião/aula, ou 'escutar o que eu vou falar'), 'cameras' (OSONE VIGIA — as câmeras de segurança: mostra o vídeo ao vivo e a lista do que foi detectado. Abra quando ele perguntar o que está acontecendo na garagem/portão/loja, pedir para ver uma câmera, ou quiser rever uma gravação)."
+                        enum: ["home", "writing", "code", "sounds", "canvas", "wellness", "whatsapp", "creator", "smarthome", "tiktok", "map", "cowork", "hear", "cameras", "web_research"],
+                        description: "O modo para o qual alternar: 'writing' (Aba de Prosa e Escrita de Texto/Documentos), 'code' (Aba OSONE CODE - Programação, Desenvolvimento de Jogos e Software), 'web_research' (OSONE PESQUISA - book de fontes, pesquisa web Max, conversa com fontes e estúdio), 'home' (Fechar aba atual / Voltar ao Início), 'canvas' (Lousa Interativa), 'sounds' (Biblioteca de Sons), 'wellness' (Saúde), 'whatsapp' (OSONE ZAP - Atendimento pelo WhatsApp), 'cowork' (OSONE COWORK - a aba onde o usuário pede uma tarefa no computador, aprova o plano e vê o agente clicar e digitar sozinho), 'hear' (OSONE HEAR - escuta ativa que transcreve um discurso falado e depois o organiza; abra quando o usuário pedir para ouvir, gravar, transcrever, anotar uma reunião/aula, ou 'escutar o que eu vou falar'), 'cameras' (OSONE VIGIA — as câmeras de segurança: mostra o vídeo ao vivo e a lista do que foi detectado. Abra quando ele perguntar o que está acontecendo na garagem/portão/loja, pedir para ver uma câmera, ou quiser rever uma gravação)."
                       }
                     },
                     required: ["mode"]
@@ -10540,6 +10560,14 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 {
                   name: "get_osone_code_chat_context",
                   description: "Lê o projeto aberto e a conversa recente da sessão Conversar do OSONE CODE para responder por voz sobre código, arquitetura, decisões e alterações. Recurso exclusivo do plano Pro ou Max; chame antes de responder qualquer pergunta por voz sobre o chat do OSONE CODE.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {}
+                  }
+                },
+                {
+                  name: "get_osone_research_context",
+                  description: "Lê o book de fontes ativo da aba OSONE PESQUISA para responder por voz com base nas fontes selecionadas, no último resultado do Estúdio e nos trechos importados/pesquisados. Recurso exclusivo do plano Max; chame antes de responder perguntas por voz sobre fontes, notebook, relatório ou pesquisa.",
                   parameters: {
                     type: Type.OBJECT,
                     properties: {}
@@ -11632,6 +11660,22 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                         ? { result: contexto }
                         : { error: 'Abra o OSONE CODE e a sessão Conversar ao menos uma vez para carregar o contexto do projeto.' }
                     });
+                  } else if (call.name === "get_osone_research_context") {
+                    if (!requestPaidFeature('agentic_research')) {
+                      responses.push({
+                        name: call.name, id: call.id,
+                        response: { error: 'OSONE PESQUISA requer o plano Max e o book de fontes não foi disponibilizado.' }
+                      });
+                      continue;
+                    }
+                    const contexto = contextoDaPesquisaParaVozRef.current.trim();
+                    responses.push({
+                      name: call.name,
+                      id: call.id,
+                      response: contexto
+                        ? { result: contexto }
+                        : { error: 'Abra o OSONE PESQUISA, adicione ou selecione fontes e gere/converse ao menos uma vez para carregar o book.' }
+                    });
                   } else if (call.name === "send_code_prompt") {
                     const promptText = (call.args as any).prompt as string;
                     if (!requestPaidFeature('osone_code')) {
@@ -12647,8 +12691,12 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
     
     // Inject prompt to live session if connected (this pushes attention context to Gemini Live real-time stream)
     if (liveSessionRef.current && liveState.status === 'connected') {
+      const contextoPesquisa = workspaceMode === 'web_research' ? contextoDaPesquisaParaVozRef.current.trim() : '';
+      const contextoDaAba = contextoPesquisa
+        ? `\n\n[BOOK DE FONTES DA ABA OSONE PESQUISA]\n${contextoPesquisa.slice(0, 18000)}`
+        : '';
       liveSessionRef.current.sendRealtimeInput({
-        text: `[SINTONIZADOR DE CHASSI NEURAL DA ATENÇÃO]: O usuário acaba de te chamar explicitamente para sintonizar seu foco e acompanhá-lo na aba atual "${friendlyName}" (ID: ${workspaceMode})! Reconheça imediatamente de forma audível e de forma polida que você está olhando exatamente para esta aba e se coloque à disposição do usuário para o que ele precisar aqui.`
+        text: `[SINTONIZADOR DE CHASSI NEURAL DA ATENÇÃO]: O usuário acaba de te chamar explicitamente para sintonizar seu foco e acompanhá-lo na aba atual "${friendlyName}" (ID: ${workspaceMode})! Reconheça imediatamente de forma audível e de forma polida que você está olhando exatamente para esta aba e se coloque à disposição do usuário para o que ele precisar aqui.${contextoDaAba}`
       });
     } else {
       // Otherwise, add response in chat history
@@ -12661,6 +12709,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         sounds: "Sintonizada! Estou de olho na sua Biblioteca de Sons e Efeitos. Aqui você pode carregar novos arquivos locais, classificar trilhas e montar as suas músicas preferidas.",
         whatsapp: "Sintonizada! Estou sintonizando suas interações no OSONE ZAP. Pronta para disparar mensagens ou responder seus contatos com inteligência de ponta.",
         map: "Sintonizada! Estou atenta ao Mapa OS de satélite. Diga o nome de uma cidade ou localidade para eu traçar um dossiê geográfico completo com pontos históricos interessantes!",
+        web_research: "Sintonizada! Estou no OSONE PESQUISA. Podemos montar um book de fontes, conversar usando apenas esse material e gerar relatório, tabela, gráfico textual, cartões e documento Word.",
         rag: "Sintonizada! Estou no painel de RAG e Conectividade de Arquivos do Computador. Lembra-se: tenho acesso total e integrado a todos os arquivos que você compartilhou aqui no IndexedDB. Posso carregar novos arquivos, ler dados, sincronizar ideias e salvá-los localmente em tempo real.",
         creator: "Sintonizada! Estou pronta no Estúdio Neural de Criação Viral. Defina o nicho e referências do canal do seu computador e eu irei pesquisar e raciocinar sobre 9 ideias incríveis, destacar as 3 melhores e criar um roteiro em 3 estágios dramáticos de retenção para o seu próximo vídeo viral!"
       };
@@ -13532,6 +13581,22 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 onLocationFound={(placeName) => {
                   setMapSearchQuery(placeName);
                 }}
+              />
+            </motion.div>
+          ) : workspaceMode === 'web_research' ? (
+            <motion.div
+              key="workspace-web-research"
+              initial={{ opacity: 0, scale: 0.985 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.985 }}
+              className="w-full flex-1 flex flex-col min-h-0"
+            >
+              <OsoneResearchWorkspace
+                apiKeys={apiKeys}
+                onBack={() => setWorkspaceMode('home')}
+                onNotification={addNotification}
+                onStartLiveVoice={() => startLiveSession()}
+                onContextChange={setContextoDaPesquisaParaVoz}
               />
             </motion.div>
           ) : workspaceMode === 'rag' ? (

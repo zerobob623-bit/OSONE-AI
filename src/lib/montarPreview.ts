@@ -115,13 +115,39 @@ export function resolverImports(
   });
 }
 
-/** A página do projeto: a marcada como principal, senão index.html, senão o primeiro HTML. */
+function projetoPareceFullstack(arquivos: CodeRepositoryFile[]): boolean {
+  return (arquivos || []).some(f => /^(frontend|public|src|server|api|shared)\//i.test(f.name || ''))
+    || (arquivos || []).some(f => chaveDeCaminho(f.name || '') === 'package.json');
+}
+
+function estaDentroDoFrontend(caminho: string): boolean {
+  return /^(frontend|public|src)\//i.test(caminho || '');
+}
+
+/** A página do projeto: no fullstack, prioriza o frontend; no simples, preserva index.html. */
 export function paginaPrincipal(arquivos: CodeRepositoryFile[]): CodeRepositoryFile | null {
   const html = (arquivos || []).filter(f =>
     /\.html?$/i.test(f.name || '') || f.language === 'html'
   );
   if (html.length === 0) return null;
   const porCaminho = (nome: string) => html.find(f => chaveDeCaminho(f.name || '') === chaveDeCaminho(nome));
+
+  /**
+   * Quando existe árvore fullstack, "index.html" na raiz pode ser apenas um rascunho antigo.
+   *
+   * O botão Fullstack abre o frontend, mas o preview escolhia a página principal dando preferência
+   * ao index da raiz. Resultado: a pessoa via o modo fullstack ligado, porém o iframe rodava outro
+   * arquivo, com JS antigo tentando escutar elementos que não estavam mais na tela.
+   */
+  if (projetoPareceFullstack(arquivos)) {
+    const principalDoFrontend = html.find(f => f.isMain && estaDentroDoFrontend(f.name || ''))
+      || porCaminho('frontend/index.html')
+      || porCaminho('public/index.html')
+      || porCaminho('src/index.html')
+      || html.find(f => estaDentroDoFrontend(f.name || '') && nomeDoCaminho(f.name || '').toLowerCase() === 'index.html');
+    if (principalDoFrontend) return principalDoFrontend;
+  }
+
   return html.find(f => f.isMain)
     || porCaminho('index.html')
     || porCaminho('frontend/index.html')

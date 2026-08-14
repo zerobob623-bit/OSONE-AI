@@ -56,6 +56,13 @@ registrar('o preview resolve caminhos relativos a partir do arquivo de origem',
     && preview.includes('frontend/index.html'),
   'frontend/index.html + ./app.js + imports aninhados');
 
+registrar('projeto fullstack prioriza o frontend no preview',
+  preview.includes('projetoPareceFullstack')
+    && preview.includes('principalDoFrontend')
+    && workspace.includes('entradaFrontendPreferidaDoCode')
+    && workspace.includes('f.id === entrada.id ? { ...f, isMain: true } : { ...f, isMain: false }'),
+  'não roda um index.html antigo da raiz quando há frontend/index.html');
+
 registrar('o exportador preserva pastas seguras no zip',
   exportador.includes('caminhoSeguroNoPacote')
     && exportador.includes('normalizarCaminhoDoCode')

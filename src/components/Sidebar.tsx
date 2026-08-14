@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   X, Volume2, FileText, Code2, Music, Gamepad2, Zap, Activity, LogOut, MessageSquare,
   Compass, Crown, Database, Video, Radio, Eye, Heart, BookOpen, Settings, MousePointerClick, Ear,
+  Search,
   type LucideIcon
 } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -83,6 +84,11 @@ const GRUPOS: GrupoDoMenu[] = [
         rotulo: 'OSONE HEAR', icone: Ear, modo: 'hear',
         ativo: "bg-violet-500/10 text-violet-300 border border-violet-500/25 shadow-[0_0_15px_rgba(139,92,246,0.15)]",
         corDoIcone: "text-violet-400"
+      },
+      {
+        rotulo: 'OSONE PESQUISA', icone: Search, modo: 'web_research',
+        ativo: "bg-purple-500/10 text-purple-300 border border-purple-500/25 shadow-[0_0_15px_rgba(168,85,247,0.15)]",
+        corDoIcone: "text-purple-300"
       },
       {
         /**
