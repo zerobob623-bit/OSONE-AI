@@ -831,8 +831,8 @@ export const SettingsModal = ({
                       </div>
                       <div className="p-3 rounded-2xl bg-white/[0.01] border border-white/[0.05] flex items-center justify-between gap-4">
                         <div className="min-w-0">
-                          <p className="text-xs font-bold text-white">Nano Banana 2</p>
-                          <p className="text-[10px] text-her-muted/60 font-mono">gemini-3.6-flash</p>
+                          <p className="text-xs font-bold text-white">Nano Banana</p>
+                          <p className="text-[10px] text-her-muted/60 font-mono">gemini-2.5-flash-image</p>
                         </div>
                         <span className="p-1 px-2.5 rounded-full bg-emerald-500/10 text-emerald-400 text-[9px] font-bold uppercase tracking-widest border border-emerald-500/25 flex items-center gap-1.5 shrink-0">
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -840,7 +840,7 @@ export const SettingsModal = ({
                         </span>
                       </div>
                       <p className="mt-2 text-[10px] text-her-muted/40 italic leading-relaxed">
-                        Este é o modelo generativo multimídia mais avançado do ecossistema Gemini para criação e edição de imagens de alta fidelidade e resolução.
+                        Modelo de criação e edição de imagens do Gemini, escolhido por ser o da linha de imagem que o nível GRATUITO ainda cobre — os mais novos rendem imagem melhor, mas voltam sem cota numa chave gratuita. Se ele ficar sem cota, o OSONE tenta os modelos seguintes e, por último, uma geração sem chave, para a imagem não deixar de sair.
                       </p>
                     </div>
 

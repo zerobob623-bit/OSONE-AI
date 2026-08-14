@@ -5509,7 +5509,11 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
         return res.status(400).json({ error: "Chave API do Gemini não definida. Insira uma chave válida nos Ajustes." });
       }
 
-      const requestedModel = model || "gemini-3.6-flash";
+      // O modelo de imagem padrão é o gemini-2.5-flash-image (o Nano Banana original): é o único
+      // da linha de imagem que o nível GRATUITO ainda cobre. Os modelos de imagem mais novos
+      // rendem imagem melhor, mas numa chave gratuita eles voltam sem cota — e uma geração que
+      // não acontece vale menos do que uma imagem boa que acontece.
+      const requestedModel = model || "gemini-2.5-flash-image";
 
       // Helper function to try generating with Gemini (generateContent) via direct REST API
       const tryGeminiModelREST = async (modelName: string) => {
@@ -5625,9 +5629,16 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
         };
       };
 
-      // Execute with self-healing fallback logic
+      // Execute with self-healing fallback logic.
+      //
+      // A fila começa pelos modelos de IMAGEM, e o nome de preview entra logo depois do definitivo:
+      // nome de modelo muda de geração em geração e quebra em silêncio, então vale tentar as duas
+      // formas antes de desistir da linha inteira. Os modelos de texto continuam no fim como último
+      // recurso antes do Pollinations, que é sem chave e não gasta cota nenhuma do usuário.
       const candidates = [
         requestedModel,
+        "gemini-2.5-flash-image",
+        "gemini-2.5-flash-image-preview",
         "gemini-3.6-flash",
         "gemini-3.5-flash-lite",
         "gemini-3.1-flash-lite"
