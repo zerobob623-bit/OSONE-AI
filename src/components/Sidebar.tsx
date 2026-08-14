@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { WorkspaceMode } from '../types';
+import type { OsonePlanId } from '../lib/planos';
 
 /**
  * Uma entrada do menu.
@@ -164,7 +165,7 @@ export const Sidebar = ({ isOpen, onClose, mode, setMode, user, currentPlan, onL
   mode: WorkspaceMode;
   setMode: (mode: WorkspaceMode) => void;
   user?: any;
-  currentPlan?: 'free' | 'plus' | 'pro';
+  currentPlan?: OsonePlanId;
   onLogout?: () => void;
   onOpenProfileModal?: () => void;
   onOpenSettings?: () => void;

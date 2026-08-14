@@ -4,19 +4,22 @@ import { applicationDefault, cert, getApps, initializeApp, type App as FirebaseA
 import { getAuth } from 'firebase-admin/auth';
 import { FieldValue, getFirestore, type Firestore } from 'firebase-admin/firestore';
 
-type PlanId = 'free' | 'plus' | 'pro';
+type PlanId = 'free' | 'plus' | 'pro' | 'max';
 type Interval = 'month' | 'year';
 type PaymentMethod = 'card' | 'pix';
 type PaidPlanId = Exclude<PlanId, 'free'>;
+const PAID_PLAN_IDS: PaidPlanId[] = ['plus', 'pro', 'max'];
 
 const PRICE_ENV: Record<Exclude<PlanId, 'free'>, Record<Interval, string>> = {
   plus: { month: 'STRIPE_PRICE_PLUS_MONTHLY', year: 'STRIPE_PRICE_PLUS_YEARLY' },
-  pro: { month: 'STRIPE_PRICE_PRO_MONTHLY', year: 'STRIPE_PRICE_PRO_YEARLY' }
+  pro: { month: 'STRIPE_PRICE_PRO_MONTHLY', year: 'STRIPE_PRICE_PRO_YEARLY' },
+  max: { month: 'STRIPE_PRICE_MAX_MONTHLY', year: 'STRIPE_PRICE_MAX_YEARLY' }
 };
 
 const EXPECTED_PRICE: Record<Exclude<PlanId, 'free'>, Record<Interval, number>> = {
   plus: { month: 3990, year: 33990 },
-  pro: { month: 6990, year: 66990 }
+  pro: { month: 6990, year: 66990 },
+  max: { month: 11990, year: 119990 }
 };
 
 let stripeClient: Stripe | null = null;
@@ -41,6 +44,13 @@ const BILLING_EVENTS = new Set([
 ]);
 
 function env(name: string): string { return String(process.env[name] || '').trim(); }
+
+function billingPlansConfigured(): Record<PaidPlanId, boolean> {
+  return Object.fromEntries(PAID_PLAN_IDS.map(plan => [
+    plan,
+    !!env(PRICE_ENV[plan].month) && !!env(PRICE_ENV[plan].year)
+  ])) as Record<PaidPlanId, boolean>;
+}
 
 function billingConfiguration() {
   const missing = [
@@ -160,15 +170,16 @@ export function validateStripePrice(
 
 function planFromPrice(price: string | null | undefined): PlanId {
   if (!price) return 'free';
-  if ([priceId('pro', 'month'), priceId('pro', 'year')].includes(price)) return 'pro';
-  if ([priceId('plus', 'month'), priceId('plus', 'year')].includes(price)) return 'plus';
+  for (const plan of PAID_PLAN_IDS) {
+    if ([priceId(plan, 'month'), priceId(plan, 'year')].includes(price)) return plan;
+  }
   return 'free';
 }
 
 function intervalFromPrice(price: string | null | undefined): Interval | null {
   if (!price) return null;
-  if ([priceId('plus', 'month'), priceId('pro', 'month')].includes(price)) return 'month';
-  if ([priceId('plus', 'year'), priceId('pro', 'year')].includes(price)) return 'year';
+  if (PAID_PLAN_IDS.map(plan => priceId(plan, 'month')).includes(price)) return 'month';
+  if (PAID_PLAN_IDS.map(plan => priceId(plan, 'year')).includes(price)) return 'year';
   return null;
 }
 
@@ -336,7 +347,7 @@ async function writePixEntitlement(session: Stripe.Checkout.Session) {
   const uid = session.metadata?.firebaseUid;
   const plan = session.metadata?.plan as PaidPlanId;
   const interval = session.metadata?.interval as Interval;
-  if (!uid || !['plus', 'pro'].includes(plan) || !['month', 'year'].includes(interval) || session.metadata?.paymentMethod !== 'pix') {
+  if (!uid || !PAID_PLAN_IDS.includes(plan) || !['month', 'year'].includes(interval) || session.metadata?.paymentMethod !== 'pix') {
     throw new Error(`Checkout PIX ${session.id} sem metadados válidos.`);
   }
   validatePixCheckout(session, plan, interval);
@@ -465,7 +476,12 @@ export function registerBillingApi(app: Express) {
       missing: config.enabled ? [] : config.missing,
       returnOrigin: config.returnOrigin,
       pixEnabled: config.enabled ? await pixAvailable() : false,
-      plans: { plus: { monthly: 39.90, yearly: 339.90 }, pro: { monthly: 69.90, yearly: 669.90 } }
+      planBillingConfigured: billingPlansConfigured(),
+      plans: {
+        plus: { monthly: 39.90, yearly: 339.90 },
+        pro: { monthly: 69.90, yearly: 669.90 },
+        max: { monthly: 119.90, yearly: 1199.90 }
+      }
     });
   });
 
@@ -498,13 +514,14 @@ export function registerBillingApi(app: Express) {
         ACCESS_GRANTING_STATUSES.includes(data.status) && !pixExpired;
       const paidPix = data.billingMethod === 'pix' && data.paid === true && data.status === 'active' && !pixExpired;
       const manualGrant = data.billingMethod === 'manual' && data.manualGrant === true && data.status === 'active' && !manualExpired;
-      const grantsPlan = ['plus', 'pro'].includes(data.plan) && (paidCard || paidPix || manualGrant);
+      const grantsPlan = PAID_PLAN_IDS.includes(data.plan) && (paidCard || paidPix || manualGrant);
       return res.json({
         plan: grantsPlan ? data.plan : 'free',
         status: grantsPlan ? data.status : 'free',
         currentPeriodEnd: grantsPlan ? data.currentPeriodEnd || null : null,
         billingMethod: grantsPlan ? data.billingMethod || (data.stripeSubscriptionId ? 'card' : null) : null,
         pixEnabled: await pixAvailable(),
+        planBillingConfigured: billingPlansConfigured(),
         billingEnabled: true
       });
     } catch (err) { return sendError(res, err); }
@@ -518,7 +535,7 @@ export function registerBillingApi(app: Express) {
       const plan = req.body?.plan as PaidPlanId;
       const interval = req.body?.interval as Interval;
       const paymentMethod = (req.body?.paymentMethod || 'card') as PaymentMethod;
-      if (!['plus', 'pro'].includes(plan) || !['month', 'year'].includes(interval)) {
+      if (!PAID_PLAN_IDS.includes(plan) || !['month', 'year'].includes(interval)) {
         return res.status(400).json({ error: 'Plano ou período inválido.' });
       }
       if (!['card', 'pix'].includes(paymentMethod)) return res.status(400).json({ error: 'Forma de pagamento inválida.' });
@@ -530,7 +547,11 @@ export function registerBillingApi(app: Express) {
       // trás um cliente sem pagamento nenhum, e um painel cheio desses clientes fantasma esconde
       // quantas pessoas de fato chegaram à página de pagamento.
       const returnUrl = env('OSONE_BILLING_RETURN_URL');
-      const configuredPrice = await stripe().prices.retrieve(priceId(plan, interval));
+      const configuredPriceId = priceId(plan, interval);
+      if (!configuredPriceId) {
+        return res.status(503).json({ error: `Cobrança do plano ${plan.toUpperCase()} ${interval === 'month' ? 'mensal' : 'anual'} ainda não configurada na Stripe.` });
+      }
+      const configuredPrice = await stripe().prices.retrieve(configuredPriceId);
       validateStripePrice(configuredPrice, plan, interval);
       const { db } = adminServices();
       const entitlement = (await db.collection('entitlements').doc(user.uid).get()).data() || {};

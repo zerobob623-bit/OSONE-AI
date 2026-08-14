@@ -11,6 +11,7 @@ export interface SubscriptionSnapshot {
   billingEnabled: boolean;
   billingMethod?: 'card' | 'pix' | null;
   pixEnabled?: boolean;
+  planBillingConfigured?: Partial<Record<Exclude<OsonePlanId, 'free'>, boolean>>;
   configurationMissing?: string[];
 }
 

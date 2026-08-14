@@ -915,7 +915,13 @@ export default function App() {
     cowork_browser: 'OSONE COWORK',
     hear: 'OSONE HEAR',
     osone_code: 'OSONE CODE',
-    whatsapp: 'OSONE ZAP'
+    whatsapp: 'OSONE ZAP',
+    agentic_research: 'Pesquisa agêntica avançada'
+  };
+
+  const paidFeaturePlanName = (feature: PaidFeature): string => {
+    const plan = minimumPlanForFeature(feature);
+    return plan === 'max' ? 'Max' : plan === 'pro' ? 'Pro' : 'Plus';
   };
 
   const requestPaidFeature = (feature: PaidFeature): boolean => {
@@ -2281,7 +2287,7 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
    */
   const listarContatosWhatsApp = async (args: any): Promise<any> => {
     if (!requestPaidFeature('whatsapp')) {
-      return { error: 'OSONE ZAP requer o plano Pro. A tela de planos foi aberta para o usuário.' };
+      return { error: 'OSONE ZAP requer o plano Pro ou Max. A tela de planos foi aberta para o usuário.' };
     }
     try {
       const res = await fetch('/api/whatsapp/contacts');
@@ -2319,7 +2325,7 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
 
   const sendWhatsAppFromModel = async (args: any): Promise<{ message: string; error?: string }> => {
     if (!requestPaidFeature('whatsapp')) {
-      return { message: '', error: 'OSONE ZAP requer o plano Pro. Nenhuma mensagem foi enviada.' };
+      return { message: '', error: 'OSONE ZAP requer o plano Pro ou Max. Nenhuma mensagem foi enviada.' };
     }
     const number = String(args?.number || '').replace(/\D/g, '');
     const message = String(args?.message || '').trim();
@@ -9438,7 +9444,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
             if (feature && !requestPaidFeature(feature)) {
               setChatHistory(prev => [...prev, {
                 id: Math.random().toString(36).substr(2, 9), role: 'assistant' as const,
-                content: `${paidFeatureLabel[feature]} faz parte do plano ${minimumPlanForFeature(feature) === 'pro' ? 'Pro' : 'Plus'}. Abri os planos para você.`
+                content: `${paidFeatureLabel[feature]} faz parte do plano ${paidFeaturePlanName(feature)}. Abri os planos para você.`
               }]);
               continue;
             }
@@ -9460,7 +9466,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
             if (!requestPaidFeature('osone_code')) {
               setChatHistory(prev => [...prev, {
                 id: Math.random().toString(36).substr(2, 9), role: 'assistant' as const,
-                content: 'O OSONE CODE faz parte do plano Pro. A aba de Escrita continua gratuita, inclusive para escrever código.'
+                content: 'O OSONE CODE faz parte do plano Pro ou Max. A aba de Escrita continua gratuita, inclusive para escrever código.'
               }]);
               continue;
             }
@@ -9688,7 +9694,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
             const { objetivo, passos } = call.args as any;
             const rel: any = requestPaidFeature('cowork_browser')
               ? await executarCowork(passos || [], apiKeys.localAgentToken, false, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.7-flash' })
-              : { error: 'OSONE COWORK requer o plano Plus ou Pro. Nenhuma ação foi executada no navegador.' };
+              : { error: 'OSONE COWORK requer o plano Plus ou superior. Nenhuma ação foi executada no navegador.' };
 
             if (rel?.error) {
               addNotification(rel.error, 'error');
@@ -10085,7 +10091,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
         - Se o usuário disser "Feche a aba", "Volte para o início" ou "Sair da aba", chame 'close_workspace_tab' ou 'switch_workspace_mode' com mode 'home'.
         - PEDIDOS DE JOGOS E CÓDIGOS PARA O OSONE CODE SEM DIGITAR:
           Quando o usuário solicitar por voz para o OSONE CODE gerar um jogo, aplicativo ou modificação de código (ex: "OSONE, crie um jogo da velha no OSONE CODE" ou "Gere um jogo de nave space invader"), chame IMEDIATAMENTE a ferramenta 'send_code_prompt' informando a instrução em texto no parâmetro 'prompt'. A ferramenta abrirá o OSONE CODE automaticamente e iniciará a geração do código/jogo sem o usuário precisar digitar nada!
-          Quando ele fizer uma PERGUNTA sobre o projeto ou sobre a conversa da sessão Conversar do OSONE CODE, não mande editar: chame 'get_osone_code_chat_context', leia o contexto retornado e responda em voz alta com base nele. Nunca tente obter ou revelar esse contexto quando a ferramenta recusar por falta do plano Pro.
+          Quando ele fizer uma PERGUNTA sobre o projeto ou sobre a conversa da sessão Conversar do OSONE CODE, não mande editar: chame 'get_osone_code_chat_context', leia o contexto retornado e responda em voz alta com base nele. Nunca tente obter ou revelar esse contexto quando a ferramenta recusar por falta do plano Pro ou Max.
 
         CONTEXTO:
         - Workspace: ${workspaceMode}
@@ -10533,7 +10539,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 },
                 {
                   name: "get_osone_code_chat_context",
-                  description: "Lê o projeto aberto e a conversa recente da sessão Conversar do OSONE CODE para responder por voz sobre código, arquitetura, decisões e alterações. Recurso exclusivo do plano Pro; chame antes de responder qualquer pergunta por voz sobre o chat do OSONE CODE.",
+                  description: "Lê o projeto aberto e a conversa recente da sessão Conversar do OSONE CODE para responder por voz sobre código, arquitetura, decisões e alterações. Recurso exclusivo do plano Pro ou Max; chame antes de responder qualquer pergunta por voz sobre o chat do OSONE CODE.",
                   parameters: {
                     type: Type.OBJECT,
                     properties: {}
@@ -11454,7 +11460,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     const { passos } = call.args as any;
                     const rel: any = requestPaidFeature('cowork_browser')
                       ? await executarCowork(passos || [], apiKeys.localAgentToken, true, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.7-flash' })
-                      : { error: 'OSONE COWORK requer o plano Plus ou Pro. Nenhuma ação foi executada no navegador.' };
+                      : { error: 'OSONE COWORK requer o plano Plus ou superior. Nenhuma ação foi executada no navegador.' };
                     if (rel?.error) {
                       addNotification(rel.error, 'error');
                       responses.push({ name: call.name, id: call.id, response: { error: rel.error } });
@@ -11585,7 +11591,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     if (feature && !requestPaidFeature(feature)) {
                       responses.push({
                         name: call.name, id: call.id,
-                        response: { error: `${paidFeatureLabel[feature]} requer o plano ${minimumPlanForFeature(feature) === 'pro' ? 'Pro' : 'Plus'}. A tela de planos foi aberta.` }
+                        response: { error: `${paidFeatureLabel[feature]} requer o plano ${paidFeaturePlanName(feature)}. A tela de planos foi aberta.` }
                       });
                       continue;
                     }
@@ -11614,7 +11620,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     if (!requestPaidFeature('osone_code')) {
                       responses.push({
                         name: call.name, id: call.id,
-                        response: { error: 'O chat do OSONE CODE requer o plano Pro e seu contexto não foi disponibilizado.' }
+                        response: { error: 'O chat do OSONE CODE requer o plano Pro ou Max e seu contexto não foi disponibilizado.' }
                       });
                       continue;
                     }
@@ -11631,7 +11637,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     if (!requestPaidFeature('osone_code')) {
                       responses.push({
                         name: call.name, id: call.id,
-                        response: { error: 'OSONE CODE requer o plano Pro. A aba de Escrita continua gratuita, inclusive para escrever código.' }
+                        response: { error: 'OSONE CODE requer o plano Pro ou Max. A aba de Escrita continua gratuita, inclusive para escrever código.' }
                       });
                       continue;
                     }
