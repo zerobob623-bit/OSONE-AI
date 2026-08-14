@@ -13595,7 +13595,9 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 apiKeys={apiKeys}
                 onBack={() => setWorkspaceMode('home')}
                 onNotification={addNotification}
-                onStartLiveVoice={() => startLiveSession()}
+                onToggleLiveVoice={handleVoiceToggle}
+                isVoiceActive={liveState.status === 'connected' || isElevenLabsLiveActive}
+                isVoiceConnecting={liveState.status === 'connecting'}
                 onContextChange={setContextoDaPesquisaParaVoz}
               />
             </motion.div>

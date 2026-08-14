@@ -8,11 +8,11 @@ import {
   Download,
   FilePlus2,
   FileText,
-  Globe2,
   History,
   Loader2,
   MessageSquareText,
   Mic,
+  MicOff,
   Plus,
   Search,
   SlidersHorizontal,
@@ -61,7 +61,9 @@ interface OsoneResearchWorkspaceProps {
   apiKeys: ApiKeys;
   onBack: () => void;
   onNotification?: (message: string, type?: 'success' | 'error' | 'info') => void;
-  onStartLiveVoice?: () => void;
+  onToggleLiveVoice?: () => void;
+  isVoiceActive?: boolean;
+  isVoiceConnecting?: boolean;
   onContextChange?: (context: string) => void;
 }
 
@@ -178,7 +180,9 @@ export const OsoneResearchWorkspace: React.FC<OsoneResearchWorkspaceProps> = ({
   apiKeys,
   onBack,
   onNotification,
-  onStartLiveVoice,
+  onToggleLiveVoice,
+  isVoiceActive = false,
+  isVoiceConnecting = false,
   onContextChange
 }) => {
   const [consulta, setConsulta] = useState('');
@@ -196,6 +200,7 @@ export const OsoneResearchWorkspace: React.FC<OsoneResearchWorkspaceProps> = ({
   const [historicoPesquisas, setHistoricoPesquisas] = useState<HistoricoPesquisa[]>([]);
   const [respondendo, setRespondendo] = useState(false);
   const [abaStudio, setAbaStudio] = useState<'relatorio' | 'tabela' | 'grafico' | 'cartoes'>('relatorio');
+  const [fontesPanelAberto, setFontesPanelAberto] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -587,7 +592,7 @@ ${contextoDasFontes}`;
 
   return (
     <div className="w-full flex-1 min-h-0 bg-[#070910] text-white flex flex-col overflow-hidden">
-      <header className="shrink-0 px-5 md:px-7 py-4 border-b border-white/10 bg-black/30 backdrop-blur-xl flex items-center gap-3">
+      <header className="relative z-40 shrink-0 px-5 md:px-7 py-4 border-b border-white/10 bg-black/30 backdrop-blur-xl flex items-center gap-3">
         <button
           onClick={onBack}
           className="p-2.5 rounded-2xl bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 border border-white/10 transition-colors"
@@ -602,17 +607,97 @@ ${contextoDasFontes}`;
           </div>
           <h2 className="text-lg md:text-2xl font-serif italic font-light truncate">OSONE PESQUISA</h2>
         </div>
-        <div className="ml-auto hidden md:flex items-center gap-2 text-[11px] font-mono text-zinc-400">
-          <span className="px-3 py-1.5 rounded-full bg-cyan-500/10 text-cyan-200 border border-cyan-400/20">{fontesSelecionadas.length} fontes ativas</span>
-          <span className="px-3 py-1.5 rounded-full bg-purple-500/10 text-purple-200 border border-purple-400/20">book local</span>
-        </div>
-        {onStartLiveVoice && (
+        <div className="relative ml-auto">
           <button
-            onClick={onStartLiveVoice}
-            className="p-2.5 rounded-2xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-400/25"
-            title="Conversar por voz com o OSONE sobre este book"
+            onClick={() => setFontesPanelAberto(prev => !prev)}
+            className={cn(
+              "h-11 px-3 rounded-2xl border transition-colors flex items-center gap-2 font-mono text-xs",
+              fontes.length > 0
+                ? "bg-cyan-500/10 hover:bg-cyan-500/20 border-cyan-400/25 text-cyan-100"
+                : "bg-white/[0.04] hover:bg-white/[0.08] border-white/10 text-zinc-400"
+            )}
+            title="Abrir fontes pesquisadas"
           >
-            <Mic size={18} />
+            <BookOpen size={16} />
+            <span className="font-bold">{fontes.length}</span>
+            <span className="hidden sm:inline text-[10px] uppercase tracking-wider text-current/70">fontes</span>
+          </button>
+
+          {fontesPanelAberto && (
+            <div className="absolute right-0 mt-3 w-[min(92vw,430px)] max-h-[70vh] overflow-hidden rounded-3xl border border-white/10 bg-[#090c14]/95 shadow-2xl shadow-black/60 backdrop-blur-2xl">
+              <div className="p-4 border-b border-white/10 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-cyan-300">Fontes do book</div>
+                  <div className="text-xs text-zinc-500 mt-1">{fontesSelecionadas.length} selecionada(s) de {fontes.length}</div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => setFontes(prev => prev.map(f => ({ ...f, selecionada: true })))}
+                    disabled={fontes.length === 0}
+                    className="px-3 py-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 text-[10px] font-mono text-zinc-300 disabled:opacity-40"
+                  >
+                    todas
+                  </button>
+                  <button
+                    onClick={limparBook}
+                    disabled={fontes.length === 0}
+                    className="p-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 border border-red-400/15 text-red-200 disabled:opacity-40"
+                    title="Limpar book"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="max-h-[54vh] overflow-y-auto custom-scrollbar p-3 space-y-2">
+                {fontes.length === 0 ? (
+                  <div className="p-5 rounded-2xl border border-dashed border-white/10 text-xs text-zinc-500 leading-relaxed">
+                    Nenhuma fonte ainda. Pesquise na web, importe arquivos ou adicione uma nota.
+                  </div>
+                ) : fontes.map(fonte => (
+                  <button
+                    key={fonte.id}
+                    onClick={() => setFontes(prev => prev.map(f => f.id === fonte.id ? { ...f, selecionada: !f.selecionada } : f))}
+                    className={cn(
+                      "w-full text-left px-3 py-2.5 rounded-2xl border transition-all group flex items-start gap-2",
+                      fonte.selecionada ? "bg-cyan-500/10 border-cyan-400/25" : "bg-black/25 border-white/10 opacity-65"
+                    )}
+                  >
+                    <span className={cn("mt-0.5 w-5 h-5 rounded-lg border flex items-center justify-center shrink-0", fonte.selecionada ? "border-cyan-300 text-cyan-200" : "border-white/20 text-transparent")}>
+                      <Check size={12} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-xs font-semibold text-zinc-100 truncate">{fonte.titulo}</span>
+                      <span className="block text-[10px] text-zinc-500 mt-0.5 truncate">{fonte.url || fonte.tipo}</span>
+                    </span>
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFontes(prev => prev.filter(f => f.id !== fonte.id));
+                      }}
+                      className="p-1 rounded-lg text-zinc-600 hover:text-red-300 hover:bg-red-500/10 opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+                      title="Remover fonte"
+                    >
+                      <X size={13} />
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+        {onToggleLiveVoice && (
+          <button
+            onClick={onToggleLiveVoice}
+            className={cn(
+              "p-2.5 rounded-2xl border transition-colors",
+              isVoiceActive || isVoiceConnecting
+                ? "bg-orange-500/10 hover:bg-orange-500/20 text-orange-200 border-orange-400/25"
+                : "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-400/25"
+            )}
+            title={isVoiceActive || isVoiceConnecting ? "Desligar voz da Pesquisa" : "Conversar por voz com o OSONE sobre este book"}
+          >
+            {isVoiceConnecting ? <Loader2 size={18} className="animate-spin" /> : isVoiceActive ? <MicOff size={18} /> : <Mic size={18} />}
           </button>
         )}
       </header>
@@ -622,12 +707,10 @@ ${contextoDasFontes}`;
           <div className="p-4 space-y-3 shrink-0">
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-sm font-bold font-mono uppercase tracking-wider flex items-center gap-2">
-                <Globe2 size={15} className="text-cyan-300" />
-                Fontes
+                <Search size={15} className="text-cyan-300" />
+                Pesquisar
               </h3>
-              <button onClick={limparBook} className="p-2 rounded-xl hover:bg-red-500/10 text-zinc-500 hover:text-red-300" title="Limpar book">
-                <Trash2 size={14} />
-              </button>
+              <span className="text-[10px] font-mono text-zinc-600">{fontes.length} fonte(s)</span>
             </div>
 
             <div className="rounded-2xl border border-white/10 bg-black/35 p-3 space-y-2">
@@ -777,50 +860,12 @@ ${contextoDasFontes}`;
             </div>
           </div>
 
-          <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4 space-y-2 custom-scrollbar">
-            <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-wider text-zinc-500">
-              <span>Selecionar fontes</span>
-              <button
-                onClick={() => setFontes(prev => prev.map(f => ({ ...f, selecionada: true })))}
-                className="hover:text-cyan-300"
-              >
-                todas
-              </button>
+          <div className="flex-1 min-h-0 px-4 pb-4">
+            <div className="h-full min-h-[92px] rounded-2xl border border-white/10 bg-black/20 p-4 flex items-center justify-center text-center">
+              <p className="text-xs text-zinc-500 leading-relaxed max-w-[250px]">
+                As fontes ficam organizadas no botão superior. Abra o contador para selecionar, remover ou limpar o book.
+              </p>
             </div>
-            {fontes.length === 0 ? (
-              <div className="p-5 rounded-2xl border border-dashed border-white/10 text-xs text-zinc-500 leading-relaxed">
-                Comece pesquisando na web, importando arquivos ou colando uma fonte manual.
-              </div>
-            ) : fontes.map(fonte => (
-              <button
-                key={fonte.id}
-                onClick={() => setFontes(prev => prev.map(f => f.id === fonte.id ? { ...f, selecionada: !f.selecionada } : f))}
-                className={cn(
-                  "w-full text-left p-3 rounded-2xl border transition-all group",
-                  fonte.selecionada ? "bg-cyan-500/10 border-cyan-400/25" : "bg-black/20 border-white/10 opacity-60"
-                )}
-              >
-                <div className="flex items-start gap-2">
-                  <span className={cn("mt-0.5 w-5 h-5 rounded-lg border flex items-center justify-center shrink-0", fonte.selecionada ? "border-cyan-300 text-cyan-200" : "border-white/20 text-transparent")}>
-                    <Check size={12} />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-xs font-semibold text-zinc-100 truncate">{fonte.titulo}</span>
-                    <span className="block text-[10px] text-zinc-500 mt-1 truncate">{fonte.url || fonte.tipo}</span>
-                    <span className="block text-[11px] text-zinc-400 mt-2 line-clamp-2">{fonte.resumo || fonte.conteudo}</span>
-                  </span>
-                  <span
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setFontes(prev => prev.filter(f => f.id !== fonte.id));
-                    }}
-                    className="p-1 rounded-lg text-zinc-600 hover:text-red-300 hover:bg-red-500/10 opacity-0 group-hover:opacity-100"
-                  >
-                    <X size={13} />
-                  </span>
-                </div>
-              </button>
-            ))}
           </div>
         </aside>
 
