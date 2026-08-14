@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { auth } from '../firebase';
+import { abrirPagamento, ambienteDoNavegador } from '../lib/abrirPagamento';
 import { BillingInterval, OsonePlanId, PaidFeature, planHasFeature } from '../lib/planos';
 import type { User } from '../types';
 
@@ -97,9 +98,7 @@ export function useSubscription(user: User | null) {
         method: 'POST',
         body: JSON.stringify({ plan, interval, paymentMethod })
       });
-      const popup = window.open(data.url, '_blank');
-      if (!popup) throw new Error('O navegador bloqueou a página de pagamento. Libere pop-ups e tente novamente.');
-      popup.opener = null;
+      abrirPagamento(data.url, ambienteDoNavegador());
     } catch (err: any) {
       setError(err?.message || 'Não foi possível abrir o pagamento.');
       throw err;
@@ -113,9 +112,7 @@ export function useSubscription(user: User | null) {
     setError('');
     try {
       const data = await request('/portal', { method: 'POST', body: '{}' });
-      const popup = window.open(data.url, '_blank');
-      if (!popup) throw new Error('O navegador bloqueou o portal. Libere pop-ups e tente novamente.');
-      popup.opener = null;
+      abrirPagamento(data.url, ambienteDoNavegador());
     } catch (err: any) {
       setError(err?.message || 'Não foi possível abrir o portal da assinatura.');
       throw err;

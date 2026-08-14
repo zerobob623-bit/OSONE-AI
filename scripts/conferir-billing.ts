@@ -5,6 +5,7 @@ import path from 'node:path';
 import Stripe from 'stripe';
 import handler from '../api/billing';
 import { billingResultUrl, classifySubscriptions, pixPeriodEnd, validatePixCheckout, validateStripePrice } from '../src/billingService';
+import { abrirPagamento, type AmbienteDePagamento } from '../src/lib/abrirPagamento';
 import { minimumPlanForFeature, OSONE_PLANS, paidFeatureForWorkspace, planHasFeature } from '../src/lib/planos';
 
 const PROJECT_ROOT = path.resolve(import.meta.dirname, '..');
@@ -180,6 +181,36 @@ try {
   assert.deepEqual(contaComHistorico.stale, ['sub_incompleta']);
   console.log('  ok  pagamento recusado não tranca a conta, e assinatura ativa segue sem duplicar');
 
+  // O app instalado manda o link para o navegador do sistema e o `window.open` devolve `null`.
+  // Ler isso como pop-up bloqueado avisava que o pagamento tinha falhado bem quando ele abria.
+  const UA_APP = 'Mozilla/5.0 OSONE/1.5.1 Chrome/126 Electron/31.0.0 Safari/537.36';
+  const UA_SITE = 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/126 Mobile Safari/537.36';
+  const ambiente = (userAgent: string, janela: { opener: unknown } | null): AmbienteDePagamento & { navegou: string[] } => {
+    const registro: string[] = [];
+    return {
+      userAgent,
+      abrirAba: () => janela,
+      navegarNaAba: url => { registro.push(url); },
+      navegou: registro
+    };
+  };
+  const CHECKOUT = 'https://checkout.stripe.com/c/pay/cs_test_conferidor';
+
+  const noApp = ambiente(UA_APP, null);
+  assert.equal(abrirPagamento(CHECKOUT, noApp), 'navegador-do-sistema');
+  assert.deepEqual(noApp.navegou, [], 'o app instalado não pode sair da própria tela');
+
+  const noSite = ambiente(UA_SITE, null);
+  assert.equal(abrirPagamento(CHECKOUT, noSite), 'mesma-aba');
+  assert.deepEqual(noSite.navegou, [CHECKOUT], 'pop-up barrado no site precisa virar navegação na própria aba');
+
+  const janelaAberta: { opener: unknown } = { opener: 'janela-que-abriu' };
+  const comPopup = ambiente(UA_SITE, janelaAberta);
+  assert.equal(abrirPagamento(CHECKOUT, comPopup), 'aba-nova');
+  assert.deepEqual(comPopup.navegou, [], 'com pop-up liberado o app continua aberto atrás');
+  assert.equal(janelaAberta.opener, null, 'a página de pagamento não pode manter acesso à janela que a abriu');
+  console.log('  ok  página de pagamento abre no app, no site e no APK sem falso "pop-up bloqueado"');
+
   assert.equal(OSONE_PLANS.plus.monthlyPrice, 39.90);
   assert.equal(OSONE_PLANS.plus.yearlyPrice, 339.90);
   assert.equal(OSONE_PLANS.pro.monthlyPrice, 69.90);
@@ -226,4 +257,4 @@ try {
   await new Promise<void>(resolve => server.close(() => resolve()));
 }
 
-console.log('19/19 grupos de conferências de cobrança passaram.');
+console.log('20/20 grupos de conferências de cobrança passaram.');

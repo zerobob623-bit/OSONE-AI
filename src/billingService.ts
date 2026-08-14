@@ -413,13 +413,13 @@ export function registerBillingApi(app: Express) {
       if (paymentMethod === 'pix' && !(await pixAvailable())) {
         return res.status(503).json({ error: 'O PIX ainda não foi liberado pela Stripe para esta conta. Use cartão enquanto a ativação está pendente.' });
       }
-      const customer = await customerFor(user.uid, user.email, user.name);
-      const { blocking, stale } = classifySubscriptions(await subscriptionsFor(customer));
-      if (blocking.length) {
-        return res.status(409).json({
-          error: 'Esta conta já possui uma assinatura. Use “Gerenciar assinatura e cobrança” para trocar de plano ou período.'
-        });
-      }
+      // Preço e direito são conferidos ANTES de tocar no cliente da Stripe. Criar o cliente
+      // primeiro fazia cada pedido recusado — Price ID trocado, PIX ainda válido — deixar para
+      // trás um cliente sem pagamento nenhum, e um painel cheio desses clientes fantasma esconde
+      // quantas pessoas de fato chegaram à página de pagamento.
+      const returnUrl = env('OSONE_BILLING_RETURN_URL');
+      const configuredPrice = await stripe().prices.retrieve(priceId(plan, interval));
+      validateStripePrice(configuredPrice, plan, interval);
       const { db } = adminServices();
       const entitlement = (await db.collection('entitlements').doc(user.uid).get()).data() || {};
       const hasActivePix = entitlement.billingMethod === 'pix' && entitlement.status === 'active' &&
@@ -427,9 +427,13 @@ export function registerBillingApi(app: Express) {
       if (hasActivePix) {
         return res.status(409).json({ error: `Seu acesso por PIX está pago até ${new Date(entitlement.currentPeriodEnd).toLocaleDateString('pt-BR')}. Faça um novo pagamento somente após o vencimento.` });
       }
-      const returnUrl = env('OSONE_BILLING_RETURN_URL');
-      const configuredPrice = await stripe().prices.retrieve(priceId(plan, interval));
-      validateStripePrice(configuredPrice, plan, interval);
+      const customer = await customerFor(user.uid, user.email, user.name);
+      const { blocking, stale } = classifySubscriptions(await subscriptionsFor(customer));
+      if (blocking.length) {
+        return res.status(409).json({
+          error: 'Esta conta já possui uma assinatura. Use “Gerenciar assinatura e cobrança” para trocar de plano ou período.'
+        });
+      }
       await cancelStaleSubscriptions(stale);
       if (paymentMethod === 'pix') {
         const product = typeof configuredPrice.product === 'string' ? configuredPrice.product : configuredPrice.product.id;
