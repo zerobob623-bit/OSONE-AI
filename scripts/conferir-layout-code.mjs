@@ -17,7 +17,8 @@
  *   2. O MEIO É O CÓDIGO/PREVIEW — os três modos de visualização continuam alcançáveis.
  *   3. O QUE SE DIGITA FICA EMBAIXO, com os ícones dentro do próprio campo.
  *   4. OS PROJETOS CABEM NUM ELEMENTO SÓ, e não numa faixa de pastilhas.
- *   5. A ABA SE SOBREPÕE ao cabeçalho e à navegação do app.
+ *   5. BAIXAR PROJETO fica no topo, longe da mãozinha/mascote.
+ *   6. A ABA SE SOBREPÕE ao cabeçalho e à navegação do app.
  *
  * Cada uma dessas foi um pedido explícito, e cada uma pode ser desfeita sem erro de compilação.
  *
@@ -31,7 +32,7 @@ const code = fs.readFileSync(new URL('../src/components/CodeWorkspace.tsx', impo
 const app = fs.readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
 
 let passaram = 0;
-const total = 5;
+const total = 6;
 const ok = (mensagem) => { passaram++; console.log(`  ok  ${mensagem}`); };
 
 // 1) As duas fileiras laterais
@@ -60,7 +61,21 @@ assert.match(code, /handleSwitchProject/);
 ok('os projetos cabem num botão só, com a troca dentro dele');
 
 /**
- * 5) A aba se sobrepõe ao resto do app.
+ * 5) Exportar projeto no topo
+ *
+ * O botão de baixar o projeto inteiro ficava no fim da fileira direita, exatamente onde a
+ * mãozinha/mascote visual costuma aparecer por cima. O arquivo aberto ainda pode ser baixado ali,
+ * mas o ZIP do projeto completo precisa estar na barra superior.
+ */
+const barraSuperior = code.slice(code.indexOf('BARRA SUPERIOR'), code.indexOf('O PAINEL DE COMPARAÇÃO'));
+const fileiraDireita = code.slice(code.indexOf('FILEIRA DIREITA'), code.indexOf('AI Code Assistant Footer Prompt Box'));
+assert.match(barraSuperior, /Baixar o projeto inteiro/);
+assert.match(barraSuperior, /exportarProjetoEmZip/);
+assert.doesNotMatch(fileiraDireita, /Baixar o projeto inteiro/);
+ok('baixar projeto inteiro fica na barra superior, fora da área da mãozinha');
+
+/**
+ * 6) A aba se sobrepõe ao resto do app.
  *
  * Este é o único que não mora neste arquivo: quem esconde o cabeçalho e a navegação é o App, e é
  * lá que a regressão aconteceria. Sem esta conferência, "a aba deveria se sobrepor a todos eles"
