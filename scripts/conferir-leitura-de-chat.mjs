@@ -70,10 +70,25 @@ console.log('\n· Tamanho e proporção do quadro enviado ao modelo\n');
 
 {
   const ambiente = calcularQuadro(2560, 1440, 'ambiente');
+  const tela = calcularQuadro(2560, 1440, 'tela');
+  registrar('compartilhamento de tela usa perfil mais nítido que câmera/ambiente',
+    tela.largura > ambiente.largura && tela.qualidadeJpeg > ambiente.qualidadeJpeg,
+    `tela ${tela.largura}x${tela.altura}@${tela.qualidadeJpeg} vs ambiente ${ambiente.largura}x${ambiente.altura}@${ambiente.qualidadeJpeg}`);
+}
+
+{
+  const tela = calcularQuadro(1920, 1080, 'tela');
+  registrar('tela Full HD compartilhada chega inteira, sem reduzir texto pequeno',
+    tela.largura === 1920 && tela.altura === 1080 && tela.qualidadeJpeg >= 0.9,
+    `${tela.largura}x${tela.altura}@${tela.qualidadeJpeg}`);
+}
+
+{
+  const tela = calcularQuadro(2560, 1440, 'tela');
   const leitura = calcularQuadro(2560, 1440, 'leitura');
-  registrar('a foto de leitura é bem maior e menos comprimida que o quadro de acompanhamento',
-    leitura.largura > ambiente.largura && leitura.qualidadeJpeg > ambiente.qualidadeJpeg,
-    `leitura ${leitura.largura}x${leitura.altura}@${leitura.qualidadeJpeg} vs ambiente ${ambiente.largura}x${ambiente.altura}@${ambiente.qualidadeJpeg}`);
+  registrar('a foto de leitura é maior e menos comprimida que o vídeo de tela',
+    leitura.largura > tela.largura && leitura.qualidadeJpeg > tela.qualidadeJpeg,
+    `leitura ${leitura.largura}x${leitura.altura}@${leitura.qualidadeJpeg} vs tela ${tela.largura}x${tela.altura}@${tela.qualidadeJpeg}`);
 }
 
 {

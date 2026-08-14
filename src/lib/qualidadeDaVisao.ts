@@ -27,13 +27,16 @@
  * As contas abaixo preservam a proporção SEMPRE, nunca ampliam além da fonte (ampliar não cria
  * detalhe que a origem não tinha, só peso) e separam dois usos que têm exigências opostas:
  *
- * - 'ambiente': acompanhar em tempo real, um quadro por segundo, para o modelo saber o que está
+ * - 'ambiente': acompanhar câmera/ambiente em tempo real, para o modelo saber o que está
  *   acontecendo. Precisa ser leve, porque atravessa um WebSocket aberto o tempo todo.
+ * - 'tela': acompanhar compartilhamento de tela. É mais pesado que câmera, porque texto, menus,
+ *   números e botões pequenos são o caso comum; é mais leve que 'leitura' para ainda caber no
+ *   fluxo contínuo sem transformar cada segundo em uma foto gigante.
  * - 'leitura': UMA foto, tirada de propósito para ler texto. Aqui peso não importa — é uma
  *   chamada só, e ela decide se um nome vai ser dito certo ou errado em voz alta numa transmissão.
  */
 
-export type ModoDeVisao = 'ambiente' | 'leitura';
+export type ModoDeVisao = 'ambiente' | 'tela' | 'leitura';
 
 export interface QuadroDeVisao {
   largura: number;
@@ -56,6 +59,7 @@ interface Perfil {
  */
 const PERFIS: Record<ModoDeVisao, Perfil> = {
   ambiente: { ladoMaior: 1280, qualidadeJpeg: 0.82 },
+  tela: { ladoMaior: 1920, qualidadeJpeg: 0.92 },
   leitura: { ladoMaior: 2560, qualidadeJpeg: 0.97 }
 };
 
