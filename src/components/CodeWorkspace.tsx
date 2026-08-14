@@ -841,6 +841,10 @@ export const CodeWorkspace: React.FC<{
 
   const activeFile = files.find(f => f.id === activeFileId) || files[0];
   const activeProjectName = projects.find(p => p.id === activeProjectId)?.name || 'Projeto OSONE CODE';
+  const projetoTemEstruturaFullstack = useMemo(
+    () => files.some(f => /^(frontend|server|shared|src|api)\//i.test(f.name || '') || /^(server|app)\.(ts|js)$/i.test(f.name || '')),
+    [files]
+  );
 
   /**
    * A lista de arquivos sempre atual, para quem grava fora do ciclo de renderização.
@@ -1528,6 +1532,27 @@ export const CodeWorkspace: React.FC<{
     setNotificationBanner({
       message: `Estrutura fullstack criada com ${novos.length} arquivos em frontend/, server/ e shared/.`,
       type: 'success'
+    });
+  };
+
+  const abrirOuCriarModoFullstack = () => {
+    if (!projetoTemEstruturaFullstack) {
+      criarEstruturaFullstack();
+      return;
+    }
+
+    const entrada = filesRef.current.find(f => /^frontend\/index\.html$/i.test(f.name || ''))
+      || filesRef.current.find(f => /^src\/main\.(tsx|ts|jsx|js)$/i.test(f.name || ''))
+      || filesRef.current.find(f => /^src\/app\.(tsx|ts|jsx|js)$/i.test(f.name || ''))
+      || filesRef.current.find(f => /index\.html$/i.test(f.name || ''))
+      || filesRef.current[0];
+
+    if (entrada) setActiveFileId(entrada.id);
+    setShowRepoSidebar(true);
+    setViewLayout('split');
+    setNotificationBanner({
+      message: 'Modo fullstack aberto: o frontend roda no Preview; server/ e shared/ ficam no projeto para exportar, GitHub ou execução backend dedicada.',
+      type: 'info'
     });
   };
 
@@ -3276,6 +3301,42 @@ FORMATO OBRIGATÓRIO (JSON estrito):
           </button>
         </div>
 
+        <button
+          onClick={exportarProjetoEmZip}
+          disabled={empacotando}
+          className="hidden min-[520px]:flex items-center gap-1.5 px-2.5 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/25 transition-all disabled:opacity-40 shrink-0 cursor-pointer active:scale-95"
+          title={`Baixar o projeto inteiro (${files.length} arquivo(s)) em .zip`}
+        >
+          {empacotando ? <Loader2 size={15} className="animate-spin" /> : <Archive size={15} />}
+          <span className="hidden lg:inline text-[11px] font-mono font-bold uppercase tracking-wide">Baixar projeto</span>
+        </button>
+
+        <button
+          onClick={exportarProjetoEmZip}
+          disabled={empacotando}
+          className="min-[520px]:hidden p-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/25 transition-all disabled:opacity-40 shrink-0 cursor-pointer active:scale-95"
+          title="Baixar projeto (.zip)"
+          aria-label={`Baixar projeto em .zip (${files.length} arquivo(s))`}
+        >
+          {empacotando ? <Loader2 size={15} className="animate-spin" /> : <Archive size={15} />}
+        </button>
+
+        <button
+          onClick={abrirOuCriarModoFullstack}
+          className={cn(
+            "hidden sm:flex items-center gap-1.5 px-2.5 py-2 rounded-xl border transition-all shrink-0 cursor-pointer active:scale-95",
+            projetoTemEstruturaFullstack
+              ? "bg-indigo-500/10 text-indigo-200 border-indigo-400/25 hover:bg-indigo-500/20"
+              : "bg-emerald-500/10 text-emerald-300 border-emerald-500/25 hover:bg-emerald-500/20"
+          )}
+          title={projetoTemEstruturaFullstack ? "Abrir modo fullstack: frontend no preview + server/shared no projeto" : "Criar estrutura fullstack com frontend/, server/ e shared/"}
+        >
+          <Layers size={15} />
+          <span className="hidden xl:inline text-[11px] font-mono font-bold uppercase tracking-wide">
+            {projetoTemEstruturaFullstack ? 'Fullstack' : 'Criar fullstack'}
+          </span>
+        </button>
+
         {/* GitHub e chave da API: o "para onde publica" e o "com o que gera" */}
         <button
           onClick={() => setIsGithubPanelOpen(true)}
@@ -3940,7 +4001,7 @@ FORMATO OBRIGATÓRIO (JSON estrito):
             </button>
           )}
 
-          {/* Levar o trabalho embora: o arquivo aberto, ou o projeto inteiro em .zip. */}
+          {/* Levar o arquivo aberto embora. O projeto inteiro agora mora no topo, longe da mãozinha. */}
           <button
             onClick={handleCopyCode}
             className="mt-auto p-2 rounded-xl bg-white/[0.02] hover:bg-white/[0.08] text-zinc-400 hover:text-white border border-white/5 transition-all"
@@ -3955,15 +4016,6 @@ FORMATO OBRIGATÓRIO (JSON estrito):
             title="Baixar apenas o arquivo aberto"
           >
             <Download size={15} />
-          </button>
-
-          <button
-            onClick={exportarProjetoEmZip}
-            disabled={empacotando}
-            className="p-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/25 transition-all disabled:opacity-40 cursor-pointer"
-            title={`Baixar o projeto inteiro (${files.length} arquivo(s)) em .zip`}
-          >
-            {empacotando ? <Loader2 size={15} className="animate-spin" /> : <Archive size={15} />}
           </button>
         </div>
 
