@@ -41,6 +41,7 @@
     "test:sons": "node scripts/conferir-biblioteca-sons.mjs",
     "test:chat-code": "node scripts/conferir-chat-code.mjs",
     "test:cameras": "node scripts/conferir-cameras.mjs",
+    "test:leitura-chat": "node scripts/conferir-leitura-de-chat.mjs",
     "test:tela-inicial": "node scripts/conferir-tela-inicial.mjs",
     "test:franqueza": "node scripts/conferir-franqueza.mjs",
     "test:cowork-memory": "tsx scripts/conferir-memoria-cowork.ts",
