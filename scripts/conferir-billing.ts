@@ -4,7 +4,7 @@ import http from 'node:http';
 import path from 'node:path';
 import Stripe from 'stripe';
 import handler from '../api/billing';
-import { billingResultUrl, pixPeriodEnd, validatePixCheckout, validateStripePrice } from '../src/billingService';
+import { billingResultUrl, classifySubscriptions, pixPeriodEnd, validatePixCheckout, validateStripePrice } from '../src/billingService';
 import { minimumPlanForFeature, OSONE_PLANS, paidFeatureForWorkspace, planHasFeature } from '../src/lib/planos';
 
 const PROJECT_ROOT = path.resolve(import.meta.dirname, '..');
@@ -155,6 +155,31 @@ try {
   assert.equal(pixPeriodEnd(new Date('2026-08-08T12:00:00Z'), 'year').toISOString(), '2027-08-08T12:00:00.000Z');
   console.log('  ok  PIX só libera após confirmação, no valor exato, por um mês ou um ano');
 
+  // Cartão recusado na primeira cobrança deixava uma assinatura `incomplete` que era lida como
+  // assinatura válida: o cliente recebia 409 para sempre e nunca chegava a pagar.
+  const semAssinatura = classifySubscriptions([]);
+  assert.deepEqual(semAssinatura, { blocking: [], stale: [] });
+  const primeiraTentativaRecusada = classifySubscriptions([{ id: 'sub_incompleta', status: 'incomplete' }]);
+  assert.deepEqual(primeiraTentativaRecusada.blocking, []);
+  assert.deepEqual(primeiraTentativaRecusada.stale, ['sub_incompleta']);
+  for (const status of ['active', 'trialing', 'past_due'] as const) {
+    const emDia = classifySubscriptions([{ id: `sub_${status}`, status }]);
+    assert.deepEqual(emDia.blocking, [`sub_${status}`], `${status} deve continuar impedindo Checkout duplicado`);
+    assert.deepEqual(emDia.stale, []);
+  }
+  for (const status of ['canceled', 'incomplete_expired'] as const) {
+    assert.deepEqual(classifySubscriptions([{ id: 'sub_encerrada', status }]), { blocking: [], stale: [] });
+  }
+  assert.deepEqual(classifySubscriptions([{ id: 'sub_sem_pagamento', status: 'unpaid' }]).stale, ['sub_sem_pagamento']);
+  const contaComHistorico = classifySubscriptions([
+    { id: 'sub_incompleta', status: 'incomplete' },
+    { id: 'sub_ativa', status: 'active' },
+    { id: 'sub_antiga', status: 'canceled' }
+  ]);
+  assert.deepEqual(contaComHistorico.blocking, ['sub_ativa']);
+  assert.deepEqual(contaComHistorico.stale, ['sub_incompleta']);
+  console.log('  ok  pagamento recusado não tranca a conta, e assinatura ativa segue sem duplicar');
+
   assert.equal(OSONE_PLANS.plus.monthlyPrice, 39.90);
   assert.equal(OSONE_PLANS.plus.yearlyPrice, 339.90);
   assert.equal(OSONE_PLANS.pro.monthlyPrice, 69.90);
@@ -201,4 +226,4 @@ try {
   await new Promise<void>(resolve => server.close(() => resolve()));
 }
 
-console.log('18/18 grupos de conferências de cobrança passaram.');
+console.log('19/19 grupos de conferências de cobrança passaram.');

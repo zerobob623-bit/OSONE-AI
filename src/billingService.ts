@@ -23,6 +23,12 @@ let firebaseApp: FirebaseAdminApp | null = null;
 let firestore: Firestore | null = null;
 let pixAvailabilityCache: { value: boolean; expiresAt: number } | null = null;
 
+/** As únicas situações em que a assinatura já foi paga o bastante para liberar o plano. */
+const ACCESS_GRANTING_STATUSES: Stripe.Subscription.Status[] = ['active', 'trialing', 'past_due'];
+
+/** Tentativas mortas: não liberam nada e não voltam a cobrar sozinhas. */
+const STALE_STATUSES: Stripe.Subscription.Status[] = ['incomplete', 'unpaid'];
+
 const BILLING_EVENTS = new Set([
   'checkout.session.completed',
   'checkout.session.async_payment_succeeded',
@@ -185,11 +191,45 @@ async function customerFor(uid: string, email?: string, name?: string): Promise<
   return customer.id;
 }
 
-async function activeSubscriptionFor(customer: string): Promise<Stripe.Subscription | undefined> {
+async function subscriptionsFor(customer: string): Promise<Stripe.Subscription[]> {
   const subscriptions = await stripe().subscriptions.list({ customer, status: 'all', limit: 20 });
-  return subscriptions.data.find(subscription =>
-    ['active', 'trialing', 'past_due', 'incomplete'].includes(subscription.status)
-  );
+  return subscriptions.data;
+}
+
+/**
+ * Separa o que impede um novo Checkout do que apenas sobrou de uma tentativa fracassada.
+ *
+ * Só bloqueia quem realmente dá acesso — exatamente as situações que `writeEntitlement` credita.
+ * Uma assinatura `incomplete` (cartão recusado na primeira cobrança, ou 3-D Secure abandonado)
+ * não libera plano nenhum e expira sozinha em ~23 h. Tratá-la como assinatura válida prendia o
+ * cliente: ele recebia "já possui uma assinatura", não conseguia tentar outro cartão, e nunca era
+ * cobrado. `unpaid` é o mesmo beco sem saída depois que a Stripe desiste das novas tentativas.
+ */
+export function classifySubscriptions(
+  subscriptions: Array<Pick<Stripe.Subscription, 'id' | 'status'>>
+): { blocking: string[]; stale: string[] } {
+  const blocking: string[] = [];
+  const stale: string[] = [];
+  for (const subscription of subscriptions) {
+    if (ACCESS_GRANTING_STATUSES.includes(subscription.status)) blocking.push(subscription.id);
+    else if (STALE_STATUSES.includes(subscription.status)) stale.push(subscription.id);
+  }
+  return { blocking, stale };
+}
+
+/**
+ * Cancelar a tentativa morta antes de abrir a próxima também anula a fatura pendente dela. Sem
+ * isso, quem voltasse à aba antiga do Checkout poderia concluir as duas e pagar em dobro.
+ * Falhar aqui não impede o novo pagamento: a assinatura pendente expira sozinha na Stripe.
+ */
+async function cancelStaleSubscriptions(ids: string[]) {
+  for (const id of ids) {
+    try {
+      await stripe().subscriptions.cancel(id);
+    } catch (err: any) {
+      console.warn(`[Billing] Assinatura pendente ${id} não pôde ser cancelada:`, err?.message || err);
+    }
+  }
 }
 
 async function writeEntitlement(subscription: Stripe.Subscription) {
@@ -197,7 +237,7 @@ async function writeEntitlement(subscription: Stripe.Subscription) {
   if (!uid) throw new Error(`Assinatura ${subscription.id} sem firebaseUid.`);
   const firstItem = subscription.items.data[0];
   const plan = planFromPrice(firstItem?.price?.id);
-  const grantsAccess = ['active', 'trialing', 'past_due'].includes(subscription.status);
+  const grantsAccess = ACCESS_GRANTING_STATUSES.includes(subscription.status);
   const periodEnd = firstItem?.current_period_end ? new Date(firstItem.current_period_end * 1000).toISOString() : null;
   const { db } = adminServices();
   await db.collection('entitlements').doc(uid).set({
@@ -374,8 +414,8 @@ export function registerBillingApi(app: Express) {
         return res.status(503).json({ error: 'O PIX ainda não foi liberado pela Stripe para esta conta. Use cartão enquanto a ativação está pendente.' });
       }
       const customer = await customerFor(user.uid, user.email, user.name);
-      const existingSubscription = await activeSubscriptionFor(customer);
-      if (existingSubscription) {
+      const { blocking, stale } = classifySubscriptions(await subscriptionsFor(customer));
+      if (blocking.length) {
         return res.status(409).json({
           error: 'Esta conta já possui uma assinatura. Use “Gerenciar assinatura e cobrança” para trocar de plano ou período.'
         });
@@ -390,6 +430,7 @@ export function registerBillingApi(app: Express) {
       const returnUrl = env('OSONE_BILLING_RETURN_URL');
       const configuredPrice = await stripe().prices.retrieve(priceId(plan, interval));
       validateStripePrice(configuredPrice, plan, interval);
+      await cancelStaleSubscriptions(stale);
       if (paymentMethod === 'pix') {
         const product = typeof configuredPrice.product === 'string' ? configuredPrice.product : configuredPrice.product.id;
         const session = await stripe().checkout.sessions.create({
