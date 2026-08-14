@@ -226,16 +226,22 @@ export const TikTokLivePanel = ({
                     animate={{ opacity: 1, height: 'auto' }}
                     className="space-y-4 pt-1"
                   >
+                    <div className="text-[9px] leading-relaxed text-amber-400/80 bg-amber-500/[0.04] border border-amber-500/10 rounded-xl px-3.5 py-3">
+                      Os campos abaixo só funcionam com plano pago da EulerStream, o serviço que
+                      assina a conexão com o TikTok. No modo gratuito eles são ignorados — deixe
+                      ambos vazios para conectar de forma anônima.
+                    </div>
+
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between text-[8px] font-mono tracking-wider uppercase font-bold">
                         <span className="text-zinc-400">SESSION ID COOKIE</span>
-                        <span className="text-zinc-500 select-none lowercase italic text-[7.5px] normal-case">evita sombra e block</span>
+                        <span className="text-zinc-500 select-none lowercase italic text-[7.5px] normal-case">requer plano pago</span>
                       </div>
-                      <input 
+                      <input
                         type="password"
                         value={localSessionId}
                         onChange={(e) => setLocalSessionId(e.target.value)}
-                        placeholder="Insira o sessionid do seu navegador"
+                        placeholder="Deixe vazio no modo gratuito"
                         disabled={tiktokState.status !== 'disconnected'}
                         className="w-full bg-white/[0.02] border border-white/[0.05] rounded-xl px-3.5 py-3 focus:outline-none focus:border-rose-500/20 text-xs text-zinc-300 font-mono"
                       />
@@ -244,13 +250,13 @@ export const TikTokLivePanel = ({
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between text-[8px] font-mono tracking-wider uppercase font-bold">
                         <span className="text-zinc-400">TARGET IDC REGION</span>
-                        <span className="text-zinc-500 select-none lowercase italic text-[7.5px] normal-case">ex: row, alisg, useast2a</span>
+                        <span className="text-zinc-500 select-none lowercase italic text-[7.5px] normal-case">região, não o @ do canal</span>
                       </div>
-                      <input 
+                      <input
                         type="text"
                         value={localTargetIdc}
                         onChange={(e) => setLocalTargetIdc(e.target.value)}
-                        placeholder="row"
+                        placeholder="row, alisg, useast2a..."
                         disabled={tiktokState.status !== 'disconnected'}
                         className="w-full bg-white/[0.02] border border-white/[0.05] rounded-xl px-3.5 py-3 focus:outline-none focus:border-rose-500/20 text-xs text-zinc-300 font-mono placeholder:text-zinc-700"
                       />

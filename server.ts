@@ -483,31 +483,71 @@ Comentário de @${user}: "${text}"`;
         }
       };
 
-      if (sessionId && sessionId.trim()) {
-        /**
-         * A credencial deixou de ser um campo solto (`sessionId`) e passou a ser um pacote de
-         * sessão tipado. Sem esta tradução o login seria ignorado em silêncio: a conexão subiria
-         * como anônima e os shadow-blocks — exatamente o que o Session ID existe para evitar —
-         * voltariam sem nenhuma mensagem de erro para explicar o porquê.
-         */
-        configOpts.session = {
-          cookie: {
-            type: 'cookie',
-            value: {
-              sessionId: sessionId.trim(),
-              ttTargetIdc: (targetIdc || '').trim()
-            }
-          }
-        };
-        configOpts.authenticateWs = true;
+      /**
+       * Assinatura de requisição: gratuita (anônima) x paga (autenticada).
+       *
+       * A v2 não fala direto com o TikTok — toda URL de webcast precisa ser assinada pela
+       * EulerStream antes de virar conexão. E a EulerStream cobra por sessão: a rota
+       * `fetchWebcastSignatureFromEulerRoute` repassa `sessionId`/`ttTargetIdc` para o
+       * assinador, e assinar COM sessão é endpoint de plano Business. Sem plano, a resposta
+       * é um 4xx que a lib traduz para `SignatureMissingTokensError`, cujo rótulo de classe é
+       * "Empty Payload" — mensagem que não tem nada a ver com a causa real e mandava o
+       * usuário justamente preencher o Session ID que causou a falha.
+       *
+       * Por isso a credencial só é anexada quando existe uma chave de assinatura paga. Sem
+       * chave, a conexão sobe anônima — que é o caminho gratuito e o único que funciona aqui.
+       */
+      const signApiKey = (process.env.TIKTOK_SIGN_API_KEY || "").trim();
+      if (signApiKey) {
+        configOpts.signApiKey = signApiKey;
+      }
 
+      const trimmedSessionId = (sessionId || "").trim();
+      const trimmedTargetIdc = (targetIdc || "").trim();
+
+      if (trimmedSessionId && !signApiKey) {
         tiktokEventLogs.unshift({
           id: Math.random().toString(),
           type: "system",
           user: "Sistema",
-          message: "Autenticação Ativa: Conectando com Session ID credenciado para evitar shadow-blocks.",
+          message: "Modo gratuito: o Session ID foi ignorado de propósito. Assinar a conexão com credencial é recurso do plano pago da EulerStream — enviá-lo derrubaria a conexão antes de começar. Conectando de forma anônima.",
           timestamp: Date.now()
         });
+      } else if (trimmedSessionId && signApiKey) {
+        /**
+         * O `ttTargetIdc` é o datacenter da conta (`useast2a`, `alisg`, `row`...), lido do
+         * cookie `tt-target-idc` do navegador. A lib exige ele sempre que há sessionId, e um
+         * valor fora do formato — o @ do canal, por exemplo — só produziria uma falha obscura
+         * lá dentro. Melhor recusar a credencial inteira aqui e dizer o porquê.
+         */
+        if (!/^[a-z0-9-]{2,20}$/.test(trimmedTargetIdc)) {
+          tiktokEventLogs.unshift({
+            id: Math.random().toString(),
+            type: "system",
+            user: "Sistema",
+            message: `Session ID ignorado: o campo 'Target IDC Region' precisa da região do datacenter (ex: row, alisg, useast2a), lida do cookie 'tt-target-idc' do navegador — e não do nome do canal. Valor recebido: "${trimmedTargetIdc || "(vazio)"}". Conectando de forma anônima.`,
+            timestamp: Date.now()
+          });
+        } else {
+          configOpts.session = {
+            cookie: {
+              type: 'cookie',
+              value: {
+                sessionId: trimmedSessionId,
+                ttTargetIdc: trimmedTargetIdc
+              }
+            }
+          };
+          configOpts.authenticateWs = true;
+
+          tiktokEventLogs.unshift({
+            id: Math.random().toString(),
+            type: "system",
+            user: "Sistema",
+            message: "Autenticação Ativa: Conectando com Session ID credenciado para evitar shadow-blocks.",
+            timestamp: Date.now()
+          });
+        }
       }
 
       const connection = new TikTokLiveConnection(username, configOpts);
@@ -596,13 +636,24 @@ Comentário de @${user}: "${text}"`;
       });
 
       connection.on(ControlEvent.ERROR, (err: any) => {
+        /**
+         * Este handler dispara junto com a falha real do connect(), e o erro que chega aqui
+         * muitas vezes vem sem `.message` — o que enchia o terminal de linhas idênticas de
+         * "Problema de transporte de sockets", ruído que escondia a mensagem que de fato
+         * explicava a causa. Repetições consecutivas do mesmo texto viram uma linha só.
+         */
+        const message = `Alerta na transmissão: ${err?.message || err?.reason || "Problema de transporte de sockets."}`;
+        if (tiktokEventLogs[0]?.type === "error" && tiktokEventLogs[0]?.message === message) {
+          return;
+        }
         tiktokEventLogs.unshift({
           id: Math.random().toString(),
           type: "error",
           user: "Erro",
-          message: `Alerta na transmissão: ${err.message || "Problema de transporte de sockets."}`,
+          message,
           timestamp: Date.now()
         });
+        if (tiktokEventLogs.length > 300) tiktokEventLogs.pop();
       });
 
       await connection.connect();
@@ -620,18 +671,30 @@ Comentário de @${user}: "${text}"`;
       console.error("TikTok connection crash:", err);
       tiktokStatus = "disconnected";
       
-      let errMsg = err.message || "Sem resposta/Transmissão offline.";
-      if (errMsg.includes("404") || errMsg.includes("not found")) {
-        errMsg = "Canal não encontrado ou transmissão offline no momento.";
-      } else if (errMsg.includes("rate limit") || errMsg.includes("IP") || errMsg.includes("block")) {
-        errMsg = "Bloqueio de IP por taxa limite do TikTok. Recomenda-se preencher o seu 'Session ID' para bypass.";
+      /**
+       * A dica antiga era sempre a mesma e mandava preencher o Session ID — conselho que, no
+       * caso mais comum (assinatura recusada por ser recurso pago), levava exatamente de volta
+       * ao erro. Cada família de falha agora recebe a sua própria saída.
+       */
+      const rawMsg = err.message || "Sem resposta/Transmissão offline.";
+      const lowerMsg = rawMsg.toLowerCase();
+      let errMsg = rawMsg;
+
+      if (lowerMsg.includes("business plan") || lowerMsg.includes("premium feature") || lowerMsg.includes("permission from the signature provider")) {
+        errMsg = "O serviço de assinatura (EulerStream) recusou a requisição por ser recurso de plano pago. Deixe os campos 'Session ID' e 'Target IDC' VAZIOS para conectar pelo modo gratuito anônimo.";
+      } else if (lowerMsg.includes("rate limit") || lowerMsg.includes("429")) {
+        errMsg = "Limite de assinaturas gratuitas atingido. Aguarde alguns minutos antes de tentar reconectar — o plano gratuito da EulerStream tem cota por hora.";
+      } else if (lowerMsg.includes("404") || lowerMsg.includes("not found") || lowerMsg.includes("offline")) {
+        errMsg = "Canal não encontrado ou transmissão offline no momento. Confira o @ do canal e se a live está realmente no ar.";
+      } else if (/\bblocked?\b/.test(lowerMsg) || /\bip\b/.test(lowerMsg)) {
+        errMsg = "O TikTok pode estar bloqueando o IP desta máquina. Tente novamente mais tarde ou a partir de outra rede.";
       }
 
       tiktokEventLogs.unshift({
         id: Math.random().toString(),
         type: "error",
         user: "Erro",
-        message: `Falha na conexão: ${errMsg} Dica: Se o canal existir e estiver online, o TikTok pode estar bloqueando nosso IP de nuvem. Use o campo 'Session ID' ao lado para autenticar.`,
+        message: `Falha na conexão: ${errMsg}`,
         timestamp: Date.now()
       });
       throw err;
