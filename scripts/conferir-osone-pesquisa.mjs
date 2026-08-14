@@ -14,6 +14,8 @@ const checks = [
   ['modo profundo cria múltiplas consultas', componente.includes('consultasDeInvestigacao') && componente.includes('fontes confiáveis') && componente.includes('críticas limitações')],
   ['pesquisa para ao atingir prazo e preserva achados', componente.includes('tempo_limite') && componente.includes('Tempo limite atingido')],
   ['resposta natural remove markdown decorativo', componente.includes('limparRespostaNatural') && componente.includes('Não use markdown decorativo')],
+  ['fontes ficam em painel superior único', componente.includes('fontesPanelAberto') && componente.includes('Fontes do book') && !componente.includes('Selecionar fontes')],
+  ['voz da pesquisa usa toggle global', componente.includes('onToggleLiveVoice') && componente.includes('isVoiceActive') && app.includes('onToggleLiveVoice={handleVoiceToggle}')],
   ['Tavily aceita profundidade e quantidade', server.includes('searchDepth === "advanced"') && server.includes('maxResults')],
   ['Google Custom Search aceita num por rodada', server.includes('Number(num)') && server.includes('&num=${maxResults}')]
 ];
