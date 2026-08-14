@@ -7,6 +7,7 @@ import { FieldValue, getFirestore, type Firestore } from 'firebase-admin/firesto
 type PlanId = 'free' | 'plus' | 'pro';
 type Interval = 'month' | 'year';
 type PaymentMethod = 'card' | 'pix';
+type PaidPlanId = Exclude<PlanId, 'free'>;
 
 const PRICE_ENV: Record<Exclude<PlanId, 'free'>, Record<Interval, string>> = {
   plus: { month: 'STRIPE_PRICE_PLUS_MONTHLY', year: 'STRIPE_PRICE_PLUS_YEARLY' },
@@ -23,15 +24,17 @@ let firebaseApp: FirebaseAdminApp | null = null;
 let firestore: Firestore | null = null;
 let pixAvailabilityCache: { value: boolean; expiresAt: number } | null = null;
 
-/** As únicas situações em que a assinatura já foi paga o bastante para liberar o plano. */
-const ACCESS_GRANTING_STATUSES: Stripe.Subscription.Status[] = ['active', 'trialing', 'past_due'];
+/** Acesso por cartão exige assinatura viva E pelo menos uma fatura paga no valor anunciado. */
+const ACCESS_GRANTING_STATUSES: Stripe.Subscription.Status[] = ['active', 'past_due'];
 
 /** Tentativas mortas: não liberam nada e não voltam a cobrar sozinhas. */
-const STALE_STATUSES: Stripe.Subscription.Status[] = ['incomplete', 'unpaid'];
+const STALE_STATUSES: Stripe.Subscription.Status[] = ['incomplete', 'incomplete_expired', 'trialing', 'unpaid'];
 
 const BILLING_EVENTS = new Set([
   'checkout.session.completed',
   'checkout.session.async_payment_succeeded',
+  'invoice.paid',
+  'invoice.payment_succeeded',
   'customer.subscription.created',
   'customer.subscription.updated',
   'customer.subscription.deleted'
@@ -124,7 +127,7 @@ async function authenticatedUser(req: Request) {
   return getAuth(app).verifyIdToken(header.slice(7));
 }
 
-function priceId(plan: Exclude<PlanId, 'free'>, interval: Interval): string {
+function priceId(plan: PaidPlanId, interval: Interval): string {
   return env(PRICE_ENV[plan][interval]);
 }
 
@@ -141,7 +144,7 @@ export function billingResultUrl(returnUrl: string, result: 'success' | 'cancele
  */
 export function validateStripePrice(
   price: Pick<Stripe.Price, 'active' | 'currency' | 'unit_amount' | 'type' | 'recurring'>,
-  plan: Exclude<PlanId, 'free'>,
+  plan: PaidPlanId,
   interval: Interval
 ) {
   const expectedAmount = EXPECTED_PRICE[plan][interval];
@@ -162,6 +165,13 @@ function planFromPrice(price: string | null | undefined): PlanId {
   return 'free';
 }
 
+function intervalFromPrice(price: string | null | undefined): Interval | null {
+  if (!price) return null;
+  if ([priceId('plus', 'month'), priceId('pro', 'month')].includes(price)) return 'month';
+  if ([priceId('plus', 'year'), priceId('pro', 'year')].includes(price)) return 'year';
+  return null;
+}
+
 export function pixPeriodEnd(start: Date, interval: Interval): Date {
   const end = new Date(start);
   if (interval === 'month') end.setUTCMonth(end.getUTCMonth() + 1);
@@ -171,7 +181,7 @@ export function pixPeriodEnd(start: Date, interval: Interval): Date {
 
 export function validatePixCheckout(
   session: Pick<Stripe.Checkout.Session, 'mode' | 'payment_status' | 'currency' | 'amount_total'>,
-  plan: Exclude<PlanId, 'free'>,
+  plan: PaidPlanId,
   interval: Interval
 ) {
   if (session.mode !== 'payment' || session.payment_status !== 'paid' ||
@@ -180,15 +190,26 @@ export function validatePixCheckout(
   }
 }
 
-async function customerFor(uid: string, email?: string, name?: string): Promise<string> {
+function stripeCustomerId(customer: string | Stripe.Customer | Stripe.DeletedCustomer | null): string | null {
+  if (!customer) return null;
+  return typeof customer === 'string' ? customer : customer.id;
+}
+
+async function rememberCustomer(uid: string, customer: string | Stripe.Customer | Stripe.DeletedCustomer | null) {
+  const customerId = stripeCustomerId(customer);
+  if (!customerId) return;
+  const { db } = adminServices();
+  const ref = db.collection('billingCustomers').doc(uid);
+  await ref.set({ stripeCustomerId: customerId, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+}
+
+async function storedCustomerFor(uid: string): Promise<string | null> {
   const { db } = adminServices();
   const ref = db.collection('billingCustomers').doc(uid);
   const stored = await ref.get();
   const existingId = stored.data()?.stripeCustomerId;
   if (existingId) return existingId;
-  const customer = await stripe().customers.create({ email, name, metadata: { firebaseUid: uid } });
-  await ref.set({ stripeCustomerId: customer.id, createdAt: FieldValue.serverTimestamp() }, { merge: true });
-  return customer.id;
+  return null;
 }
 
 async function subscriptionsFor(customer: string): Promise<Stripe.Subscription[]> {
@@ -232,29 +253,88 @@ async function cancelStaleSubscriptions(ids: string[]) {
   }
 }
 
-async function writeEntitlement(subscription: Stripe.Subscription) {
+function invoiceHasPrice(invoice: Pick<Stripe.Invoice, 'lines'>, expectedPriceId: string): boolean {
+  return !!invoice.lines?.data?.some((line: any) => line?.price?.id === expectedPriceId || line?.pricing?.price_details?.price === expectedPriceId);
+}
+
+export function invoiceConfirmsExpectedPayment(
+  invoice: Pick<Stripe.Invoice, 'status' | 'currency' | 'amount_paid' | 'lines'> & { paid?: boolean },
+  plan: PaidPlanId,
+  interval: Interval,
+  expectedPriceId?: string
+): boolean {
+  const paid = (invoice as any).paid === true || invoice.status === 'paid';
+  const expectedAmount = EXPECTED_PRICE[plan][interval];
+  const amountMatches = invoice.amount_paid === expectedAmount;
+  const currencyMatches = String(invoice.currency || '').toLowerCase() === 'brl';
+  const priceMatches = !expectedPriceId || invoiceHasPrice(invoice, expectedPriceId);
+  return paid && currencyMatches && amountMatches && priceMatches;
+}
+
+async function retrieveInvoice(id: string): Promise<Stripe.Invoice | null> {
+  try {
+    return await stripe().invoices.retrieve(id, { expand: ['lines.data.price'] });
+  } catch (err: any) {
+    console.warn(`[Billing] Não foi possível conferir a fatura ${id}:`, err?.message || err);
+    return null;
+  }
+}
+
+async function findPaidInvoice(subscription: Stripe.Subscription, plan: PaidPlanId, interval: Interval): Promise<Stripe.Invoice | null> {
+  const expectedPriceId = priceId(plan, interval);
+  const latest = subscription.latest_invoice;
+  const latestInvoice = typeof latest === 'string' ? await retrieveInvoice(latest) : latest;
+  if (latestInvoice && invoiceConfirmsExpectedPayment(latestInvoice, plan, interval, expectedPriceId)) {
+    return latestInvoice;
+  }
+
+  const invoices = await stripe().invoices.list({
+    subscription: subscription.id,
+    status: 'paid',
+    limit: 12,
+    expand: ['data.lines.data.price']
+  } as any);
+  return invoices.data.find(invoice => invoiceConfirmsExpectedPayment(invoice, plan, interval, expectedPriceId)) || null;
+}
+
+async function subscriptionEntitlement(subscription: Stripe.Subscription) {
   const uid = subscription.metadata?.firebaseUid;
   if (!uid) throw new Error(`Assinatura ${subscription.id} sem firebaseUid.`);
   const firstItem = subscription.items.data[0];
-  const plan = planFromPrice(firstItem?.price?.id);
-  const grantsAccess = ACCESS_GRANTING_STATUSES.includes(subscription.status);
+  const price = firstItem?.price?.id;
+  const plan = planFromPrice(price);
+  const interval = intervalFromPrice(price);
+  const paidInvoice = plan !== 'free' && interval ? await findPaidInvoice(subscription, plan, interval) : null;
+  const grantsAccess = plan !== 'free' && !!paidInvoice && ACCESS_GRANTING_STATUSES.includes(subscription.status);
   const periodEnd = firstItem?.current_period_end ? new Date(firstItem.current_period_end * 1000).toISOString() : null;
-  const { db } = adminServices();
-  await db.collection('entitlements').doc(uid).set({
+  return {
+    uid,
     plan: grantsAccess ? plan : 'free',
     status: subscription.status,
     currentPeriodEnd: periodEnd,
-    stripeCustomerId: typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id,
+    stripeCustomerId: stripeCustomerId(subscription.customer),
     stripeSubscriptionId: subscription.id,
     billingMethod: 'card',
+    paid: grantsAccess,
+    paidAmount: paidInvoice?.amount_paid || null,
+    paidCurrency: paidInvoice?.currency || null,
+    paidInvoiceId: paidInvoice?.id || null,
     cancelAtPeriodEnd: subscription.cancel_at_period_end,
     updatedAt: FieldValue.serverTimestamp()
-  }, { merge: true });
+  };
+}
+
+async function writeEntitlement(subscription: Stripe.Subscription) {
+  const entitlement = await subscriptionEntitlement(subscription);
+  const { uid, ...data } = entitlement;
+  const { db } = adminServices();
+  await rememberCustomer(uid, subscription.customer);
+  await db.collection('entitlements').doc(uid).set(data, { merge: true });
 }
 
 async function writePixEntitlement(session: Stripe.Checkout.Session) {
   const uid = session.metadata?.firebaseUid;
-  const plan = session.metadata?.plan as Exclude<PlanId, 'free'>;
+  const plan = session.metadata?.plan as PaidPlanId;
   const interval = session.metadata?.interval as Interval;
   if (!uid || !['plus', 'pro'].includes(plan) || !['month', 'year'].includes(interval) || session.metadata?.paymentMethod !== 'pix') {
     throw new Error(`Checkout PIX ${session.id} sem metadados válidos.`);
@@ -273,9 +353,12 @@ async function writePixEntitlement(session: Stripe.Checkout.Session) {
       status: 'active',
       billingMethod: 'pix',
       currentPeriodEnd,
-      stripeCustomerId: typeof session.customer === 'string' ? session.customer : session.customer?.id || null,
+      stripeCustomerId: stripeCustomerId(session.customer),
       stripeCheckoutSessionId: session.id,
       stripeSubscriptionId: FieldValue.delete(),
+      paid: true,
+      paidAmount: session.amount_total,
+      paidCurrency: session.currency,
       cancelAtPeriodEnd: true,
       updatedAt: FieldValue.serverTimestamp()
     }, { merge: true });
@@ -284,6 +367,7 @@ async function writePixEntitlement(session: Stripe.Checkout.Session) {
       currentPeriodEnd, processedAt: FieldValue.serverTimestamp()
     });
   });
+  await rememberCustomer(uid, session.customer);
 }
 
 function sendError(res: express.Response, err: any) {
@@ -319,6 +403,16 @@ export function registerBillingWebhook(app: Express) {
         }
       } else if (event.type === 'checkout.session.async_payment_succeeded') {
         await writePixEntitlement(event.data.object as Stripe.Checkout.Session);
+      } else if (event.type === 'invoice.paid' || event.type === 'invoice.payment_succeeded') {
+        const invoice = event.data.object as Stripe.Invoice;
+        const rawInvoice = invoice as any;
+        const subscriptionId = typeof rawInvoice.subscription === 'string'
+          ? rawInvoice.subscription
+          : rawInvoice.subscription?.id || rawInvoice.parent?.subscription_details?.subscription;
+        if (subscriptionId) {
+          const subscription = await stripe().subscriptions.retrieve(subscriptionId);
+          await writeEntitlement(subscription);
+        }
       } else if (event.type === 'customer.subscription.created' || event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.deleted') {
         // Eventos podem chegar fora de ordem. Reconsultar o objeto atual evita que um evento
         // atrasado de "active" sobrescreva um cancelamento que já ocorreu.
@@ -385,13 +479,31 @@ export function registerBillingApi(app: Express) {
       const user = await authenticatedUser(req);
       const { db } = adminServices();
       const snapshot = await db.collection('entitlements').doc(user.uid).get();
-      const data = snapshot.data() || {};
+      let data = snapshot.data() || {};
+      if (data.billingMethod === 'card' && data.stripeSubscriptionId && data.plan !== 'free') {
+        try {
+          const subscription = await stripe().subscriptions.retrieve(String(data.stripeSubscriptionId));
+          const entitlement = await subscriptionEntitlement(subscription);
+          const { uid: _uid, ...freshData } = entitlement;
+          await rememberCustomer(user.uid, subscription.customer);
+          await db.collection('entitlements').doc(user.uid).set(freshData, { merge: true });
+          data = freshData;
+        } catch (err: any) {
+          console.warn('[Billing] Não foi possível revalidar assinatura no status:', err?.message || err);
+        }
+      }
       const pixExpired = data.billingMethod === 'pix' && data.currentPeriodEnd && Date.parse(data.currentPeriodEnd) <= Date.now();
+      const manualExpired = data.billingMethod === 'manual' && data.currentPeriodEnd && Date.parse(data.currentPeriodEnd) <= Date.now();
+      const paidCard = data.billingMethod === 'card' && data.paid === true &&
+        ACCESS_GRANTING_STATUSES.includes(data.status) && !pixExpired;
+      const paidPix = data.billingMethod === 'pix' && data.paid === true && data.status === 'active' && !pixExpired;
+      const manualGrant = data.billingMethod === 'manual' && data.manualGrant === true && data.status === 'active' && !manualExpired;
+      const grantsPlan = ['plus', 'pro'].includes(data.plan) && (paidCard || paidPix || manualGrant);
       return res.json({
-        plan: pixExpired ? 'free' : data.plan || 'free',
-        status: pixExpired ? 'free' : data.status || 'free',
-        currentPeriodEnd: data.currentPeriodEnd || null,
-        billingMethod: pixExpired ? null : data.billingMethod || (data.stripeSubscriptionId ? 'card' : null),
+        plan: grantsPlan ? data.plan : 'free',
+        status: grantsPlan ? data.status : 'free',
+        currentPeriodEnd: grantsPlan ? data.currentPeriodEnd || null : null,
+        billingMethod: grantsPlan ? data.billingMethod || (data.stripeSubscriptionId ? 'card' : null) : null,
         pixEnabled: await pixAvailable(),
         billingEnabled: true
       });
@@ -403,7 +515,7 @@ export function registerBillingApi(app: Express) {
     if (!config.enabled) return res.status(503).json({ error: `Cobrança aguardando configuração do servidor: ${config.missing.join(', ')}.` });
     try {
       const user = await authenticatedUser(req);
-      const plan = req.body?.plan as Exclude<PlanId, 'free'>;
+      const plan = req.body?.plan as PaidPlanId;
       const interval = req.body?.interval as Interval;
       const paymentMethod = (req.body?.paymentMethod || 'card') as PaymentMethod;
       if (!['plus', 'pro'].includes(plan) || !['month', 'year'].includes(interval)) {
@@ -427,20 +539,22 @@ export function registerBillingApi(app: Express) {
       if (hasActivePix) {
         return res.status(409).json({ error: `Seu acesso por PIX está pago até ${new Date(entitlement.currentPeriodEnd).toLocaleDateString('pt-BR')}. Faça um novo pagamento somente após o vencimento.` });
       }
-      const customer = await customerFor(user.uid, user.email, user.name);
-      const { blocking, stale } = classifySubscriptions(await subscriptionsFor(customer));
-      if (blocking.length) {
-        return res.status(409).json({
-          error: 'Esta conta já possui uma assinatura. Use “Gerenciar assinatura e cobrança” para trocar de plano ou período.'
-        });
+      const storedCustomer = await storedCustomerFor(user.uid);
+      if (storedCustomer) {
+        const { blocking, stale } = classifySubscriptions(await subscriptionsFor(storedCustomer));
+        if (blocking.length) {
+          return res.status(409).json({
+            error: 'Esta conta já possui uma assinatura. Use “Gerenciar assinatura e cobrança” para trocar de plano ou período.'
+          });
+        }
+        await cancelStaleSubscriptions(stale);
       }
-      await cancelStaleSubscriptions(stale);
       if (paymentMethod === 'pix') {
         const product = typeof configuredPrice.product === 'string' ? configuredPrice.product : configuredPrice.product.id;
         const session = await stripe().checkout.sessions.create({
           mode: 'payment',
           payment_method_types: ['pix'],
-          customer,
+          ...(storedCustomer ? { customer: storedCustomer } : { customer_email: user.email, customer_creation: 'always' as const }),
           line_items: [{
             price_data: { currency: 'brl', unit_amount: EXPECTED_PRICE[plan][interval], product },
             quantity: 1
@@ -456,9 +570,8 @@ export function registerBillingApi(app: Express) {
       const session = await stripe().checkout.sessions.create({
         mode: 'subscription',
         payment_method_types: ['card'],
-        customer,
+        ...(storedCustomer ? { customer: storedCustomer } : { customer_email: user.email }),
         line_items: [{ price: configuredPrice.id, quantity: 1 }],
-        allow_promotion_codes: true,
         success_url: billingResultUrl(returnUrl, 'success'),
         cancel_url: billingResultUrl(returnUrl, 'canceled'),
         client_reference_id: user.uid,

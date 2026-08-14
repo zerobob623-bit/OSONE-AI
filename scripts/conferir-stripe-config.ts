@@ -36,6 +36,8 @@ assert.equal(endpoint.status, 'enabled', 'O webhook existe, mas está desativado
 const requiredEvents = [
   'checkout.session.completed',
   'checkout.session.async_payment_succeeded',
+  'invoice.paid',
+  'invoice.payment_succeeded',
   'customer.subscription.created',
   'customer.subscription.updated',
   'customer.subscription.deleted'
