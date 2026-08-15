@@ -53,7 +53,12 @@ def main():
         clips.append(clip)
 
     print("[*] Renderizando vídeo final...")
-    final_video = concatenate_videoclips(clips, method="compose")
+    # padding negativo é o que faz o crossfade acontecer de verdade: sem ele, cada clipe funde
+    # para preto e volta sozinho na sua própria borda (dois cortes duros e um flash preto no
+    # meio), em vez de se dissolver no clipe vizinho — porque crossfadein/crossfadeout só
+    # produzem uma dissolução real quando os clipes se SOBREPÕEM no tempo dentro do composite.
+    padding = -args.fade if args.fade > 0 else 0
+    final_video = concatenate_videoclips(clips, method="compose", padding=padding)
     final_video.write_videofile(args.output, codec="libx264", audio_codec="aac")
 
     # Limpeza

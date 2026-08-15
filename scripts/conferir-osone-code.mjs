@@ -407,13 +407,10 @@ const botaoDesfazer = (pag) => pag.locator('button[title="Desfazer alteração n
   await ctx.close();
 }
 
-// 18) Python roda de verdade e o print aparece.
-{
-  const { pag, ctx } = await abrir();
-  await pag.getByRole('button', { name: 'Novo Arquivo' }).click().catch(() => {});
-  // O nome do arquivo vem por window.prompt; respondido antes de clicar.
-  await ctx.close();
-}
+// A execução de Python (rodar de verdade via Pyodide, print aparecendo na tela, erro honesto sem
+// internet) tem cobertura própria e real em conferir-python.mjs — o caso que existia aqui só
+// clicava em "Novo Arquivo" e fechava o contexto sem nunca chamar registrar(), não verificando
+// nada. Removido em vez de mantido como um teste que sempre passa.
 
 
 // ====== A GERAÇÃO QUE NÃO DÁ EM NADA PRECISA APARECER ======
