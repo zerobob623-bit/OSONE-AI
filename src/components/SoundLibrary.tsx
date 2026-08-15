@@ -472,8 +472,15 @@ export const SoundLibrary = ({
       const currentPl = updated.find(p => p.id === playlistId);
       if (currentPl) {
         const matchingSounds = currentPl.soundIds.map(sid => sounds.find(s => s.id === sid)).filter(Boolean) as SoundEffect[];
-        setActiveQueue(matchingSounds);
         const index = matchingSounds.findIndex(s => s.url === playingUrl);
+        if (index === -1 && playingUrl) {
+          // A faixa que tocava foi removida desta playlist: não há mais um índice de fila válido
+          // para ela. Sem isto, o áudio continuava tocando com currentQueueIndex em -1, e Next/Prev
+          // (que exigem índice >= 0) ficavam travados pelo resto da sessão.
+          onStopSound();
+          setPlayingPlaylistId(null);
+        }
+        setActiveQueue(matchingSounds);
         setCurrentQueueIndex(index);
       }
     }

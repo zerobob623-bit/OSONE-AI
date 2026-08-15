@@ -987,6 +987,16 @@ export const CodeWorkspace: React.FC<{
 
   /** Abre o arquivo da ocorrência e deixa o trecho selecionado no editor. */
   const irParaOcorrencia = (o: OcorrenciaNaBusca) => {
+    if (o.arquivoId === activeFileId) {
+      // Já é o arquivo aberto: setActiveFileId seria um no-op, e a seleção pendente só é
+      // aplicada pelo efeito que observa activeFile.content mudar — que não muda, então nunca
+      // dispararia. Aplica direto, sem esperar por um efeito que não vai rodar.
+      setTimeout(() => {
+        editorRef.current?.focus();
+        editorRef.current?.setSelectionRange(o.inicio, o.fim);
+      }, 0);
+      return;
+    }
     setActiveFileId(o.arquivoId);
     // A seleção é aplicada depois que o editor renderiza o arquivo novo — o mesmo mecanismo já
     // usado pela indentação com Tab.

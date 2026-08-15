@@ -16,36 +16,45 @@ export const openRagIDB = (): Promise<IDBDatabase> => {
 };
 
 export const saveRagFileToDB = async (file: RagFile): Promise<void> => {
-  try {
-    const db = await openRagIDB();
+  const db = await openRagIDB();
+  return new Promise((resolve, reject) => {
     const transaction = db.transaction("files", "readwrite");
     const store = transaction.objectStore("files");
-    store.put(file);
-  } catch (err) {
-    console.error("IndexedDB Save Error:", err);
-  }
+    const request = store.put(file);
+    request.onsuccess = () => resolve();
+    request.onerror = () => {
+      console.error("IndexedDB Save Error:", request.error);
+      reject(request.error);
+    };
+  });
 };
 
 export const deleteRagFileFromDB = async (id: string): Promise<void> => {
-  try {
-    const db = await openRagIDB();
+  const db = await openRagIDB();
+  return new Promise((resolve, reject) => {
     const transaction = db.transaction("files", "readwrite");
     const store = transaction.objectStore("files");
-    store.delete(id);
-  } catch (err) {
-    console.error("IndexedDB Delete Error:", err);
-  }
+    const request = store.delete(id);
+    request.onsuccess = () => resolve();
+    request.onerror = () => {
+      console.error("IndexedDB Delete Error:", request.error);
+      reject(request.error);
+    };
+  });
 };
 
 export const clearRagDB = async (): Promise<void> => {
-  try {
-    const db = await openRagIDB();
+  const db = await openRagIDB();
+  return new Promise((resolve, reject) => {
     const transaction = db.transaction("files", "readwrite");
     const store = transaction.objectStore("files");
-    store.clear();
-  } catch (err) {
-    console.error("IndexedDB Clear Error:", err);
-  }
+    const request = store.clear();
+    request.onsuccess = () => resolve();
+    request.onerror = () => {
+      console.error("IndexedDB Clear Error:", request.error);
+      reject(request.error);
+    };
+  });
 };
 
 export const loadRagFilesFromDB = (): Promise<RagFile[]> => {

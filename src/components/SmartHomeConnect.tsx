@@ -63,6 +63,16 @@ export const SmartHomeConnect: React.FC<{
   const [comoResolver, setComoResolver] = useState<string>('');
   const [devices, setDevices] = useState<AparelhoReal[]>([]);
   const [ocupado, setOcupado] = useState<string | null>(null);
+  /**
+   * Valor do slider de brilho ENQUANTO o usuário mexe nele, por aparelho.
+   *
+   * O slider era descontrolado (`defaultValue`), que só vale na montagem: reler o estado do
+   * aparelho ("Atualizar estado", ou depois que outra pessoa muda o brilho pelo app Smart Life)
+   * atualizava o rótulo "Brilho: X%" mas o cursor ficava congelado na posição antiga. Agora o
+   * valor exibido é este override enquanto existir, e o real (`brilho`) assim que ele é limpo —
+   * ao terminar o comando ou ao recarregar os aparelhos.
+   */
+  const [brilhoAoVivo, setBrilhoAoVivo] = useState<Record<string, number>>({});
   const [copiedScript, setCopiedScript] = useState<boolean>(false);
 
   const [routines, setRoutines] = useState<SmartRoutine[]>(() => {
@@ -91,6 +101,7 @@ export const SmartHomeConnect: React.FC<{
    */
   const carregar = useCallback(async () => {
     setEstado('carregando');
+    setBrilhoAoVivo({});
     try {
       const statusRes = await fetch('/api/tuya/status');
       const statusData = await statusRes.json().catch(() => null);
@@ -188,6 +199,17 @@ export const SmartHomeConnect: React.FC<{
     } finally {
       setOcupado(null);
     }
+  };
+
+  /** Envia o valor arrastado no slider e devolve o controle ao estado real do aparelho. */
+  const enviarBrilho = (dev: AparelhoReal, valor: number) => {
+    comandar(dev, 'set_value', valor).finally(() => {
+      setBrilhoAoVivo(prev => {
+        if (!(dev.id in prev)) return prev;
+        const { [dev.id]: _omit, ...resto } = prev;
+        return resto;
+      });
+    });
   };
 
   const criarRotina = () => {
@@ -563,10 +585,12 @@ if __name__ == "__main__":
                               type="range"
                               min="0"
                               max="100"
-                              defaultValue={brilho}
+                              value={brilhoAoVivo[dev.id] ?? brilho}
                               disabled={ocupado === dev.id}
-                              onMouseUp={(e) => comandar(dev, 'set_value', Number((e.target as HTMLInputElement).value))}
-                              onTouchEnd={(e) => comandar(dev, 'set_value', Number((e.target as HTMLInputElement).value))}
+                              onChange={(e) => setBrilhoAoVivo(prev => ({ ...prev, [dev.id]: Number(e.target.value) }))}
+                              onMouseUp={(e) => enviarBrilho(dev, Number((e.target as HTMLInputElement).value))}
+                              onTouchEnd={(e) => enviarBrilho(dev, Number((e.target as HTMLInputElement).value))}
+                              onKeyUp={(e) => enviarBrilho(dev, Number((e.target as HTMLInputElement).value))}
                               className="w-full accent-cyan-400 h-1.5 bg-black/60 rounded-lg cursor-pointer"
                             />
                           </div>

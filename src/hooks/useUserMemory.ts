@@ -226,23 +226,35 @@ export function useUserMemory() {
     });
   }, [userId]);
 
-  // Métodos utilitários de busca de datas próximas
+  /**
+   * Datas comemoradas anualmente (MM-DD), ordenadas por quão perto está a PRÓXIMA ocorrência —
+   * não por mês/dia dentro do ano corrente.
+   *
+   * Filtrar quem já passou o mês/dia deste ano (como era antes) some com a data pelo resto do
+   * ano inteiro: em agosto, um aniversário de março é o mais próximo que existe (volta em ~7
+   * meses), mas o filtro antigo o descartava até o calendário virar. Aqui toda data entra, e a
+   * ordenação por dias-até-a-próxima-ocorrência (contando a virada de ano quando o dia deste ano
+   * já passou) resolve isso naturalmente.
+   */
   const getUpcomingDates = useCallback(() => {
     if (!memory.importantDates) return [];
-    const today = new Date();
-    const currentMonth = today.getMonth() + 1;
-    const currentDate = today.getDate();
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
+    const anoAtual = hoje.getFullYear();
 
-    return memory.importantDates.filter(d => {
-      const [m, day] = d.date.split('-').map(Number);
-      if (m > currentMonth) return true;
-      if (m === currentMonth && day >= currentDate) return true;
-      return false;
-    }).sort((a, b) => {
-      const [am, ad] = a.date.split('-').map(Number);
-      const [bm, bd] = b.date.split('-').map(Number);
-      return am !== bm ? am - bm : ad - bd;
-    });
+    const diasAteProximaOcorrencia = (mes: number, dia: number): number => {
+      let proxima = new Date(anoAtual, mes - 1, dia);
+      if (proxima < hoje) proxima = new Date(anoAtual + 1, mes - 1, dia);
+      return Math.round((proxima.getTime() - hoje.getTime()) / 86400000);
+    };
+
+    return memory.importantDates
+      .map(d => {
+        const [m, day] = d.date.split('-').map(Number);
+        return { item: d, diasRestantes: diasAteProximaOcorrencia(m, day) };
+      })
+      .sort((a, b) => a.diasRestantes - b.diasRestantes)
+      .map(x => x.item);
   }, [memory.importantDates]);
 
   // Atualiza a área de rascunhos (Workspace) temporária

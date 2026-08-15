@@ -137,6 +137,26 @@ async function startServer() {
     return { ok: true, key };
   };
 
+  /**
+   * Padrões de chave reconhecidos, num único lugar.
+   *
+   * Usado tanto para redigir (sanitizeMessageOfKeys) quanto para decidir se vale a pena tentar
+   * redigir (o gate do middleware de resposta, logo abaixo). Foi exatamente a duplicação dessa
+   * lista — o formato "AQ." entrou aqui mas nunca foi atualizado no `str.includes("AIzaSy")` que
+   * decidia se a rota de sanitização rodava — que deixou chaves nesse formato vazarem inteiras
+   * em respostas de erro que não vinham do fallback/env key configurado do próprio servidor.
+   */
+  const PADROES_DE_CHAVE_SENSIVEL: RegExp[] = [
+    /AIzaSy[A-Za-z0-9_-]{33}/,
+    /AQ\.[A-Za-z0-9_-]{30,}/,
+    /sk-proj-[A-Za-z0-9_-]{20,}/,
+    /sk-ant-[A-Za-z0-9_-]{20,}/,
+    /\bsk-[A-Za-z0-9_-]{20,}/
+  ];
+
+  const contemChaveSensivel = (texto: string): boolean =>
+    !!texto && PADROES_DE_CHAVE_SENSIVEL.some(padrao => padrao.test(texto));
+
   // Helper to sanitize any occurrence of sensitive API keys from messages returned to the client
   const sanitizeMessageOfKeys = (message: string): string => {
     if (!message) return "";
@@ -241,11 +261,11 @@ async function startServer() {
           const fallbackKey = getSecretGeminiKey();
           const envKey = process.env.GEMINI_API_KEY || "";
 
-          const hasGoogleKey = str.includes("AIzaSy");
+          const hasKeyPattern = contemChaveSensivel(str);
           const hasFallbackKey = !!(fallbackKey && str.includes(fallbackKey));
           const hasEnvKey = !!(envKey && str.includes(envKey));
 
-          if (hasGoogleKey || hasFallbackKey || hasEnvKey) {
+          if (hasKeyPattern || hasFallbackKey || hasEnvKey) {
             const sanitizedStr = sanitizeMessageOfKeys(str);
             return originalJson.call(this, JSON.parse(sanitizedStr));
           }
@@ -262,11 +282,11 @@ async function startServer() {
         const fallbackKey = getSecretGeminiKey();
         const envKey = process.env.GEMINI_API_KEY || "";
 
-        const hasGoogleKey = body.includes("AIzaSy");
+        const hasKeyPattern = contemChaveSensivel(body);
         const hasFallbackKey = !!(fallbackKey && body.includes(fallbackKey));
         const hasEnvKey = !!(envKey && body.includes(envKey));
 
-        if (hasGoogleKey || hasFallbackKey || hasEnvKey) {
+        if (hasKeyPattern || hasFallbackKey || hasEnvKey) {
           const sanitizedBody = sanitizeMessageOfKeys(body);
           return originalSend.call(this, sanitizedBody);
         }
@@ -627,7 +647,10 @@ Comentário de @${user}: "${text}"`;
           });
           setTimeout(() => {
             if (currentTikTokUser === username) {
-               connectToTikTokLive(username, sessionId, tiktokTargetIdc).catch(() => {});
+               // Reconecta com o MESMO targetIdc desta sessão (parâmetro de closure), não com a
+               // global tiktokTargetIdc — que pode já ter mudado por outra chamada a
+               // /api/tiktok/connect enquanto este timer estava pendente.
+               connectToTikTokLive(username, sessionId, targetIdc).catch(() => {});
             }
           }, 10000);
         } else {
@@ -1009,10 +1032,19 @@ Responda em português do Brasil, de forma natural para leitura no WhatsApp (sem
   function findSavedContact(senderJid: string): ContactItem | undefined {
     const cleanDigits = String(senderJid || "").replace(/\D/g, "");
     if (!cleanDigits) return undefined;
+    /**
+     * Mínimo de 10 dígitos no lado comparado por sufixo: DDD (2) + número local (8), o menor
+     * recorte que ainda inclui código de área. Com o piso de 8 usado antes, um contato salvo só
+     * com o número local (sem DDD, formato comum quando a pessoa digita "99925-9368" sem área)
+     * casava contra QUALQUER remetente de QUALQUER DDD que terminasse nos mesmos 8 dígitos —
+     * furando o onlyKnownContacts para um estranho de área diferente, que herdava o nome e as
+     * notas do contato errado no prompt.
+     */
+    const MINIMO_DIGITOS_PARA_SUFIXO = 10;
     return loadContacts().find(c =>
       c.phone === cleanDigits ||
-      (cleanDigits.length >= 8 && c.phone.endsWith(cleanDigits)) ||
-      (c.phone.length >= 8 && cleanDigits.endsWith(c.phone))
+      (cleanDigits.length >= MINIMO_DIGITOS_PARA_SUFIXO && c.phone.length >= MINIMO_DIGITOS_PARA_SUFIXO && c.phone.endsWith(cleanDigits)) ||
+      (c.phone.length >= MINIMO_DIGITOS_PARA_SUFIXO && cleanDigits.length >= MINIMO_DIGITOS_PARA_SUFIXO && cleanDigits.endsWith(c.phone))
     );
   }
 
@@ -3447,22 +3479,27 @@ DIRETRIZES RÍGIDAS DE ATENDIMENTO:
             mimeType: "application/pdf"
           }
         });
+      } else if (!mimeType || mimeType.startsWith("text/") || mimeType === "application/json" || mimeType === "application/xml") {
+        // Texto de verdade: decodifica e manda como texto puro no prompt.
+        const decodedText = Buffer.from(fileData, 'base64').toString('utf8');
+        parts.push({
+          text: `DOCUMENTO DE REFERÊNCIA:\n\n${decodedText}`
+        });
       } else {
-        // Assume text file
-        try {
-          const decodedText = Buffer.from(fileData, 'base64').toString('utf8');
-          parts.push({
-            text: `DOCUMENTO DE REFERÊNCIA:\n\n${decodedText}`
-          });
-        } catch (errDec) {
-          // Fallback if decode fails, try passing as inline text direct
-          parts.push({
-            inlineData: {
-              data: fileData,
-              mimeType: mimeType || "text/plain"
-            }
-          });
-        }
+        /**
+         * Binário real (imagem, etc.): manda como inlineData com o mimeType verdadeiro.
+         *
+         * Antes qualquer coisa que não fosse PDF caía no ramo de texto acima e era forçada por
+         * Buffer.toString('utf8') — que nunca lança em bytes arbitrários, só produz mojibake — e
+         * o try/catch que existia "para esse caso" nunca disparava. O modelo recebia lixo em vez
+         * da imagem e devolvia respostas vazias ou erradas, sem nenhum erro visível ao usuário.
+         */
+        parts.push({
+          inlineData: {
+            data: fileData,
+            mimeType
+          }
+        });
       }
 
       // Add prompt with instructions and questions
@@ -4602,11 +4639,14 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
     params: { model: string; contents: any; config?: any },
     options?: { allowDowngrade?: boolean; modeloDeReserva?: string; maximoDeContinuacoes?: number }
   ): Promise<{ texto: string; finishReason: any; continuacoes: number; modeloUsado: string; bloqueado: boolean }> {
+    const ehFinishReasonBloqueado = (fr: any) =>
+      fr === "SAFETY" || fr === "PROHIBITED_CONTENT" || fr === "BLOCKLIST" || fr === "SPII";
+
     const primeira = await generateContentWithFallback(ai, params, options);
     let texto = primeira.text || "";
     let finishReason = (primeira as any)?.candidates?.[0]?.finishReason;
     const modeloUsado = (primeira as any).__modeloUsado || params.model;
-    const bloqueado = finishReason === "SAFETY" || finishReason === "PROHIBITED_CONTENT" || finishReason === "BLOCKLIST" || finishReason === "SPII";
+    let bloqueado = ehFinishReasonBloqueado(finishReason);
 
     const limite = Math.max(0, options?.maximoDeContinuacoes ?? 0);
     if (bloqueado || limite === 0) return { texto, finishReason, continuacoes: 0, modeloUsado, bloqueado };
@@ -4659,6 +4699,10 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
     if (continuacoes > 0) {
       console.log(`[Continuação] Texto final montado com ${continuacoes} continuação(ões): ${texto.length} caracteres.`);
     }
+    // finishReason pode ter mudado numa continuação (ex: a primeira parte veio por MAX_TOKENS,
+    // mas a continuação foi barrada por SAFETY) — bloqueado precisa refletir o resultado final,
+    // não só o da primeira resposta, senão uma geração bloqueada sai daqui marcada como sucesso.
+    bloqueado = ehFinishReasonBloqueado(finishReason);
     return { texto, finishReason, continuacoes, modeloUsado, bloqueado };
   }
 

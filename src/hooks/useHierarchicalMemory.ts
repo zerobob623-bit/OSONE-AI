@@ -212,7 +212,7 @@ Retorne ESTRITAMENTE este JSON, nada mais:
   }, [apiKey, model, getTier, upsertTier]);
 
   /** Junta as camadas "dia" de uma semana concluída em uma camada "semana". */
-  const rollUpWeek = useCallback(async (weekLbl: string, dayTiers: MemoryTier[]): Promise<HierarchicalMemoryState> => {
+  const rollUpWeek = useCallback(async (weekLbl: string, dayTiers: MemoryTier[], base: HierarchicalMemoryState): Promise<HierarchicalMemoryState> => {
     const prompt = `Você é o AGENTE DE CONSOLIDAÇÃO REFLEXIVA do OSONE. Junte os resumos diários abaixo (todos da mesma semana) em UM resumo semanal coeso, e refine a lista de traços abstratos do usuário (mantendo só os mais consistentes/reforçados, sem duplicar).
 
 RESUMOS DIÁRIOS DA SEMANA:
@@ -235,11 +235,11 @@ Retorne ESTRITAMENTE este JSON:
       abstractTraits: Array.isArray(parsed.abstractTraits) ? parsed.abstractTraits : [],
       updatedAt: Date.now()
     };
-    return upsertTier(weekTier, stateRef.current);
+    return upsertTier(weekTier, base);
   }, [apiKey, model, upsertTier]);
 
   /** Junta as camadas "semana" de um mês concluído em uma camada "mês". */
-  const rollUpMonth = useCallback(async (monthLbl: string, weekTiers: MemoryTier[]): Promise<HierarchicalMemoryState> => {
+  const rollUpMonth = useCallback(async (monthLbl: string, weekTiers: MemoryTier[], base: HierarchicalMemoryState): Promise<HierarchicalMemoryState> => {
     const prompt = `Você é o AGENTE DE CONSOLIDAÇÃO REFLEXIVA do OSONE. Junte os resumos semanais abaixo (todos do mesmo mês) em UM resumo mensal coeso e conciso.
 
 RESUMOS SEMANAIS DO MÊS:
@@ -262,7 +262,7 @@ Retorne ESTRITAMENTE este JSON:
       abstractTraits: Array.isArray(parsed.abstractTraits) ? parsed.abstractTraits : [],
       updatedAt: Date.now()
     };
-    let next = upsertTier(monthTier, stateRef.current);
+    let next = upsertTier(monthTier, base);
 
     // Dobra o mês novo na narrativa de vida (camada "life"), reescrevendo-a de forma concisa
     // em vez de só concatenar (evita crescimento sem limite).
@@ -318,7 +318,7 @@ Retorne ESTRITAMENTE este JSON:
       if (wk === currentWeek) continue;
       const hasWeekTier = next.tiers.some(t => t.scope === 'week' && t.periodLabel === wk);
       if (!hasWeekTier && days.length > 0) {
-        next = await rollUpWeek(wk, days);
+        next = await rollUpWeek(wk, days, next);
       }
     }
 
@@ -334,7 +334,7 @@ Retorne ESTRITAMENTE este JSON:
       if (mo === currentMonth) continue;
       const hasMonthTier = next.tiers.some(t => t.scope === 'month' && t.periodLabel === mo);
       if (!hasMonthTier && weeks.length > 0) {
-        next = await rollUpMonth(mo, weeks);
+        next = await rollUpMonth(mo, weeks, next);
       }
     }
 
