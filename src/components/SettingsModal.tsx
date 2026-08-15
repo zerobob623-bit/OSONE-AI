@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Cpu, Palette, Key, Info, Activity, CheckCircle2, AlertCircle, Loader2, Home, UserCircle, Volume2, RefreshCw, Copy, Image, Eye, EyeOff, Fingerprint, Sparkles, KeyRound, DownloadCloud } from 'lucide-react';
+import { X, Cpu, Palette, Key, Info, Activity, CheckCircle2, AlertCircle, Loader2, Home, UserCircle, Volume2, RefreshCw, Copy, Image, Eye, EyeOff, Fingerprint, Sparkles, KeyRound, DownloadCloud, Hand } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { ApiKeys, OrbStyle, AppTheme, AIProfile, VoiceModulation } from '../types';
 import { PERSONAS, Persona } from './PersonaSwitcher';
@@ -37,6 +37,8 @@ export const SettingsModal = ({
   setVoiceEngine,
   isChatAutoSpeakActive = false,
   setIsChatAutoSpeakActive,
+  slapHandEnabled = true,
+  setSlapHandEnabled,
   voiceModulation,
   setVoiceModulation,
   orbStyle,
@@ -71,6 +73,8 @@ export const SettingsModal = ({
   setVoiceEngine: (engine: 'gemini' | 'elevenlabs') => void;
   isChatAutoSpeakActive?: boolean;
   setIsChatAutoSpeakActive?: (active: boolean) => void;
+  slapHandEnabled?: boolean;
+  setSlapHandEnabled?: (enabled: boolean) => void;
   voiceModulation: VoiceModulation;
   setVoiceModulation: (mod: VoiceModulation) => void;
   orbStyle: OrbStyle;
@@ -1361,6 +1365,39 @@ export const SettingsModal = ({
                           <span className={cn(
                             "w-4 h-4 rounded-full bg-white transition-transform block shadow-sm",
                             isChatAutoSpeakActive ? "translate-x-5" : "translate-x-0"
+                          )} />
+                        </button>
+                      </div>
+
+                      {/* Slap Hand Toggle */}
+                      <div className="flex items-center justify-between bg-white/[0.01]/10 p-4 rounded-3xl border border-white/5">
+                        <div className="flex flex-col text-left space-y-0.5">
+                          <span className="text-xs text-zinc-300 font-medium select-none flex items-center gap-1.5 align-middle">
+                            <Hand size={13} className="text-her-accent" />
+                            Mão de Tapa Corretivo
+                          </span>
+                          <span className="text-[10px] text-her-muted select-none leading-normal">
+                            Mostra o botão flutuante da mão para "acordar" o OSONE. Clique e segure nele para arrastar e mudar de lugar na tela.
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => {
+                            if (setSlapHandEnabled) {
+                              const newState = !slapHandEnabled;
+                              setSlapHandEnabled(newState);
+                              if (onAddNotification) {
+                                onAddNotification(newState ? "Mão de tapa ativada" : "Mão de tapa desativada", "info");
+                              }
+                            }
+                          }}
+                          className={cn(
+                            "w-10 h-5 rounded-full transition-colors relative flex items-center p-0.5 cursor-pointer",
+                            slapHandEnabled ? "bg-her-accent" : "bg-white/10"
+                          )}
+                        >
+                          <span className={cn(
+                            "w-4 h-4 rounded-full bg-white transition-transform block shadow-sm",
+                            slapHandEnabled ? "translate-x-5" : "translate-x-0"
                           )} />
                         </button>
                       </div>

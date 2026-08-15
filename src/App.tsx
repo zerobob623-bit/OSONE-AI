@@ -4814,6 +4814,25 @@ interface SearchPopupItem {
   const [slapReactionText, setSlapReactionText] = useState<string | null>(null);
   const [lastWorkspacePrompt, setLastWorkspacePrompt] = useState('');
 
+  /** Botão flutuante da mão de tapa: pode ser desativado, e lembra de onde o usuário o arrastou. */
+  const [slapHandEnabled, setSlapHandEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('osone_slap_hand_enabled') !== 'false';
+  });
+  useEffect(() => {
+    localStorage.setItem('osone_slap_hand_enabled', String(slapHandEnabled));
+  }, [slapHandEnabled]);
+  const [slapHandOffset, setSlapHandOffset] = useState<{ x: number; y: number }>(() => {
+    try {
+      const salvo = localStorage.getItem('osone_slap_hand_offset');
+      return salvo ? JSON.parse(salvo) : { x: 0, y: 0 };
+    } catch {
+      return { x: 0, y: 0 };
+    }
+  });
+  /** Distingue "soltou o clique" de "acabou de arrastar", para o arrasto não disparar o tapa. */
+  const houveArrastoDaMaoRef = useRef(false);
+  const botaoDaMaoRef = useRef<HTMLButtonElement>(null);
+
   // Hunter - Caçador Agêntico de Código
   const [isHunterAnalyzing, setIsHunterAnalyzing] = useState(false);
   const [hunterStatus, setHunterStatus] = useState<'idle' | 'analyzing' | 'doubt' | 'success' | 'error'>('idle');
@@ -14634,15 +14653,48 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
       </AnimatePresence>
 
       {/* Botão de Tapa Corretivo Flutuante - Estilo Mão Cybernetic Isolada (Sem Fundo/Borda) */}
+      {slapHandEnabled && (
       <motion.button
-        onClick={handleSlap}
-        initial={{ opacity: 0, scale: 0.8, x: 25 }}
-        animate={{ opacity: 1, scale: 1, x: 0 }}
+        ref={botaoDaMaoRef}
+        onClick={() => {
+          // Um arrasto solto também dispara 'click' no DOM — sem esta guarda, mover a mão de
+          // lugar sempre terminava dando um tapa na posição de soltura, igual ao mesmo problema
+          // já corrigido antes no globo do mapa (arrastar para orbitar disparando um clique).
+          if (!houveArrastoDaMaoRef.current) handleSlap();
+        }}
+        drag
+        dragMomentum={false}
+        dragElastic={0}
+        onDragStart={() => { houveArrastoDaMaoRef.current = true; }}
+        onDragEnd={(_e, info) => {
+          setSlapHandOffset(prev => {
+            let novoX = prev.x + info.offset.x;
+            let novoY = prev.y + info.offset.y;
+            // Traz de volta para dentro da tela se o arrasto deixou a mão parcialmente fora —
+            // sem isto, um arrasto até a borda podia deixá-la inacessível para sempre (a posição
+            // é lembrada entre sessões).
+            const rect = botaoDaMaoRef.current?.getBoundingClientRect();
+            if (rect) {
+              if (rect.left < 0) novoX -= rect.left;
+              if (rect.top < 0) novoY -= rect.top;
+              if (rect.right > window.innerWidth) novoX -= (rect.right - window.innerWidth);
+              if (rect.bottom > window.innerHeight) novoY -= (rect.bottom - window.innerHeight);
+            }
+            const novo = { x: novoX, y: novoY };
+            try { localStorage.setItem('osone_slap_hand_offset', JSON.stringify(novo)); } catch {}
+            return novo;
+          });
+          // Só libera o clique de novo depois do 'click' sintético do próprio soltar já ter
+          // passado — os dois acontecem no mesmo instante, então zerar cedo demais não protegeria.
+          setTimeout(() => { houveArrastoDaMaoRef.current = false; }, 100);
+        }}
+        initial={{ opacity: 0, scale: 0.8 }}
+        animate={{ opacity: 1, scale: 1, x: slapHandOffset.x, y: slapHandOffset.y }}
         whileHover={{ scale: 1.1 }}
         whileTap={{ scale: 0.9 }}
         type="button"
-        className="fixed right-3 md:right-6 top-[62%] -translate-y-1/2 z-[45] w-16 h-16 md:w-20 md:h-20 bg-transparent border-none outline-none flex items-center justify-center group cursor-pointer select-none"
-        title="Dar um Tapa de Ajuste no OSONE (Wake Up / Recalibrar Foco)"
+        className="fixed right-3 md:right-6 top-[62%] -translate-y-1/2 z-[45] w-16 h-16 md:w-20 md:h-20 bg-transparent border-none outline-none flex items-center justify-center group cursor-grab active:cursor-grabbing select-none"
+        title="Clique para dar um Tapa de Ajuste no OSONE. Clique e segure para arrastar e mudar de lugar."
       >
         <motion.div
           className="w-full h-full flex items-center justify-center relative"
@@ -14668,6 +14720,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
           <CyberneticHandIcon className="w-full h-full drop-shadow-[0_0_8px_rgba(52,211,153,0.4)] group-hover:drop-shadow-[0_0_16px_rgba(52,211,153,0.75)] active:drop-shadow-[0_0_24px_rgba(52,211,153,0.95)] transition-all duration-300" />
         </motion.div>
       </motion.button>
+      )}
 
       {/* Modals & Overlays */}
       {/* Notifications Layer */}
@@ -14734,6 +14787,8 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
             setVoiceEngine={setVoiceEngine}
             isChatAutoSpeakActive={isChatAutoSpeakActive}
             setIsChatAutoSpeakActive={setIsChatAutoSpeakActive}
+            slapHandEnabled={slapHandEnabled}
+            setSlapHandEnabled={setSlapHandEnabled}
             voiceModulation={voiceModulation}
             setVoiceModulation={setVoiceModulation}
             orbStyle={orbStyle}

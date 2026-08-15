@@ -258,7 +258,7 @@ export function WhatsAppConnect({ onStatusChange, className = '' }: WhatsAppConn
 
             <p className="text-[11px] text-zinc-500 flex items-center gap-1.5">
               <ShieldCheck size={12} className="text-amber-400" />
-              A sessão será salva localmente na pasta <code className="text-zinc-300 font-mono">.wwebjs_auth</code>.
+              A sessão será salva localmente na pasta <code className="text-zinc-300 font-mono">.baileys_auth</code>.
             </p>
           </motion.div>
         )}
@@ -285,10 +285,10 @@ export function WhatsAppConnect({ onStatusChange, className = '' }: WhatsAppConn
             </div>
 
             <h4 className="text-base font-bold text-white mb-1">
-              Inicializando Motor Puppeteer OSONE...
+              Inicializando Motor OSONE ZAP...
             </h4>
             <p className="text-xs text-orange-300/80 max-w-sm">
-              Carregando Chromium e autenticação persistente em disco...
+              Conectando ao WhatsApp e carregando autenticação persistente em disco...
             </p>
           </motion.div>
         )}
@@ -336,7 +336,7 @@ export function WhatsAppConnect({ onStatusChange, className = '' }: WhatsAppConn
 
             <h4 className="text-base font-bold text-red-400 mb-1">Falha na Conexão</h4>
             <p className="text-xs text-red-300/80 mb-4 max-w-sm text-left font-mono whitespace-pre-line break-words bg-black/40 p-3 rounded-xl border border-red-500/20">
-              {errorMsg || "Não foi possível inicializar o navegador Puppeteer local."}
+              {errorMsg || "Não foi possível iniciar a conexão com o WhatsApp."}
             </p>
 
             <div className="flex flex-wrap items-center justify-center gap-3">
