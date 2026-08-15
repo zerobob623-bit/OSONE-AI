@@ -401,6 +401,10 @@ export const getFriendlyModeName = (mode: WorkspaceMode): string => {
     case 'vision_control': return 'Controle por Visão';
     case 'cowork': return 'OSONE COWORK — agente que clica e digita no computador';
     case 'cameras': return 'OSONE VIGIA — câmeras de segurança ao vivo e o registro do que aconteceu';
+    case 'tiktok': return 'Co-piloto de TikTok Live';
+    case 'sensus_evolution': return 'Sensus — evolução emocional do OSONE';
+    case 'hear': return 'OSONE Hear — escuta e transcrição ao vivo';
+    case 'web_research': return 'OSONE Pesquisa — investigação profunda na web';
     default: return String(mode);
   }
 };

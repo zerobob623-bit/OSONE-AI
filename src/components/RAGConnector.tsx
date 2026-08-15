@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Folder, FileText, Search, Link2, Unlink, RefreshCw, Eye, Trash2, 
@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { RagFile } from '../types';
 import { cn } from '../lib/utils';
-import { clearRagDB, deleteRagFileFromDB, loadRagFilesFromDB, saveRagFileToDB } from '../lib/ragDb';
+import { clearRagDB, deleteRagFileFromDB, saveRagFileToDB } from '../lib/ragDb';
 
 export const RAGConnector = ({
   ragFiles,
@@ -31,14 +31,12 @@ export const RAGConnector = ({
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Load files from IndexedDB on start
-  useEffect(() => {
-    loadRagFilesFromDB().then(files => {
-      if (files.length > 0) {
-        setRagFiles(files);
-      }
-    });
-  }, [setRagFiles]);
+  // O carregamento do IndexedDB agora acontece no mount do App.tsx (ragFiles é estado do app
+  // inteiro, usado pela busca RAG do chat mesmo fora desta aba), não mais aqui. Repetir o load
+  // neste mount sobrescreveria `ragFiles` (que pode já ter um arquivo cujo save ainda está em
+  // voo — handleToggleFileActive e o syncFileToRag do App.tsx não esperam o IndexedDB confirmar
+  // antes de atualizar o estado) com uma foto mais velha do banco, revertendo silenciosamente
+  // uma mudança recente sempre que o usuário saísse e voltasse rápido para esta aba.
 
   // Handle native showDirectoryPicker
   const handleConnectDirectory = async () => {
