@@ -92,6 +92,42 @@ const customFetch = async function (input: RequestInfo | URL, init?: RequestInit
           return originalFetch(input, init);
         }
 
+        /**
+         * Geração de imagem não precisa de clientApiKey — o comentário abaixo já dizia "sempre
+         * tentar" o Pollinations (que não pede chave), mas o bloco inteiro vivia preso dentro do
+         * `if (clientApiKey)` mais abaixo. Sem uma chave Gemini configurada, nada aqui rodava: a
+         * requisição caía direto no `originalFetch(input, init)` no fim da função, um fetch real
+         * para /api/gemini/generateImages — que não existe no Vercel estático — e o usuário via
+         * um erro de rede cru em vez de qualquer resultado ou mensagem clara.
+         */
+        if (isGeminiImageProxy) {
+          const promptStr = reqBody.prompt || "";
+          try {
+            const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptStr)}?width=1024&height=1024&nologo=true&private=true&enhance=true&seed=${Math.floor(Math.random() * 1000000)}`;
+            const polRes = await originalFetch(pollinationsUrl);
+            if (polRes.ok) {
+              const arrayBuffer = await polRes.arrayBuffer();
+              const bytes = new Uint8Array(arrayBuffer);
+              let binary = "";
+              for (let i = 0; i < bytes.byteLength; i++) {
+                binary += String.fromCharCode(bytes[i]);
+              }
+              const base64 = btoa(binary);
+              return new Response(JSON.stringify({
+                generatedImages: [{ image: { imageBytes: base64 } }]
+              }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" }
+              });
+            }
+          } catch (_) {}
+
+          return new Response(JSON.stringify({ error: "Direct image generation unavailable." }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+
         if (clientApiKey) {
           console.log("[Vercel-OSONE Fallback] Intercepting fetch and making direct client-side call to Google Gemini API...");
           
@@ -234,37 +270,6 @@ const customFetch = async function (input: RequestInfo | URL, init?: RequestInit
 
               return new Response(JSON.stringify({ text: textResult }), {
                 status: 200,
-                headers: { "Content-Type": "application/json" }
-              });
-            }
-
-            if (isGeminiImageProxy) {
-              const promptStr = reqBody.prompt || "";
-              const aspectRatio = reqBody.config?.aspectRatio || "1:1";
-
-              // Always attempt high-quality keyless / resilient Pollinations fallback on client-side direct calls
-              try {
-                const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptStr)}?width=1024&height=1024&nologo=true&private=true&enhance=true&seed=${Math.floor(Math.random() * 1000000)}`;
-                const polRes = await originalFetch(pollinationsUrl);
-                if (polRes.ok) {
-                  const arrayBuffer = await polRes.arrayBuffer();
-                  const bytes = new Uint8Array(arrayBuffer);
-                  let binary = "";
-                  for (let i = 0; i < bytes.byteLength; i++) {
-                    binary += String.fromCharCode(bytes[i]);
-                  }
-                  const base64 = btoa(binary);
-                  return new Response(JSON.stringify({
-                    generatedImages: [{ image: { imageBytes: base64 } }]
-                  }), {
-                    status: 200,
-                    headers: { "Content-Type": "application/json" }
-                  });
-                }
-              } catch (_) {}
-
-              return new Response(JSON.stringify({ error: "Direct image generation unavailable." }), {
-                status: 500,
                 headers: { "Content-Type": "application/json" }
               });
             }

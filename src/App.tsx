@@ -976,6 +976,23 @@ export default function App() {
 
   const [ragFiles, setRagFiles] = useState<RagFile[]>([]);
 
+  /**
+   * Carrega os documentos RAG do IndexedDB assim que o app abre — não quando a aba RAG é
+   * visitada.
+   *
+   * O carregamento vivia só dentro do useEffect de montagem do RAGConnector, que só existe
+   * enquanto workspaceMode === 'rag' (é montado/desmontado por um ternário, não escondido por
+   * CSS). Como `ragFiles` começa vazio e searchLocalRagDocs (abaixo) e os tools de RAG no chat/
+   * voz dependem só deste estado em memória, a busca RAG local ficava sempre vazia — mesmo com
+   * documentos salvos de sessões anteriores — até o usuário abrir a aba RAG pelo menos uma vez
+   * na sessão atual.
+   */
+  useEffect(() => {
+    loadRagFilesFromDB().then(files => {
+      if (files.length > 0) setRagFiles(files);
+    });
+  }, []);
+
   const searchLocalRagDocs = (query: string): string => {
     if (!query || ragFiles.length === 0) return "";
     const cleanQuery = query.toLowerCase().trim();
