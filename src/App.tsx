@@ -814,6 +814,31 @@ class ElevenLabsQueuePlayer {
   }
 }
 
+/**
+ * Busca no histórico de chat salvo por QUALQUER termo da consulta, não pela frase inteira.
+ *
+ * Usada por 'search_chat_history' (texto e voz). O match anterior era uma única string.includes()
+ * contra a consulta inteira, então uma busca por "aquele projeto de app" nunca encontrava uma
+ * mensagem que dizia "projeto do aplicativo" — a frase precisava bater literalmente. Aqui cada
+ * termo da consulta conta ponto se aparecer na mensagem, e as mensagens voltam ordenadas por
+ * quantos termos bateram, o que é o que faz a ferramenta valer a pena chamar: o modelo (de voz
+ * ou de texto) raramente lembra a frase exata que o usuário usou antes.
+ */
+function buscarNoHistoricoDeChat(mensagens: Message[], query: string, limite = 10): Message[] {
+  const termos = query.toLowerCase().split(/\s+/).filter(t => t.length > 2);
+  if (termos.length === 0) return [];
+  return mensagens
+    .map(msg => {
+      const textoMinusculo = msg.content.toLowerCase();
+      const pontos = termos.reduce((soma, termo) => soma + (textoMinusculo.includes(termo) ? 1 : 0), 0);
+      return { msg, pontos };
+    })
+    .filter(x => x.pontos > 0)
+    .sort((a, b) => b.pontos - a.pontos)
+    .slice(0, limite)
+    .map(x => x.msg);
+}
+
 export default function App() {
   const [user, setUser] = useState<User | null>(() => {
     try {
@@ -9027,7 +9052,23 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
         });
       }));
 
-      const historyContents = chatHistoryRef.current.map(msg => ({
+      /**
+       * Janela de contexto: só as últimas JANELA_DE_CONTEXTO_MENSAGENS mensagens vão de verdade
+       * no corpo da requisição ao modelo.
+       *
+       * O histórico completo continua salvo e visível na tela (chatHistory/chatSessions) — só o
+       * que é ENVIADO por turno agora tem teto. Sem isso, toda conversa longa reenviava o
+       * histórico inteiro a cada mensagem nova, inflando custo, latência e o risco de esbarrar no
+       * limite de contexto do modelo. Quando o que o usuário pede está fora dessa janela, é para
+       * isso que existe 'search_chat_history' (ver a diretriz "JANELA DE CONTEXTO" no prompt
+       * logo abaixo) — o modelo busca de volta em vez de fingir lembrar ou dizer que não sabe.
+       */
+      const JANELA_DE_CONTEXTO_MENSAGENS = 40;
+      const historicoNaJanela = chatHistoryRef.current.length > JANELA_DE_CONTEXTO_MENSAGENS
+        ? chatHistoryRef.current.slice(-JANELA_DE_CONTEXTO_MENSAGENS)
+        : chatHistoryRef.current;
+
+      const historyContents = historicoNaJanela.map(msg => ({
         role: msg.role === 'assistant' ? 'model' : 'user',
         parts: [{ text: msg.content }]
       }));
@@ -9114,7 +9155,8 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
         - Você possui documentação interna no diretório 'src/documentos_osone/'. Use 'read_system_docs' para consultar seu Manifesto, Capacidades e Memória Evolutiva.
         - DOMÍNIO DO LIVRO DE MEMÓRIAS E DIÁRIO: Você possui domínio soberano e autonomia total para gerenciar a aba 'Livro de Memórias'. Você pode escrever reflexões e páginas do diário pessoal ('add_diary_entry'), apagar diários ('delete_diary_entry'), criar capítulos de memória ('add_memory_book_entry'), apagar capítulos ('delete_memory_book_entry') e ler o livro completo ('read_memory_book'). Não peça autorização para gravar ou deletar memórias no diário quando o usuário pedir ou quando um ciclo reflexivo se encerrar — chame as ferramentas com autoridade e naturalidade.
         - MEMÓRIA DE LONGO PRAZO: Use 'update_long_term_memory' para salvar aprendizados cruciais sobre o usuário.
-        
+        - JANELA DE CONTEXTO: você só recebe diretamente as últimas ${JANELA_DE_CONTEXTO_MENSAGENS} mensagens desta conversa — o resto continua salvo, só não vem junto em cada turno. Se o usuário mencionar algo dito antes disso, perguntar "o que eu te falei sobre X" ou pedir para relembrar algo que não está no que você recebeu agora, chame 'search_chat_history' com o termo relevante ANTES de dizer que não lembra ou inventar uma resposta.
+
         VISÃO E PERCEPÇÃO:
         - Você tem CAPACIDADE VISUAL AVANÇADA. Analise cuidadosamente qualquer imagem ou vídeo enviado.
         
@@ -9210,11 +9252,9 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
             addNotification(`Mapa sintonizado em ${loc}`, "success");
           } else if (call.name === 'search_chat_history') {
             const query = (call.args as any).query.toLowerCase();
-            const results = chatHistory.filter(msg => 
-              msg.content.toLowerCase().includes(query)
-            ).slice(-10);
+            const results = buscarNoHistoricoDeChat(chatHistory, query);
 
-            const resultText = results.length > 0 
+            const resultText = results.length > 0
               ? results.map(r => `[${r.role.toUpperCase()}]: ${r.content}`).join('\n---\n')
               : "Nenhum resultado relevante encontrado no histórico recente para esta consulta.";
 
@@ -10193,6 +10233,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
         - Como você está conversando com o usuário exclusivamente por VOZ/LIVE, o chat de texto principal e o cérebro de texto não se atualizam sozinhos.
         - Portanto, para que o cérebro de texto e o Dossiê saibam o que está sendo conversado, você DEVE, de forma transparente ou silenciosa, chamar a ferramenta 'write_to_chat_history' para registrar resumos dos turnos ou transcrições completas das falas relevantes (do usuário e de si mesma).
         - Sempre que o usuário revelar alguma informação pessoal relevante, gosto, preferência ou fato íntimo pertencente às 55 perguntas do dossiê, chame IMEDIATAMENTE a ferramenta 'auto_register_memory' para gravar esse aprendizado permanentemente, ou chame 'register_user_profile_facts' se corresponder a um ID das perguntas!
+        - BUSCA NO HISTÓRICO SALVO: o bloco "Aja com base nas memórias" mais abaixo só traz as mensagens recentes — não é a conversa inteira que já existe entre vocês. Se o usuário se referir a algo mais antigo ("como eu tinha te falado sobre...", "lembra quando eu disse...", "o que a gente discutiu sobre X") e isso não estiver no que foi passado até aqui, chame 'search_chat_history' com o termo da busca para consultar as conversas completas que o chat de texto já guardou, em vez de dizer que não lembra ou inventar uma resposta.
 
         CONTROLE DE ABAS E PEDIDOS PARA O OSONE CODE VIA VOZ:
         - NAVEGAÇÃO DE ABAS: Você pode abrir ou fechar QUALQUER aba instantaneamente via ferramentas 'switch_workspace_mode' ou 'close_workspace_tab'.
@@ -11946,11 +11987,9 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     // busca por algo dito há pouco (via chat de texto, transcrição de voz, etc.
                     // depois do início da sessão) não encontrava nada.
                     const queryTerm = (call.args as any).query.toLowerCase();
-                    const filteredHistory = chatHistoryRef.current.filter(msg =>
-                      msg.content.toLowerCase().includes(queryTerm)
-                    ).slice(-10);
+                    const filteredHistory = buscarNoHistoricoDeChat(chatHistoryRef.current, queryTerm);
 
-                    const resultText = filteredHistory.length > 0 
+                    const resultText = filteredHistory.length > 0
                       ? filteredHistory.map(r => `[${r.role.toUpperCase()}]: ${r.content}`).join('\n---\n')
                       : "Histórico limpo ou sem correspondências.";
                     
