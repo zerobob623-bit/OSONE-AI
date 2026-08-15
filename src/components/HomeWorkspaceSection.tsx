@@ -1,10 +1,10 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  AlertCircle, ChevronRight, ChevronLeft, Loader2, VolumeX, Volume2, 
-  Plus, MessageSquare, Trash2, BookOpen, RefreshCw, Folder, Eye, EyeOff, 
+import {
+  AlertCircle, ChevronRight, ChevronLeft, Loader2, VolumeX, Volume2,
+  Plus, MessageSquare, Trash2, BookOpen, RefreshCw, Folder, Eye, EyeOff,
   Heart, Lock, Copy, Maximize, MonitorOff, Monitor, Mic, MicOff,
-  Paperclip, Globe, Send, X, Captions, CaptionsOff
+  Paperclip, Globe, Send, X, Captions, CaptionsOff, Search
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { InfinityLogo } from './InfinityLogo';
@@ -179,6 +179,47 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
   setHomePrompt,
   handleHomeChat,
 }) => {
+  const [sessionSearchTerm, setSessionSearchTerm] = useState('');
+
+  /**
+   * Sessões agrupadas por quão recentes são (Hoje/Ontem/Últimos 7 dias/...), do jeito que
+   * ChatGPT e Claude organizam o histórico — muito mais fácil de escanear visualmente do que
+   * uma lista corrida sem nenhuma hierarquia, que é como a aba estava antes. Ordenado por
+   * createdAt (mais recente primeiro) porque a ordem de chegada em chatSessions não reflete
+   * atividade recente — só sessões novas são inseridas no início; uma sessão antiga que acabou
+   * de receber uma mensagem nova fica onde já estava.
+   */
+  const gruposDeSessoes = useMemo(() => {
+    const termo = sessionSearchTerm.trim().toLowerCase();
+    const filtradas = termo
+      ? chatSessions.filter((s: any) => (s.title || '').toLowerCase().includes(termo))
+      : chatSessions;
+    const ordenadas = [...filtradas].sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
+
+    const agora = Date.now();
+    const inicioHoje = new Date().setHours(0, 0, 0, 0);
+    const umDia = 24 * 60 * 60 * 1000;
+    const rotuloDoGrupo = (createdAt: number): string => {
+      if (createdAt >= inicioHoje) return 'Hoje';
+      if (createdAt >= inicioHoje - umDia) return 'Ontem';
+      if (createdAt >= inicioHoje - 7 * umDia) return 'Últimos 7 dias';
+      if (createdAt >= inicioHoje - 30 * umDia) return 'Últimos 30 dias';
+      return 'Mais antigas';
+    };
+
+    const grupos: { rotulo: string; sessoes: any[] }[] = [];
+    for (const sessao of ordenadas) {
+      const rotulo = rotuloDoGrupo(sessao.createdAt || agora);
+      const grupoAtual = grupos[grupos.length - 1];
+      if (grupoAtual && grupoAtual.rotulo === rotulo) {
+        grupoAtual.sessoes.push(sessao);
+      } else {
+        grupos.push({ rotulo, sessoes: [sessao] });
+      }
+    }
+    return grupos;
+  }, [chatSessions, sessionSearchTerm]);
+
   return (
     <motion.div 
       key="home"
@@ -657,7 +698,7 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
         <div className={cn(
           "flex-1 transition-all duration-500 w-full min-h-0 pt-0 translate-z-0",
           (!isChatExpanded || !showUi) ? "opacity-0 pointer-events-none scale-95 hidden" : "opacity-100 flex",
-          "flex flex-col overflow-hidden h-full max-w-4xl mx-auto px-2 md:px-4"
+          "flex flex-col overflow-hidden h-full max-w-6xl mx-auto px-2 md:px-4"
         )}>
           {/* Chat Content Panel */}
           <div className="flex-1 h-full flex flex-col overflow-hidden relative bg-zinc-950/80 border border-white/10 backdrop-blur-2xl rounded-3xl p-3 md:p-5 shadow-2xl shadow-black/90">
@@ -678,78 +719,100 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
                     animate={{ x: 0 }}
                     exit={{ x: "-100%" }}
                     transition={{ type: "spring", damping: 25, stiffness: 220 }}
-                    className="absolute left-0 top-0 bottom-0 w-72 max-w-[85%] bg-zinc-950 border-r border-white/5 shadow-2xl z-50 flex flex-col p-4 rounded-l-2xl"
+                    className="absolute left-0 top-0 bottom-0 w-80 max-w-[88%] bg-zinc-950 border-r border-white/5 shadow-2xl z-50 flex flex-col p-4 rounded-l-2xl"
                   >
                     <div className="flex items-center justify-between pb-3 mb-3 border-b border-white/5 select-none shrink-0">
                       <span className="text-[11px] font-semibold text-indigo-400 font-mono tracking-widest uppercase">Histórico de Sessões</span>
-                      <button 
+                      <button
                         onClick={() => setIsSessionsOpen(false)}
                         className="text-white/40 hover:text-white px-2 py-0.5 rounded-lg hover:bg-white/5 transition-colors border border-white/5 text-[10px] font-mono"
                       >
                         FECHAR
                       </button>
                     </div>
-                    
-                    <button 
+
+                    <button
                       onClick={() => {
                         handleCreateNewSession();
                         setIsSessionsOpen(false);
                       }}
-                      className="w-full flex items-center justify-center gap-2 text-[10px] text-emerald-400 hover:text-emerald-300 bg-emerald-500/5 hover:bg-emerald-500/10 border border-emerald-500/10 hover:border-emerald-500/20 py-2.5 rounded-xl font-mono font-bold tracking-widest uppercase mb-4 transition-all"
+                      className="w-full flex items-center justify-center gap-2 text-[10px] text-emerald-400 hover:text-emerald-300 bg-emerald-500/5 hover:bg-emerald-500/10 border border-emerald-500/10 hover:border-emerald-500/20 py-2.5 rounded-xl font-mono font-bold tracking-widest uppercase mb-3 transition-all"
                     >
                       <Plus size={12} />
                       Nova Conversa
                     </button>
-                    
-                    <div className="flex-1 overflow-y-auto pr-1 space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-                      {chatSessions.length === 0 ? (
+
+                    {chatSessions.length > 4 && (
+                      <div className="relative mb-3 shrink-0">
+                        <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/25 pointer-events-none" />
+                        <input
+                          type="text"
+                          value={sessionSearchTerm}
+                          onChange={(e) => setSessionSearchTerm(e.target.value)}
+                          placeholder="Buscar conversa por título..."
+                          className="w-full pl-8 pr-3 py-2 bg-white/[0.02] border border-white/[0.06] focus:border-indigo-500/30 rounded-xl text-[11px] text-white/80 placeholder:text-white/25 focus:outline-none transition-colors"
+                        />
+                      </div>
+                    )}
+
+                    <div className="flex-1 overflow-y-auto pr-1 space-y-3 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                      {gruposDeSessoes.length === 0 ? (
                         <div className="text-center py-8 text-white/30 text-xs font-mono select-none">
-                          Nenhuma conversa salva.
+                          {sessionSearchTerm ? 'Nenhuma conversa encontrada.' : 'Nenhuma conversa salva.'}
                         </div>
                       ) : (
-                        chatSessions.map((session) => {
-                          const isActive = session.id === activeSessionId;
-                          return (
-                            <div 
-                              key={session.id}
-                              onClick={() => {
-                                handleSwitchSession(session.id);
-                                setIsSessionsOpen(false);
-                              }}
-                              className={cn(
-                                "group flex items-center justify-between p-2.5 rounded-xl border transition-all cursor-pointer select-none",
-                                isActive 
-                                  ? "bg-indigo-500/10 border-indigo-500/30 text-indigo-200" 
-                                  : "bg-white/[0.01] hover:bg-white/[0.04] border-white/5 text-stone-400 hover:text-white"
-                              )}
-                            >
-                              <div className="flex-1 min-w-0 pr-2">
-                                <p className="text-xs font-medium truncate leading-tight">
-                                  {session.title}
-                                </p>
-                                <p className="text-[9px] font-mono opacity-40 mt-1">
-                                  {new Date(session.createdAt).toLocaleDateString('pt-BR', {
-                                    day: 'numeric',
-                                    month: 'short',
-                                    hour: '2-digit',
-                                    minute: '2-digit'
-                                  })}
-                                </p>
-                              </div>
-                              
-                              <button 
-                                onClick={(e) => handleDeleteSession(session.id, e)}
-                                className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-rose-500/10 hover:text-rose-400 text-stone-500 transition-all shrink-0"
-                                title="Apagar conversa"
-                              >
-                                <Trash2 size={12} />
-                              </button>
+                        gruposDeSessoes.map((grupo) => (
+                          <div key={grupo.rotulo} className="space-y-1.5">
+                            <p className="px-1 text-[9px] font-mono font-bold uppercase tracking-widest text-white/25 select-none">
+                              {grupo.rotulo}
+                            </p>
+                            <div className="space-y-1.5">
+                              {grupo.sessoes.map((session: any) => {
+                                const isActive = session.id === activeSessionId;
+                                return (
+                                  <div
+                                    key={session.id}
+                                    onClick={() => {
+                                      handleSwitchSession(session.id);
+                                      setIsSessionsOpen(false);
+                                    }}
+                                    className={cn(
+                                      "group flex items-center justify-between p-2.5 rounded-xl border transition-all cursor-pointer select-none",
+                                      isActive
+                                        ? "bg-indigo-500/10 border-indigo-500/30 text-indigo-200"
+                                        : "bg-white/[0.01] hover:bg-white/[0.04] border-white/5 text-stone-400 hover:text-white"
+                                    )}
+                                  >
+                                    <div className="flex-1 min-w-0 pr-2">
+                                      <p className="text-xs font-medium truncate leading-tight">
+                                        {session.title}
+                                      </p>
+                                      <p className="text-[9px] font-mono opacity-40 mt-1">
+                                        {new Date(session.createdAt).toLocaleDateString('pt-BR', {
+                                          day: 'numeric',
+                                          month: 'short',
+                                          hour: '2-digit',
+                                          minute: '2-digit'
+                                        })}
+                                      </p>
+                                    </div>
+
+                                    <button
+                                      onClick={(e) => handleDeleteSession(session.id, e)}
+                                      className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-rose-500/10 hover:text-rose-400 text-stone-500 transition-all shrink-0"
+                                      title="Apagar conversa"
+                                    >
+                                      <Trash2 size={12} />
+                                    </button>
+                                  </div>
+                                );
+                              })}
                             </div>
-                          );
-                        })
+                          </div>
+                        ))
                       )}
                     </div>
-                    
+
                     <div className="pt-4 border-t border-white/5 select-none shrink-0 text-center">
                       <span className="text-[8px] font-mono tracking-widest text-white/20 uppercase">
                         Armazenamento Seguro
@@ -904,7 +967,7 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
                   </motion.div>
 
                   {/* Bento Cards Shortcuts */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-8 w-full max-w-4xl">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-8 w-full max-w-5xl">
                     <motion.div
                       onClick={() => setWorkspaceMode('rag')}
                       whileHover={{ y: -2 }}
@@ -1031,7 +1094,7 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
                       {(() => {
                         if (msg.role === 'user') {
                           return (
-                            <div className="inline-block max-w-[85%] bg-her-accent/10 border border-her-accent/15 px-4.5 py-2.5 rounded-2xl rounded-tr-none text-zinc-150 text-xs sm:text-sm font-normal tracking-wide text-left shadow-lg backdrop-blur-md">
+                            <div className="inline-block max-w-full sm:max-w-2xl bg-her-accent/10 border border-her-accent/15 px-4.5 py-2.5 rounded-2xl rounded-tr-none text-zinc-150 text-xs sm:text-sm font-normal tracking-wide text-left shadow-lg backdrop-blur-md">
                               {msg.content}
                             </div>
                           );
@@ -1040,7 +1103,7 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
                         const isCurrentlyTalkingSolo = isSpeaking;
                         
                         return (
-                          <div className="flex gap-3 max-w-[90%] items-start self-start text-left">
+                          <div className="flex gap-3 max-w-full sm:max-w-2xl items-start self-start text-left">
                             <div className="relative shrink-0 select-none">
                               <img 
                                 src={osoneOrbImage} 
@@ -1123,7 +1186,7 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
 
         {/* Chat Input Area */}
         <div className={cn(
-          "shrink-0 pt-0 w-full pb-0 md:pb-0 transition-all duration-500",
+          "shrink-0 pt-0 w-full pb-0 md:pb-0 transition-all duration-500 max-w-6xl mx-auto px-2 md:px-4",
           !showUi && "opacity-0 pointer-events-none translate-y-4"
         )}>
           <div className={cn(
