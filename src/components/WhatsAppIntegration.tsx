@@ -771,7 +771,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                     {isSending ? (
                       <>
                         <RefreshCw size={14} className="animate-spin" />
-                        <span>Enviando pelo Puppeteer...</span>
+                        <span>Enviando...</span>
                       </>
                     ) : (
                       <>
@@ -903,7 +903,7 @@ export function WhatsAppIntegration({ defaultGeminiKey }: { defaultGeminiKey: st
                     <Activity size={18} className="text-emerald-400 animate-pulse" />
                     <div>
                       <h3 className="text-sm font-bold text-white">Feed de Auditoria & Logs em Tempo Real</h3>
-                      <p className="text-[11px] text-zinc-400">Eventos de envio, recebimento e status Puppeteer</p>
+                      <p className="text-[11px] text-zinc-400">Eventos de envio, recebimento e status da conexão</p>
                     </div>
                   </div>
 
