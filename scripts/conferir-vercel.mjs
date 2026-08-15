@@ -241,9 +241,14 @@ publicar(site, 'BBB', 'VERSAO 2');
   await ctx.setOffline(true);
   await pag.reload().catch(() => {});
   await pag.waitForTimeout(400);
-  const abriu = await pag.locator('#root').count();
+  // O #root existe no HTML estático desde antes do JS rodar (é markup do index.html), então
+  // .count() > 0 passaria mesmo se o bundle JS não tivesse sido servido pelo cache e a tela
+  // ficasse com a raiz presente mas VAZIA — exatamente a tela branca que este caso existe para
+  // pegar. Precisa ser o CONTEÚDO real, igual aos outros casos deste arquivo (conteudoDaRaiz()).
+  const texto = await conteudoDaRaiz();
   registrar('sem internet o app ainda abre pelo cache',
-    abriu > 0, abriu > 0 ? 'a página foi servida pelo cache' : 'nada foi servido offline');
+    texto === 'VERSAO 2',
+    texto ? `a página foi servida pelo cache, mostrando "${texto}"` : 'TELA BRANCA: nada foi servido offline');
   await ctx.setOffline(false);
 }
 
