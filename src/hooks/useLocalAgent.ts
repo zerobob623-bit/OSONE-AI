@@ -551,9 +551,13 @@ export function useLocalAgent() {
   const limparAcoesDoMotor = () => setAcoesDoMotor([]);
   const pendingLocalAgentResolveRef = useRef<((value: any) => void) | null>(null);
   const pendingLocalAgentTimerRef = useRef<any>(null);
-  // Resolução da tela, lida uma vez e reaproveitada: ela não muda no meio de uma sessão, e
-  // consultá-la a cada clique acrescentaria uma ida ao agente antes de cada ação.
-  const telaCacheRef = useRef<{ width: number; height: number; offsetX: number; offsetY: number } | null>(null);
+  // Resolução da tela, lida e reaproveitada por um tempo curto: consultá-la a cada clique
+  // acrescentaria uma ida ao agente antes de cada ação, mas guardá-la para sempre também não
+  // serve — trocar de monitor, desacoplar o notebook ou mudar o DPI no meio da sessão deixaria
+  // toda conversão de coordenada errada até o app ser reiniciado. Mesmo TTL de
+  // lerDimensoesDaTelaDoAgente, que já resolvia isso assim para o mesmo tipo de dado.
+  const telaCacheRef = useRef<{ quando: number; valor: { width: number; height: number; offsetX: number; offsetY: number } } | null>(null);
+  const TELA_CACHE_TTL_MS = 15000;
 
   /** Nome legível da ação, para o painel não mostrar jargão de ferramenta. */
   const rotularAcao = (toolName: string, args: any): string => {
@@ -679,19 +683,21 @@ export function useLocalAgent() {
      * já sabe a resolução real.
      */
     const dimensoesDaTela = async (): Promise<{ width: number; height: number; offsetX: number; offsetY: number } | null> => {
-      if (telaCacheRef.current) return telaCacheRef.current;
+      const emCache = telaCacheRef.current;
+      if (emCache && Date.now() - emCache.quando < TELA_CACHE_TTL_MS) return emCache.valor;
       try {
         const res = await fetch(`${LOCAL_AGENT_URL}/screen-info`, { headers });
         if (!res.ok) return null;
         const data = await res.json().catch(() => null);
         if (!data?.width || !data?.height) return null;
-        telaCacheRef.current = {
+        const valor = {
           width: Number(data.width),
           height: Number(data.height),
           offsetX: Number(data.offsetX) || 0,
           offsetY: Number(data.offsetY) || 0
         };
-        return telaCacheRef.current;
+        telaCacheRef.current = { quando: Date.now(), valor };
+        return valor;
       } catch {
         return null;
       }

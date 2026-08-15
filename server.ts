@@ -4742,9 +4742,11 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
     // Remove duplicates keeping order
     const uniqueModels = Array.from(new Set(modelsToTry));
     
+    const tentativasPorModelo = 2;
+
     let lastError: any = null;
     for (const modelName of uniqueModels) {
-      for (let attempt = 1; attempt <= 2; attempt++) {
+      for (let attempt = 1; attempt <= tentativasPorModelo; attempt++) {
         try {
           console.log(`Trying Gemini content stream generation (Model: ${modelName}, Attempt: ${attempt})`);
           const stream = await ai.models.generateContentStream({
@@ -4758,12 +4760,22 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
           const errMsg = err?.message || String(err);
           const isQuota = errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.toLowerCase().includes("quota") || errMsg.toLowerCase().includes("limit");
           const isTransient = (errMsg.includes("503") || errMsg.includes("UNAVAILABLE") || errMsg.toLowerCase().includes("high demand")) && !isQuota;
-          
-          if (isQuota || (isTransient && attempt >= 1)) {
-            console.warn(`[Fallback Stream Log] Model ${modelName} encountered transient/quota issue. Switching to next candidate model...`);
+
+          if (isQuota) {
+            // Cota esgotada: repetir no mesmo modelo não resolve nada, passa direto pro próximo.
+            console.warn(`[Fallback Stream Log] Model ${modelName} encountered a quota issue. Switching to next candidate model...`);
             break;
           }
-          
+
+          if (isTransient && attempt < tentativasPorModelo) {
+            // Instabilidade passageira (ex: 503/alta demanda): vale insistir no MESMO modelo antes
+            // de desistir dele — mesma correção já feita em generateContentWithFallback, que aqui
+            // tinha ficado para trás porque todo caminho do catch saía do laço na primeira volta.
+            console.warn(`[Fallback Stream Log] Model ${modelName} hit a transient issue (attempt ${attempt}/${tentativasPorModelo}). Retrying same model shortly...`);
+            await new Promise(resolve => setTimeout(resolve, 700 * attempt));
+            continue;
+          }
+
           console.log(`[Fallback Stream Log] Model ${modelName} attempt ${attempt} returned exception:`, errMsg);
           break; // Move to next candidate model
         }
@@ -7476,6 +7488,25 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
     let elWs: WebSocket | null = null;
     const pendingMsgBuffer: string[] = [];
 
+    /**
+     * Marca que o cliente já foi embora.
+     *
+     * Mesma armadilha já resolvida na ponte do Gemini Live: o handshake com a ElevenLabs leva um
+     * tempo, e nesse meio-tempo o cliente pode desistir. A limpeza do "close" só fechava elWs
+     * quando ele já estava OPEN, então uma conexão ainda em CONNECTING escapava — logo depois
+     * ficava pronta e virava uma sessão de streaming órfã, faturada, sem ninguém do outro lado.
+     */
+    let clienteSaiu = false;
+
+    /** Fecha a conexão de saída em qualquer estado — em CONNECTING só terminate() aborta mesmo. */
+    const encerrarOutbound = () => {
+      if (!elWs) return;
+      try {
+        if (elWs.readyState === WebSocket.CONNECTING) elWs.terminate();
+        else if (elWs.readyState === WebSocket.OPEN) elWs.close();
+      } catch (_) { /* já pode ter caído sozinha */ }
+    };
+
     const initOutboundWs = (keyToUse: string) => {
       const outboundUrl = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?model_id=${modelId}&output_format=pcm_24000`;
       
@@ -7485,6 +7516,13 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
       elWs = ws;
 
       ws.on("open", () => {
+        // O cliente pode ter ido embora enquanto este handshake acontecia. Se foi, fecha agora:
+        // um terminate() disparado durante o CONNECTING nem sempre chega a tempo.
+        if (clienteSaiu || clientWs.readyState !== WebSocket.OPEN) {
+          console.log("Cliente saiu antes de a conexão com a ElevenLabs ficar pronta; fechando a sessão órfã.");
+          try { ws.close(); } catch (_) { /* já pode ter caído sozinha */ }
+          return;
+        }
         console.log("ElevenLabs outbound WebSocket successfully established");
         // Send initial settings and authentication
         const initMsg = {
@@ -7601,16 +7639,14 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
 
     clientWs.on("error", (err) => {
       console.error("ElevenLabs Proxy client WS error:", err);
-      if (elWs && elWs.readyState === WebSocket.OPEN) {
-        elWs.close();
-      }
+      clienteSaiu = true;
+      encerrarOutbound();
     });
-    
+
     clientWs.on("close", () => {
       console.log("ElevenLabs Proxy client WS closed");
-      if (elWs && elWs.readyState === WebSocket.OPEN) {
-        elWs.close();
-      }
+      clienteSaiu = true;
+      encerrarOutbound();
     });
   });
 

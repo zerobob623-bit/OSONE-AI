@@ -45,6 +45,19 @@ export function useVisionControl(getLocalAgentToken: () => string) {
   const rafRef = useRef<number | null>(null);
   const activeRef = useRef(false);
   const screenInfoRef = useRef<ScreenInfo | null>(null);
+  /**
+   * Identifica QUAL chamada de start() ainda é a válida.
+   *
+   * start() faz vários awaits (fetch, import do WASM, getUserMedia) antes de existir qualquer
+   * coisa para stop() limpar. Sem isto, fechar o painel ou clicar "parar" durante esse meio-tempo
+   * não tinha efeito nenhum — stop() rodava contra refs ainda vazios — e quando as promises
+   * finalmente resolviam, start() ligava a câmera e começava a mandar comandos reais de mouse ao
+   * sistema operacional sem nenhuma UI restante para pará-los. Um número (em vez de um booleano)
+   * também cobre o clique duplo: cada chamada de start() pega o próprio número, e só a mais
+   * recente permanece válida — qualquer chamada anterior se limpa sozinha ao notar que ficou
+   * obsoleta, em vez de sobrescrever silenciosamente o stream/landmarker da chamada mais nova.
+   */
+  const startGenRef = useRef(0);
 
   const smoothedPosRef = useRef<{ x: number; y: number } | null>(null);
   const lastMoveSentAtRef = useRef(0);
@@ -188,28 +201,54 @@ export function useVisionControl(getLocalAgentToken: () => string) {
 
   const start = useCallback(async () => {
     if (activeRef.current) return;
+    const meuGen = ++startGenRef.current;
+    const souValido = () => startGenRef.current === meuGen;
+
     setErrorMessage('');
     setStatus('starting');
+    let stream: MediaStream | null = null;
+    let landmarker: any = null;
     try {
       const info = await agentFetch('/screen-info', { method: 'GET' });
-      screenInfoRef.current = { width: info.width, height: info.height, offsetX: info.offsetX || 0, offsetY: info.offsetY || 0 };
 
       const visionModule = await import('@mediapipe/tasks-vision');
       const { FilesetResolver, HandLandmarker } = visionModule;
       const fileset = await FilesetResolver.forVisionTasks(WASM_BASE_URL);
-      landmarkerRef.current = await HandLandmarker.createFromOptions(fileset, {
+      landmarker = await HandLandmarker.createFromOptions(fileset, {
         baseOptions: { modelAssetPath: HAND_MODEL_URL, delegate: 'GPU' },
         runningMode: 'VIDEO',
         numHands: 1
       });
 
-      const stream = await navigator.mediaDevices.getUserMedia({
+      stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
       });
+
+      if (!souValido()) {
+        // stop() rodou (ou outro start() começou) enquanto isto ainda estava pendente: nada foi
+        // atribuído a nenhum ref ainda, então desligar o que ESTA chamada abriu é suficiente.
+        stream.getTracks().forEach(t => t.stop());
+        landmarker.close?.();
+        return;
+      }
+
+      screenInfoRef.current = { width: info.width, height: info.height, offsetX: info.offsetX || 0, offsetY: info.offsetY || 0 };
+      landmarkerRef.current = landmarker;
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
+      }
+
+      if (!souValido()) {
+        // Ficou obsoleta durante o play(), depois de já ter atribuído os refs: desfaz na mão,
+        // igual ao que stop() faria se já estivesse tudo pronto.
+        streamRef.current = null;
+        landmarkerRef.current = null;
+        if (videoRef.current) videoRef.current.srcObject = null;
+        stream.getTracks().forEach(t => t.stop());
+        landmarker.close?.();
+        return;
       }
 
       smoothedPosRef.current = null;
@@ -219,13 +258,18 @@ export function useVisionControl(getLocalAgentToken: () => string) {
       setStatus('no_hand');
       rafRef.current = requestAnimationFrame(detectLoop);
     } catch (err: any) {
+      stream?.getTracks().forEach(t => t.stop());
+      landmarker?.close?.();
       activeRef.current = false;
-      setStatus('error');
-      setErrorMessage(err?.message || 'Falha ao iniciar o Controle por Visão.');
+      if (souValido()) {
+        setStatus('error');
+        setErrorMessage(err?.message || 'Falha ao iniciar o Controle por Visão.');
+      }
     }
   }, [agentFetch, detectLoop]);
 
   const stop = useCallback(() => {
+    startGenRef.current++; // invalida qualquer start() ainda em andamento
     activeRef.current = false;
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = null;

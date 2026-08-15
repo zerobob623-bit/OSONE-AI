@@ -159,10 +159,42 @@ const montarPadroes = (termos: string[]): PadraoDeTermo[] => termos
   .map(termo => ({ termo, padrao: padraoDeTermo(termo), padraoColapsado: padraoDeTermo(termo, true) }))
   .filter((x): x is PadraoDeTermo => x.padrao !== null && x.padraoColapsado !== null);
 
+/**
+ * O mesmo termo aceitando separador entre QUALQUER letra: é assim que se escreve "p o r r a" ou
+ * "c-a-r-a-l-h-o" para escapar da comparação por palavra inteira.
+ *
+ * A diferença para a passada por texto compactado, mais abaixo, é a FRONTEIRA. Compactar o texto
+ * inteiro cola palavras vizinhas e apaga onde cada uma começa, e por isso lá um termo curto casaria
+ * dentro de outra palavra — "cu" apareceria em "curioso". Era o que obrigava a ignorar todo termo
+ * com menos de 7 letras naquela passada, e o efeito colateral era grande: "porra", "puta", "sexo",
+ * "cacete", "buceta" e "tarado" têm menos de 7 letras e escapavam inteiros quando escritos com
+ * espaço entre as letras — inclusive "p o r r a", que é o exemplo citado lá em cima como a razão
+ * de existir uma passada de disfarce. Exigindo borda de palavra nas duas pontas, o termo curto
+ * volta a ser verificável sem calar o chat.
+ *
+ * Cada letra vira `(?:L\s*)+` para que a letra esticada de propósito continue casando mesmo com
+ * separador no meio dela ("p o r r r r a"), que é a combinação dos dois truques ao mesmo tempo.
+ */
+const padraoEspacado = (termo: string) => {
+  const letras = colapsarRepeticoes(normalizarParaFiltro(termo)).replace(/[^a-z0-9]/g, '').split('');
+  if (letras.length === 0) return null;
+  const corpo = letras.map(l => `(?:${escapar(l)}\\s*)+`).join('');
+  return new RegExp(`(?:^|\\s)${corpo}s?a?(?:$|\\s)`);
+};
+
 const PADROES_EXPLICITOS = montarPadroes(TERMOS_EXPLICITOS);
 
 const PADROES_DE_DUPLO_SENTIDO = montarPadroes(EXPRESSOES_DE_DUPLO_SENTIDO);
 
+const ESPACADOS_EXPLICITOS = TERMOS_EXPLICITOS
+  .map(termo => ({ termo, padrao: padraoEspacado(termo) }))
+  .filter((x): x is { termo: string; padrao: RegExp } => x.padrao !== null);
+
+/**
+ * A passada por texto compactado continua, e agora só cobre o que a de cima não alcança: o
+ * palavrão colado DENTRO de uma palavra maior, sem separador nenhum. Aí não há borda para exigir,
+ * e o mínimo de 7 letras segue sendo o que impede o termo curto de casar dentro de palavra comum.
+ */
 const COMPACTOS_EXPLICITOS = TERMOS_EXPLICITOS
   .map(t => ({ termo: t, compacto: compactarParaFiltro(t) }))
   .filter(x => x.compacto.length >= TAMANHO_MINIMO_PARA_COMPACTO);
@@ -203,7 +235,19 @@ export function avaliarParaVozPublica(texto: string): VeredictoDeFala {
     }
   }
 
-  // Última passada: o mesmo palavrão escrito com separadores no meio para escapar do filtro.
+  // O mesmo palavrão com separador entre as letras, ainda preso às bordas da palavra.
+  for (const { termo, padrao } of ESPACADOS_EXPLICITOS) {
+    if (padrao.test(comFolga)) {
+      return {
+        seguro: false,
+        categoria: 'explicito',
+        termo,
+        motivo: `Contém "${termo}" escrito de forma disfarçada (letras separadas ou trocadas).`
+      };
+    }
+  }
+
+  // Última passada: o palavrão colado dentro de uma palavra maior, sem separador que sirva de borda.
   const compacto = compactarParaFiltro(texto);
   for (const { termo, compacto: alvo } of COMPACTOS_EXPLICITOS) {
     if (compacto.includes(alvo)) {
