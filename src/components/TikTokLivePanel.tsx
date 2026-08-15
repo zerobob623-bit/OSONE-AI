@@ -46,7 +46,7 @@ interface TikTokLivePanelProps {
   tiktokTargetIdc: string;
   setTiktokTargetIdc: (idc: string) => void;
   tiktokLoading: boolean;
-  onConnect: (simulate?: boolean) => Promise<void>;
+  onConnect: (simulate?: boolean, overrides?: { username?: string; sessionId?: string; targetIdc?: string }) => Promise<void>;
   onDisconnect: () => Promise<void>;
   onToggleAutoRespond: (active: boolean) => Promise<void>;
   onClearLogs: () => Promise<void>;
@@ -121,15 +121,13 @@ export const TikTokLivePanel = ({
     setTiktokUser(localUser);
     setTiktokSessionId(localSessionId);
     setTiktokTargetIdc(localTargetIdc);
-    
-    // Defer to parent connect trigger
-    // Since direct assignment state updates could be asynchronous, we pass them down
+
+    // Os setState acima são assíncronos — handleTiktokConnect leria tiktokUser/tiktokSessionId/
+    // tiktokTargetIdc de ANTES desta edição se dependesse só do estado. Passar os valores locais
+    // direto como overrides é o que garante conectar no canal que está escrito na tela agora.
+    const overrides = { username: localUser, sessionId: localSessionId, targetIdc: localTargetIdc };
     try {
-      if (simulate) {
-        await onConnect(true);
-      } else {
-        await onConnect(false);
-      }
+      await onConnect(simulate, overrides);
     } catch (e) {
       // Handled by parent
     }

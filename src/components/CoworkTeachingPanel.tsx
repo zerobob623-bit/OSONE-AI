@@ -46,6 +46,16 @@ export const CoworkTeachingPanel: React.FC<Props> = ({
   const streamRef = useRef<MediaStream | null>(null);
   const reconhecedorRef = useRef<any>(null);
   const pararDeVezRef = useRef(false);
+  /**
+   * Trava síncrona contra clique duplo em "Concluir ensino".
+   *
+   * `estado` só sai de 'gravando' depois do primeiro `await` dentro de concluir() — ao contrário
+   * de iniciar(), que muda o estado ANTES do primeiro await. Um segundo clique rápido, antes do
+   * primeiro setState assentar, via a mesma checagem `estado !== 'gravando'` e passava direto:
+   * duas chamadas a assimilarEnsinamento (gasto de API em dobro) e dois treinamentos salvos
+   * duplicados para a mesma demonstração. Setada e lida de forma síncrona, sem esperar o React.
+   */
+  const concluindoRef = useRef(false);
   const escutaRef = useRef<EstadoDaEscuta>(ESCUTA_VAZIA);
   const quadrosRef = useRef<QuadroDoEnsino[]>([]);
   const filaDeCapturaRef = useRef<Promise<any>>(Promise.resolve());
@@ -188,39 +198,44 @@ export const CoworkTeachingPanel: React.FC<Props> = ({
   };
 
   const concluir = async () => {
-    if (estado !== 'gravando') return;
-    // O último quadro precisa ser tirado antes de encerrar a faixa compartilhada.
-    await enfileirarCaptura('Estado final da demonstração', true);
-    pararDeVezRef.current = true;
-    try { reconhecedorRef.current?.stop(); } catch { /* idem */ }
-    const atual = escutaRef.current;
-    const transcricao = textoDaEscuta(atual).trim();
-    encerrarDispositivos();
-    if (!transcricao || !quadrosRef.current.length) {
-      setEstado('parado');
-      onNotification('Fale pelo menos uma instrução durante a demonstração.', 'error');
-      return;
-    }
-    setEstado('assimilando');
+    if (estado !== 'gravando' || concluindoRef.current) return;
+    concluindoRef.current = true;
     try {
-      const assimilado = await assimilarEnsinamento({
-        objetivo: objetivo.trim(), transcricao, quadros: quadrosRef.current,
-        chaveGemini, modelo: modeloGemini
-      });
-      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-      const treinamento: TreinamentoDoCowork = {
-        id, objetivo: objetivo.trim(), transcricao, criadoEm: Date.now(),
-        quadros: quadrosRef.current, ...assimilado
-      };
-      setTreinamentos(await salvarTreinamentoDoCowork(treinamento));
-      guardarAutomacaoEnsinada({ objetivo: treinamento.objetivo, treinamentoId: id, passos: assimilado.passos });
-      setEstado('parado');
-      tocar('concluido');
-      onNotification(`Automação ensinada: ${assimilado.passos.length} passo(s) assimilado(s).`, 'success');
-    } catch (err: any) {
-      setEstado('parado');
-      const mensagem = err?.message || 'Não foi possível assimilar o treinamento.';
-      setAviso(mensagem); onNotification(mensagem, 'error'); tocar('falha');
+      // O último quadro precisa ser tirado antes de encerrar a faixa compartilhada.
+      await enfileirarCaptura('Estado final da demonstração', true);
+      pararDeVezRef.current = true;
+      try { reconhecedorRef.current?.stop(); } catch { /* idem */ }
+      const atual = escutaRef.current;
+      const transcricao = textoDaEscuta(atual).trim();
+      encerrarDispositivos();
+      if (!transcricao || !quadrosRef.current.length) {
+        setEstado('parado');
+        onNotification('Fale pelo menos uma instrução durante a demonstração.', 'error');
+        return;
+      }
+      setEstado('assimilando');
+      try {
+        const assimilado = await assimilarEnsinamento({
+          objetivo: objetivo.trim(), transcricao, quadros: quadrosRef.current,
+          chaveGemini, modelo: modeloGemini
+        });
+        const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+        const treinamento: TreinamentoDoCowork = {
+          id, objetivo: objetivo.trim(), transcricao, criadoEm: Date.now(),
+          quadros: quadrosRef.current, ...assimilado
+        };
+        setTreinamentos(await salvarTreinamentoDoCowork(treinamento));
+        guardarAutomacaoEnsinada({ objetivo: treinamento.objetivo, treinamentoId: id, passos: assimilado.passos });
+        setEstado('parado');
+        tocar('concluido');
+        onNotification(`Automação ensinada: ${assimilado.passos.length} passo(s) assimilado(s).`, 'success');
+      } catch (err: any) {
+        setEstado('parado');
+        const mensagem = err?.message || 'Não foi possível assimilar o treinamento.';
+        setAviso(mensagem); onNotification(mensagem, 'error'); tocar('falha');
+      }
+    } finally {
+      concluindoRef.current = false;
     }
   };
 

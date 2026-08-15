@@ -250,17 +250,25 @@ export function resolveSafePath(folderKey: string, relativeSubPath: string = '')
     throw new Error('Pasta não especificada ou inválida.');
   }
 
-  const configuredPath = CONFIG.allowedFolders[folderKey];
-  if (!configuredPath) {
+  // A CHAVE continua restrita à lista autorizada (downloads/desktop/documents) — é isso que
+  // mantém o jail. O que muda é como o CAMINHO dessa chave é resolvido: ver comentário abaixo.
+  if (!CONFIG.allowedFolders[folderKey]) {
     throw new Error(`Pasta '${folderKey}' não está na lista de allowedFolders autorizadas.`);
   }
 
-  let expandedBase = configuredPath;
-  if (expandedBase.startsWith('~')) {
-    expandedBase = path.join(os.homedir(), expandedBase.slice(1));
-  }
-
-  const baseDir = path.resolve(expandedBase);
+  /**
+   * Pergunta ao disco onde a pasta REALMENTE está, em vez de usar o caminho fixo em inglês de
+   * CONFIG.allowedFolders[folderKey] (ex: sempre "~/Downloads").
+   *
+   * Esta função é a única parte do agente que ainda fazia isso — handleFileTrash e o resto já
+   * tinham migrado para resolveAnyPath por causa do mesmo problema: numa instalação em
+   * português, a pasta de downloads real chama-se "Transferências" ou "Descargas", não
+   * "Downloads". Sem esta troca, /organize/plan e /organize/execute criavam um "~/Downloads"
+   * vazio e organizavam ELE — zero arquivos, nenhuma explicação — enquanto a pasta de verdade,
+   * cheia de arquivos, nunca era tocada. resolveAnyPath só usa o nome em inglês como ÚLTIMO
+   * recurso, quando nenhuma variante localizada existe no disco ainda.
+   */
+  const baseDir = path.resolve(resolveAnyPath(folderKey));
 
   if (!fs.existsSync(baseDir)) {
     try {
@@ -1536,7 +1544,16 @@ function targetsOwnInstallation(command: string): boolean {
   // lugares. O usuário pode mexer livremente em clones; protegido é apenas o código que está
   // rodando agora.
   if (!command.includes(OSONE_INSTALL_DIR)) return false;
-  const writeVerbs = /\b(rm|del|rmdir|mv|move|cp\s+-f|sed\s+-i|truncate|shred)\b|>>?\s|\btee\b/i;
+  /**
+   * Três brechas fechadas aqui, testadas isoladamente antes de entrar:
+   * - `cp\s+-f` só barrava cp COM a flag -f; `cp origem ${INSTALL_DIR}/arquivo` sobrescreve o
+   *   destino sem `-f` da mesma forma e passava direto.
+   * - `>>?\s` exigia espaço logo depois do redirecionamento; `echo x>arquivo` (sem espaço) é
+   *   shell válido e não casava.
+   * - `dd` e as formas de baixar-e-salvar (`curl -o`/`--output`, `wget -O`) nem apareciam na
+   *   lista, apesar de serem jeitos igualmente diretos de sobrescrever um arquivo.
+   */
+  const writeVerbs = /\b(rm|del|rmdir|mv|move|cp|dd|sed\s+-i|truncate|shred|curl\s+(-o|--output)|wget\s+-O)\b|>>?|\btee\b/i;
   return writeVerbs.test(command);
 }
 
@@ -1710,6 +1727,25 @@ function winMouseEventCommand(flag: number, x?: number, y?: number): string {
 const WIN_MOUSEEVENTF = { LEFTDOWN: 0x0002, LEFTUP: 0x0004, RIGHTDOWN: 0x0008, RIGHTUP: 0x0010 };
 
 /**
+ * Monta um clique (down+up, opcionalmente repetido para duplo clique) como UM script PowerShell
+ * só, em vez de dois `runShell` separados como o resto do arquivo fazia.
+ *
+ * Down e up disparados como dois processos powershell.exe independentes deixavam uma janela real
+ * de falha: se o down tivesse sucesso mas o up estourasse o timeout de 3s (PowerShell frio custa
+ * caro para iniciar) ou o spawn falhasse, o botão ficava fisicamente pressionado no sistema
+ * operacional inteiro, sem nenhuma recuperação automática — todo movimento de mouse seguinte
+ * vira arrasto/seleção em vez de clique. Com os dois mouse_event() na mesma invocação do
+ * PowerShell, ou os dois disparam (mesmo processo, sem gap entre eles) ou nenhum dispara.
+ */
+function winMouseClickCommand(downFlag: number, upFlag: number, times = 1): string {
+  const sequenciaDeCliques = Array.from({ length: times })
+    .map(() => `[OsoneMouse]::mouse_event(${downFlag},0,0,0,0); [OsoneMouse]::mouse_event(${upFlag},0,0,0,0);`)
+    .join(' ');
+  const script = `Add-Type -AssemblyName System.Windows.Forms; Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public class OsoneMouse { [DllImport("user32.dll")] public static extern void mouse_event(int flags, int dx, int dy, int data, int extra); }'; ${sequenciaDeCliques}`;
+  return `powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`;
+}
+
+/**
  * POST /mouse/move - Move o cursor do sistema para coordenadas absolutas de tela (x, y),
  * podendo cobrir qualquer monitor conectado. É a base do controle por visão: cada quadro em
  * que a câmera detecta a posição da mão, o frontend chama este endpoint (com controle de taxa
@@ -1823,14 +1859,7 @@ const handleMouseButton = async (req: Request, res: Response) => {
       const up = button === 'left' ? WIN_MOUSEEVENTF.LEFTUP : WIN_MOUSEEVENTF.RIGHTUP;
       if (action === 'down') await runShell(winMouseEventCommand(down), 3000);
       else if (action === 'up') await runShell(winMouseEventCommand(up), 3000);
-      else {
-        await runShell(winMouseEventCommand(down), 3000);
-        await runShell(winMouseEventCommand(up), 3000);
-        if (double) {
-          await runShell(winMouseEventCommand(down), 3000);
-          await runShell(winMouseEventCommand(up), 3000);
-        }
-      }
+      else await runShell(winMouseClickCommand(down, up, double ? 2 : 1), 3000);
     } else {
       return res.status(501).json({ error: `Controle de mouse ainda não suportado na plataforma '${platform}'.` });
     }
@@ -2268,7 +2297,15 @@ const handleScreenCapture = async (req: Request, res: Response) => {
     let comGrade = false;
     let regiao: { x0: number; y0: number; x1: number; y1: number } | null = null;
 
-    if (querGrade && tela && tela.width > 0 && tela.height > 0) {
+    /**
+     * (querGrade || pedeZoom): a ampliação é o "segundo olhar" de uma mira em dois tempos e é
+     * pedida SÓ com x/y na query — não exige grade=1 junto, apesar do comentário logo acima ter
+     * documentado esse comportamento desde o início. Com a condição exigindo os dois, o único
+     * chamador real (capturar_tela em useLocalAgent.ts, que manda x/y mas nunca manda grade=1)
+     * nunca entrava aqui: pedir para olhar de perto sempre devolvia a mesma captura de tela
+     * inteira de antes, sem nenhuma ampliação nem grade.
+     */
+    if ((querGrade || pedeZoom) && tela && tela.width > 0 && tela.height > 0) {
       try {
         if (pedeZoom && Number.isFinite(zoomX) && Number.isFinite(zoomY)) {
           regiao = await ampliarRegiao(tmpFile, tela, zoomX, zoomY, janela);
@@ -2429,7 +2466,11 @@ const handleDeletePath = (req: Request, res: Response) => {
     return res.status(400).json({ error: "Parâmetro 'target' é obrigatório (caminho do arquivo ou pasta)." });
   }
 
-  const targetPath = path.resolve(expandHomePath(rawTarget));
+  // resolveAnyPath, não expandHomePath: expandHomePath só trata '~'. Um caminho relativo sem
+  // barra/til (ex: "notas.txt", como um modelo às vezes escreve) caía em path.resolve() puro,
+  // que resolve contra process.cwd() — a pasta de dados do próprio app empacotado, não a do
+  // usuário. 'target' apagava (ou tentava apagar) o arquivo errado, silenciosamente.
+  const targetPath = path.resolve(resolveAnyPath(rawTarget));
 
   if (isProtectedInstallPath(targetPath)) {
     logAudit('SECURITY', 'DELETE_BLOCKED_SELF', `Exclusão bloqueada: caminho pertence à instalação do OSONE`, { targetPath });
@@ -2471,8 +2512,10 @@ const handleDeletePath = (req: Request, res: Response) => {
  */
 const handleManagePath = (req: Request, res: Response) => {
   const action = (req.body?.action || '').toString();
-  const source = path.resolve(expandHomePath((req.body?.source || '').toString()));
-  const destination = path.resolve(expandHomePath((req.body?.destination || '').toString()));
+  // resolveAnyPath pelo mesmo motivo de handleDeletePath: caminho relativo sem '~' não pode cair
+  // em path.resolve() puro, que resolveria contra a pasta do próprio app, não a do usuário.
+  const source = path.resolve(resolveAnyPath((req.body?.source || '').toString()));
+  const destination = path.resolve(resolveAnyPath((req.body?.destination || '').toString()));
 
   if (!['move', 'copy', 'rename'].includes(action)) {
     return res.status(400).json({ error: "Parâmetro 'action' deve ser 'move', 'copy' ou 'rename'." });
@@ -2559,7 +2602,10 @@ const handleOpenSettings = async (req: Request, res: Response) => {
  */
 const handleListPath = (req: Request, res: Response) => {
   const rawTarget = (req.body?.target || '').toString().trim();
-  const targetPath = path.resolve(expandHomePath(rawTarget || USER_HOME_DIR));
+  // resolveAnyPath pelo mesmo motivo dos outros dois handlers acima; e um alvo vazio já resolve
+  // para a pasta pessoal do usuário sozinho (regra 0 de resolverCaminho), sem precisar de um
+  // fallback explícito para USER_HOME_DIR aqui.
+  const targetPath = path.resolve(resolveAnyPath(rawTarget));
 
   if (!fs.existsSync(targetPath)) {
     return res.status(404).json({ error: `A pasta '${targetPath}' não existe.` });

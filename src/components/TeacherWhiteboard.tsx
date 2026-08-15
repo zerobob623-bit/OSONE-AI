@@ -77,7 +77,12 @@ export const TeacherWhiteboard: React.FC<TeacherWhiteboardProps> = ({
       noise.connect(filter);
       filter.connect(gainNode);
       gainNode.connect(ctx.destination);
-      
+
+      // Sem isto, cada AudioContext criado aqui ficava vivo para sempre — o som (40-80ms) acaba,
+      // mas o contexto continua "running" segurando recurso real de áudio do sistema até ser
+      // fechado explicitamente. Como isto dispara a cada mudança de `text` (ou seja, a cada tecla
+      // no modo de edição), digitar um parágrafo empilhava um AudioContext por letra.
+      noise.onended = () => { ctx.close().catch(() => {}); };
       noise.start();
     } catch (e) {
       // Ignore audio error if context blocked
@@ -110,6 +115,9 @@ export const TeacherWhiteboard: React.FC<TeacherWhiteboardProps> = ({
       
       noise.connect(filter);
       filter.connect(ctx.destination);
+      // Mesmo vazamento de playChalkSound acima: sem fechar, este AudioContext também ficava
+      // vivo para sempre a cada apagar de lousa.
+      noise.onended = () => { ctx.close().catch(() => {}); };
       noise.start();
     } catch (e) {}
   };
