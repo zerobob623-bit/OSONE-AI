@@ -284,6 +284,8 @@ interface GlobeState {
   isDragging: boolean;
   lastX: number;
   lastY: number;
+  /** Soma do deslocamento do ponteiro desde o mousedown/touchstart — ver handleCanvasClick. */
+  dragDistance: number;
   isCentering: boolean;
   targetYaw: number;
   targetPitch: number;
@@ -337,6 +339,8 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
   const [activeViewMode, setActiveViewMode] = useState<'globe' | 'map2d'>('globe');
   const [isGlobeNavigating, setIsGlobeNavigating] = useState(false);
   const fullMapContainerRef = useRef<HTMLDivElement | null>(null);
+  /** Só o clique mais recente no globo pode aplicar o resultado do seu reverse-geocode. */
+  const ultimoCliqueNoGloboIdRef = useRef(0);
 
   // Trilateration solver — pure math, unchanged
   const triangulatedPoint = useMemo(() => {
@@ -653,7 +657,7 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
       ambientLight, sunLight, textures,
       equatorLine, meridianLine, atmosMat, markerGroup, markerMat, markerRingMat,
       triGroup, raycaster, pointer, clock: new THREE.Clock(), animId: 0,
-      yaw: 0, pitch: 0, yawVel: 0, pitchVel: 0, isDragging: false, lastX: 0, lastY: 0,
+      yaw: 0, pitch: 0, yawVel: 0, pitchVel: 0, isDragging: false, lastX: 0, lastY: 0, dragDistance: 0,
       isCentering: true, targetYaw: 0, targetPitch: 0, orbitMode, pulseRings: [],
       targetDist: BASE_DISTANCE / zoomLevel
     };
@@ -950,6 +954,26 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
     return () => clearTimeout(timer);
   }, [currentCoords, satZoom, satProvider, satPanelOpen]);
 
+  /**
+   * Descarta os mapas Leaflet quando o OSONEMap fecha.
+   *
+   * Os dois efeitos acima guardam a instância de L.Map no próprio nó do DOM
+   * (`_leaflet_map`) para reaproveitar entre trocas de modo/zoom sem recriar o mapa — o
+   * container em si nunca desmonta enquanto o painel está aberto, só fica escondido via CSS. Mas
+   * nenhum dos dois nunca chamava `.remove()`, então o listener de "resize" que o Leaflet registra
+   * no `window`, e o resto do estado interno dele, sobreviviam ao fechar o painel — abrir e fechar
+   * o mapa (ou alternar o visor de satélite) repetidas vezes acumulava instâncias de L.Map
+   * órfãs sem limite. Isto roda só uma vez, no unmount do componente inteiro.
+   */
+  useEffect(() => {
+    return () => {
+      const fullMap = (fullMapContainerRef.current as any)?._leaflet_map as L.Map | undefined;
+      fullMap?.remove();
+      const satMap = (satMapContainerRef.current as any)?._leaflet_map as L.Map | undefined;
+      satMap?.remove();
+    };
+  }, []);
+
   // ── Triangulation rebuild ────────────────────────────────────────────
   useEffect(() => {
     const s = stateRef.current;
@@ -1048,12 +1072,17 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
       const tempLabel = `Coordenadas: [${lat.toFixed(4)}, ${lng.toFixed(4)}]`;
       triggerSatelliteFocus(lat, lng, tempLabel);
 
-      // Fetch accurate town/city/country via reverse lookup
+      // Fetch accurate town/city/country via reverse lookup. Marca ESTE clique como o mais
+      // recente: se outro clique acontecer antes da resposta chegar, o de agora perde a corrida
+      // mesmo que a resposta dele volte depois — sem isto, uma resposta de rede mais lenta para
+      // um clique ANTERIOR podia sobrescrever a posição do clique mais novo por último.
+      const idDoClique = ++ultimoCliqueNoGloboIdRef.current;
       fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=10`, {
         headers: { Accept: 'application/json', 'User-Agent': 'OSONE-3DGlobe-Navigator/6.0' }
       })
         .then(res => res.json())
         .then(data => {
+          if (idDoClique !== ultimoCliqueNoGloboIdRef.current) return;
           if (data && data.display_name) {
             const displayName = data.display_name.split(',').slice(0, 3).join(',');
             updateMapPosition(lat, lng, displayName);
@@ -1065,7 +1094,19 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
     }
   };
 
+  /**
+   * Abaixo de quantos pixels de deslocamento total um gesto ainda conta como "clique" e não
+   * como "arrastei o globo". O DOM dispara click no mouseup independentemente de quanto o
+   * ponteiro se moveu entre o mousedown e o mouseup, contanto que os dois tenham acontecido no
+   * mesmo elemento — então sem essa checagem, TODO arrasto para orbitar o globo terminava com um
+   * clique espúrio na posição de soltura, disparando "viajar até esta coordenada" e virando a
+   * visão para o modo satélite 2D no meio do gesto de rotação.
+   */
+  const LIMIAR_DE_ARRASTO_PX = 6;
+
   const handleCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const s = stateRef.current;
+    if (s && s.dragDistance > LIMIAR_DE_ARRASTO_PX) return;
     pickCoordsFromEvent(e.clientX, e.clientY);
   };
 
@@ -1073,6 +1114,7 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
     const s = stateRef.current;
     if (!s) return;
     s.isDragging = true;
+    s.dragDistance = 0;
     s.lastX = e.clientX;
     s.lastY = e.clientY;
   };
@@ -1082,6 +1124,7 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
     if (!s || !s.isDragging) return;
     const dx = e.clientX - s.lastX;
     const dy = e.clientY - s.lastY;
+    s.dragDistance += Math.hypot(dx, dy);
     s.yaw += dx * 0.0065;
     s.pitch = THREE.MathUtils.clamp(s.pitch - dy * 0.0065, -Math.PI / 2.05, Math.PI / 2.05);
     s.yawVel = dx * 0.004;
@@ -1100,6 +1143,7 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
     const s = stateRef.current;
     if (!s || e.touches.length !== 1) return;
     s.isDragging = true;
+    s.dragDistance = 0;
     s.lastX = e.touches[0].clientX;
     s.lastY = e.touches[0].clientY;
   };
@@ -1109,6 +1153,7 @@ export const OSONEMap = ({ onClose, initialSearchQuery = '', onLocationFound }: 
     if (!s || !s.isDragging || e.touches.length !== 1) return;
     const dx = e.touches[0].clientX - s.lastX;
     const dy = e.touches[0].clientY - s.lastY;
+    s.dragDistance += Math.hypot(dx, dy);
     s.yaw += dx * 0.007;
     s.pitch = THREE.MathUtils.clamp(s.pitch - dy * 0.007, -Math.PI / 2.05, Math.PI / 2.05);
     s.yawVel = dx * 0.004;

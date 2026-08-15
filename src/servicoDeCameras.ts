@@ -580,6 +580,16 @@ function abrirTransmissao(camera: CameraConfigurada): TransmissaoViva {
   viva.estado = 'conectando';
   viva.acumulado = Buffer.alloc(0);
   viva.assinaturaAnterior = null;
+  /**
+   * Zera o relógio do vigia numa reconexão. Sem isto, `ultimoQuadroEm` seguia com o horário do
+   * ÚLTIMO QUADRO DA CONEXÃO ANTERIOR — já bem mais velho que os 15s de tolerância só de esperar
+   * a queda ser notada mais o backoff antes de tentar de novo. O vigia então matava o ffmpeg
+   * recém-criado no primeiro tique (5s depois), antes mesmo do handshake RTSP ter chance de
+   * terminar, e o ciclo se repetia para sempre — a câmera nunca reconectava sozinha. Zerado, o
+   * vigia (que só age quando `ultimoQuadroEm` é verdadeiro) espera o primeiro quadro desta conexão
+   * nova antes de começar a contar silêncio, igual a uma transmissão nunca aberta antes.
+   */
+  viva.ultimoQuadroEm = 0;
 
   const processo = spawn(resolverFfmpeg(), [
     '-nostdin', '-loglevel', 'error',

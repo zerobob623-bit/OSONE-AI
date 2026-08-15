@@ -107,8 +107,15 @@ export const CamerasSection: React.FC<CamerasSectionProps> = ({ onBack, onNotifi
    */
   const [paradoPorque, setParadoPorque] = useState<{ texto: string; definitivo: boolean } | null>(null);
   const falhasSeguidas = useRef(0);
+  /**
+   * O intervalo de 5s não espera a leitura anterior terminar antes de disparar a próxima — se uma
+   * demorar mais que o normal (rede lenta), duas ficam em voo ao mesmo tempo, e nada garante que
+   * respondam na ordem em que saíram. Só a leitura mais recente pode aplicar seu resultado.
+   */
+  const ultimaBuscaIdRef = useRef(0);
 
   const buscar = useCallback(async (silencioso = false): Promise<'ok' | 'falhou' | 'impossivel'> => {
+    const idDaBusca = ++ultimaBuscaIdRef.current;
     try {
       const [respCameras, respEventos] = await Promise.all([
         fetch('/api/cameras'),
@@ -135,9 +142,13 @@ export const CamerasSection: React.FC<CamerasSectionProps> = ({ onBack, onNotifi
       if (!respCameras.ok) throw new Error(dadosCameras?.error || 'Não consegui ler a lista de câmeras.');
 
       falhasSeguidas.current = 0;
-      setParadoPorque(null);
-      setCameras(dadosCameras.cameras || []);
-      setEventos(dadosEventos.eventos || []);
+      // Uma leitura mais nova pode já ter chegado e sido aplicada enquanto esta ainda esperava a
+      // rede — aplicar esta por cima voltaria a tela para um estado mais velho.
+      if (idDaBusca === ultimaBuscaIdRef.current) {
+        setParadoPorque(null);
+        setCameras(dadosCameras.cameras || []);
+        setEventos(dadosEventos.eventos || []);
+      }
       return 'ok';
     } catch (err: any) {
       falhasSeguidas.current++;
