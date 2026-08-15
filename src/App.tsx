@@ -6887,6 +6887,8 @@ ${isBad
         liveSessionRef.current.sendRealtimeInput({ text: aviso });
       };
 
+      const INTERVALO_TELA_COMPARTILHADA_MS = 650;
+
       screenIntervalRef.current = setInterval(() => {
         // Enquanto uma captura injetada está sendo examinada, não mandar frames por cima dela.
         if (Date.now() < pausarEnvioDeTelaAte.current) {
@@ -6926,9 +6928,10 @@ ${isBad
            *
            * `calcularQuadro` preserva a proporção real e nunca amplia além da fonte.
            */
-          const quadro = calcularQuadro(video.videoWidth, video.videoHeight, 'ambiente');
+          const quadro = calcularQuadro(video.videoWidth, video.videoHeight, 'tela');
           canvas.width = quadro.largura;
           canvas.height = quadro.altura;
+          ctx.imageSmoothingEnabled = false;
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const base64Data = canvas.toDataURL('image/jpeg', quadro.qualidadeJpeg).split(',')[1];
           liveSessionRef.current.sendRealtimeInput({
@@ -6938,7 +6941,7 @@ ${isBad
           // imagem chegar recria, por um instante, a mesma mentira que se está corrigindo.
           avisarSeMudou(true, '');
         }
-      }, 1000);
+      }, INTERVALO_TELA_COMPARTILHADA_MS);
 
       stream.getVideoTracks()[0].onended = () => {
         stopScreenSharing();
@@ -7011,6 +7014,7 @@ ${isBad
     if (!ctx) {
       return { error: 'Não foi possível preparar a imagem para leitura neste navegador.' };
     }
+    ctx.imageSmoothingEnabled = false;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     const imagem = canvas.toDataURL('image/jpeg', quadro.qualidadeJpeg);
 
@@ -9838,31 +9842,23 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
         await new Promise<void>((resolve) => {
           img.onload = () => {
             const canvas = document.createElement('canvas');
-            // Scale down image if it's too large to prevent overloading the live websocket stream
-            const maxDim = 1024;
-            let width = img.width;
-            let height = img.height;
-            if (width > maxDim || height > maxDim) {
-              if (width > height) {
-                height = Math.round((height * maxDim) / width);
-                width = maxDim;
-              } else {
-                width = Math.round((width * maxDim) / height);
-                height = maxDim;
-              }
-            }
+            // Anexo de imagem é uma foto única, não vídeo contínuo: preserva mais detalhe para
+            // prints de tela, texto pequeno e interface. Ainda assim nunca amplia além da fonte.
+            const quadro = calcularQuadro(img.width, img.height, 'leitura');
+            const width = quadro.largura;
+            const height = quadro.altura;
             canvas.width = width;
             canvas.height = height;
-            
+
             const ctx = canvas.getContext('2d');
             if (ctx) {
               // Fill background to solid white for transparent elements/PNGs
               ctx.fillStyle = "#FFFFFF";
               ctx.fillRect(0, 0, width, height);
+              ctx.imageSmoothingEnabled = false;
               ctx.drawImage(img, 0, 0, width, height);
-              
-              // Compress to 0.75 JPEG for optimal balance of speed and visual detail
-              const jpegBase64 = canvas.toDataURL('image/jpeg', 0.75).split(',')[1];
+
+              const jpegBase64 = canvas.toDataURL('image/jpeg', quadro.qualidadeJpeg).split(',')[1];
               
               try {
                 session.sendRealtimeInput({
