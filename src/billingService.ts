@@ -183,10 +183,24 @@ function intervalFromPrice(price: string | null | undefined): Interval | null {
   return null;
 }
 
+/**
+ * Soma 1 mês (ou 1 ano) a `start` sem deixar o resultado transbordar para o mês seguinte.
+ *
+ * `setUTCMonth`/`setUTCFullYear` não travam no tamanho do mês de destino: 31 de janeiro + 1 mês
+ * vira 3 de março (fevereiro só tem 28), não 28 de fevereiro. Como isto calcula o vencimento de
+ * assinaturas pagas via PIX, o transbordo dava alguns dias de acesso pago de graça para todo
+ * assinante que pagasse nos últimos dias de um mês mais curto que o seguinte — e o mesmo vale
+ * para 29 de fevereiro num plano anual que cai num ano não bissexto.
+ */
 export function pixPeriodEnd(start: Date, interval: Interval): Date {
+  const originalDay = start.getUTCDate();
+  const monthsToAdd = interval === 'month' ? 1 : 12;
+  const targetMonthIndex = start.getUTCMonth() + monthsToAdd;
+  const targetYear = start.getUTCFullYear() + Math.floor(targetMonthIndex / 12);
+  const targetMonth = ((targetMonthIndex % 12) + 12) % 12;
+  const lastDayOfTargetMonth = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
   const end = new Date(start);
-  if (interval === 'month') end.setUTCMonth(end.getUTCMonth() + 1);
-  else end.setUTCFullYear(end.getUTCFullYear() + 1);
+  end.setUTCFullYear(targetYear, targetMonth, Math.min(originalDay, lastDayOfTargetMonth));
   return end;
 }
 

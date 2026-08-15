@@ -650,6 +650,17 @@ class ElevenLabsQueuePlayer {
   public onQueueDrained: (() => void) | null = null;
   public isStreamFinished: boolean = false;
   private drainNotified: boolean = false;
+  /**
+   * Quantas chamadas a addChunk ainda estão em voo (decodificando, sem ter chegado à fila).
+   *
+   * Sem isto, markStreamFinished (e o setTimeout de source.onended, mais abaixo) só olhava
+   * isPlaying/activeSources/queue — todos vazios enquanto um chunk ainda está sendo decodificado,
+   * antes de cair em queue. Se a última mensagem "isFinal" (ou o fechamento do WebSocket) chegasse
+   * enquanto o último addChunk ainda estivesse aguardando decodeAudioData ou audioCtx.resume(), o
+   * drenado disparava achando que acabou — cortando a fala nos casos em que quem chama não espera
+   * o addChunk terminar antes de avisar o fim do stream.
+   */
+  private pendingChunks: number = 0;
 
   constructor(onStateChange: (speaking: boolean) => void) {
     this.onStateChange = onStateChange;
@@ -662,9 +673,9 @@ class ElevenLabsQueuePlayer {
 
   public markStreamFinished() {
     this.isStreamFinished = true;
-    if (!this.isPlaying && this.activeSources.length === 0 && this.queue.length === 0) {
+    if (!this.isPlaying && this.activeSources.length === 0 && this.queue.length === 0 && this.pendingChunks === 0) {
       setTimeout(() => {
-        if (!this.isPlaying && this.activeSources.length === 0 && this.queue.length === 0) {
+        if (!this.isPlaying && this.activeSources.length === 0 && this.queue.length === 0 && this.pendingChunks === 0) {
           this.notifyQueueDrained();
         }
       }, 350);
@@ -691,50 +702,55 @@ class ElevenLabsQueuePlayer {
   }
 
   public async addChunk(base64Data: string): Promise<boolean> {
-    await this.initAudio();
-    if (!this.audioCtx) return false;
-
+    this.pendingChunks++;
     try {
-      const binaryString = window.atob(base64Data);
-      const len = binaryString.length;
-      if (len === 0) return false;
+      await this.initAudio();
+      if (!this.audioCtx) return false;
 
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
+      try {
+        const binaryString = window.atob(base64Data);
+        const len = binaryString.length;
+        if (len === 0) return false;
+
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+
+        let audioBuffer: AudioBuffer | null = null;
+
+        // Primary: Raw 24kHz Int16 PCM (2 bytes per sample, 1 channel)
+        if (len % 2 === 0) {
+          try {
+            const int16Array = new Int16Array(bytes.buffer);
+            const float32Array = new Float32Array(int16Array.length);
+            for (let i = 0; i < int16Array.length; i++) {
+              float32Array[i] = int16Array[i] / 32768.0;
+            }
+            audioBuffer = this.audioCtx.createBuffer(1, float32Array.length, 24000);
+            audioBuffer.getChannelData(0).set(float32Array);
+          } catch (_) {}
+        }
+
+        // Fallback: Web Audio decodeAudioData for MP3/WAV
+        if (!audioBuffer) {
+          try {
+            audioBuffer = await this.audioCtx.decodeAudioData(bytes.buffer.slice(0));
+          } catch (_) {}
+        }
+
+        if (audioBuffer) {
+          this.queue.push(audioBuffer);
+          this.processQueue();
+          return true;
+        }
+      } catch (e) {
+        console.warn("Soft warning: failed to decode an individual audio chunk:", e);
       }
-
-      let audioBuffer: AudioBuffer | null = null;
-
-      // Primary: Raw 24kHz Int16 PCM (2 bytes per sample, 1 channel)
-      if (len % 2 === 0) {
-        try {
-          const int16Array = new Int16Array(bytes.buffer);
-          const float32Array = new Float32Array(int16Array.length);
-          for (let i = 0; i < int16Array.length; i++) {
-            float32Array[i] = int16Array[i] / 32768.0;
-          }
-          audioBuffer = this.audioCtx.createBuffer(1, float32Array.length, 24000);
-          audioBuffer.getChannelData(0).set(float32Array);
-        } catch (_) {}
-      }
-
-      // Fallback: Web Audio decodeAudioData for MP3/WAV
-      if (!audioBuffer) {
-        try {
-          audioBuffer = await this.audioCtx.decodeAudioData(bytes.buffer.slice(0));
-        } catch (_) {}
-      }
-
-      if (audioBuffer) {
-        this.queue.push(audioBuffer);
-        this.processQueue();
-        return true;
-      }
-    } catch (e) {
-      console.warn("Soft warning: failed to decode an individual audio chunk:", e);
+      return false;
+    } finally {
+      this.pendingChunks--;
     }
-    return false;
   }
 
   private processQueue() {
@@ -766,7 +782,7 @@ class ElevenLabsQueuePlayer {
             if (this.activeSources.length === 0 && this.queue.length === 0) {
               this.isPlaying = false;
               this.onStateChange(false);
-              if (this.isStreamFinished && this.onQueueDrained) {
+              if (this.isStreamFinished && this.pendingChunks === 0 && this.onQueueDrained) {
                 this.notifyQueueDrained();
               }
             }
@@ -3801,10 +3817,20 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
         };
         switchUser(userObj);
       } else {
-        // Sem sessão no Firebase não há usuário nenhum: o perfil local, que antes era preservado
-        // aqui, deixou de ser uma forma de entrar.
-        setUser(null);
-        isCloudSyncReady.current = false;
+        /**
+         * Sem sessão no Firebase não há usuário nenhum: o perfil local, que antes era preservado
+         * aqui, deixou de ser uma forma de entrar.
+         *
+         * Precisa ser switchUser(null), não só setUser(null). Esta chamada também cobre queda
+         * PASSIVA de sessão — token expirado, mesma conta deslogada em outra aba — no meio de
+         * uma sessão com chatHistory/aiProfile/healthData/longTermMemory já carregados na tela
+         * com dados reais de quem estava logado. Um setUser(null) sozinho zera só o ponteiro do
+         * usuário e deixa esse estado privado intacto; o efeito de persistência do chat, que
+         * escreve na chave global de convidado sempre que `user` é null, então gravava a
+         * conversa privada de quem saiu no bucket compartilhado — de onde o próximo usuário
+         * diferente a herdava, se a própria conversa dele estivesse vazia.
+         */
+        switchUser(null);
       }
       setIsAuthLoading(false);
       setVerificandoSessao(false);
@@ -4504,6 +4530,10 @@ Sua resposta DEVE ser estritamente um objeto JSON válido e NADA MAIS.`;
     if (activeSessionId === sessionId) {
       const remaining = chatSessions.filter(s => s.id !== sessionId);
       if (remaining.length > 0) {
+        // setChatSessions também é necessário aqui: só trocar activeSessionId/chatHistory tira a
+        // sessão apagada da TELA, mas ela continuava em chatSessions e era persistida de volta no
+        // storage pelo efeito logo abaixo — reabrível como se nunca tivesse sido removida.
+        setChatSessions(remaining);
         setActiveSessionId(remaining[0].id);
         setChatHistory(remaining[0].messages);
       } else {
@@ -4534,6 +4564,20 @@ Sua resposta DEVE ser estritamente um objeto JSON válido e NADA MAIS.`;
   // Keep active session in sync with chatHistory
   useEffect(() => {
     if (!activeSessionId) {
+      /**
+       * chatSessions e activeSessionId são carregados de chaves separadas do localStorage
+       * (linhas ~4120-4165), sem validação cruzada entre elas. Se já existem sessões salvas mas
+       * o ponteiro da ativa veio vazio (escrita anterior falhou, corrida entre abas, chave
+       * apagada manualmente), reaproveita a primeira sessão salva em vez de SUBSTITUIR
+       * chatSessions inteiro por uma sessão nova — fazer isso descartava toda conversa salva
+       * logo na primeira renderização, e o efeito de persistência abaixo regravava a lista
+       * truncada no storage, tornando a perda permanente.
+       */
+      if (chatSessions.length > 0) {
+        setActiveSessionId(chatSessions[0].id);
+        setChatHistory(chatSessions[0].messages);
+        return;
+      }
       const initialId = Math.random().toString(36).substring(2, 11);
       const newSession: ChatSession = {
         id: initialId,
@@ -4890,6 +4934,8 @@ Escreva um novo retorno. Comece expressando a pancada física com dor bem-humora
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const liveVideoRef = useRef<HTMLVideoElement | null>(null);
   const liveAnimationFrameRef = useRef<number | null>(null);
+  /** Timer de re-checagem a cada 500ms enquanto a câmera está inativa — ver streamFrames. */
+  const liveIdleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (isCameraActive && cameraStreamRef.current && liveVideoRef.current) {
@@ -6768,6 +6814,10 @@ ${isBad
       cancelAnimationFrame(liveAnimationFrameRef.current);
       liveAnimationFrameRef.current = null;
     }
+    if (liveIdleTimeoutRef.current) {
+      clearTimeout(liveIdleTimeoutRef.current);
+      liveIdleTimeoutRef.current = null;
+    }
     audioProcessorRef.current?.stopRecording?.();
     audioPlayerRef.current?.stop?.();
     if (!preservarTela) stopScreenSharing();
@@ -7981,6 +8031,20 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
       let currentResult = null;
       let hasResearchLoops = true;
       let researchLoopCount = 0;
+      /**
+       * Chamadas de ferramentas REAIS (não uma das 5 "espertas" abaixo) que vieram no MESMO
+       * turno que uma chamada de pesquisa/leitura/memória.
+       *
+       * O laço abaixo processa de fato só as 5 espertas; para qualquer outra, o único jeito de
+       * responder ao protocolo de function-calling (toda chamada precisa de uma resposta antes
+       * do próximo turno) sem executar de verdade era fingir "Executado internamente." — o que
+       * engana o modelo: ele passa a acreditar que a ação (escrever arquivo, mandar WhatsApp,
+       * comandar dispositivo, o que for) já aconteceu, não pede de novo, e a ação real nunca
+       * roda. Aqui a resposta ao modelo diz a verdade (ainda não executada), e a chamada em si é
+       * guardada para ser executada de verdade por quem chamou esta função, fora do laço de
+       * pesquisa — que é onde as implementações reais dessas outras ferramentas já vivem.
+       */
+      const chamadasReaisAdiadas: any[] = [];
 
       while (hasResearchLoops && researchLoopCount < 3) {
         researchLoopCount++;
@@ -8035,6 +8099,18 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
             const toolResponses: any[] = [];
 
             for (const call of functionCalls) {
+              if (!smartTools.includes(call)) {
+                // Ferramenta real fora das 5 espertas, misturada neste turno: não finge sucesso,
+                // adia para execução de verdade depois do laço (ver chamadasReaisAdiadas acima).
+                chamadasReaisAdiadas.push(call);
+                toolResponses.push({
+                  name: call.name,
+                  id: call.id,
+                  response: { result: "Esta ação ainda não foi executada — será processada assim que a pesquisa/leitura em andamento terminar." }
+                });
+                continue;
+              }
+
               let resValue: any = "Executado internamente.";
 
               if (call.name === 'google_search') {
@@ -8260,6 +8336,14 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
             });
           }
         }
+      }
+
+      if (chamadasReaisAdiadas.length > 0 && currentResult) {
+        // O laço de pesquisa terminou (ou nunca precisou continuar) sem que estas chamadas
+        // tivessem sido de fato executadas. Anexadas aqui, quem chamou esta função as processa
+        // com as implementações reais — currentResult.functionCalls é o campo que ele lê primeiro.
+        const jaTinha = Array.isArray((currentResult as any).functionCalls) ? (currentResult as any).functionCalls : [];
+        currentResult = { ...currentResult, functionCalls: [...jaTinha, ...chamadasReaisAdiadas] };
       }
 
       return currentResult;
@@ -8949,6 +9033,12 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
 
       activeSystemInstruction += `\n\n${buildMemoryContextBlock()}`;
 
+      // Estado do Canvas: calculado acima (canvasSummary) mas nunca chegava a entrar aqui — só a
+      // sessão de voz (startLiveSession) injeta a mesma variável no próprio prompt. Sem isto, uma
+      // pergunta sobre o que está desenhado feita pelo chat de texto não tinha como ser
+      // respondida, mesmo com objetos reais no drawingObjects.
+      activeSystemInstruction += `\n\n[ESTADO ATUAL DA LOUSA INTERATIVA (CANVAS)]:\n${canvasSummary}`;
+
       if (selectedPersona.id === 'osone') {
         activeSystemInstruction += `\n\n[SISTEMA DE EVOLUÇÃO NEURO-ADAPTATIVA DO OSONE ATIVO]:
 Seu alinhamento comportamental atual está na seguinte escala de afinidade evolutiva com o usuário:
@@ -9499,9 +9589,10 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
             }]);
           } else if (call.name === 'update_long_term_memory') {
             const insight = (call.args as any).insight;
-            const prevMemory = longTermMemory || "";
-            const newMemory = `${prevMemory}\n- ${new Date().toLocaleDateString()}: ${insight}`;
-            setLongTermMemory(newMemory);
+            // Forma funcional: o modelo pode devolver mais de uma functionCall no mesmo turno, e
+            // duas chamadas a esta ferramenta no mesmo lote leriam o mesmo `longTermMemory`
+            // fechado — a segunda sobrescreveria a primeira em vez de somar as duas.
+            setLongTermMemory(prev => `${prev || ""}\n- ${new Date().toLocaleDateString()}: ${insight}`);
             addNotification("Memória de Longo Prazo Atualizada", "success");
             setChatHistory(prev => [...prev, { 
               id: Math.random().toString(36).substr(2, 9), 
@@ -11117,8 +11208,13 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   }
                   liveAnimationFrameRef.current = requestAnimationFrame(streamFrames);
                 } else if (liveSessionRef.current) {
-                   // When camera inactive, check again in 500ms instead of running 60fps RAF loop
-                   liveAnimationFrameRef.current = setTimeout(() => streamFrames(performance.now()), 500) as any;
+                   // When camera inactive, check again in 500ms instead of running 60fps RAF loop.
+                   // Guardado num ref PRÓPRIO (liveIdleTimeoutRef), não em liveAnimationFrameRef:
+                   // a limpeza da sessão só chama cancelAnimationFrame, que não cancela um
+                   // setTimeout (IDs de namespaces diferentes) — guardar os dois no mesmo ref
+                   // deixava este timer sobrevivendo à sessão e reentrando em streamFrames depois
+                   // dela encerrada.
+                   liveIdleTimeoutRef.current = setTimeout(() => streamFrames(performance.now()), 500);
                 }
               };
               
@@ -11602,7 +11698,12 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       response: { result: `Videoclipe ${vidId} exibido no Pop-up da interface.` }
                     });
                   } else if (call.name === "prune_chat_history") {
-                    const count = Math.min(call.args.count as number, chatHistory.length);
+                    // chatHistoryRef.current, não chatHistory: este handler mora no onmessage de
+                    // uma sessão de voz, cujo closure foi criado uma vez no início da sessão e não
+                    // vê o histórico crescer depois disso. Com o `chatHistory` fechado, um pedido
+                    // de podar 40 mensagens antigas de uma conversa que já tem 200 na tela ficava
+                    // preso ao tamanho (bem menor) que ela tinha quando a sessão começou.
+                    const count = Math.min(call.args.count as number, chatHistoryRef.current.length);
                     setChatHistory(prev => prev.slice(count));
                     responses.push({
                       name: call.name,
@@ -11823,8 +11924,12 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       response: { result: "Osciladores neurais recalibrados. Minha voz agora opera nos novos parâmetros." }
                     });
                   } else if (call.name === "search_chat_history") {
+                    // chatHistoryRef.current pelo mesmo motivo do prune_chat_history acima: o
+                    // `chatHistory` fechado é a foto de quando a sessão de voz começou, então uma
+                    // busca por algo dito há pouco (via chat de texto, transcrição de voz, etc.
+                    // depois do início da sessão) não encontrava nada.
                     const queryTerm = (call.args as any).query.toLowerCase();
-                    const filteredHistory = chatHistory.filter(msg => 
+                    const filteredHistory = chatHistoryRef.current.filter(msg =>
                       msg.content.toLowerCase().includes(queryTerm)
                     ).slice(-10);
 
@@ -11847,9 +11952,16 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     });
                   } else if (call.name === "update_long_term_memory") {
                     const insight = (call.args as any).insight;
-                    const prevMemory = longTermMemory || "";
-                    const newMemory = `${prevMemory}\n- ${new Date().toLocaleDateString()}: ${insight}`;
-                    setLongTermMemory(newMemory);
+                    /**
+                     * Forma funcional, não `longTermMemory` fechado + setLongTermMemory(valor).
+                     * Este handler mora no closure de uma sessão de voz que pode viver por vários
+                     * turnos. Se update_long_term_memory e auto_register_memory (ou o mesmo tool
+                     * duas vezes) disparassem na mesma sessão, o segundo lia `longTermMemory`
+                     * como estava ANTES da sessão começar — sem o insight que o primeiro acabara
+                     * de gravar — e sobrescrevia o valor real com esse de volta, apagando o
+                     * primeiro insight mesmo com as duas chamadas reportando sucesso.
+                     */
+                    setLongTermMemory(prev => `${prev || ""}\n- ${new Date().toLocaleDateString()}: ${insight}`);
                     addNotification("Memória de Longo Prazo Atualizada", "success");
                     responses.push({
                       name: call.name,
@@ -11915,9 +12027,9 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   } else if (call.name === "auto_register_memory") {
                     const memoryText = (call.args as any).memory_text;
                     if (memoryText) {
-                      const prevMemory = longTermMemory || "";
-                      const newMemory = `${prevMemory}\n- ${new Date().toLocaleDateString()}: ${memoryText}`;
-                      setLongTermMemory(newMemory);
+                      // Forma funcional pelo mesmo motivo de update_long_term_memory logo acima —
+                      // as duas ferramentas escrevem no mesmo estado e podiam se sobrescrever.
+                      setLongTermMemory(prev => `${prev || ""}\n- ${new Date().toLocaleDateString()}: ${memoryText}`);
                       addNotification("Memória de Longo Prazo Sincronizada via Voz", "success");
                       responses.push({
                         name: call.name,
