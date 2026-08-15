@@ -1505,44 +1505,54 @@ if (!gotSingleInstanceLock) {
       mainWindow.focus();
     }
   });
-}
 
-app.whenReady().then(async () => {
-  setupFileLogging();
-  setupScreenSharing();
-  screen.on('display-metrics-changed', ajustarJanelaDoMascote);
-  screen.on('display-added', ajustarJanelaDoMascote);
-  screen.on('display-removed', ajustarJanelaDoMascote);
-  // O controle vai para o ar ANTES do servidor: é ele que o servidor procura ao responder as
-  // rotas de atualização, e um servidor que suba primeiro não encontraria nada.
-  publicarControleDoMascote();
-  publicarControleDeAtualizacao();
-  publicarDiagnosticoDeLogin();
-  await startBackendServer();
+  /**
+   * Precisa morar AQUI DENTRO, e não solto no nível do módulo.
+   *
+   * app.quit(), chamado acima quando o lock falha, só AGENDA o encerramento — não impede o
+   * evento 'ready' de disparar antes disso acontecer de verdade. Com este bloco fora do `else`,
+   * uma segunda instância ainda rodava startBackendServer() (um segundo Express + um segundo
+   * Agente Local, em outra porta) e chegava a criar uma BrowserWindow, brevemente visível, antes
+   * do quit() surtir efeito — exatamente o "segundo servidor e segundo Agente Local disputando os
+   * mesmos arquivos de dados" que o comentário do lock, acima, diz que ele existe para evitar.
+   */
+  app.whenReady().then(async () => {
+    setupFileLogging();
+    setupScreenSharing();
+    screen.on('display-metrics-changed', ajustarJanelaDoMascote);
+    screen.on('display-added', ajustarJanelaDoMascote);
+    screen.on('display-removed', ajustarJanelaDoMascote);
+    // O controle vai para o ar ANTES do servidor: é ele que o servidor procura ao responder as
+    // rotas de atualização, e um servidor que suba primeiro não encontraria nada.
+    publicarControleDoMascote();
+    publicarControleDeAtualizacao();
+    publicarDiagnosticoDeLogin();
+    await startBackendServer();
 
-  if (!startupError) {
-    // O retorno era descartado: mesmo quando o servidor nunca subia, a janela era criada e
-    // carregava um endereço morto — exatamente o cenário da tela preta. Agora um servidor que
-    // não responde vira uma mensagem de erro explicando o que aconteceu.
-    const readyPort = await waitForServer();
-    if (readyPort === null) {
-      startupError = `O servidor interno do OSONE não respondeu na porta ${activePort} dentro do tempo esperado. Isso costuma acontecer quando o firewall/antivírus bloqueia o app ou outro programa está ocupando a porta.`;
-      console.error(`[Startup] ${startupError}`);
+    if (!startupError) {
+      // O retorno era descartado: mesmo quando o servidor nunca subia, a janela era criada e
+      // carregava um endereço morto — exatamente o cenário da tela preta. Agora um servidor que
+      // não responde vira uma mensagem de erro explicando o que aconteceu.
+      const readyPort = await waitForServer();
+      if (readyPort === null) {
+        startupError = `O servidor interno do OSONE não respondeu na porta ${activePort} dentro do tempo esperado. Isso costuma acontecer quando o firewall/antivírus bloqueia o app ou outro programa está ocupando a porta.`;
+        console.error(`[Startup] ${startupError}`);
+      }
     }
-  }
 
-  createWindow();
+    createWindow();
 
-  if (app.isPackaged) {
-    setupAutoUpdater();
-  }
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+    if (app.isPackaged) {
+      setupAutoUpdater();
     }
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      }
+    });
   });
-});
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

@@ -134,7 +134,16 @@ async function authenticatedUser(req: Request) {
   const header = String(req.headers.authorization || '');
   if (!header.startsWith('Bearer ')) throw Object.assign(new Error('Entre com sua conta Google para continuar.'), { status: 401 });
   const { app } = adminServices();
-  return getAuth(app).verifyIdToken(header.slice(7));
+  try {
+    return await getAuth(app).verifyIdToken(header.slice(7));
+  } catch (err: any) {
+    /**
+     * Sem isto, um token expirado (o caso normal depois de ~1h de sessão) chegava a sendError()
+     * sem `.status`, caindo no 500 genérico em vez do 401 que diz ao cliente para entrar de novo
+     * — e gerando um console.error com stack trace para cada expiração rotineira de sessão.
+     */
+    throw Object.assign(new Error(err?.message || 'Sessão do Google inválida ou expirada.'), { status: 401 });
+  }
 }
 
 function priceId(plan: PaidPlanId, interval: Interval): string {

@@ -127,17 +127,29 @@ export function useTikTokLive(
     };
   }, [tiktokUser, tiktokSessionId, tiktokTargetIdc, isLiveNarratorActive, liveNarratorVoice, workspaceMode, tiktokState?.status]);
 
-  const handleTiktokConnect = async (simulate = false) => {
+  const handleTiktokConnect = async (
+    simulate = false,
+    /**
+     * Sobrescreve o estado (tiktokUser/tiktokSessionId/tiktokTargetIdc) com valores lidos direto
+     * de quem chamou, em vez de esperar o estado assentar.
+     *
+     * setTiktokUser/setTiktokSessionId/setTiktokTargetIdc são assíncronos: um chamador que ajusta
+     * esses campos e imediatamente invoca handleTiktokConnect(false) — como o botão "Conectar
+     * Canal" do painel — via closure lia os valores de ANTES da edição, conectando ao canal
+     * errado sempre que o campo tivesse acabado de mudar.
+     */
+    overrides?: { username?: string; sessionId?: string; targetIdc?: string }
+  ) => {
     setTiktokLoading(true);
     try {
       const res = await fetch('/api/tiktok/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          username: tiktokUser,
+          username: overrides?.username ?? tiktokUser,
           simulate,
-          sessionId: tiktokSessionId,
-          targetIdc: tiktokTargetIdc
+          sessionId: overrides?.sessionId ?? tiktokSessionId,
+          targetIdc: overrides?.targetIdc ?? tiktokTargetIdc
         })
       });
 

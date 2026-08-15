@@ -37,5 +37,15 @@ export async function verifyFirebaseBearer(header: string): Promise<{ uid: strin
     throw Object.assign(new Error('Entre com sua conta OSONE para ativar o Google Home.'), { status: 401 });
   }
   const { app: adminApp } = firebaseAdminServices();
-  return getAuth(adminApp).verifyIdToken(header.slice(7));
+  try {
+    return await getAuth(adminApp).verifyIdToken(header.slice(7));
+  } catch (err: any) {
+    /**
+     * Sem isto, um token expirado (o caso normal depois de ~1h de sessão) chegava aos chamadores
+     * como um erro sem `.status` — cloudError, em server.ts, cai para 500 quando `.status` não
+     * existe. Todo re-login rotineiro por expiração virava um 500 genérico com stack trace no
+     * log do servidor, em vez do 401 que já diz ao cliente "sua sessão caiu, entre de novo".
+     */
+    throw Object.assign(new Error(err?.message || 'Sessão do Firebase inválida ou expirada.'), { status: 401 });
+  }
 }
