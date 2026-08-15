@@ -149,7 +149,18 @@ export function montarCheckupDasEtapas(historico: VoltaDoAgente[]): string {
   }
   const ultimas = [...feitos.values()].slice(-12).map((relato, i) => `${i + 1}. [FEITO E CONFIRMADO] ${relato}`);
   const ultima = historico.at(-1);
-  if (ultima && (!ultima.ok || /não mudou|nao mudou|pendente|ainda/i.test(`${ultima.relato} ${ultima.erro || ''}`))) {
+  /**
+   * SÓ `ok: false` CONTA COMO "EM ANDAMENTO".
+   *
+   * Antes, um regex genérico (`não mudou|ainda|pendente`) também disparava esta etiqueta — e
+   * pegava toda ação BEM-SUCEDIDA (`ok: true`) cujo clique não mudou a tela visivelmente, que é
+   * metade dos cliques do mundo (foco de campo, checkbox, menu que já estava aberto). O modelo
+   * lia "[EM ANDAMENTO — NÃO ABANDONAR]" sobre um passo que na verdade tinha terminado bem, e
+   * travava tentando "continuar" algo que já não precisava de continuação. Todo estado
+   * genuinamente pendente neste código (download não confirmado, etapa repetida rejeitada) já
+   * vem marcado `ok: false`, então este sinal sozinho basta.
+   */
+  if (ultima && !ultima.ok) {
     ultimas.push(`[EM ANDAMENTO — NÃO ABANDONAR] ${ultima.pensamento} → ${ultima.relato}`);
   }
   return ultimas.length ? ultimas.join('\n') : '[A FAZER] Nenhuma etapa foi confirmada ainda.';
@@ -361,7 +372,11 @@ async function perguntarProximaAcao(
         `Use esta leitura: ela tem o nome REAL dos botões. Não volte a procurar um botão com o nome da tarefa, ` +
         `e não refaça o caminho que já não deu certo.`
       : '',
-    historico.some(v => !v.ok || /não mudou|nao mudou|não achei|nao achei|não consegui|nao consegui/i.test(`${v.relato} ${v.erro || ''}`))
+    // Só as ÚLTIMAS voltas contam para "recente": rodando sobre o histórico inteiro, um único
+    // clique sem efeito visual lá no início de uma tarefa longa (comum — metade dos cliques do
+    // mundo) deixava este aviso de "você está travado" grudado até o fim da tarefa inteira,
+    // mesmo com tudo correndo bem havia dezenas de passos.
+    historico.slice(-3).some(v => !v.ok || /não mudou|nao mudou|não achei|nao achei|não consegui|nao consegui/i.test(`${v.relato} ${v.erro || ''}`))
       ? 'SINAL DE EMPACAMENTO: algo recente falhou, não mudou a tela ou não foi encontrado. NÃO repita a mesma ação. Formule uma hipótese nova e teste uma alternativa segura: menu de três pontos, clique_direito no item, rolagem curta, campo de busca, botão Mais/More, ou abrir endereço direto. NÃO feche o que você mesmo acabou de abrir.'
       : '',
     /**
