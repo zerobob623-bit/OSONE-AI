@@ -27,6 +27,19 @@ export function useTuyaSmartHome() {
       .catch(() => setIsTuyaConfigured(false));
   }, []);
 
+  // Não deixa o timeout de 180s da confirmação pendente sobreviver ao unmount: sem isto, ele
+  // rodaria mesmo com o componente dono já desmontado, chamando setPendingTuyaConfirmation numa
+  // árvore que não existe mais e resolvendo uma promise cujo chamador pode já ter ido embora.
+  useEffect(() => {
+    return () => {
+      if (pendingTuyaTimerRef.current) {
+        clearTimeout(pendingTuyaTimerRef.current);
+        pendingTuyaTimerRef.current = null;
+      }
+      pendingTuyaResolveRef.current = null;
+    };
+  }, []);
+
   const isTuyaLockCategoryClient = (category?: string): boolean => ehFechadura(category);
 
   const findTuyaDeviceByNameOrId = async (query: string): Promise<any | null> => {

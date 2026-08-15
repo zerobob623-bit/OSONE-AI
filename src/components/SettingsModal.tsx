@@ -64,7 +64,7 @@ export const SettingsModal = ({
   /** Aba em que abrir. Quem manda daqui é quem sabe qual campo o usuário está indo preencher. */
   abaInicial?: string;
   keys: ApiKeys;
-  setKeys: (keys: ApiKeys) => void;
+  setKeys: (keys: ApiKeys | ((prev: ApiKeys) => ApiKeys)) => void;
   selectedVoice: string;
   setSelectedVoice: (voice: string) => void;
   voiceEngine: 'gemini' | 'elevenlabs';
@@ -231,7 +231,10 @@ export const SettingsModal = ({
         if (onAddNotification) onAddNotification(errMsg, 'error');
         return;
       }
-      setKeys({ ...keys, localAgentToken: data.token });
+      // Forma funcional: se o usuário editou outro campo (ex: a chave Gemini) enquanto este
+      // fetch estava pendente, `keys` capturado no início da função já está desatualizado e
+      // espalhá-lo aqui apagaria silenciosamente o que foi digitado nesse meio-tempo.
+      setKeys(prev => ({ ...prev, localAgentToken: data.token }));
       setLocalAgentStatus('success');
       setLocalAgentMessage(`Token gerado e preenchido automaticamente${data.platform ? ` (sistema: ${data.platform})` : ''}. O Agente Local já está pronto para uso.`);
       if (onAddNotification) onAddNotification('Token do Agente Local gerado automaticamente!', 'success');

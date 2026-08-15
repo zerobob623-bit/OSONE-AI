@@ -1011,7 +1011,7 @@ export default function App() {
           type: extension,
           isActive: true
         };
-        saveRagFileToDB(updatedFile);
+        saveRagFileToDB(updatedFile).catch(err => console.error("Erro ao sincronizar arquivo com o RAG local:", err));
         const copy = [...prev];
         copy[existingIdx] = updatedFile;
         return copy;
@@ -1025,7 +1025,7 @@ export default function App() {
           type: extension,
           isActive: true
         };
-        saveRagFileToDB(newFile);
+        saveRagFileToDB(newFile).catch(err => console.error("Erro ao sincronizar arquivo com o RAG local:", err));
         return [...prev, newFile];
       }
     });

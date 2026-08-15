@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { PendingLocalAgentConfirmation } from '../components/LocalAgentConfirmModal';
 import { mirarNaInterface } from '../lib/mirarNaInterface';
 import { mirarPorVisao } from '../lib/mirarPorVisao';
@@ -551,6 +551,19 @@ export function useLocalAgent() {
   const limparAcoesDoMotor = () => setAcoesDoMotor([]);
   const pendingLocalAgentResolveRef = useRef<((value: any) => void) | null>(null);
   const pendingLocalAgentTimerRef = useRef<any>(null);
+
+  // Não deixa o timeout de 180s da confirmação pendente sobreviver ao unmount: sem isto, ele
+  // rodaria mesmo com o componente dono já desmontado, chamando setPendingLocalAgentConfirmation
+  // numa árvore que não existe mais e resolvendo uma promise cujo chamador pode já ter ido embora.
+  useEffect(() => {
+    return () => {
+      if (pendingLocalAgentTimerRef.current) {
+        clearTimeout(pendingLocalAgentTimerRef.current);
+        pendingLocalAgentTimerRef.current = null;
+      }
+      pendingLocalAgentResolveRef.current = null;
+    };
+  }, []);
   // Resolução da tela, lida e reaproveitada por um tempo curto: consultá-la a cada clique
   // acrescentaria uma ida ao agente antes de cada ação, mas guardá-la para sempre também não
   // serve — trocar de monitor, desacoplar o notebook ou mudar o DPI no meio da sessão deixaria

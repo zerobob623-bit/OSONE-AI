@@ -153,34 +153,42 @@ export const RAGConnector = ({
   const processUploadedFiles = async (files: File[]) => {
     setIsScanning(true);
     let count = 0;
-    
-    for (const file of files) {
-      const ext = file.name.split('.').pop()?.toLowerCase() || '';
-      const text = await file.text();
-      
-      const ragFile: RagFile = {
-        id: Math.random().toString(36).substr(2, 9),
-        name: file.name,
-        path: file.name,
-        content: text,
-        size: file.size,
-        type: ext,
-        isActive: true
-      };
 
-      await saveRagFileToDB(ragFile);
-      setRagFiles(prev => {
-        if (prev.some(p => p.name === ragFile.name)) {
-          return prev.map(p => p.name === ragFile.name ? ragFile : p);
-        }
-        return [...prev, ragFile];
-      });
-      count++;
-    }
+    try {
+      for (const file of files) {
+        const ext = file.name.split('.').pop()?.toLowerCase() || '';
+        const text = await file.text();
 
-    setIsScanning(false);
-    if (onAddNotification && count > 0) {
-      onAddNotification(`${count} arquivos manuais indexados no RAG local com sucesso!`, "success");
+        const ragFile: RagFile = {
+          id: Math.random().toString(36).substr(2, 9),
+          name: file.name,
+          path: file.name,
+          content: text,
+          size: file.size,
+          type: ext,
+          isActive: true
+        };
+
+        await saveRagFileToDB(ragFile);
+        setRagFiles(prev => {
+          if (prev.some(p => p.name === ragFile.name)) {
+            return prev.map(p => p.name === ragFile.name ? ragFile : p);
+          }
+          return [...prev, ragFile];
+        });
+        count++;
+      }
+
+      if (onAddNotification && count > 0) {
+        onAddNotification(`${count} arquivos manuais indexados no RAG local com sucesso!`, "success");
+      }
+    } catch (err) {
+      console.error("Erro ao salvar arquivo no RAG local:", err);
+      if (onAddNotification) {
+        onAddNotification("Falha ao salvar um dos arquivos no armazenamento local.", "error");
+      }
+    } finally {
+      setIsScanning(false);
     }
   };
 
@@ -189,7 +197,7 @@ export const RAGConnector = ({
     setRagFiles(prev => prev.map(f => {
       if (f.id === id) {
         const updated = { ...f, isActive: !f.isActive };
-        saveRagFileToDB(updated);
+        saveRagFileToDB(updated).catch(err => console.error("Erro ao salvar estado do documento RAG:", err));
         return updated;
       }
       return f;
@@ -198,22 +206,36 @@ export const RAGConnector = ({
 
   // Delete specific file
   const handleDeleteFile = async (id: string) => {
-    await deleteRagFileFromDB(id);
-    setRagFiles(prev => prev.filter(f => f.id !== id));
-    if (onAddNotification) {
-      onAddNotification("Documento desvinculado do cérebro local.", "info");
+    try {
+      await deleteRagFileFromDB(id);
+      setRagFiles(prev => prev.filter(f => f.id !== id));
+      if (onAddNotification) {
+        onAddNotification("Documento desvinculado do cérebro local.", "info");
+      }
+    } catch (err) {
+      console.error("Erro ao remover documento do RAG local:", err);
+      if (onAddNotification) {
+        onAddNotification("Falha ao remover o documento do armazenamento local.", "error");
+      }
     }
   };
 
   // Disconnect all
   const handleDisconnectAll = async () => {
     if (confirm("Deseja desconectar absolutamente todos os documentos vinculados da sua máquina local?")) {
-      await clearRagDB();
-      setRagFiles([]);
-      setSelectedDirectoryName('');
-      localStorage.removeItem('osone_rag_directory_name');
-      if (onAddNotification) {
-        onAddNotification("Todos os documentos locais foram desvinculados com sucesso.", "success");
+      try {
+        await clearRagDB();
+        setRagFiles([]);
+        setSelectedDirectoryName('');
+        localStorage.removeItem('osone_rag_directory_name');
+        if (onAddNotification) {
+          onAddNotification("Todos os documentos locais foram desvinculados com sucesso.", "success");
+        }
+      } catch (err) {
+        console.error("Erro ao limpar o RAG local:", err);
+        if (onAddNotification) {
+          onAddNotification("Falha ao desvincular os documentos locais.", "error");
+        }
       }
     }
   };

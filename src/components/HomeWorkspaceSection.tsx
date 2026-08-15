@@ -1247,7 +1247,7 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
                         ? "bg-her-accent/20 text-her-accent border-her-accent/30"
                         : "bg-white/[0.03] text-her-muted hover:bg-white/[0.05] border-white/[0.05]"
                     )}
-                    title={isScreenSharing ? "Compartilhar Tela" : "Parar Tela"}
+                    title={isScreenSharing ? "Parar Tela" : "Compartilhar Tela"}
                   >
                     {isScreenSharing ? <MonitorOff size={14} /> : <Monitor size={14} />}
                   </button>
