@@ -57,8 +57,8 @@ android {
         applicationId "com.osone.app"
         minSdkVersion 23
         targetSdkVersion 36
-        versionCode 10508
-        versionName "1.5.8"
+        versionCode 10509
+        versionName "1.5.9"
 
         // The name for the application
         resValue "string", "appName", twaManifest.name
