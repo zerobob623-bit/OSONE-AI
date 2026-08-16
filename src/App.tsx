@@ -1528,6 +1528,23 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
     isMutedRef.current = isMuted;
   }, [isMuted]);
 
+  /**
+   * Silencia o microfone: nem a palavra de ativação nem o áudio de uma chamada em andamento são
+   * mais enviados ao modelo enquanto ativo. Existe para quando o usuário precisa falar com outra
+   * pessoa perto do computador, ou está num lugar barulhento — sem isso, o OSONE podia reagir a
+   * uma palavra de ativação captada por acaso ou interpretar ruído/conversa alheia como comando.
+   */
+  const handleMuteToggle = () => {
+    setIsMuted(prev => {
+      const proximoEstado = !prev;
+      addNotification(
+        proximoEstado ? "Microfone silenciado. O OSONE não está ouvindo." : "Microfone reativado.",
+        "info"
+      );
+      return proximoEstado;
+    });
+  };
+
   const [isScreenSharing, setIsScreenSharing] = useState(false);
 
   const [isGoogleSearchActive, setIsGoogleSearchActive] = useState(() => {
@@ -5808,7 +5825,7 @@ ${isBad
         return;
       }
       // Use the ref to check status instead of state to avoid closure issues
-      if (isWaitingRef.current && !isListening && !isTranscribing && !stoppedManually) {
+      if (isWaitingRef.current && !isListening && !isTranscribing && !isMuted && !stoppedManually) {
         try {
           wakeWordRec.start();
         } catch (e) {
@@ -5862,7 +5879,7 @@ ${isBad
 
     wakeWordRecognitionRef.current = wakeWordRec;
     
-      if (isWaitingForWakeWord && !isListening && !isTranscribing && !isElevenLabsLiveActiveRef.current && liveStateRef.current.status !== 'connected' && liveStateRef.current.status !== 'connecting') {
+      if (isWaitingForWakeWord && !isListening && !isTranscribing && !isMuted && !isElevenLabsLiveActiveRef.current && liveStateRef.current.status !== 'connected' && liveStateRef.current.status !== 'connecting') {
         stoppedManually = false;
         startRecognition();
       }
@@ -5871,7 +5888,7 @@ ${isBad
       stoppedManually = true;
       try { wakeWordRec.stop(); } catch(e) {}
     };
-  }, [isWaitingForWakeWord, isListening, isTranscribing, isElevenLabsLiveActive, liveState.status, chosenInitSoundUrl, voiceEngine]);
+  }, [isWaitingForWakeWord, isListening, isTranscribing, isMuted, isElevenLabsLiveActive, liveState.status, chosenInitSoundUrl, voiceEngine]);
 
   const soundLibraryRef = useRef(soundLibrary);
   useEffect(() => {
@@ -5882,11 +5899,12 @@ ${isBad
   useEffect(() => {
     // Guard against running when any active voice mode or transcription is active to avoid microphone contention
     if (
-      !isWaitingForWakeWord || 
-      isListening || 
-      isTranscribing || 
-      isElevenLabsLiveActive || 
-      liveState.status === 'connected' || 
+      !isWaitingForWakeWord ||
+      isListening ||
+      isTranscribing ||
+      isMuted ||
+      isElevenLabsLiveActive ||
+      liveState.status === 'connected' ||
       liveState.status === 'connecting'
     ) return;
 
@@ -5991,7 +6009,7 @@ ${isBad
         audioCtx.close().catch(e => {});
       }
     };
-  }, [isWaitingForWakeWord, isListening, isTranscribing, isElevenLabsLiveActive, liveState.status, chosenInitSoundUrl, voiceEngine]);
+  }, [isWaitingForWakeWord, isListening, isTranscribing, isMuted, isElevenLabsLiveActive, liveState.status, chosenInitSoundUrl, voiceEngine]);
 
   const stopElevenLabsLiveSession = (rearmHandsFree = true, closeLiveBridge = true) => {
     setIsElevenLabsLiveActive(false);
@@ -8063,6 +8081,14 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
     if (((!homePrompt.trim() && !directMessage) && attachedFiles.length === 0)) {
       return;
     }
+
+    /**
+     * Sem isto, mandar uma pergunta pela caixa de texto minimalista (painel recolhido) gerava a
+     * resposta normalmente — ela ia parar em chatHistory — mas ninguém via nada: o painel com o
+     * histórico só abre sozinho quando a ativação por voz acontece (activateHandsFreeVoice), nunca
+     * ao enviar texto. Parecia que o chat de texto simplesmente não respondia.
+     */
+    setIsChatExpanded(true);
 
     const userMessage = directMessage || homePrompt.trim();
 
@@ -11204,6 +11230,10 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
 
               audioProcessorRef.current?.startRecording(
                 (base64Data, rms) => {
+                  // Microfone silenciado pelo usuário: nada do que for captado sai daqui, nem
+                  // sequer para a lógica de interrupção por voz — o OSONE precisa continuar cego
+                  // ao som ambiente e a conversas alheias até a pessoa reativar o microfone.
+                  if (isMutedRef.current) return;
                   if (session) {
                     // Evitar eco/retorno: se o OSONE ou os Professores estiverem falando, só enviamos áudio se detectarmos um volume que indique que o usuário está interrompendo de fato.
                     // Se o usuário falar ativamente, o RMS passará de um limite de voz (ex: 0.007).
@@ -14157,6 +14187,8 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 startScreenSharing={startScreenSharing}
                 stopScreenSharing={stopScreenSharing}
                 handleTranscriptionToggle={handleTranscriptionToggle}
+                isMuted={isMuted}
+                handleMuteToggle={handleMuteToggle}
                 fileInputRef={fileInputRef}
                 handleFileSelect={handleFileSelect}
                 toggleCamera={toggleCamera}
