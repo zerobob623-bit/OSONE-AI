@@ -3,6 +3,7 @@ import {
   getAuth,
   GoogleAuthProvider,
   signInWithPopup as fbSignInWithPopup,
+  signInWithCustomToken as fbSignInWithCustomToken,
   signOut as fbSignOut,
   onAuthStateChanged as fbOnAuthStateChanged,
   type Auth,
@@ -110,9 +111,22 @@ export function explicarErroDeLogin(err: any): string {
     case 'auth/internal-error':
       return 'O Firebase respondeu com erro interno. Costuma ser chave incompleta ou domínio não autorizado — confira ' +
         `se "${dominio}" está em Authentication > Settings > Authorized domains.`;
+    case 'osone/handoff-expirado':
+      return err?.message || 'O login não chegou de volta a tempo.';
     default:
       return `${err?.message || err}${codigo ? ` (código: ${codigo})` : ''}`;
   }
+}
+
+/**
+ * O app instalado marca a própria URL com "?osoneShell=electron" ao carregá-la (ver
+ * electron/main.js), porque o user agent já é deliberadamente disfarçado de navegador comum
+ * (ver userAgentDeNavegadorComum lá) para não ser rejeitado pelo Google — então ele deixa de
+ * servir para o app SABER que está rodando dentro do Electron.
+ */
+export function estaNoAppInstalado(): boolean {
+  if (typeof window === 'undefined') return false;
+  return new URLSearchParams(window.location.search).get('osoneShell') === 'electron';
 }
 
 let app: FirebaseApp | null = null;
@@ -147,6 +161,11 @@ const NOT_CONFIGURED_MSG =
 export const signInWithPopup = async (authInstance: any, providerInstance: any): Promise<any> => {
   if (!realAuth) throw new Error(NOT_CONFIGURED_MSG);
   return fbSignInWithPopup(authInstance, providerInstance);
+};
+
+export const signInWithCustomToken = async (authInstance: any, token: string): Promise<any> => {
+  if (!realAuth) throw new Error(NOT_CONFIGURED_MSG);
+  return fbSignInWithCustomToken(authInstance, token);
 };
 
 export const signOut = async (authInstance: any) => {

@@ -49,7 +49,8 @@ import {
   handleDisconnect as googleHomeDisconnect
 } from "./src/googleHomeService";
 import { registerBillingApi, registerBillingWebhook } from "./src/billingService";
-import { verifyFirebaseBearer } from "./src/firebaseAdminService";
+import { verifyFirebaseBearer, firebaseAdminServices } from "./src/firebaseAdminService";
+import { getAuth as getFirebaseAdminAuth } from "firebase-admin/auth";
 import {
   backendForGoogleHomeUser,
   exchangeCloudToken,
@@ -6828,6 +6829,71 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
       return res.json(await googleHomeCloudStatus(user.uid));
     } catch (err: any) {
       return cloudError(res, err);
+    }
+  });
+
+  /**
+   * PONTE DE LOGIN PARA O APP INSTALADO.
+   *
+   * O Google recusa o popup de login dentro de uma BrowserWindow do Electron (política contra
+   * "embedded browsers"), então o app instalado abre o site público no navegador padrão do
+   * sistema — onde este mesmo popup sempre funcionou — e a aba entrega a sessão de volta ao
+   * Electron através de um código de uso único. O instalador local nunca recebe a credencial de
+   * administrador do Firebase (não é distribuída dentro dele, ver electron-builder em
+   * package.json), então quem verifica o token e emite o token customizado é sempre a ponte
+   * pública — o mesmo desenho já usado acima para o vínculo do Google Home.
+   */
+  const handoffsDeLoginPendentes = new Map<string, { customToken: string; criadoEm: number }>();
+  setInterval(() => {
+    const agora = Date.now();
+    for (const [codigo, registro] of handoffsDeLoginPendentes) {
+      if (agora - registro.criadoEm > 10 * 60 * 1000) handoffsDeLoginPendentes.delete(codigo);
+    }
+  }, 5 * 60 * 1000);
+
+  // Chamada pela ABA DO NAVEGADOR (site público), assim que o login com o Google termina nela.
+  app.post('/api/login/entrega', async (req, res) => {
+    if (!isVercel) return res.status(404).json({ error: 'Entrega de login disponível apenas na ponte pública.' });
+    try {
+      const codigo = String(req.body?.codigo || '');
+      const idToken = String(req.body?.idToken || '');
+      if (!codigo || !idToken) return res.status(400).json({ error: 'codigo e idToken são obrigatórios.' });
+      const { app: adminApp } = firebaseAdminServices();
+      const decodificado = await getFirebaseAdminAuth(adminApp).verifyIdToken(idToken);
+      const customToken = await getFirebaseAdminAuth(adminApp).createCustomToken(decodificado.uid);
+      handoffsDeLoginPendentes.set(codigo, { customToken, criadoEm: Date.now() });
+      return res.json({ ok: true });
+    } catch (err: any) {
+      const status = Number(err?.status) || 500;
+      if (status >= 500) console.error('[Login handoff]', err);
+      return res.status(status).json({ error: err?.message || 'Não foi possível concluir o login.' });
+    }
+  });
+
+  // Consultada indiretamente pelo Electron (via /api/login/entrega/consultar, abaixo) para saber
+  // se a aba do navegador já entregou a sessão. Uso único: o código some assim que é lido.
+  app.get('/api/login/entrega/estado', (req, res) => {
+    if (!isVercel) return res.status(404).json({ error: 'Consulta de login disponível apenas na ponte pública.' });
+    const codigo = String(req.query.codigo || '');
+    const registro = handoffsDeLoginPendentes.get(codigo);
+    if (!registro) return res.json({ pronto: false });
+    handoffsDeLoginPendentes.delete(codigo);
+    return res.json({ pronto: true, customToken: registro.customToken });
+  });
+
+  // Chamada pela JANELA DO ELECTRON, na mesma origem do servidor local (sem CORS). Repassa para
+  // a ponte pública porque é lá que o resultado do login fica guardado.
+  app.get('/api/login/entrega/consultar', async (req, res) => {
+    if (isVercel) return res.status(404).json({ error: 'Consulta local disponível apenas no app instalado.' });
+    const codigo = String(req.query.codigo || '');
+    if (!codigo) return res.status(400).json({ error: 'codigo é obrigatório.' });
+    try {
+      const base = googleHomePublicUrl();
+      const resposta = await fetch(`${base}/api/login/entrega/estado?codigo=${encodeURIComponent(codigo)}`);
+      const dados: any = await resposta.json().catch(() => ({}));
+      return res.status(resposta.status).json(dados);
+    } catch {
+      return res.json({ pronto: false });
     }
   });
 

@@ -1062,7 +1062,11 @@ async function loadOsoneInterface(reason = 'initial') {
   }
 
   try {
-    await mainWindow.loadURL(`http://${LOOPBACK_HOST}:${readyPort}`);
+    // A marca "osoneShell=electron" na própria URL é como a interface sabe que está dentro do
+    // app instalado: o user agent já é disfarçado de navegador comum por userAgentDeNavegadorComum
+    // (abaixo), justamente para não ser rejeitado pelo Google, e por isso deixou de servir para
+    // essa detecção.
+    await mainWindow.loadURL(`http://${LOOPBACK_HOST}:${readyPort}?osoneShell=electron`);
     return true;
   } catch (err) {
     console.error(`[Janela] loadURL falhou em http://${LOOPBACK_HOST}:${readyPort}:`, err);
@@ -1205,11 +1209,12 @@ function createWindow() {
     /**
      * Login: abre dentro do app, HERDANDO as preferências da janela que o chamou.
      *
-     * Não declarar webPreferences aqui é a correção, e não um descuido. A janela principal roda
-     * com webSecurity desligado; a janela de login era criada sem essa opção, ou seja, com ela
-     * ligada. Preferências de segurança diferentes fazem o Chromium colocar as duas janelas em
-     * instâncias separadas, e isso corta a ligação 'opener' entre elas — que é exatamente o
-     * caminho por onde a credencial volta do handler do Firebase para o app.
+     * Não declarar webPreferences aqui é a correção, e não um descuido: preferências de segurança
+     * diferentes entre as duas janelas fazem o Chromium colocar cada uma em uma instância
+     * separada, e isso corta a ligação 'opener' entre elas — que é exatamente o caminho por onde
+     * a credencial volta do handler do Firebase para o app. (A janela principal roda com
+     * webSecurity LIGADO desde a correção logo acima, em createWindow — herdando, a janela de
+     * login passa a rodar com a mesma configuração, e não mais com uma diferente dela.)
      *
      * O rastro do login mostrou isso sem margem para dúvida: a janela abriu no handler, foi ao
      * Google, VOLTOU ao handler já com o parâmetro 'state' (ou seja, o Google autenticou e
