@@ -1094,7 +1094,7 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
                       {(() => {
                         if (msg.role === 'user') {
                           return (
-                            <div className="inline-block max-w-full sm:max-w-2xl bg-her-accent/10 border border-her-accent/15 px-4.5 py-2.5 rounded-2xl rounded-tr-none text-zinc-150 text-xs sm:text-sm font-normal tracking-wide text-left shadow-lg backdrop-blur-md">
+                            <div className="inline-block max-w-full sm:max-w-2xl bg-her-accent/10 border border-her-accent/15 px-4.5 py-2.5 rounded-2xl rounded-tr-none text-zinc-100 text-xs sm:text-sm font-normal tracking-wide text-left shadow-lg backdrop-blur-md">
                               {msg.content}
                             </div>
                           );
@@ -1130,7 +1130,7 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
                                   NÚCLEO NEURAL
                                 </span>
                               </div>
-                              <div className="px-4 py-3 bg-orange-500/[0.04] text-stone-250 border border-orange-500/10 rounded-2xl rounded-tl-none text-xs sm:text-sm font-light leading-relaxed tracking-wide shadow-sm text-left backdrop-blur-md whitespace-pre-wrap">
+                              <div className="text-stone-200 text-xs sm:text-sm font-light leading-relaxed tracking-wide text-left whitespace-pre-wrap">
                                 {msg.content}
                               </div>
                             </div>
