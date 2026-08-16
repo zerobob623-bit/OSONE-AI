@@ -29,6 +29,33 @@ function invalidateTuyaToken(): void {
   tokenRequestInFlight = null;
 }
 
+/**
+ * Um único comando de voz ("ligue a luz") faz de 3 a 4 chamadas SEQUENCIAIS à nuvem da Tuya
+ * antes de sequer começar a executar: listar aparelhos (achar o ID pelo nome), ler o status
+ * (descobrir quais comandos o aparelho aceita) e, dentro do envio do comando, consultar o
+ * detalhe do aparelho de novo (checagem de segurança contra fechaduras) — só então o comando
+ * em si. Isso é o principal motivo do Gemini Live demorar para responder a comandos de
+ * automação: nenhuma dessas chamadas muda com frequência, mas todas eram refeitas do zero a
+ * cada pedido.
+ *
+ * Os TTLs abaixo são deliberadamente diferentes por chamada, calibrados pelo risco de dado
+ * velho: nome/categoria de um aparelho físico praticamente nunca mudam (cache mais longo); o
+ * status com os VALORES ao vivo (usado também pelo painel Smart Home e pelo Google Home) fica
+ * em cache por só 2s — o bastante para não repetir a mesma leitura dentro de um único turno de
+ * voz, sem deixar o painel mostrar um estado visivelmente desatualizado.
+ */
+const CACHE_LISTA_APARELHOS_MS = 15_000;
+const CACHE_DETALHE_APARELHO_MS = 5 * 60_000;
+const CACHE_STATUS_APARELHO_MS = 2_000;
+
+let cacheDeAparelhos: { valor: any; expiraEm: number } | null = null;
+const cacheDeDetalhes = new Map<string, { valor: any; expiraEm: number }>();
+const cacheDeStatus = new Map<string, { valor: any; expiraEm: number }>();
+
+function limparCacheDeStatus(deviceId: string): void {
+  cacheDeStatus.delete(deviceId);
+}
+
 // Safe helper to get env variables with fallback trimming
 function getTuyaEnv() {
   const clientId = (process.env.TUYA_CLIENT_ID || '').trim();
@@ -414,8 +441,14 @@ export async function getTuyaDevices(uid?: string) {
     throw new Error("Nenhum UID de usuário Tuya configurado (process.env.TUYA_USER_UID).");
   }
 
+  if (cacheDeAparelhos && cacheDeAparelhos.expiraEm > Date.now()) {
+    return cacheDeAparelhos.valor;
+  }
+
   const path = `/v1.0/users/${targetUid}/devices`;
-  return await tuyaFetchWithTokenRetry("GET", path);
+  const resultado = await tuyaFetchWithTokenRetry("GET", path);
+  cacheDeAparelhos = { valor: resultado, expiraEm: Date.now() + CACHE_LISTA_APARELHOS_MS };
+  return resultado;
 }
 
 /**
@@ -424,8 +457,14 @@ export async function getTuyaDevices(uid?: string) {
  */
 export async function getDeviceStatus(deviceId: string) {
   if (!deviceId) throw new Error("ID do dispositivo é obrigatório.");
+
+  const emCache = cacheDeStatus.get(deviceId);
+  if (emCache && emCache.expiraEm > Date.now()) return emCache.valor;
+
   const path = `/v1.0/devices/${deviceId}/status`;
-  return await tuyaFetchWithTokenRetry("GET", path);
+  const resultado = await tuyaFetchWithTokenRetry("GET", path);
+  cacheDeStatus.set(deviceId, { valor: resultado, expiraEm: Date.now() + CACHE_STATUS_APARELHO_MS });
+  return resultado;
 }
 
 /**
@@ -434,8 +473,14 @@ export async function getDeviceStatus(deviceId: string) {
  */
 export async function getDeviceDetail(deviceId: string) {
   if (!deviceId) throw new Error("ID do dispositivo é obrigatório.");
+
+  const emCache = cacheDeDetalhes.get(deviceId);
+  if (emCache && emCache.expiraEm > Date.now()) return emCache.valor;
+
   const path = `/v1.0/devices/${deviceId}`;
-  return await tuyaFetchWithTokenRetry("GET", path);
+  const resultado = await tuyaFetchWithTokenRetry("GET", path);
+  cacheDeDetalhes.set(deviceId, { valor: resultado, expiraEm: Date.now() + CACHE_DETALHE_APARELHO_MS });
+  return resultado;
 }
 
 /**
@@ -460,6 +505,10 @@ export async function sendDeviceCommand(deviceId: string, commands: Array<{ code
       `A Tuya recebeu o comando mas o dispositivo o recusou (provavelmente está offline ou não aceita '${commands.map(c => c.code).join(", ")}'). Nada foi alterado.`
     );
   }
+
+  // O comando muda o estado real do aparelho — manter o status antigo em cache faria uma
+  // leitura logo em seguida (nesta mesma conversa) devolver o valor de ANTES do comando.
+  limparCacheDeStatus(deviceId);
 
   return result;
 }
