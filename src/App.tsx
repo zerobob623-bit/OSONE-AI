@@ -106,8 +106,9 @@ import { useSensusEvolution } from './hooks/useSensusEvolution';
 import { getMemoryItem, setMemoryItem } from './lib/indexedDbMemory';
 import { generatePDF } from './lib/pdfUtils';
 import { resolveAudioUrl, deleteAudio } from './lib/audioDb';
-import { auth, googleProvider, signInWithPopup, signOut, onAuthStateChanged, db, doc, setDoc, getDoc, OperationType, handleFirestoreError, isFirebaseFullyConfigured, firebaseConfigFaltando, explicarErroDeLogin } from './firebase';
+import { auth, googleProvider, signInWithPopup, signInWithCustomToken, signOut, onAuthStateChanged, db, doc, setDoc, getDoc, OperationType, handleFirestoreError, isFirebaseFullyConfigured, firebaseConfigFaltando, explicarErroDeLogin, estaNoAppInstalado } from './firebase';
 import { TelaDeEntrada } from './components/TelaDeEntrada';
+import { TelaDeEntregaDeLogin } from './components/TelaDeEntregaDeLogin';
 import { LegalConsentGate } from './components/LegalConsentGate';
 import {
   OsoneMascotCompanion,
@@ -3793,11 +3794,48 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
     window.dispatchEvent(new Event('osone_user_changed'));
   };
 
+  /**
+   * Login do app instalado, pelo navegador padrão do sistema.
+   *
+   * O Google recusa o popup de login dentro da janela do Electron, mas sempre aceitou num
+   * navegador comum — por isso o app instalado abre o site público nele em vez de insistir na
+   * própria janela. Um código de uso único identifica esta tentativa; a aba que abrir entra com
+   * o Google normalmente e entrega a sessão de volta aqui através de /api/login/entrega
+   * (repassada pelo servidor local até a ponte pública, que é quem tem a credencial de
+   * administrador do Firebase — o instalador nunca a recebe, ver server.ts).
+   */
+  const loginPeloNavegadorDoSistema = async (): Promise<any> => {
+    const codigo = (window.crypto as any)?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    window.open(`https://osone-ai-six.vercel.app/?loginParaAppInstalado=${codigo}`, '_blank');
+    const prazoFinal = Date.now() + 5 * 60 * 1000;
+    while (Date.now() < prazoFinal) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      try {
+        const resposta = await fetch(`/api/login/entrega/consultar?codigo=${encodeURIComponent(codigo)}`);
+        const dados = await resposta.json();
+        if (dados?.pronto && dados?.customToken) {
+          return signInWithCustomToken(auth, dados.customToken);
+        }
+      } catch {
+        // falha de rede pontual não deve interromper a espera — tenta de novo no próximo ciclo
+      }
+    }
+    throw Object.assign(
+      new Error(
+        'Abrimos uma aba no seu navegador para você entrar com o Google, mas o login não chegou de volta a ' +
+        'tempo. Confira se a aba abriu e se o login foi concluído nela, depois tente de novo.'
+      ),
+      { code: 'osone/handoff-expirado' }
+    );
+  };
+
   const handleLogin = async () => {
     try {
       setIsAuthLoading(true);
       setErroDeEntrada(null);
-      const result = await signInWithPopup(auth, googleProvider);
+      const result = estaNoAppInstalado()
+        ? await loginPeloNavegadorDoSistema()
+        : await signInWithPopup(auth, googleProvider);
       const userObj: User = {
         uid: result.user.uid,
         displayName: result.user.displayName || 'Usuário Google',
@@ -13189,6 +13227,18 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
    * entre renderizações, que é justamente o que o React proíbe. Aqui embaixo, a única coisa que
    * muda é o que vai para a tela.
    */
+  /**
+   * Aba aberta pelo app instalado no navegador do sistema para concluir o login lá (ver
+   * loginPeloNavegadorDoSistema, acima). Não depende do estado de sessão desta aba — ela existe
+   * só para entrar com o Google e entregar o resultado, então vem antes de tudo o resto.
+   */
+  const codigoDeEntregaDeLogin = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('loginParaAppInstalado')
+    : null;
+  if (codigoDeEntregaDeLogin) {
+    return <TelaDeEntregaDeLogin codigo={codigoDeEntregaDeLogin} />;
+  }
+
   if (verificandoSessao) {
     return (
       <div className="w-full h-[100dvh] flex flex-col items-center justify-center gap-3 bg-[#0d0c0b]">
