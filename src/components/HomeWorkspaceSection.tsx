@@ -82,6 +82,8 @@ interface HomeWorkspaceSectionProps {
   startScreenSharing: () => Promise<void>;
   stopScreenSharing: () => void;
   handleTranscriptionToggle: () => void;
+  isMuted: boolean;
+  handleMuteToggle: () => void;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   handleFileSelect: (e: React.ChangeEvent<HTMLInputElement>) => void;
   toggleCamera: () => void;
@@ -167,6 +169,8 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
   startScreenSharing,
   stopScreenSharing,
   handleTranscriptionToggle,
+  isMuted,
+  handleMuteToggle,
   fileInputRef,
   handleFileSelect,
   toggleCamera,
@@ -1230,17 +1234,17 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
             "flex items-center",
             !isChatExpanded ? "justify-center w-full gap-2.5 max-w-lg mx-auto py-2 px-4 rounded-full bg-white/[0.01] border border-white/[0.03] backdrop-blur-xl" : "gap-2"
           )}>
-            <button 
-              onClick={handleTranscriptionToggle}
+            <button
+              onClick={handleMuteToggle}
               className={cn(
                 "w-9 h-9 rounded-full flex items-center justify-center transition-all duration-500 relative shrink-0",
-                isTranscribing 
-                  ? "bg-her-accent/20 text-her-accent border border-her-accent/30 mic-glow" 
+                isMuted
+                  ? "bg-red-500/15 text-red-400 border border-red-500/30"
                   : "bg-white/[0.03] text-her-muted hover:bg-white/[0.05] border border-white/[0.05]"
               )}
-              title={isTranscribing ? "Parar Transcrição" : "Transcrever Áudio"}
+              title={isMuted ? "Reativar Microfone" : "Silenciar Microfone"}
             >
-              {isTranscribing ? <MicOff size={14} /> : <Mic size={14} />}
+              {isMuted ? <MicOff size={14} /> : <Mic size={14} />}
             </button>
             
             <div className={cn(
@@ -1382,15 +1386,15 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
                       autoFocus
                     />
                     <div className="flex items-center h-full shrink-0">
-                      <button 
-                        onClick={handleTranscriptionToggle}
+                      <button
+                        onClick={handleMuteToggle}
                         className={cn(
                           "w-12 h-full text-her-muted hover:text-her-accent transition-colors border-l border-white/5 flex items-center justify-center relative",
-                          isTranscribing && "text-her-accent bg-her-accent/5"
+                          isMuted && "text-red-400 bg-red-500/5"
                         )}
-                        title={isTranscribing ? "Parar Gravação" : "Gravar Voz"}
+                        title={isMuted ? "Reativar Microfone" : "Silenciar Microfone"}
                       >
-                        {isTranscribing ? <MicOff size={16} className="text-her-accent animate-pulse" /> : <Mic size={16} />}
+                        {isMuted ? <MicOff size={16} className="text-red-400" /> : <Mic size={16} />}
                       </button>
                       <button 
                         onClick={() => handleHomeChat()}
