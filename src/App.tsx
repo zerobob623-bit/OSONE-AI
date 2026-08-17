@@ -106,7 +106,7 @@ import { useSensusEvolution } from './hooks/useSensusEvolution';
 import { getMemoryItem, setMemoryItem } from './lib/indexedDbMemory';
 import { generatePDF } from './lib/pdfUtils';
 import { resolveAudioUrl, deleteAudio } from './lib/audioDb';
-import { auth, googleProvider, signInWithPopup, signInWithCustomToken, signOut, onAuthStateChanged, db, doc, setDoc, getDoc, OperationType, handleFirestoreError, isFirebaseFullyConfigured, firebaseConfigFaltando, explicarErroDeLogin, estaNoAppInstalado } from './firebase';
+import { auth, googleProvider, GoogleAuthProvider, signInWithPopup, signInWithCredential, signOut, onAuthStateChanged, db, doc, setDoc, getDoc, OperationType, handleFirestoreError, isFirebaseFullyConfigured, firebaseConfigFaltando, explicarErroDeLogin, estaNoAppInstalado } from './firebase';
 import { TelaDeEntrada } from './components/TelaDeEntrada';
 import { TelaDeEntregaDeLogin } from './components/TelaDeEntregaDeLogin';
 import { LegalConsentGate } from './components/LegalConsentGate';
@@ -3812,26 +3812,29 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   };
 
   /**
-   * Login do app instalado, pelo navegador padrão do sistema.
+   * Login do app instalado, pelo navegador padrão do sistema — 100% local, sem depender de
+   * nenhum servidor externo.
    *
    * O Google recusa o popup de login dentro da janela do Electron, mas sempre aceitou num
-   * navegador comum — por isso o app instalado abre o site público nele em vez de insistir na
-   * própria janela. Um código de uso único identifica esta tentativa; a aba que abrir entra com
-   * o Google normalmente e entrega a sessão de volta aqui através de /api/login/entrega
-   * (repassada pelo servidor local até a ponte pública, que é quem tem a credencial de
-   * administrador do Firebase — o instalador nunca a recebe, ver server.ts).
+   * navegador comum — por isso o app instalado abre um navegador de verdade apontando para o
+   * PRÓPRIO servidor local (este mesmo endereço, 127.0.0.1) em vez de insistir na janela do
+   * Electron. Um código de uso único identifica esta tentativa; a aba que abrir entra com o
+   * Google normalmente e entrega o token original do Google de volta aqui através de
+   * /api/login/entrega (guardado em memória pelo servidor local, sem verificação nenhuma — quem
+   * reconstrói e valida a credencial é o próprio SDK do Firebase, logo abaixo).
    */
   const loginPeloNavegadorDoSistema = async (): Promise<any> => {
     const codigo = (window.crypto as any)?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    window.open(`https://osone-ai-six.vercel.app/?loginParaAppInstalado=${codigo}`, '_blank');
+    window.open(`${window.location.origin}/?loginParaAppInstalado=${codigo}`, '_blank');
     const prazoFinal = Date.now() + 5 * 60 * 1000;
     while (Date.now() < prazoFinal) {
       await new Promise(resolve => setTimeout(resolve, 2000));
       try {
-        const resposta = await fetch(`/api/login/entrega/consultar?codigo=${encodeURIComponent(codigo)}`);
+        const resposta = await fetch(`/api/login/entrega/estado?codigo=${encodeURIComponent(codigo)}`);
         const dados = await resposta.json();
-        if (dados?.pronto && dados?.customToken) {
-          return signInWithCustomToken(auth, dados.customToken);
+        if (dados?.pronto && dados?.idToken) {
+          const credencial = GoogleAuthProvider.credential(dados.idToken);
+          return signInWithCredential(auth, credencial);
         }
       } catch {
         // falha de rede pontual não deve interromper a espera — tenta de novo no próximo ciclo
