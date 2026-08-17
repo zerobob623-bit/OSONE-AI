@@ -1,0 +1,190 @@
+[1mdiff --git a/FEATURES.md b/FEATURES.md[m
+[1mindex b91bf45..1d1b141 100644[m
+[1m--- a/FEATURES.md[m
+[1m+++ b/FEATURES.md[m
+[36m@@ -27,7 +27,7 @@[m [mEste documento registra todas as funcionalidades, rotas e módulos ativos no eco[m
+ - **Geração de imagens no `gemini-2.5-flash-image` (Nano Banana) (`/api/gemini/generateImages`)** — *desde 1.5.1*: a criação de imagens usa o modelo da linha de imagem que o nível GRATUITO ainda cobre, e não o modelo de imagem mais novo — que rende melhor, mas volta sem cota numa chave gratuita, trocando imagem boa por imagem nenhuma. A fila tenta o nome definitivo, depois o nome de preview (nome de modelo muda de geração em geração e quebra em silêncio), depois os modelos seguintes e, por último, a geração sem chave do Pollinations, que não gasta cota do usuário. O texto dos Ajustes explica a escolha em vez de só mostrar o nome do modelo.[m
+ - **Integração Gemini Live WebSocket Proxy (`/api/live-ws`)**: Comunicação bidirecional de áudio e texto com o modelo `gemini-3.1-flash-live-preview`. Requer servidor persistente (não funciona em deploy serverless na Vercel).[m
+ - **ElevenLabs Streaming TTS no modo Live do OSONE**: com chave própria do usuário nas Configurações, o navegador conecta direto na ElevenLabs (funciona em qualquer hospedagem, inclusive Vercel); sem chave própria, usa o proxy do backend (`/api/elevenlabs-ws`) com a chave do servidor, que requer servidor persistente. O live usa Rachel como voz padrão real quando o Voice ID fica vazio, normaliza o streaming para modelo de baixa latência (`eleven_flash_v2_5`) e, se o WebSocket fechar/errar sem áudio, cai automaticamente para `/api/tts` REST antes de desistir. Se a ElevenLabs REST também falhar, tenta Piper local para não ficar mudo. Se o usuário colar um ID de chave em vez da API Key secreta (`sk_...`), o app detecta antes da chamada, mostra instrução clara e evita repetir WebSocket/REST com a mesma credencial inválida. Quando o motor de voz escolhido é ElevenLabs, o OSONE abre a mesma sessão Live do Gemini usada no modo Gemini: o Gemini continua cuidando da escuta contínua, VAD, transcrição, ferramentas, comandos de abas, Agente Local, COWORK, WhatsApp, memórias e integrações; o áudio nativo do Gemini é silenciado e cada pedaço de transcrição da resposta é enviado incrementalmente para a ElevenLabs, sem esperar o texto inteiro. Ao fim do turno o app envia `flush`, fecha o socket quando recebe o final e rearma a escuta assim que a fila de áudio drena. Voz alta do usuário durante a fala corta a ElevenLabs, preserva o microfone do Gemini Live e permite interrupção real sem esperar timeout.[m
+[31m-- **Visão de leitura: transcrição literal de chat/comentários da tela (`src/lib/qualidadeDaVisao.ts`, `src/lib/lerChatDaTela.ts`, `src/lib/filtroDeVozPublica.ts`, ferramenta de voz `ler_chat_ao_vivo`)** — *desde 1.5.1*: ler comentários de live em voz alta deixou de sair do vídeo em tempo real e passou a ter caminho próprio. Quatro consertos empilhados: (1) o quadro do compartilhamento não é mais 640×480 fixo em qualidade 0,6 — a proporção real da tela é preservada (16:9 não é mais espremido em 4:3, o que deformava as letras e trocava "m" por "rn") e a resolução/compressão sobem, com o mesmo cálculo aplicado à câmera; (2) a sessão Live passa a pedir `MEDIA_RESOLUTION_HIGH`, senão cada quadro chegava ao modelo reduzido a 64 tokens do outro lado; (3) para DIZER o que alguém escreveu, o modelo é obrigado a chamar `ler_chat_ao_vivo`, que tira uma foto nova em resolução cheia e a transcreve numa chamada dedicada, sem histórico de conversa e com temperatura zero — cada comentário volta com confiança declarada, e o que não passa da régua vira contagem de "ilegíveis" que o OSONE relata em voz alta em vez de adivinhar; (4) nada é falado sem passar por duas barreiras independentes — a classificação do modelo e uma lista escrita local que pega palavrão disfarçado (`p0rr4`, `c a r a l h o`, `caraaaalhooo`) e expressões de duplo sentido, de modo que comentário impróprio não é lido, nem resumido, nem insinuado numa transmissão pública. Comentário já lido não se repete. Conferidor: `npm run test:leitura-chat`.[m
+[32m+[m[32m- **Visão de leitura: transcrição literal de chat/comentários da tela (`src/lib/qualidadeDaVisao.ts`, `src/lib/lerChatDaTela.ts`, `src/lib/filtroDeVozPublica.ts`, ferramenta de voz `ler_chat_ao_vivo`)** — *desde 1.5.1*: ler comentários de live em voz alta deixou de sair do vídeo em tempo real e passou a ter caminho próprio. Quatro consertos empilhados: (1) o quadro do compartilhamento não é mais 640×480 fixo em qualidade 0,6 — a proporção real da tela é preservada (16:9 não é mais espremido em 4:3, o que deformava as letras e trocava "m" por "rn") e a resolução/compressão sobem; desde 1.5.x, câmera/ambiente, tela compartilhada e foto de leitura usam perfis separados: a tela ao vivo vai mais nítida e rápida para texto/menus, enquanto câmera segue leve e `ler_chat_ao_vivo` continua tirando foto dedicada em resolução cheia; (2) a sessão Live passa a pedir `MEDIA_RESOLUTION_HIGH`, senão cada quadro chegava ao modelo reduzido a 64 tokens do outro lado; (3) para DIZER o que alguém escreveu, o modelo é obrigado a chamar `ler_chat_ao_vivo`, que tira uma foto nova em resolução cheia e a transcreve numa chamada dedicada, sem histórico de conversa e com temperatura zero — cada comentário volta com confiança declarada, e o que não passa da régua vira contagem de "ilegíveis" que o OSONE relata em voz alta em vez de adivinhar; (4) nada é falado sem passar por duas barreiras independentes — a classificação do modelo e uma lista escrita local que pega palavrão disfarçado (`p0rr4`, `c a r a l h o`, `caraaaalhooo`) e expressões de duplo sentido, de modo que comentário impróprio não é lido, nem resumido, nem insinuado numa transmissão pública. Comentário já lido não se repete. Conferidor: `npm run test:leitura-chat`.[m
+ - **Hands-Free contínuo por voz ou palma**: com o botão Hands-Free ativo, a palavra isolada **“OSONE”** (sem precisar dizer “Ei”) ou uma palma nítida inicia a sessão no motor de voz escolhido. Ao encerrar a conversa, o app aguarda a liberação do microfone e rearma sozinho os dois detectores, permitindo ciclos ilimitados e misturados de voz/palma até o usuário desligar o botão. Uma trava impede ativação duplicada e nenhuma saudação artificial é enviada ao chat.[m
+ - **Perfis e Alternador de Vozes (`VoiceSwitcher.tsx`)**: Configuração de tom e personalidade vocal (Escarlate, Fenrir, etc.).[m
+ - **Canto nativo completo no Gemini Live**: ao pedir uma música com a voz nativa, o modelo prepara a letra inteira uma vez e canta em fluxo contínuo, sem chamadas de ferramenta entre versos. Se a API fechar um turno de áudio antes do último verso, o app pede continuação automática do ponto em que parou, sem teto artificial; interrupção do usuário, fim explícito da música ou encerramento da sessão continuam parando imediatamente. A letra completa permanece rolável na tela. Conferidor: `node scripts/conferir-canto-completo.mjs`.[m
+[1mdiff --git a/scripts/conferir-leitura-de-chat.mjs b/scripts/conferir-leitura-de-chat.mjs[m
+[1mindex 0539d12..b66b55d 100644[m
+[1m--- a/scripts/conferir-leitura-de-chat.mjs[m
+[1m+++ b/scripts/conferir-leitura-de-chat.mjs[m
+[36m@@ -70,10 +70,25 @@[m [mconsole.log('\n· Tamanho e proporção do quadro enviado ao modelo\n');[m
+ [m
+ {[m
+   const ambiente = calcularQuadro(2560, 1440, 'ambiente');[m
+[32m+[m[32m  const tela = calcularQuadro(2560, 1440, 'tela');[m
+[32m+[m[32m  registrar('compartilhamento de tela usa perfil mais nítido que câmera/ambiente',[m
+[32m+[m[32m    tela.largura > ambiente.largura && tela.qualidadeJpeg > ambiente.qualidadeJpeg,[m
+[32m+[m[32m    `tela ${tela.largura}x${tela.altura}@${tela.qualidadeJpeg} vs ambiente ${ambiente.largura}x${ambiente.altura}@${ambiente.qualidadeJpeg}`);[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32m{[m
+[32m+[m[32m  const tela = calcularQuadro(1920, 1080, 'tela');[m
+[32m+[m[32m  registrar('tela Full HD compartilhada chega inteira, sem reduzir texto pequeno',[m
+[32m+[m[32m    tela.largura === 1920 && tela.altura === 1080 && tela.qualidadeJpeg >= 0.9,[m
+[32m+[m[32m    `${tela.largura}x${tela.altura}@${tela.qualidadeJpeg}`);[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32m{[m
+[32m+[m[32m  const tela = calcularQuadro(2560, 1440, 'tela');[m
+   const leitura = calcularQuadro(2560, 1440, 'leitura');[m
+[31m-  registrar('a foto de leitura é bem maior e menos comprimida que o quadro de acompanhamento',[m
+[31m-    leitura.largura > ambiente.largura && leitura.qualidadeJpeg > ambiente.qualidadeJpeg,[m
+[31m-    `leitura ${leitura.largura}x${leitura.altura}@${leitura.qualidadeJpeg} vs ambiente ${ambiente.largura}x${ambiente.altura}@${ambiente.qualidadeJpeg}`);[m
+[32m+[m[32m  registrar('a foto de leitura é maior e menos comprimida que o vídeo de tela',[m
+[32m+[m[32m    leitura.largura > tela.largura && leitura.qualidadeJpeg > tela.qualidadeJpeg,[m
+[32m+[m[32m    `leitura ${leitura.largura}x${leitura.altura}@${leitura.qualidadeJpeg} vs tela ${tela.largura}x${tela.altura}@${tela.qualidadeJpeg}`);[m
+ }[m
+ [m
+ {[m
+[1mdiff --git a/src/App.tsx b/src/App.tsx[m
+[1mindex 7964b6f..db68388 100644[m
+[1m--- a/src/App.tsx[m
+[1m+++ b/src/App.tsx[m
+[36m@@ -6887,6 +6887,8 @@[m [m${isBad[m
+         liveSessionRef.current.sendRealtimeInput({ text: aviso });[m
+       };[m
+ [m
+[32m+[m[32m      const INTERVALO_TELA_COMPARTILHADA_MS = 650;[m
+[32m+[m
+       screenIntervalRef.current = setInterval(() => {[m
+         // Enquanto uma captura injetada está sendo examinada, não mandar frames por cima dela.[m
+         if (Date.now() < pausarEnvioDeTelaAte.current) {[m
+[36m@@ -6926,9 +6928,10 @@[m [m${isBad[m
+            *[m
+            * `calcularQuadro` preserva a proporção real e nunca amplia além da fonte.[m
+            */[m
+[31m-          const quadro = calcularQuadro(video.videoWidth, video.videoHeight, 'ambiente');[m
+[32m+[m[32m          const quadro = calcularQuadro(video.videoWidth, video.videoHeight, 'tela');[m
+           canvas.width = quadro.largura;[m
+           canvas.height = quadro.altura;[m
+[32m+[m[32m          ctx.imageSmoothingEnabled = false;[m
+           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);[m
+           const base64Data = canvas.toDataURL('image/jpeg', quadro.qualidadeJpeg).split(',')[1];[m
+           liveSessionRef.current.sendRealtimeInput({[m
+[36m@@ -6938,7 +6941,7 @@[m [m${isBad[m
+           // imagem chegar recria, por um instante, a mesma mentira que se está corrigindo.[m
+           avisarSeMudou(true, '');[m
+         }[m
+[31m-      }, 1000);[m
+[32m+[m[32m      }, INTERVALO_TELA_COMPARTILHADA_MS);[m
+ [m
+       stream.getVideoTracks()[0].onended = () => {[m
+         stopScreenSharing();[m
+[36m@@ -7011,6 +7014,7 @@[m [m${isBad[m
+     if (!ctx) {[m
+       return { error: 'Não foi possível preparar a imagem para leitura neste navegador.' };[m
+     }[m
+[32m+[m[32m    ctx.imageSmoothingEnabled = false;[m
+     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);[m
+     const imagem = canvas.toDataURL('image/jpeg', quadro.qualidadeJpeg);[m
+ [m
+[36m@@ -9838,19 +9842,11 @@[m [mIMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma[m
+         await new Promise<void>((resolve) => {[m
+           img.onload = () => {[m
+             const canvas = document.createElement('canvas');[m
+[31m-            // Scale down image if it's too large to prevent overloading the live websocket stream[m
+[31m-            const maxDim = 1024;[m
+[31m-            let width = img.width;[m
+[31m-            let height = img.height;[m
+[31m-            if (width > maxDim || height > maxDim) {[m
+[31m-              if (width > height) {[m
+[31m-                height = Math.round((height * maxDim) / width);[m
+[31m-                width = maxDim;[m
+[31m-              } else {[m
+[31m-                width = Math.round((width * maxDim) / height);[m
+[31m-                height = maxDim;[m
+[31m-              }[m
+[31m-            }[m
+[32m+[m[32m            // Anexo de imagem é uma foto única, não vídeo contínuo: preserva mais detalhe para[m
+[32m+[m[32m            // prints de tela, texto pequeno e interface. Ainda assim nunca amplia além da fonte.[m
+[32m+[m[32m            const quadro = calcularQuadro(img.width, img.height, 'leitura');[m
+[32m+[m[32m            const width = quadro.largura;[m
+[32m+[m[32m            const height = quadro.altura;[m
+             canvas.width = width;[m
+             canvas.height = height;[m
+             [m
+[36m@@ -9859,10 +9855,10 @@[m [mIMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma[m
+               // Fill background to solid white for transparent elements/PNGs[m
+               ctx.fillStyle = "#FFFFFF";[m
+               ctx.fillRect(0, 0, width, height);[m
+[32m+[m[32m              ctx.imageSmoothingEnabled = false;[m
+               ctx.drawImage(img, 0, 0, width, height);[m
+               [m
+[31m-              // Compress to 0.75 JPEG for optimal balance of speed and visual detail[m
+[31m-              const jpegBase64 = canvas.toDataURL('image/jpeg', 0.75).split(',')[1];[m
+[32m+[m[32m              const jpegBase64 = canvas.toDataURL('image/jpeg', quadro.qualidadeJpeg).split(',')[1];[m
+               [m
+               try {[m
+                 session.sendRealtimeInput({[m
+[1mdiff --git a/src/lib/agenteAutonomo.ts b/src/lib/agenteAutonomo.ts[m
+[1mindex 43f3677..e6e3dd3 100644[m
+[1m--- a/src/lib/agenteAutonomo.ts[m
+[1m+++ b/src/lib/agenteAutonomo.ts[m
+[36m@@ -163,7 +163,7 @@[m [mAÇÕES:[m
+ - "abrir" { "caminho": "..." } — abre um programa instalado, arquivo, pasta ou ENDEREÇO DE SITE pelo Agente Local interno. Para app, passe o nome humano ("Chrome", "VS Code", "Calculadora", "Spotify"); para pasta, passe "downloads", "documentos" ou caminho real; para site, passe URL. NÃO procure app em navegador/arquivos: abrir resolve PATH, atalhos do Windows, .desktop do Linux e fallbacks. É assim que você chega onde precisa: prefira abrir o endereço direto (ex: "https://studio.youtube.com") a navegar clicando de tela em tela. ABRA CADA COISA UMA VEZ SÓ: depois de abrir, você JÁ PASSA A OLHAR a janela que nasceu, automaticamente. Se a foto seguinte ainda parecer a tela anterior, a página está carregando — use "esperar", NUNCA mande abrir de novo. Abrir duas vezes cria uma segunda aba com o mesmo conteúdo e atrapalha a tarefa.[m
+ - "clicar" { "alvo": "descrição do que clicar" } — NUNCA passe x/y. Descreva o alvo como você o vê na foto ("o botão azul Entrar", "a aba Análises"); a posição é medida na hora.[m
+ - "clique_direito" { "alvo": "descrição do item/imagem/card" } — abre menu contextual no alvo. Use quando a opção buscada costuma estar escondida no clique direito, como baixar imagem, salvar mídia, copiar link, abrir em nova guia, inspecionar opções de arquivo ou menu de item.[m
+[31m-- "digitar" { "texto": "..." } — digita no campo que está em foco. Clique no campo antes.[m
+[32m+[m[32m- "digitar" { "texto": "..." } — digita no campo que está em foco. Se a foto mostra o cursor piscando, campo destacado, editor ativo, caixa de chat ativa, ou se a ação anterior clicou exatamente nesse campo, DIGITE DIRETO. Não clique de novo só por hábito: clique repetido pode tirar o foco ou mandar o texto para outro lugar.[m
+ - "tecla" { "tecla": "enter" } — teclas nomeadas: enter, tab, escape, backspace, delete, arrowup/down/left/right, home, end, pageup, pagedown. Aceita "modificadores": ["ctrl"].[m
+ - "rolar" { "direcao": "down", "quantidade": 3 } — rola a página.[m
+ - "esperar" { "segundos": 3 } — só quando a tela ainda está claramente carregando.[m
+[36m@@ -177,6 +177,7 @@[m [mAÇÕES:[m
+ [m
+ REGRAS:[m
+ - O CONTEXTO diz qual é o SISTEMA desta máquina e o nome REAL de cada pasta do usuário. Use exatamente o que está lá: caminho de Windows num Linux (ou o contrário) não funciona, e "Downloads" e "downloads" são pastas DIFERENTES no Linux. Não invente caminho, não escreva o nome de um programa no meio de um caminho, e nunca use caminho relativo — sempre o caminho completo que aparece no contexto.[m
+[32m+[m[32m- O COWORK opera a JANELA/FIELD que está na foto. Não use OSONE CODE, aba Escrita, chat interno nem workspace do próprio OSONE para "digitar" um texto que o usuário pediu dentro de um site, app, formulário, navegador, WhatsApp Web, YouTube Studio, campo de busca, editor externo ou janela aberta. OSONE CODE/Escrita só entram quando o usuário disser explicitamente "no OSONE CODE", "na aba de Escrita" ou "crie código no OSONE CODE".[m
+ - "pensamento" é obrigatório e em português: diga o que você ESTÁ VENDO na foto e por que age assim. É o que o usuário lê enquanto você trabalha.[m
+ - OLHE A FOTO ANTES DE DECIDIR. Não repita a ação anterior se a tela não mudou — se não mudou, o que você tentou não funcionou; tente outro caminho.[m
+ - O CHECKUP DE ETAPAS no contexto é a sua memória operacional. Tudo marcado [FEITO] não deve ser refeito. Continue da etapa [EM ANDAMENTO] até confirmá-la; só volte a uma etapa feita se a foto atual mostrar uma CONTRADIÇÃO concreta, e escreva essa contradição no pensamento.[m
+[1mdiff --git a/src/lib/qualidadeDaVisao.ts b/src/lib/qualidadeDaVisao.ts[m
+[1mindex d715477..f81f61e 100644[m
+[1m--- a/src/lib/qualidadeDaVisao.ts[m
+[1m+++ b/src/lib/qualidadeDaVisao.ts[m
+[36m@@ -27,13 +27,16 @@[m
+  * As contas abaixo preservam a proporção SEMPRE, nunca ampliam além da fonte (ampliar não cria[m
+  * detalhe que a origem não tinha, só peso) e separam dois usos que têm exigências opostas:[m
+  *[m
+[31m- * - 'ambiente': acompanhar em tempo real, um quadro por segundo, para o modelo saber o que está[m
+[32m+[m[32m * - 'ambiente': acompanhar câmera/ambiente em tempo real, para o modelo saber o que está[m
+  *   acontecendo. Precisa ser leve, porque atravessa um WebSocket aberto o tempo todo.[m
+[32m+[m[32m * - 'tela': acompanhar compartilhamento de tela. É mais pesado que câmera, porque texto, menus,[m
+[32m+[m[32m *   números e botões pequenos são o caso comum; é mais leve que 'leitura' para ainda caber no[m
+[32m+[m[32m *   fluxo contínuo sem transformar cada segundo em uma foto gigante.[m
+  * - 'leitura': UMA foto, tirada de propósito para ler texto. Aqui peso não importa — é uma[m
+  *   chamada só, e ela decide se um nome vai ser dito certo ou errado em voz alta numa transmissão.[m
+  */[m
+ [m
+[31m-export type ModoDeVisao = 'ambiente' | 'leitura';[m
+[32m+[m[32mexport type ModoDeVisao = 'ambiente' | 'tela' | 'leitura';[m
+ [m
+ export interface QuadroDeVisao {[m
+   largura: number;[m
+[36m@@ -56,6 +59,7 @@[m [minterface Perfil {[m
+  */[m
+ const PERFIS: Record<ModoDeVisao, Perfil> = {[m
+   ambiente: { ladoMaior: 1280, qualidadeJpeg: 0.82 },[m
+[32m+[m[32m  tela: { ladoMaior: 1920, qualidadeJpeg: 0.92 },[m
+   leitura: { ladoMaior: 2560, qualidadeJpeg: 0.97 }[m
+ };[m
+ [m
+[1mdiff --git a/vercel.json b/vercel.json[m
+[1mindex b0d2bdb..efe7351 100644[m
+[1m--- a/vercel.json[m
+[1m+++ b/vercel.json[m
+[36m@@ -1,6 +1,6 @@[m
+ {[m
+   "version": 2,[m
+[31m-  "buildCommand": "npm run build:vercel",[m
+[32m+[m[32m  "buildCommand": "npm run build:vercel && node scripts/conferir-build-vercel.mjs",[m
+   "outputDirectory": "dist",[m
+   "rewrites": [[m
+     {[m
