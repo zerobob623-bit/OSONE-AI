@@ -88,10 +88,30 @@ export async function mirarPorVisao(
   imagemBase64: string,
   mimeType: string,
   chaveGemini: string,
-  modelo: string
+  modelo: string,
+  sinalExterno?: AbortSignal
 ): Promise<ResultadoDaVisao> {
   const comecou = Date.now();
   const dados = imagemBase64.includes(',') ? imagemBase64.split(',')[1] : imagemBase64;
+
+  /**
+   * TETO DE TEMPO PRÓPRIO, E CANCELAMENTO VINDO DE FORA — o que vier primeiro.
+   *
+   * Esta chamada não tinha nenhum limite: era um fetch só, sem AbortController, sem timeout.
+   * Relatado como "às vezes ele fica 2 minutos caçando na tela" — e fazia sentido: o servidor
+   * tenta mais de um modelo, mais de uma vez cada, e nada aqui cortava a espera se um deles
+   * estivesse lento. Enquanto isso, o motor ficava com UMA AÇÃO POR VEZ travada, então o resto
+   * do controle do PC ficava preso atrás desta única pergunta ao modelo de visão.
+   *
+   * 'sinalExterno' é o que permite o motor MUDAR DE IDEIA: se uma ação nova chegar enquanto esta
+   * busca ainda está no ar, quem chama aborta esta chamada em vez de esperar — sem prejuízo,
+   * porque isto é só uma pergunta de leitura, sem efeito nenhum na máquina do usuário.
+   */
+  const controle = new AbortController();
+  const TETO_MS = 25000;
+  const timer = setTimeout(() => controle.abort(), TETO_MS);
+  const repassarCancelamento = () => controle.abort();
+  sinalExterno?.addEventListener('abort', repassarCancelamento);
 
   let resposta: Response;
   try {
@@ -115,10 +135,23 @@ export async function mirarPorVisao(
           temperature: 0,
           responseMimeType: 'application/json'
         }
-      })
+      }),
+      signal: controle.signal
     });
   } catch (err: any) {
-    return { encontrado: false, motivo: `Não foi possível falar com o modelo para olhar a tela: ${err?.message || err}`, duracaoMs: Date.now() - comecou };
+    const foiCancelamento = err?.name === 'AbortError';
+    return {
+      encontrado: false,
+      motivo: foiCancelamento
+        ? (sinalExterno?.aborted
+            ? 'Busca cancelada: outra ação começou antes de terminar de olhar a tela.'
+            : `O modelo demorou mais de ${TETO_MS / 1000}s para olhar a tela e a busca foi cancelada.`)
+        : `Não foi possível falar com o modelo para olhar a tela: ${err?.message || err}`,
+      duracaoMs: Date.now() - comecou
+    };
+  } finally {
+    clearTimeout(timer);
+    sinalExterno?.removeEventListener('abort', repassarCancelamento);
   }
 
   const corpo = await resposta.json().catch(() => null);
