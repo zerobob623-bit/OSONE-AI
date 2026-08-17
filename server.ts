@@ -5807,12 +5807,23 @@ CONTINUE EXATAMENTE do ponto onde parou, como se nunca tivesse havido interrupç
   const generatedVideosDir = path.join(generatedDir, 'videos');
   const metadataFilePath = path.join(generatedDir, 'metadata.json');
 
-  if (!fs.existsSync(generatedDir)) fs.mkdirSync(generatedDir, { recursive: true });
-  if (!fs.existsSync(generatedImagesDir)) fs.mkdirSync(generatedImagesDir, { recursive: true });
-  if (!fs.existsSync(generatedVideosDir)) fs.mkdirSync(generatedVideosDir, { recursive: true });
+  /**
+   * Só cria (e só serve) esta pasta fora da Vercel.
+   *
+   * Numa função serverless o disco do pacote (`/var/task`, o que `process.cwd()` aponta lá) é
+   * somente leitura — só `/tmp` é gravável, e mesmo esse some entre uma invocação e outra. Este
+   * `mkdirSync` incondicional derrubava a inicialização do servidor inteiro na Vercel com ENOENT
+   * antes de qualquer rota responder (FUNCTION_INVOCATION_FAILED em TODA a API, não só nas rotas
+   * de conteúdo gerado) — geração de imagem/vídeo salva em disco local não faz sentido ali mesmo.
+   */
+  if (!isVercel) {
+    if (!fs.existsSync(generatedDir)) fs.mkdirSync(generatedDir, { recursive: true });
+    if (!fs.existsSync(generatedImagesDir)) fs.mkdirSync(generatedImagesDir, { recursive: true });
+    if (!fs.existsSync(generatedVideosDir)) fs.mkdirSync(generatedVideosDir, { recursive: true });
 
-  // Serve static files from generated-content folder
-  app.use('/generated-content', express.static(generatedDir));
+    // Serve static files from generated-content folder
+    app.use('/generated-content', express.static(generatedDir));
+  }
 
   interface MediaItem {
     id: string;
