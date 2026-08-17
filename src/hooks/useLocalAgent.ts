@@ -798,10 +798,17 @@ export function useLocalAgent() {
           }
           case 'ler_arquivo':
             if (!caminho) return { error: "Informe 'caminho' com o arquivo a ler (ex: '~/Documentos/nota.txt')." };
-            return post('/read-file', { target: caminho });
+            return post('/read-file', {
+              target: caminho,
+              linhaInicial: args?.linhaInicial,
+              linhaFinal: args?.linhaFinal
+            });
           case 'servir_pasta':
             if (!caminho) return { error: "Informe 'caminho' com a pasta a servir num localhost." };
             return post('/serve-folder', { folder: caminho });
+          case 'conferir_projeto':
+            if (!caminho) return { error: "Informe 'caminho' com a pasta do projeto a conferir." };
+            return post('/check-project', { folder: caminho });
           case 'editar_arquivo': {
             if (!caminho) return { error: "Informe 'caminho' com o arquivo a editar." };
             if (typeof args?.buscar !== 'string' || args.buscar === '') {
