@@ -232,7 +232,13 @@ export class AudioPlayer {
   }
 
   playChunk(base64Data: string) {
-    if (!this.audioContext || this.audioContext.state === 'closed') return;
+    // Contexto solto por um stop() anterior: recria aqui, na hora em que há som para tocar. É o
+    // que permite stop() não deixar contexto órfão sem tornar o player descartável.
+    if (!this.audioContext || this.audioContext.state === 'closed') {
+      this.initAudioContext();
+      this.nextStartTime = 0;
+    }
+    if (!this.audioContext) return;
 
     if (this.audioContext.state === 'suspended') {
       this.audioContext.resume().catch(err => console.error("Erro ao resumir AudioContext no playChunk:", err));
@@ -279,9 +285,25 @@ export class AudioPlayer {
       }
   
       const currentTime = this.audioContext.currentTime;
-      // Jitter buffer management: if nextStartTime is behind currentTime or starting fresh, add 50ms buffer
+      /**
+       * ALMOFADA CONTRA OSCILAÇÃO DA REDE (jitter).
+       *
+       * Os pedaços de áudio são agendados um atrás do outro em nextStartTime. Quando um pedaço
+       * demora a chegar, o relógio do áudio ultrapassa esse instante e o agendamento é reiniciado
+       * — e a diferença vira um buraco audível. É o "picote".
+       *
+       * A almofada era de 50ms, fina demais para internet de verdade: qualquer engasgo comum de
+       * rede já a estoura. 140ms cobre a oscilação típica e custa 90ms a mais de atraso na
+       * resposta — imperceptível numa conversa, ao contrário do picote.
+       *
+       * O teto de meio segundo existe para o caso oposto: depois de uma pausa longa, nextStartTime
+       * fica muito à frente e a fala sairia com um atraso crescente, acumulado silenciosamente.
+       */
+      const ALMOFADA_S = 0.14;
       if (this.nextStartTime < currentTime + 0.02) {
-        this.nextStartTime = currentTime + 0.05;
+        this.nextStartTime = currentTime + ALMOFADA_S;
+      } else if (this.nextStartTime > currentTime + 0.5) {
+        this.nextStartTime = currentTime + ALMOFADA_S;
       }
   
       const startTime = this.nextStartTime;
@@ -315,14 +337,31 @@ export class AudioPlayer {
     }
   }
 
+  /**
+   * Para tudo e SOLTA o contexto de áudio — sem criar outro no lugar.
+   *
+   * Antes, stop() fechava o contexto e imediatamente chamava initAudioContext() para deixar um
+   * novo pronto. Parece zeloso e é um vazamento: quem chama stop() quase sempre está descartando
+   * o player logo em seguida (startLiveSession cria um AudioPlayer novo a cada sessão), então o
+   * contexto recém-criado ficava vivo, órfão e sem ninguém para fechá-lo.
+   *
+   * O navegador tem um teto baixo de contextos de áudio por página (~6 no Chrome). Com uma
+   * sessão por vez isso levava horas para aparecer e passava por "coisa da internet". Com o Modo
+   * Vigília religando a cada ~10 minutos, o teto passou a ser alcançado em cerca de uma hora — e
+   * o sintoma é exatamente o relatado: áudio picotando e, depois, falhando de vez. Medido: 6
+   * religamentos = 7 contextos vivos.
+   *
+   * O contexto volta sozinho no próximo playChunk (ver lá), então o player continua reutilizável.
+   */
   stop() {
     this.stopLevelMonitoring();
     this.activeSources.forEach(s => {
       try { s.stop(); } catch(e) {}
     });
     this.activeSources.clear();
-    this.audioContext?.close();
-    this.initAudioContext();
+    this.audioContext?.close().catch(() => { /* já estava fechando */ });
+    this.audioContext = null;
+    this.analyserNode = null;
     this.nextStartTime = 0;
     this.onActivityChange?.(false);
   }
