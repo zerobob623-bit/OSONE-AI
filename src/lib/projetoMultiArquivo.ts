@@ -2,6 +2,20 @@ import { CodeRepositoryFile } from '../types';
 import { chaveDeCaminho, normalizarCaminhoDoCode } from './caminhosDoCode';
 
 /**
+ * O modelo que ESCREVE código no OSONE, em um lugar só.
+ *
+ * Mora aqui, e não dentro do CodeWorkspace, porque deixou de ter um único chamador: a aba CODE e
+ * a construção de projetos pedida por voz precisam usar exatamente o mesmo modelo. Duplicar a
+ * string nos dois deixaria a voz num modelo mais fraco na primeira vez que este fosse atualizado
+ * — e essa diferença é invisível até alguém reparar que o jogo saiu pior pela voz.
+ *
+ * gemini-3.7-flash: o mais recente e líder em benchmarks de código/agentes entre os gratuitos.
+ * Independe do modelo escolhido nos Ajustes gerais do chat — qualidade de código não pode ficar
+ * refém de um modelo lite mais fraco.
+ */
+export const OSONE_CODE_MODELO_PRINCIPAL = 'gemini-3.7-flash';
+
+/**
  * A IA ESCREVENDO MAIS DE UM ARQUIVO POR VEZ.
  *
  * ====== O QUE ESTAVA FALTANDO ======
