@@ -1,7 +1,7 @@
 {
   "name": "osone-app",
   "private": true,
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "OSONE G5 - Sistema Operacional Neural",
   "author": "OSONE",
   "type": "module",
