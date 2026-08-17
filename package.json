@@ -48,6 +48,7 @@
     "test:tela-inicial": "node scripts/conferir-tela-inicial.mjs",
     "test:franqueza": "node scripts/conferir-franqueza.mjs",
     "test:arquivos-agente": "node scripts/conferir-arquivos-do-agente.mjs",
+    "test:youtube": "node scripts/conferir-youtube.mjs",
     "test:cowork-memory": "tsx scripts/conferir-memoria-cowork.ts",
     "test:cowork-checkup": "tsx scripts/conferir-checkup-cowork.ts",
     "test:cowork-performance": "node scripts/conferir-desempenho-cowork.mjs",
