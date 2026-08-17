@@ -59,6 +59,7 @@ import {
   Heart,
   Youtube,
   ExternalLink,
+  AlertTriangle,
   Layers
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -270,10 +271,38 @@ const loadPdfJs = async (): Promise<any> => {
   });
 };
 
-const extractYoutubeVideoId = (urlOrId?: string) => {
-  if (!urlOrId) return 'XgWUDbYfNe4';
-  const match = urlOrId.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
-  return match ? match[1] : (urlOrId.length === 11 ? urlOrId : 'XgWUDbYfNe4');
+/**
+ * Extrai o ID de 11 caracteres de um link do YouTube — ou devolve null se não for um link.
+ *
+ * O null é a correção principal aqui. Antes, qualquer coisa que a função não soubesse ler virava
+ * 'XgWUDbYfNe4' (um videoclipe do Homem de Ferro, chumbado como padrão). O efeito era o pior
+ * possível para quem usa: pedir um vídeo e receber OUTRO, sem aviso nenhum — e se esse outro não
+ * permitir ser embutido, o que aparece na tela é "Vídeo indisponível" com o link certo na mão do
+ * usuário. A falha silenciosa disfarçava o defeito de duas formas ao mesmo tempo.
+ *
+ * Os formatos que caíam nessa armadilha e agora são lidos: /shorts/ (hoje metade do YouTube),
+ * /live/ e /embed/. Um título ou termo de busca ("despacito") continua não sendo um ID — mas
+ * agora devolve null, e quem chamou decide o que fazer, em vez de tocar outro vídeo.
+ */
+const extractYoutubeVideoId = (urlOrId?: string): string | null => {
+  const bruto = (urlOrId || '').trim();
+  if (!bruto) return null;
+
+  const porCaminho = bruto.match(
+    /(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|shorts\/|live\/))([\w-]{11})(?![\w-])/
+  );
+  if (porCaminho) return porCaminho[1];
+
+  // ?v= em qualquer posição da query, cobrindo m., music. e www. sem depender da ordem dos
+  // parâmetros (um link com ?list=...&v=... é comum e não pode ficar de fora).
+  const porQuery = bruto.match(/[?&]v=([\w-]{11})(?![\w-])/);
+  if (porQuery) return porQuery[1];
+
+  // O ID puro, sozinho. A checagem de formato evita que uma palavra de 11 letras ("despacito1")
+  // seja tratada como vídeo — o ID do YouTube não é uma palavra qualquer.
+  if (/^[\w-]{11}$/.test(bruto) && /[-_0-9A-Z]/.test(bruto)) return bruto;
+
+  return null;
 };
 
 const BowAndArrowIcon = ({ size = 16, className = "" }: { size?: number; className?: string }) => (
@@ -1601,15 +1630,50 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   const [youtubeVideoPopup, setYoutubeVideoPopup] = useState<{ isOpen: boolean; videoId: string; title: string } | null>(null);
   const [isYoutubeMinimized, setIsYoutubeMinimized] = useState<boolean>(false);
 
+  /**
+   * O dono do vídeo proibiu tocá-lo fora do YouTube?
+   *
+   * Este caso não é um defeito do OSONE e não tem conserto pelo nosso lado — é uma trava que o
+   * YouTube aplica no servidor dele, comuníssima em clipe de gravadora. O que ERA defeito nosso
+   * é o que o usuário via: um retângulo preto escrito "Vídeo indisponível", com o link certo na
+   * mão, sem nada explicando o motivo nem oferecendo saída. Detectado o bloqueio, a janela passa
+   * a dizer o que houve e a oferecer o vídeo no YouTube em um clique.
+   */
+  const [youtubeBloqueado, setYoutubeBloqueado] = useState(false);
+
   useEffect(() => {
     if (youtubeVideoPopup && youtubeVideoPopup.isOpen) {
       setIsYoutubeMinimized(false);
+      setYoutubeBloqueado(false);
       const timer = setTimeout(() => {
         setIsYoutubeMinimized(true);
       }, 2000);
       return () => clearTimeout(timer);
     }
   }, [youtubeVideoPopup]);
+
+  /**
+   * Escuta o player do YouTube pelo canal de mensagens que 'enablejsapi=1' abre.
+   *
+   * Os códigos 101 e 150 são o mesmo caso com dois números (o YouTube usa os dois): "o dono não
+   * permite reprodução embutida". 100 é vídeo removido/privado. Sem escutar isso, o iframe falha
+   * em silêncio — a página de dentro é de outra origem, então nada do erro atravessa sozinho.
+   */
+  useEffect(() => {
+    if (!youtubeVideoPopup?.isOpen) return;
+    const aoReceber = (evento: MessageEvent) => {
+      if (!/youtube(-nocookie)?\.com$/.test(new URL(evento.origin || 'http://x').hostname)) return;
+      try {
+        const dados = typeof evento.data === 'string' ? JSON.parse(evento.data) : evento.data;
+        if (dados?.event === 'onError' || dados?.event === 'initialDelivery') {
+          const codigo = Number(dados?.info?.errorCode ?? dados?.info);
+          if ([100, 101, 150].includes(codigo)) setYoutubeBloqueado(true);
+        }
+      } catch { /* mensagem que não é JSON do player: ignora */ }
+    };
+    window.addEventListener('message', aoReceber);
+    return () => window.removeEventListener('message', aoReceber);
+  }, [youtubeVideoPopup?.isOpen, youtubeVideoPopup?.videoId]);
   const [isChatExpanded, setIsChatExpanded] = useState(false);
   const [isConfirmingOptimize, setIsConfirmingOptimize] = useState(false);
   const [isConfirmingClear, setIsConfirmingClear] = useState(false);
@@ -10093,17 +10157,21 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
             }]);
           } else if (call.name === 'open_youtube_video') {
             const { url_or_id, title } = call.args as any;
-            const vidId = extractYoutubeVideoId(url_or_id || 'XgWUDbYfNe4');
-            setYoutubeVideoPopup({
-              isOpen: true,
-              videoId: vidId,
-              title: title || 'Homem de Ferro (Iron Man) - Videoclipe Oficial'
-            });
-            setChatHistory(prev => [...prev, { 
-              id: Math.random().toString(36).substr(2, 9), 
-              role: 'assistant' as const, 
-              content: `🎬 **Videoclipe aberto no Pop-up com sucesso!**` 
-            }]);
+            const vidId = extractYoutubeVideoId(url_or_id);
+            if (!vidId) {
+              setChatHistory(prev => [...prev, {
+                id: Math.random().toString(36).substr(2, 9),
+                role: 'assistant' as const,
+                content: `⚠️ "${url_or_id}" não é um link nem um ID de vídeo do YouTube, então não abri nada. Me manda o endereço do vídeo.`
+              }]);
+            } else {
+              setYoutubeVideoPopup({ isOpen: true, videoId: vidId, title: title || 'Vídeo do YouTube' });
+              setChatHistory(prev => [...prev, {
+                id: Math.random().toString(36).substr(2, 9),
+                role: 'assistant' as const,
+                content: `🎬 Abri o vídeo no player.`
+              }]);
+            }
           } else if (call.name === 'show_notification') {
             const { message, type } = call.args as any;
             addNotification(message, type || 'info');
@@ -12121,17 +12189,21 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     });
                   } else if (call.name === "open_youtube_video") {
                     const { url_or_id, title } = call.args as any;
-                    const vidId = extractYoutubeVideoId(url_or_id || 'XgWUDbYfNe4');
-                    setYoutubeVideoPopup({
-                      isOpen: true,
-                      videoId: vidId,
-                      title: title || 'Homem de Ferro (Iron Man) - Videoclipe Oficial'
-                    });
-                    responses.push({
-                      name: call.name,
-                      id: call.id,
-                      response: { result: `Videoclipe ${vidId} exibido no Pop-up da interface.` }
-                    });
+                    const vidId = extractYoutubeVideoId(url_or_id);
+                    if (!vidId) {
+                      responses.push({
+                        name: call.name, id: call.id,
+                        response: { error: `"${url_or_id}" não é um link nem um ID de vídeo do YouTube — nada foi aberto. Não invente um ID: peça o endereço do vídeo ao usuário, ou pesquise antes com 'google_search' e use o link que a busca devolver.` }
+                      });
+                    } else {
+                      setYoutubeVideoPopup({ isOpen: true, videoId: vidId, title: title || 'Vídeo do YouTube' });
+                      responses.push({
+                        name: call.name, id: call.id,
+                        response: {
+                          result: `Player aberto com o vídeo ${vidId}. ATENÇÃO: alguns vídeos (clipes de gravadora, principalmente) proíbem ser tocados fora do YouTube, e nesse caso o player mostra "Vídeo indisponível" — não é erro do link. O usuário tem um botão "Assistir no YouTube" na janela para esse caso.`
+                        }
+                      });
+                    }
                   } else if (call.name === "prune_chat_history") {
                     // chatHistoryRef.current, não chatHistory: este handler mora no onmessage de
                     // uma sessão de voz, cujo closure foi criado uma vez no início da sessão e não
@@ -15330,12 +15402,43 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
               {/* Video Player Frame */}
               <div className="relative w-full aspect-video bg-black flex items-center justify-center">
                 <iframe
-                  src={`https://www.youtube.com/embed/${youtubeVideoPopup.videoId}?autoplay=1&rel=0&enablejsapi=1`}
+                  src={`https://www.youtube.com/embed/${youtubeVideoPopup.videoId}?autoplay=1&rel=0&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`}
                   title={youtubeVideoPopup.title || "YouTube Video"}
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                   allowFullScreen
                   className="w-full h-full border-0"
+                  onLoad={(e) => {
+                    // O player só começa a mandar eventos (inclusive os de erro) depois deste
+                    // aperto de mão. Sem ele, 'enablejsapi=1' fica ligado sem ninguém escutando.
+                    try {
+                      (e.currentTarget as HTMLIFrameElement).contentWindow?.postMessage(
+                        JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }), '*'
+                      );
+                    } catch { /* origem cruzada pode recusar: a saída manual continua na tela */ }
+                  }}
                 />
+
+                {youtubeBloqueado && (
+                  <div className="absolute inset-0 bg-zinc-950 flex flex-col items-center justify-center text-center px-6 gap-3">
+                    <AlertTriangle size={26} className="text-amber-400" />
+                    <p className="text-[13px] text-neutral-200 max-w-md leading-relaxed">
+                      O dono deste vídeo não permite que ele seja tocado fora do YouTube.
+                    </p>
+                    <p className="text-[11px] text-neutral-500 max-w-md leading-relaxed">
+                      O link está certo — é uma restrição do próprio canal, comum em clipes de gravadora.
+                    </p>
+                    <a
+                      href={`https://www.youtube.com/watch?v=${youtubeVideoPopup.videoId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-1 px-4 py-2.5 rounded-xl border border-red-500/30 bg-red-500/10 hover:bg-red-500/20
+                                 text-red-300 text-[12px] font-bold flex items-center gap-2 transition-all"
+                    >
+                      <ExternalLink size={14} />
+                      Assistir no YouTube
+                    </a>
+                  </div>
+                )}
               </div>
 
               {/* Footer info bar */}
