@@ -254,6 +254,30 @@ export const HomeWorkspaceSection: React.FC<HomeWorkspaceSectionProps> = ({
         </div>
       )}
 
+      {/**
+       * AVISO DE MUDO — visível, e não um ícone de 14 pixels.
+       *
+       * Silenciar o microfone corta todo o áudio antes do modelo, e o efeito colateral é cruel:
+       * o OSONE não responde e NÃO dá erro, porque tecnicamente nada quebrou. Quem não reparou no
+       * ícone vermelho conclui que o app quebrou e fica falando com uma parede. O tamanho do
+       * aviso tem de ser proporcional ao tamanho da consequência — aqui a consequência é o app
+       * inteiro parecer morto.
+       */}
+      {isMuted && (
+        <button
+          onClick={handleMuteToggle}
+          className={cn(
+            "shrink-0 mx-auto mb-2 flex items-center gap-2 px-4 py-2 rounded-full border border-red-500/40",
+            "bg-red-500/10 hover:bg-red-500/20 text-red-300 text-[11px] font-bold transition-all",
+            !showUi && "opacity-0 pointer-events-none"
+          )}
+          title="Clique para reativar o microfone"
+        >
+          <MicOff size={13} className="animate-pulse" />
+          MICROFONE MUDO — O OSONE NÃO ESTÁ TE OUVINDO. CLIQUE PARA REATIVAR.
+        </button>
+      )}
+
       {chatHistory.length === 0 && (
         <div className={cn(
           "mb-2 md:mb-8 text-center shrink-0 hidden md:block transition-all duration-500",

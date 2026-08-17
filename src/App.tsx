@@ -1594,6 +1594,9 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
 
   const [isMuted, setIsMuted] = useState(false);
   const isMutedRef = useRef(false);
+  // Contadores do aviso "você está falando no mudo" (ver o uso em startRecording).
+  const pedacosFalandoNoMudoRef = useRef(0);
+  const ultimoAvisoDeMudoRef = useRef(0);
 
   useEffect(() => {
     isMutedRef.current = isMuted;
@@ -11666,7 +11669,33 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   // Microfone silenciado pelo usuário: nada do que for captado sai daqui, nem
                   // sequer para a lógica de interrupção por voz — o OSONE precisa continuar cego
                   // ao som ambiente e a conversas alheias até a pessoa reativar o microfone.
-                  if (isMutedRef.current) return;
+                  if (isMutedRef.current) {
+                    /**
+                     * ESTÁ FALANDO NO MUDO — e é ESTE o instante em que a pessoa precisa saber.
+                     *
+                     * Silenciar corta todo o áudio antes do modelo. O efeito colateral é cruel:
+                     * o OSONE não responde e NÃO DÁ ERRO, porque tecnicamente nada quebrou. Quem
+                     * não reparou no ícone vermelho conclui que o app parou de funcionar e fica
+                     * falando com uma parede — foi exatamente o que aconteceu depois que este
+                     * botão trocou de função.
+                     *
+                     * O aviso só dispara quando há VOZ de verdade (não ruído de fundo) sustentada
+                     * por ~3 pedaços seguidos, e no máximo uma vez a cada 15s: avisar a cada
+                     * respiração seria outra forma de incomodar.
+                     */
+                    if (rms >= 0.02) {
+                      pedacosFalandoNoMudoRef.current += 1;
+                      const agora = Date.now();
+                      if (pedacosFalandoNoMudoRef.current >= 3 && agora - ultimoAvisoDeMudoRef.current > 15000) {
+                        ultimoAvisoDeMudoRef.current = agora;
+                        addNotification('Seu microfone está MUDO — o OSONE não está te ouvindo. Clique no ícone do microfone para reativar.', 'error');
+                      }
+                    } else {
+                      pedacosFalandoNoMudoRef.current = 0;
+                    }
+                    return;
+                  }
+                  pedacosFalandoNoMudoRef.current = 0;
                   if (session) {
                     // Evitar eco/retorno: se o OSONE ou os Professores estiverem falando, só enviamos áudio se detectarmos um volume que indique que o usuário está interrompendo de fato.
                     // Se o usuário falar ativamente, o RMS passará de um limite de voz (ex: 0.007).
