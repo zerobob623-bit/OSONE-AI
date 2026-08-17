@@ -51,6 +51,7 @@
     "test:youtube": "node scripts/conferir-youtube.mjs",
     "test:vigilia": "node scripts/conferir-modo-vigilia.mjs",
     "test:audio-voz": "node scripts/conferir-audio-da-voz.mjs",
+    "test:uma-voz": "node scripts/conferir-uma-voz-so.mjs",
     "test:cowork-memory": "tsx scripts/conferir-memoria-cowork.ts",
     "test:cowork-checkup": "tsx scripts/conferir-checkup-cowork.ts",
     "test:cowork-performance": "node scripts/conferir-desempenho-cowork.mjs",

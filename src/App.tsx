@@ -7130,7 +7130,16 @@ ${isBad
     religamentoDaVozRef.current = setTimeout(() => {
       religamentoDaVozRef.current = null;
       if (!modoVigiliaRef.current || paradaManualDaVozRef.current) return;
-      // Já voltou sozinho por outro caminho: não abre uma segunda sessão por cima.
+      /**
+       * Já voltou sozinho por outro caminho: não abre uma segunda sessão por cima.
+       *
+       * A checagem NÃO pode se apoiar só em liveStateRef: ele é atualizado por um useEffect, ou
+       * seja, só depois da renderização. Entre pedir a sessão e o ref refletir isso existe uma
+       * janela em que ele ainda diz "desligado" — e dois religamentos disparados juntos passavam
+       * os dois, criando as duas sessões que produziam o coro de vozes. liveSessionRef é atribuído
+       * de imediato, sem passar por renderização, e é o que fecha essa janela.
+       */
+      if (liveSessionRef.current) return;
       if (liveStateRef.current.status === 'connected' || liveStateRef.current.status === 'connecting') return;
 
       setLiveState({ status: 'connecting' });
@@ -10570,6 +10579,21 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
     const minhaGeracao = ++geracaoDaSessaoDeVozRef.current;
     const souAGeracaoAtual = () => minhaGeracao === geracaoDaSessaoDeVozRef.current;
 
+    /**
+     * TERRA ARRASADA ANTES DE SUBIR: nenhuma sessão anterior pode sobreviver a esta linha.
+     *
+     * Mais abaixo, audioProcessorRef e audioPlayerRef são SOBRESCRITOS com instâncias novas. Se a
+     * sessão anterior ainda estivesse de pé, seus aparelhos ficariam órfãos — tocando e gravando
+     * sem que nada mais conseguisse alcançá-los para parar, porque a única referência a eles
+     * acabou de ser substituída. Fechar aqui é o que garante uma voz de cada vez, mesmo que dois
+     * caminhos peçam uma sessão ao mesmo tempo (religamento automático, hands-free e clique do
+     * usuário podem coincidir).
+     */
+    try { liveSessionRef.current?.close?.(); } catch { /* já estava fechada */ }
+    liveSessionRef.current = null;
+    try { audioProcessorRef.current?.stopRecording?.(); } catch { /* nunca chegou a gravar */ }
+    try { audioPlayerRef.current?.stop?.(); } catch { /* nunca chegou a tocar */ }
+
     pauseHandsFreeDetection();
     setIsVoiceOutputPaused(false);
     liveAudioOutputEngineRef.current = audioOutputEngine;
@@ -11839,7 +11863,22 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
             });
           },
           onmessage: async (message) => {
+            /**
+             * A TRAVA QUE FALTAVA — e é por isso que davam VÁRIAS VOZES AO MESMO TEMPO.
+             *
+             * onclose e onerror já descartavam eventos de sessão substituída; o onmessage, que é
+             * justamente por onde o ÁUDIO passa, não conferia nada. Com duas sessões vivas (o
+             * religamento automático do Modo Vigília tornou isso rotina, a cada ~10 minutos), as
+             * duas recebiam respostas diferentes e as duas empurravam os pedaços de áudio para o
+             * MESMO tocador — que os intercalava. O resultado é um coro de vozes sobrepostas
+             * falando coisas diferentes.
+             *
+             * Sem esta linha, nenhuma outra correção resolve: a sessão velha continua com um
+             * WebSocket aberto despejando áudio até o servidor encerrá-la.
+             */
+            if (!souAGeracaoAtual()) return;
             sessionPromise.then(async (session) => {
+              if (!souAGeracaoAtual()) return;
               // 1. Detect user transcription for voice command pause/play control
               let userTranscriptText = "";
               let isFinalUserTranscript = false;
