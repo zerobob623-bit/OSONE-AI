@@ -5129,6 +5129,39 @@ Escreva um novo retorno. Comece expressando a pancada física com dor bem-humora
   useEffect(() => {
     liveStateRef.current = liveState;
   }, [liveState]);
+
+  /**
+   * MODO VIGÍLIA — a voz não aceita ficar desligada.
+   *
+   * O QUE ESTAVA ACONTECENDO, E POR QUE ERA SEMPRE ~10 MINUTOS.
+   *
+   * A sessão de voz do Gemini Live tem prazo de validade no servidor do Google. Perto do fim, a
+   * API manda um aviso chamado 'goAway' — "vou encerrar esta conexão". O OSONE recebia esse
+   * aviso e fazia a única coisa que não devia: encerrava e ficava quieto. Não era queda de rede
+   * nem bug intermitente; era o comportamento normal da API encontrando um cliente que desistia.
+   * Daí ser 100% das vezes, e sempre no mesmo tempo — a comunidade estava certa no relato.
+   *
+   * Com o modo ligado, todo fim de sessão que NÃO foi o usuário mandando parar vira um
+   * religamento imediato. O usuário não clica de novo, não chama sem ser ouvido.
+   */
+  const [modoVigilia, setModoVigilia] = useState<boolean>(() => {
+    try { return localStorage.getItem('osone_modo_vigilia') === 'true'; } catch { return false; }
+  });
+  const modoVigiliaRef = useRef(modoVigilia);
+  useEffect(() => {
+    modoVigiliaRef.current = modoVigilia;
+    try { localStorage.setItem('osone_modo_vigilia', String(modoVigilia)); } catch { /* modo privado */ }
+  }, [modoVigilia]);
+
+  /**
+   * O usuário mandou parar? Então parou — vigília não é teimosia contra o dono da máquina.
+   *
+   * Sem esta separação, clicar em "desligar a voz" com o modo ativo faria a sessão renascer no
+   * mesmo instante, e o botão de desligar viraria um botão que não desliga.
+   */
+  const paradaManualDaVozRef = useRef(false);
+  const religamentoDaVozRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tentativasDeReligamentoRef = useRef(0);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const isCameraActiveRef = useRef(false);
@@ -7061,6 +7094,47 @@ ${isBad
     stopLiveSessionInternal(keepError, preservarTela);
     stopElevenLabsLiveSession(false, false);
     if (rearmHandsFree) scheduleHandsFreeRearm();
+  };
+
+  const cancelarReligamentoDaVoz = () => {
+    if (religamentoDaVozRef.current) {
+      clearTimeout(religamentoDaVozRef.current);
+      religamentoDaVozRef.current = null;
+    }
+  };
+
+  /**
+   * Religa a voz depois de uma queda — a peça central do Modo Vigília.
+   *
+   * A espera cresce a cada tentativa seguida que não vingou (1s, 2s, 4s... até 20s). O primeiro
+   * religamento é quase imediato de propósito: o caso comum não é falha, é o prazo da sessão
+   * vencendo (goAway), e nesse caso a conexão nova sobe de primeira. Crescer a espera só importa
+   * quando algo está realmente errado — sem isso, uma chave inválida viraria um laço de
+   * reconexão em tempo real martelando a API e queimando cota.
+   *
+   * O contador zera assim que uma sessão consegue se conectar (ver onopen), então uma hora de
+   * conversa com vários goAway pelo caminho continua religando rápido a cada vez.
+   */
+  const religarVozSePreciso = (motivo: string) => {
+    if (!modoVigiliaRef.current) return;
+    if (paradaManualDaVozRef.current) return;
+    if (religamentoDaVozRef.current) return;
+
+    const tentativa = ++tentativasDeReligamentoRef.current;
+    const espera = Math.min(1000 * Math.pow(2, tentativa - 1), 20000);
+    console.log(`[Vigília] ${motivo} — religando em ${espera}ms (tentativa ${tentativa}).`);
+
+    religamentoDaVozRef.current = setTimeout(() => {
+      religamentoDaVozRef.current = null;
+      if (!modoVigiliaRef.current || paradaManualDaVozRef.current) return;
+      // Já voltou sozinho por outro caminho: não abre uma segunda sessão por cima.
+      if (liveStateRef.current.status === 'connected' || liveStateRef.current.status === 'connecting') return;
+
+      setLiveState({ status: 'connecting' });
+      pauseHandsFreeDetection();
+      if (voiceEngineRef.current === 'elevenlabs') startElevenLabsLiveSession();
+      else startLiveSession(isCameraActiveRef.current);
+    }, espera);
   };
 
   const startScreenSharing = async () => {
@@ -11572,6 +11646,10 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
               liveSessionRef.current = session;
               setLiveState({ status: 'connected' });
               setIsListening(true);
+              // Conectou: a escada de espera do Modo Vigília volta ao degrau mais rápido. Sem
+              // este zeramento, uma conversa longa (vários goAway pelo caminho, todos religados
+              // com sucesso) iria ficando cada vez mais lenta para voltar, até os 20s de teto.
+              tentativasDeReligamentoRef.current = 0;
               if (useElevenLabsOutput) {
                 elevenLabsStateRef.current = 'listening';
               }
@@ -11980,6 +12058,11 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       id: call.id,
                       response: { result: "Chamada de voz de áudio Live encerrada com sucesso." }
                     });
+                    // "Encerra a chamada" dito em voz alta é o usuário mandando parar tanto
+                    // quanto o clique no botão — a vigília não pode religar por cima disso, ou o
+                    // OSONE voltaria sozinho três segundos depois de ser dispensado.
+                    paradaManualDaVozRef.current = true;
+                    cancelarReligamentoDaVoz();
                     setTimeout(() => {
                       stopLiveSession();
                       addNotification("Chamada de voz finalizada por comando de voz", "success");
@@ -13254,7 +13337,12 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
               console.log("[Voz] onclose de sessão antiga ignorado — já existe outra no lugar.");
               return;
             }
-            stopLiveSession();
+            // Sem rearmar o hands-free quando a vigília vai religar: os dois disputariam o
+            // microfone, e o detector de palavra-chave chegaria a segurar o aparelho bem na hora
+            // em que a sessão nova precisa dele.
+            const vaiReligar = modoVigiliaRef.current && !paradaManualDaVozRef.current;
+            stopLiveSession(false, !vaiReligar);
+            if (vaiReligar) religarVozSePreciso('a sessão de voz fechou (prazo da API ou queda)');
           },
           onerror: (error: any) => {
             if (!souAGeracaoAtual()) {
@@ -13269,16 +13357,30 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                                errorMessage.toLowerCase().includes("billing");
 
             if (isQuotaError) {
-              setLiveState({ 
-                status: 'error', 
-                error: "COTA EXCEDIDA: O plano gratuito do Gemini atingiu o limite. Aguarde alguns minutos ou troque a chave API se necessário." 
+              setLiveState({
+                status: 'error',
+                error: "COTA EXCEDIDA: O plano gratuito do Gemini atingiu o limite. Aguarde alguns minutos ou troque a chave API se necessário."
               });
               addNotification("LIMITE DE COTA ATINGIDO", "error");
             } else {
               setLiveState({ status: 'error', error: errorMessage || "Erro de rede na Live API." });
               addNotification("Erro na conexão Neural", "error");
             }
-            stopLiveSession(true);
+            const vaiReligar = modoVigiliaRef.current && !paradaManualDaVozRef.current;
+            stopLiveSession(true, !vaiReligar);
+            /**
+             * Cota estourada é o único caso em que a vigília NÃO insiste rápido.
+             *
+             * Religar em um segundo contra um limite de cota não reconecta ninguém: só repete a
+             * mesma recusa em looping, queima o resto da cota e enche a tela de erro. O contador
+             * é empurrado para o topo da escala, o que transforma a próxima tentativa nos 20s de
+             * teto — ainda insiste (a cota pode liberar sozinha), mas num ritmo que não piora a
+             * situação que causou o erro.
+             */
+            if (vaiReligar) {
+              if (isQuotaError) tentativasDeReligamentoRef.current = Math.max(tentativasDeReligamentoRef.current, 5);
+              religarVozSePreciso(isQuotaError ? 'cota excedida' : 'erro na sessão de voz');
+            }
           }
         }
       });
@@ -13552,6 +13654,21 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
   };
 
   const handleVoiceToggle = () => {
+    /**
+     * Este botão é a vontade explícita do dono da máquina, e ela vence a vigília.
+     *
+     * Desligar aqui marca a parada como MANUAL, o que impede o religamento automático — senão a
+     * sessão renasceria no mesmo instante e o botão de desligar não desligaria nada. Ligar aqui
+     * limpa a marca e cancela qualquer religamento já agendado, para não abrir uma segunda
+     * sessão em cima da que o usuário acabou de pedir.
+     */
+    const estaLigada = voiceEngine === 'elevenlabs'
+      ? (isElevenLabsLiveActive || liveState.status === 'connected')
+      : (liveState.status === 'connected' || liveState.status === 'connecting');
+    paradaManualDaVozRef.current = estaLigada;
+    cancelarReligamentoDaVoz();
+    if (!estaLigada) tentativasDeReligamentoRef.current = 0;
+
     if (voiceEngine === 'elevenlabs') {
       const wasActive = isElevenLabsLiveActive;
       if (isElevenLabsLiveActive || liveState.status === 'connected') {
@@ -13575,6 +13692,31 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         pauseHandsFreeDetection();
         startLiveSession();
       }
+    }
+  };
+
+  /**
+   * Liga/desliga o Modo Vigília pelo botão do cabeçalho.
+   *
+   * Ligar já ACENDE a voz na hora se ela estiver apagada: quem liga um modo chamado "a voz nunca
+   * fica desligada" espera exatamente isso, e não um modo que só valeria a partir da próxima vez
+   * que a sessão caísse.
+   */
+  const alternarModoVigilia = () => {
+    const ligando = !modoVigilia;
+    setModoVigilia(ligando);
+
+    if (ligando) {
+      paradaManualDaVozRef.current = false;
+      tentativasDeReligamentoRef.current = 0;
+      addNotification('Modo Vigília ligado: a voz religa sozinha se cair.', 'success');
+      const desligada = voiceEngineRef.current === 'elevenlabs'
+        ? !isElevenLabsLiveActiveRef.current && liveStateRef.current.status !== 'connected'
+        : liveStateRef.current.status !== 'connected' && liveStateRef.current.status !== 'connecting';
+      if (desligada) handleVoiceToggle();
+    } else {
+      cancelarReligamentoDaVoz();
+      addNotification('Modo Vigília desligado.', 'info');
     }
   };
 
@@ -13738,10 +13880,33 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         
         <div className="flex flex-col items-center gap-0.5 md:gap-1">
           <span className="text-[7px] md:text-[9px] tracking-[0.5em] uppercase text-her-muted font-light opacity-40">OSONE G5</span>
-          <span className="flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] uppercase tracking-[0.2em] font-light text-her-muted">
-            {selectedPersona.icon}
-            <span>{selectedPersona.name}</span>
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] uppercase tracking-[0.2em] font-light text-her-muted">
+              {selectedPersona.icon}
+              <span>{selectedPersona.name}</span>
+            </span>
+
+            {/* MODO VIGÍLIA — a voz não aceita ficar desligada. Fica junto ao nome, e não no
+                grupo de botões da direita, porque é um estado permanente do OSONE (como a
+                persona ao lado), não uma ação avulsa. */}
+            <button
+              onClick={alternarModoVigilia}
+              className={cn(
+                "flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-all text-[9px] font-bold uppercase tracking-widest shrink-0",
+                modoVigilia
+                  ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.25)]"
+                  : "bg-white/[0.03] border-white/[0.08] text-her-muted hover:border-white/20 hover:bg-white/[0.05]"
+              )}
+              title={modoVigilia
+                ? "Modo Vigília LIGADO — se a voz cair, ela religa sozinha. Clique para desligar."
+                : "Modo Vigília — mantém a voz ligada e religa sozinha quando a sessão cai (a API do Gemini encerra por tempo a cada ~10 min)."}
+              aria-label="Modo Vigília — manter a voz sempre ligada e religar sozinha"
+              aria-pressed={modoVigilia}
+            >
+              <Activity size={12} className={modoVigilia ? "animate-pulse" : ""} />
+              <span className="hidden md:inline">{modoVigilia ? "VIGÍLIA ON" : "VIGÍLIA"}</span>
+            </button>
+          </div>
         </div>
 
         <div className="flex items-center gap-1 md:gap-2">
