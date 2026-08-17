@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { Loader2, AlertTriangle, CheckCircle2 } from 'lucide-react';
-import { auth, googleProvider, signInWithPopup, explicarErroDeLogin } from '../firebase';
+import { auth, googleProvider, GoogleAuthProvider, signInWithPopup, explicarErroDeLogin } from '../firebase';
 
 /**
  * Tela aberta pelo app INSTALADO no navegador padrão do sistema, nunca dentro do Electron.
@@ -25,7 +25,16 @@ export const TelaDeEntregaDeLogin = ({ codigo }: { codigo: string }) => {
         const resultado = await signInWithPopup(auth, googleProvider);
         if (cancelado) return;
         setEstado('enviando');
-        const idToken = await resultado.user.getIdToken();
+        /**
+         * O token do GOOGLE (credentialFromResult), não o token de sessão do Firebase
+         * (user.getIdToken()) — é o primeiro que GoogleAuthProvider.credential() sabe reconstruir
+         * do outro lado, dentro do Electron, para terminar o login sem precisar de nenhum
+         * servidor com credencial de administrador no meio.
+         */
+        const idToken = GoogleAuthProvider.credentialFromResult(resultado)?.idToken;
+        if (!idToken) {
+          throw new Error('O Google não devolveu um token de identidade. Tente entrar de novo.');
+        }
         const resposta = await fetch('/api/login/entrega', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

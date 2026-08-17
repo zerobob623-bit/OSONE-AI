@@ -3,7 +3,7 @@ import {
   getAuth,
   GoogleAuthProvider,
   signInWithPopup as fbSignInWithPopup,
-  signInWithCustomToken as fbSignInWithCustomToken,
+  signInWithCredential as fbSignInWithCredential,
   signOut as fbSignOut,
   onAuthStateChanged as fbOnAuthStateChanged,
   type Auth,
@@ -152,6 +152,10 @@ export const db: any = realDb || {};
 // GoogleAuthProvider não depende de app inicializado, então pode sempre existir de verdade —
 // só o USO dele (signInWithPopup) é que exige Firebase configurado.
 export const googleProvider = new GoogleAuthProvider();
+// A classe (não só a instância) é exportada porque o handoff de login do app instalado precisa
+// dela nos dois lados: para ler o token do Google do resultado (credentialFromResult, na aba do
+// navegador) e para reconstruir a credencial a partir desse token (credential, no Electron).
+export { GoogleAuthProvider };
 
 const NOT_CONFIGURED_MSG =
   "A sincronização em nuvem (Firebase) não está configurada nesta instalação do OSONE. " +
@@ -163,9 +167,9 @@ export const signInWithPopup = async (authInstance: any, providerInstance: any):
   return fbSignInWithPopup(authInstance, providerInstance);
 };
 
-export const signInWithCustomToken = async (authInstance: any, token: string): Promise<any> => {
+export const signInWithCredential = async (authInstance: any, credential: any): Promise<any> => {
   if (!realAuth) throw new Error(NOT_CONFIGURED_MSG);
-  return fbSignInWithCustomToken(authInstance, token);
+  return fbSignInWithCredential(authInstance, credential);
 };
 
 export const signOut = async (authInstance: any) => {
