@@ -506,6 +506,17 @@ export function useLocalAgent() {
   /** Rótulo da ação em andamento, ou null. É o que impede duas ações ao mesmo tempo. */
   const emExecucaoRef = useRef<string | null>(null);
   /**
+   * O controlador de cancelamento da busca na tela ('localizar'/'achar_texto') em andamento.
+   *
+   * Esta ação fica de FORA da trava de "uma ação por vez" (ver mais abaixo) e ganha esta em
+   * troca: como é só uma pergunta de leitura ao modelo de visão, sem nenhum efeito na máquina do
+   * usuário, ela pode ser interrompida a qualquer momento sem deixar nada pela metade — e é
+   * exatamente isso que faz o motor "mudar de ideia" no meio de uma busca demorada, em vez de
+   * ficar preso a ela até ela terminar sozinha (o relato era "às vezes ele fica 2 minutos
+   * caçando na tela", travando tudo o mais junto).
+   */
+  const buscaNaTelaAbortRef = useRef<AbortController | null>(null);
+  /**
    * Quando a tela foi olhada pela última vez, e se foi uma ampliação.
    *
    * Existe porque pedir no prompt não bastou: medido em uso real, o modelo clicou três vezes
@@ -608,18 +619,40 @@ export function useLocalAgent() {
     }
 
     /**
-     * UMA AÇÃO POR VEZ.
+     * UMA NOVA AÇÃO SEMPRE PODE ENCERRAR UMA BUSCA NA TELA PENDENTE.
      *
-     * Sem esta trava, cada frase do usuário abria uma rodada nova enquanto a anterior ainda
-     * rodava, e as ações se empilhavam sem limite — medido em uso real: cinco leituras de tela
-     * simultâneas, cada uma consumindo quase um núcleo inteiro, e a máquina inteira parando. O
-     * usuário via o efeito exato disso: "falo qualquer coisa e ele manda outra ação e outra e
-     * outra e trava".
-     *
-     * A segunda ação é RECUSADA, não enfileirada: enfileirar só adiaria a mesma pilha. A recusa
-     * volta como texto para o modelo, que assim sabe esperar em vez de insistir.
+     * 'localizar'/'achar_texto' é a única ação sem efeito na máquina do usuário — não move mouse,
+     * não digita, não abre nada. Por isso, diferente de tudo o mais, ela pode ser cancelada a
+     * qualquer momento sem deixar rastro pela metade. Qualquer ação nova (inclusive outra busca)
+     * encerra a anterior na hora, em vez de esperá-la terminar sozinha.
      */
-    if (emExecucaoRef.current) {
+    if (buscaNaTelaAbortRef.current) {
+      buscaNaTelaAbortRef.current.abort();
+      buscaNaTelaAbortRef.current = null;
+    }
+
+    const ehBuscaNaTela = toolName === 'controlar_pc'
+      && ['localizar', 'achar_texto'].includes(String(args?.acao || ''));
+
+    /**
+     * UMA AÇÃO POR VEZ — exceto a busca na tela, que fica de fora desta trava.
+     *
+     * Sem trava nenhuma, cada frase do usuário abria uma rodada nova enquanto a anterior ainda
+     * rodava, e as ações se empilhavam sem limite — medido em uso real: cinco leituras de tela
+     * simultâneas, cada uma consumindo quase um núcleo inteiro (então era reconhecimento de texto
+     * local, hoje removido), e a máquina inteira parando. O usuário via o efeito exato disso:
+     * "falo qualquer coisa e ele manda outra ação e outra e outra e trava".
+     *
+     * 'localizar' é a exceção segura: hoje é uma pergunta de rede ao modelo de visão, não trabalho
+     * pesado local, e tem teto de tempo e cancelamento próprios (ver mirarPorVisao.ts) — deixá-la
+     * fora da trava não reintroduz o problema medido, e é o que evita que ela sozinha prenda o
+     * resto do controle do PC atrás de uma única pergunta.
+     *
+     * Para tudo o mais (clique, digitação, terminal, arquivo), a segunda ação continua RECUSADA,
+     * não enfileirada: enfileirar só adiaria a mesma pilha. A recusa volta como texto para o
+     * modelo, que assim sabe esperar em vez de insistir.
+     */
+    if (!ehBuscaNaTela && emExecucaoRef.current) {
       return {
         error: `Já existe uma ação em andamento no computador ("${emExecucaoRef.current}"). ` +
           `Espere ela terminar e usar o resultado dela antes de pedir outra — não repita nem tente um caminho alternativo agora.`
@@ -656,11 +689,11 @@ export function useLocalAgent() {
       return resultado;
     };
 
-    emExecucaoRef.current = rotularAcao(toolName, args);
+    if (!ehBuscaNaTela) emExecucaoRef.current = rotularAcao(toolName, args);
     try {
       return concluir(await executarAcao(toolName, args, localAgentToken, isVoiceSession, visao));
     } finally {
-      emExecucaoRef.current = null;
+      if (!ehBuscaNaTela) emExecucaoRef.current = null;
     }
   };
 
@@ -1035,13 +1068,26 @@ export function useLocalAgent() {
             }
             ultimaCapturaRef.current = { quando: Date.now(), ampliada: false };
 
-            const visto = await mirarPorVisao(
-              procurado,
-              captura.image,
-              captura.mimeType || 'image/png',
-              visao?.chaveGemini || '',
-              visao?.modeloGemini || 'gemini-3.7-flash'
-            );
+            // Registrado ANTES da chamada: é o que uma ação nova encontra e aborta lá em cima,
+            // no início de executeLocalAgentCall — sem isto, nada saberia que existe uma busca
+            // em voo para cancelar.
+            const controleDaBusca = new AbortController();
+            buscaNaTelaAbortRef.current = controleDaBusca;
+            let visto: Awaited<ReturnType<typeof mirarPorVisao>>;
+            try {
+              visto = await mirarPorVisao(
+                procurado,
+                captura.image,
+                captura.mimeType || 'image/png',
+                visao?.chaveGemini || '',
+                visao?.modeloGemini || 'gemini-3.7-flash',
+                controleDaBusca.signal
+              );
+            } finally {
+              // Só limpa a REFERÊNCIA se ainda for esta busca: uma ação nova já pode ter
+              // colocado a dela no lugar enquanto esta ainda estava terminando de responder.
+              if (buscaNaTelaAbortRef.current === controleDaBusca) buscaNaTelaAbortRef.current = null;
+            }
 
             if (!visto.encontrado || !visto.alvo) {
               return {
