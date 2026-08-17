@@ -96,7 +96,7 @@ import { usePersonaSelfRevision } from './hooks/usePersonaSelfRevision';
 import { getCounterfactualReasoningDirective, getSalienceEmpathyDirective } from './lib/cognitiveDirectives';
 import { getFranquezaDirective } from './lib/franquezaJarvis';
 import { buildCodeEditSystemInstruction, applyModelCodeResponse, pareceDocumentoIncompleto, substituirTrecho, contextoAoRedor } from './lib/codeEdits';
-import { INSTRUCAO_DE_PROJETO_MULTIARQUIVO, lerArquivosDoModelo } from './lib/projetoMultiArquivo';
+import { INSTRUCAO_DE_PROJETO_MULTIARQUIVO, OSONE_CODE_MODELO_PRINCIPAL, lerArquivosDoModelo } from './lib/projetoMultiArquivo';
 import { gerarCodigoEmFluxo } from './lib/gerarCodigoEmFluxo';
 import { calcularQuadro } from './lib/qualidadeDaVisao';
 import { lerChatDaTela, montarInstrucaoDeLeitura, chaveDoComentario } from './lib/lerChatDaTela';
@@ -122,7 +122,44 @@ import { HomeWorkspaceSection } from './components/HomeWorkspaceSection';
 import { useSubscription } from './hooks/useSubscription';
 import { minimumPlanForFeature, paidFeatureForWorkspace, PaidFeature } from './lib/planos';
 
-const OSONE_CODE_BEST_MODEL = "gemini-3.7-flash";
+const OSONE_CODE_BEST_MODEL = OSONE_CODE_MODELO_PRINCIPAL;
+
+/**
+ * A ferramenta que faz o OSONE CONSTRUIR software de verdade, declarada uma vez só.
+ *
+ * O texto vive aqui fora porque as duas metades do app (chat de texto e sessão de voz) declaram
+ * suas ferramentas separadamente. Descrição duplicada é descrição que diverge: a que alguém
+ * lembrar de editar melhora, a esquecida fica para trás, e o mesmo pedido passa a se comportar
+ * diferente por voz e por texto.
+ */
+const OSONE_CODE_CRIAR_PROJETO_DESCRICAO =
+  "CONSTRUIR SOFTWARE (OSONE CODE) — jogo, site, aplicativo, página ou qualquer projeto de código que o usuário peça para você CRIAR. " +
+  "USE SEMPRE ESTA FERRAMENTA para isso, e NUNCA escreva o código você mesmo com 'controlar_pc'. O motivo é direto: você é o modelo de " +
+  "CONVERSA, e código escrito por você sai primário. Esta ferramenta entrega o pedido ao modelo de CÓDIGO do OSONE CODE (o mesmo da aba " +
+  "CODE), que escreve o projeto inteiro com qualidade, grava os arquivos no computador do usuário e já abre num servidor local (http://127.0.0.1). " +
+  "Vale para 'faz um jogo', 'cria um site', 'monta um app', 'faz uma página' — inclusive quando o usuário disser 'no terminal' ou 'num localhost'. " +
+  "Recurso EXCLUSIVO de assinante: se a resposta vier com 'error' falando de plano, apenas conte isso ao usuário e NÃO tente construir por outro caminho. " +
+  "Enquanto ela roda, avise que o OSONE CODE está escrevendo o projeto — leva alguns segundos.";
+
+const OSONE_CODE_CRIAR_PROJETO_PARAMETROS = (T: typeof Type) => ({
+  type: T.OBJECT,
+  properties: {
+    descricao: {
+      type: T.STRING,
+      description: "O que construir, com o máximo de detalhe que o usuário deu — tipo de projeto, mecânica, visual, cores, regras, funcionalidades. " +
+        "Repasse o pedido inteiro dele, não um resumo de duas palavras: é este texto que o modelo de código recebe, e um pedido pobre gera um projeto pobre."
+    },
+    pasta: {
+      type: T.STRING,
+      description: "Opcional. Pasta onde gravar o projeto (ex: '~/Documentos/meu-jogo'). Se omitir, o OSONE cria uma pasta com nome derivado da descrição dentro de '~/OSONE Projetos'."
+    },
+    servir: {
+      type: T.BOOLEAN,
+      description: "Opcional, padrão true: sobe um servidor local e abre o projeto no navegador. Só passe false se o usuário pedir explicitamente para apenas gravar os arquivos sem abrir."
+    }
+  },
+  required: ["descricao"]
+});
 
 /* O modelo pode mandar qualquer coisa nos argumentos, entao o comando do mascote
    passa por aqui antes de virar movimento na tela. */
@@ -1283,7 +1320,11 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   - NUNCA diga que criou, apagou, abriu ou executou algo sem ter chamado a ferramenta e recebido uma resposta de sucesso. Se a resposta contiver "error", a ação NÃO aconteceu: informe o erro exato ao usuário. Afirmar sucesso inexistente é o pior erro possível aqui.
   - Use os caminhos reais do bloco AMBIENTE REAL DESTE COMPUTADOR (acima) e a sintaxe do sistema indicado ali. Não adivinhe o sistema operacional nem invente nomes de pasta em inglês se as pastas reais estiverem em português.
   - Em dúvida sobre o que existe numa pasta, chame antes com acao='listar' e aja sobre o que voltou, em vez de chutar nomes de arquivo.
+  - LER ARQUIVO: para saber o que há DENTRO de um arquivo de texto, use acao='ler_arquivo' com o caminho. Você lê direto do disco — não peça ao usuário para compartilhar a tela, não abra o arquivo num editor para olhar por cima do ombro dele, e nunca diga que não consegue ver o conteúdo de um arquivo.
+  - EDITAR ARQUIVO: para mudar parte de um arquivo existente, use acao='editar_arquivo' com 'buscar' (o trecho exato que está lá hoje) e 'substituir' (o que entra no lugar). SEMPRE leia o arquivo antes com 'ler_arquivo' e copie o trecho como ele está, com a mesma indentação — trecho digitado de memória não bate e a edição é recusada. Se o trecho aparecer mais de uma vez, mande um pedaço maior que inclua as linhas em volta.
+    NÃO use 'escrever_arquivo' para editar algo que já existe: aquilo sobrescreve o arquivo inteiro, e tudo que você não reproduzir é perdido. 'escrever_arquivo' é só para arquivo novo ou para substituir o conteúdo inteiro de propósito.
   - Quando o usuário quiser VER o comando rodando ("abre o terminal", "mostra no terminal"), use acao='terminal' com visivel=true, que abre uma janela real na tela.
+  - CONSTRUIR SOFTWARE NÃO É COM VOCÊ: se o pedido for criar um jogo, site, app ou página, chame 'osone_code_criar_projeto' e deixe o modelo de código do OSONE CODE escrever. NUNCA escreva o código você mesmo e mande por 'escrever_arquivo' ou por 'terminal' — você é o modelo de conversa, e o que sai daí é primário perto do que o OSONE CODE entrega. Isso vale mesmo quando o usuário disser "faz no terminal" ou "põe num localhost": a ferramenta já grava os arquivos e abre o servidor local sozinha.
   - COMO CLICAR: chame acao='localizar' com 'alvo' descrevendo o elemento como você descreveria para uma pessoa, e clique EXATAMENTE na coordenada que voltar, sem somar nem subtrair nada. É só isso — não existe procedimento de mira em dois tempos, nem grade para ler, nem etapa de ampliação.
     'localizar' OLHA a tela e acha qualquer coisa: botão escrito, ícone sem texto, aba, campo, item de menu, miniatura de vídeo, em qualquer programa. Descreva com o que distingue o alvo dos vizinhos ("o ícone de lupa no topo à direita", "a aba Conteúdo do menu lateral", "o botão vermelho de gravar"). Se a descrição servir para vários elementos, ele responde que não achou em vez de chutar — nesse caso descreva melhor, não insista igual.
     NUNCA invente uma coordenada olhando uma imagem: já foi medido que a estimativa erra de 44 a 510 pixels, e o clique cai no botão vizinho ou em nada. Se 'localizar' não achar, diga ao usuário o que voltou na resposta em vez de tentar adivinhar a posição.
@@ -8079,6 +8120,138 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
     speakNextChunk();
   };
 
+  /**
+   * CONSTRUIR SOFTWARE DE VERDADE PELO OSONE CODE — chamada pela voz e pelo chat de texto.
+   *
+   * Por que existe: pedir "faz um jogo no terminal" fazia o modelo de VOZ escrever o jogo com a
+   * inteligência dele próprio e despejar o código por 'controlar_pc'. O modelo de voz é otimizado
+   * para conversa em tempo real, não para programar — o resultado saía primário, e o
+   * gemini-3.7-flash (o modelo bom de código, já configurado e pago no OSONE CODE) ficava sem ser
+   * usado, porque estava preso à aba CODE e a voz não tinha como chamá-lo.
+   *
+   * Aqui o trabalho é dividido pelo que cada um faz bem: a voz entende o pedido e conversa; o
+   * modelo de código ESCREVE o projeto; o Agente Local grava no disco e sobe o localhost.
+   *
+   * Exclusivo de assinante (mesma trava 'osone_code' da aba CODE): é o mesmo motor de geração de
+   * código, e liberá-lo pela voz seria uma porta lateral para o recurso pago.
+   */
+  const criarProjetoComOsoneCode = async (args: any): Promise<any> => {
+    const descricao = String(args?.descricao || '').trim();
+    if (!descricao) return { error: "Informe 'descricao' com o que deve ser construído." };
+
+    if (!hasPaidFeatureRef.current('osone_code')) {
+      // Abre a tela de planos junto: a recusa por si só deixaria o usuário sem o caminho da
+      // solução, e por voz ele não tem onde clicar para descobrir.
+      setRequestedPaidFeature(paidFeatureLabel.osone_code);
+      setIsPlansOpen(true);
+      return {
+        error: `Construir aplicativos, jogos e sites é o OSONE CODE, exclusivo do plano ${paidFeaturePlanName('osone_code')}. ` +
+          `Abri a tela de planos para o usuário. Diga isso a ele e NÃO tente construir o projeto por conta própria com 'controlar_pc'.`
+      };
+    }
+
+    const pastaAlvo = String(args?.pasta || '').trim() || `~/OSONE Projetos/${
+      descricao.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'projeto'
+    }`;
+
+    try {
+      addNotification('OSONE CODE está escrevendo o projeto...', 'info');
+
+      const resposta = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          codeAiProvider: 'gemini',
+          clientApiKey: apiKeys.gemini || '',
+          // O mesmo modelo que a aba OSONE CODE usa. A reserva cobre a chave que não o atenda.
+          model: OSONE_CODE_MODELO_PRINCIPAL,
+          modeloDeReserva: apiKeys.geminiModel || '',
+          unrestricted: true,
+          systemInstruction:
+            `Você é o motor de código do OSONE CODE. Escreva um projeto COMPLETO e FUNCIONAL a partir do pedido do usuário.\n\n` +
+            `Qualidade esperada: não entregue esboço nem versão "de exemplo". O que você escrever é o que a pessoa vai abrir e usar. ` +
+            `Se for um jogo, ele precisa ser jogável de verdade — com controles, estado, pontuação, fim de jogo e visual caprichado. ` +
+            `Se for um site ou app, precisa estar completo e com bom acabamento visual.\n\n` +
+            `O projeto roda ABRINDO index.html num servidor estático local. Portanto: nada de passo de build, nada de npm install, ` +
+            `nada de framework que precise ser compilado. HTML + CSS + JavaScript puro (pode usar biblioteca por CDN). ` +
+            `Sempre exista um "index.html" na raiz.\n\n` +
+            INSTRUCAO_DE_PROJETO_MULTIARQUIVO,
+          prompt: descricao
+        })
+      });
+
+      const dados: any = await resposta.json().catch(() => ({}));
+      if (!resposta.ok) return { error: dados?.error || `O OSONE CODE falhou (HTTP ${resposta.status}).` };
+      if (dados?.blocked) return { error: 'O modelo de código recusou o pedido por política de conteúdo.' };
+
+      const leitura = lerArquivosDoModelo(String(dados?.text || ''));
+      if (leitura.arquivos.length === 0) {
+        return {
+          error: leitura.cortada
+            ? 'A resposta do modelo de código foi cortada antes de fechar o primeiro arquivo. Peça algo menor ou mais simples.'
+            : 'O modelo de código não devolveu nenhum arquivo. Tente descrever o projeto de outro jeito.'
+        };
+      }
+
+      const gravados: string[] = [];
+      const falharam: string[] = [];
+      for (const arquivo of leitura.arquivos) {
+        const destino = `${pastaAlvo.replace(/\/+$/, '')}/${arquivo.caminho}`;
+        const r = await executeLocalAgentCall(
+          'controlar_pc',
+          { acao: 'escrever_arquivo', caminho: destino, conteudo: arquivo.conteudo },
+          apiKeys.localAgentToken, false,
+          { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.7-flash' }
+        );
+        if (r?.error) falharam.push(`${arquivo.caminho} (${r.error})`); else gravados.push(arquivo.caminho);
+      }
+
+      if (gravados.length === 0) {
+        return { error: `Nenhum arquivo pôde ser gravado em '${pastaAlvo}'. Motivos: ${falharam.join('; ')}` };
+      }
+
+      // Sem localhost, um index.html com módulos ES ou fetch abre em branco no file:// — o que
+      // parece projeto quebrado sem ser. Servir é o padrão, não um extra.
+      let url: string | null = null;
+      let avisoDoServidor: string | null = null;
+      if (args?.servir !== false) {
+        const s = await executeLocalAgentCall(
+          'controlar_pc', { acao: 'servir_pasta', caminho: pastaAlvo },
+          apiKeys.localAgentToken, false,
+          { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.7-flash' }
+        );
+        if (s?.url) {
+          url = s.url;
+          await executeLocalAgentCall(
+            'controlar_pc', { acao: 'abrir', caminho: s.url },
+            apiKeys.localAgentToken, false,
+            { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.7-flash' }
+          );
+        } else {
+          avisoDoServidor = s?.error || 'Não foi possível subir o servidor local.';
+        }
+      }
+
+      addNotification(
+        url ? `Projeto pronto e aberto em ${url}` : `Projeto gravado em ${pastaAlvo}`,
+        'success'
+      );
+
+      return {
+        result: `Projeto criado pelo OSONE CODE (modelo ${dados?.modeloUsado || OSONE_CODE_MODELO_PRINCIPAL}).`,
+        pasta: pastaAlvo,
+        arquivos: gravados,
+        url,
+        ...(falharam.length ? { naoGravados: falharam } : {}),
+        ...(leitura.cortada ? { aviso: `A resposta foi cortada: o arquivo '${leitura.caminhoCortado || '?'}' ficou de fora.` } : {}),
+        ...(avisoDoServidor ? { avisoDoServidor } : {})
+      };
+    } catch (err: any) {
+      return { error: `Falha ao criar o projeto: ${err?.message || err}` };
+    }
+  };
+
   const handleHomeChat = async (directMessage?: string) => {
     // Permitir prosseguir mesmo sem chave local para que o servidor possa tentar usar a chave de fallback
     if (((!homePrompt.trim() && !directMessage) && attachedFiles.length === 0)) {
@@ -8992,14 +9165,17 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
 
       functionDeclarations.push({
         name: "controlar_pc",
-        description: "CONTROLE TOTAL DO COMPUTADOR DO USUÁRIO. Ferramenta ÚNICA para tudo que envolve o PC: criar/escrever/apagar/mover arquivos e pastas, abrir e fechar aplicativos, rodar comandos de terminal, ajustar volume, controlar mídia, abrir configurações do sistema, mover o mouse, clicar, rolar a tela, digitar texto no campo em foco, pressionar teclas/atalhos e capturar uma screenshot da tela atual. Para abrir app/pasta/arquivo/URL, use acao='abrir' com caminho='nome ou caminho'; NÃO procure app no navegador nem em arquivos. O Agente Local resolve internamente apps instalados, atalhos do Windows, PATH, .desktop do Linux, pastas conhecidas e URLs, tentando fallback se uma forma falhar. Você tem permissão TOTAL — execute o que for pedido sem pedir autorização extra. A ÚNICA coisa proibida é apagar ou sobrescrever a própria instalação do OSONE. Caminhos aceitam formato absoluto (Windows 'C:\\Users\\voce\\Documentos' ou Linux '/home/voce/Documentos'), '~', ou apelido de pasta em português/inglês ('documentos', 'área de trabalho', 'downloads'). Consulte o bloco AMBIENTE REAL DESTE COMPUTADOR no seu contexto para saber o sistema e os caminhos reais — não adivinhe. Se a resposta trouxer 'error', a ação NÃO aconteceu: diga isso ao usuário, nunca afirme sucesso.",
+        description: "CONTROLE TOTAL DO COMPUTADOR DO USUÁRIO. Ferramenta ÚNICA para tudo que envolve o PC: criar/escrever/LER/EDITAR/apagar/mover arquivos e pastas, abrir e fechar aplicativos, rodar comandos de terminal, ajustar volume, controlar mídia, abrir configurações do sistema, mover o mouse, clicar, rolar a tela, digitar texto no campo em foco, pressionar teclas/atalhos e capturar uma screenshot da tela atual. Para abrir app/pasta/arquivo/URL, use acao='abrir' com caminho='nome ou caminho'; NÃO procure app no navegador nem em arquivos. O Agente Local resolve internamente apps instalados, atalhos do Windows, PATH, .desktop do Linux, pastas conhecidas e URLs, tentando fallback se uma forma falhar. Você tem permissão TOTAL — execute o que for pedido sem pedir autorização extra. A ÚNICA coisa proibida é apagar ou sobrescrever a própria instalação do OSONE. Caminhos aceitam formato absoluto (Windows 'C:\\Users\\voce\\Documentos' ou Linux '/home/voce/Documentos'), '~', ou apelido de pasta em português/inglês ('documentos', 'área de trabalho', 'downloads'). Consulte o bloco AMBIENTE REAL DESTE COMPUTADOR no seu contexto para saber o sistema e os caminhos reais — não adivinhe. Se a resposta trouxer 'error', a ação NÃO aconteceu: diga isso ao usuário, nunca afirme sucesso.",
         parameters: {
           type: Type.OBJECT,
           properties: {
-            acao: { type: Type.STRING, description: "O que fazer. Use exatamente um destes: 'criar_pasta', 'escrever_arquivo', 'apagar', 'mover', 'copiar', 'renomear', 'listar', 'abrir', 'fechar', 'terminal', 'volume', 'midia', 'configuracoes', 'checar_sistema', 'status', 'mover_mouse', 'clicar', 'rolar', 'digitar', 'tecla', 'capturar_tela', 'localizar'. Para clicar em qualquer coisa, comece SEMPRE por 'localizar' (passando 'alvo' com a descrição do elemento): a tela é OLHADA e a coordenada volta pronta. Funciona com qualquer programa e com qualquer elemento — botão escrito, ícone sem texto, aba, campo, miniatura. NUNCA estime coordenada você mesmo: já foi medido que a estimativa erra de 44 a 510 pixels. 'capturar_tela' serve para você VER o estado da tela (o que está aberto, se o clique deu certo), não para tirar coordenada." },
+            acao: { type: Type.STRING, description: "O que fazer. Use exatamente um destes: 'criar_pasta', 'escrever_arquivo', 'ler_arquivo', 'editar_arquivo', 'apagar', 'mover', 'copiar', 'renomear', 'listar', 'abrir', 'fechar', 'terminal', 'volume', 'midia', 'configuracoes', 'checar_sistema', 'status', 'mover_mouse', 'clicar', 'rolar', 'digitar', 'tecla', 'capturar_tela', 'localizar'. Para clicar em qualquer coisa, comece SEMPRE por 'localizar' (passando 'alvo' com a descrição do elemento): a tela é OLHADA e a coordenada volta pronta. Funciona com qualquer programa e com qualquer elemento — botão escrito, ícone sem texto, aba, campo, miniatura. NUNCA estime coordenada você mesmo: já foi medido que a estimativa erra de 44 a 510 pixels. 'capturar_tela' serve para você VER o estado da tela (o que está aberto, se o clique deu certo), não para tirar coordenada." },
             caminho: { type: Type.STRING, description: "Alvo da ação. Para 'abrir': nome do app instalado ('Chrome', 'VS Code', 'Calculadora'), pasta conhecida ('downloads', 'documentos'), caminho de arquivo/pasta ou URL. O Agente Local resolve internamente por sistema e tenta fallback; não coloque 'OSONE-AI' nem caminho relativo à pasta do app." },
             destino: { type: Type.STRING, description: "Caminho de destino, para 'mover', 'copiar' e 'renomear'." },
             conteudo: { type: Type.STRING, description: "Texto a gravar, para 'escrever_arquivo'." },
+            buscar: { type: Type.STRING, description: "Para 'editar_arquivo': o trecho EXATO que já está no arquivo e será trocado — com a mesma indentação e quebras de linha. Leia o arquivo antes com 'ler_arquivo' e copie o texto como ele está; não digite de memória. Se o trecho aparecer mais de uma vez, a edição é recusada: mande um trecho maior, que inclua as linhas em volta e seja único." },
+            substituir: { type: Type.STRING, description: "Para 'editar_arquivo': o texto que entra no lugar de 'buscar'. String vazia apaga o trecho." },
+            todas: { type: Type.BOOLEAN, description: "Para 'editar_arquivo': true troca TODAS as ocorrências do trecho. Padrão false (exige que o trecho seja único)." },
             comando: { type: Type.STRING, description: "O comando de terminal, para acao='terminal'. Use a sintaxe do sistema informado no seu contexto." },
             visivel: { type: Type.BOOLEAN, description: "Para 'terminal': true abre uma janela de terminal REAL na tela para o usuário ver o comando rodando." },
             subacao: { type: Type.STRING, description: "Detalhe da ação: volume ('set','up','down','mute','unmute'); midia ('playpause','play','pause','next','previous'); configuracoes ('camera','sound','network','bluetooth','privacy','display','taskbar','main')." },
@@ -9018,6 +9194,12 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
           },
           required: ["acao"]
         }
+      });
+
+      functionDeclarations.push({
+        name: "osone_code_criar_projeto",
+        description: OSONE_CODE_CRIAR_PROJETO_DESCRICAO,
+        parameters: OSONE_CODE_CRIAR_PROJETO_PARAMETROS(Type)
       });
 
       functionDeclarations.push({
@@ -9965,6 +10147,16 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
                 content: `${cabecalho} ${objetivo || ''}\n\n${linhas}\n\n${rel.resumo}`
               }]);
             }
+          } else if (call.name === 'osone_code_criar_projeto') {
+            const r = await criarProjetoComOsoneCode(call.args);
+            setChatHistory(prev => [...prev, {
+              id: Math.random().toString(36).substr(2, 9),
+              role: 'assistant' as const,
+              content: r?.error
+                ? `⚠️ [OSONE CODE] ${r.error}`
+                : `🛠️ [OSONE CODE] Projeto criado em \`${r.pasta}\` (${r.arquivos.length} arquivo(s)).` +
+                  (r.url ? `\n\nRodando em ${r.url}` : '')
+            }]);
           } else if (['controlar_pc', 'organize_folder_plan', 'organize_folder_execute'].includes(call.name)) {
             const agentRes = await executeLocalAgentCall(call.name, call.args, apiKeys.localAgentToken, false, { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.7-flash' });
             // 'capturar_tela' devolve uma imagem base64 potencialmente grande demais para virar
@@ -10899,6 +11091,11 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                   }
                 },
                 {
+                  name: "osone_code_criar_projeto",
+                  description: OSONE_CODE_CRIAR_PROJETO_DESCRICAO,
+                  parameters: OSONE_CODE_CRIAR_PROJETO_PARAMETROS(Type)
+                },
+                {
                   name: "osone_cowork",
                   description: "OSONE COWORK — executa uma sequência INTEIRA de passos no computador sozinho, SEM perguntar nada no meio. USE SEMPRE que a tarefa tiver mais de um clique encadeado, e NÃO pergunte ao usuário entre as etapas: ele já autorizou quando pediu a tarefa. A cada passo o COWORK executa, ESTIMA o tempo daquele tipo de ação, ESPERA a tela parar, TIRA UMA FOTO NOVA e confere se pegou; se não pegou, TENTA DE NOVO até 3 vezes. Antes de montar o plano, use 'controlar_pc' com 'capturar_tela' e 'localizar' para as coordenadas reais. Se a opção não estiver visível, explore menu de três pontos/Mais, rolagem curta, busca, botão exportar/download ou clique direito com acao='clicar' e args.botao='right'. Ele para sozinho e devolve o motivo quando um passo não confirma; aí olhe a tela e monte um plano NOVO. Ações de arquivo e terminal não entram. E nada de dinheiro: pagamento, compra, PIX, transferência ou cartão são recusados — leve o usuário até a tela e devolva o controle a ele.",
                   parameters: {
@@ -10925,14 +11122,17 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 },
                 {
                   name: "controlar_pc",
-                  description: "CONTROLE TOTAL DO COMPUTADOR DO USUÁRIO. Ferramenta ÚNICA para tudo que envolve o PC: criar/escrever/apagar/mover arquivos e pastas, abrir e fechar aplicativos, rodar comandos de terminal, ajustar volume, controlar mídia, abrir configurações do sistema, mover o mouse, clicar, rolar a tela, digitar texto no campo em foco, pressionar teclas/atalhos e capturar uma screenshot da tela atual. Para abrir app/pasta/arquivo/URL, use acao='abrir' com caminho='nome ou caminho'; NÃO procure app no navegador nem em arquivos. O Agente Local resolve internamente apps instalados, atalhos do Windows, PATH, .desktop do Linux, pastas conhecidas e URLs, tentando fallback se uma forma falhar. Você tem permissão TOTAL — execute o que for pedido sem pedir autorização extra. A ÚNICA coisa proibida é apagar ou sobrescrever a própria instalação do OSONE. Caminhos aceitam formato absoluto (Windows 'C:\\Users\\voce\\Documentos' ou Linux '/home/voce/Documentos'), '~', ou apelido de pasta em português/inglês ('documentos', 'área de trabalho', 'downloads'). Consulte o bloco AMBIENTE REAL DESTE COMPUTADOR no seu contexto para saber o sistema e os caminhos reais — não adivinhe. Se a resposta trouxer 'error', a ação NÃO aconteceu: diga isso ao usuário, nunca afirme sucesso.",
+                  description: "CONTROLE TOTAL DO COMPUTADOR DO USUÁRIO. Ferramenta ÚNICA para tudo que envolve o PC: criar/escrever/LER/EDITAR/apagar/mover arquivos e pastas, abrir e fechar aplicativos, rodar comandos de terminal, ajustar volume, controlar mídia, abrir configurações do sistema, mover o mouse, clicar, rolar a tela, digitar texto no campo em foco, pressionar teclas/atalhos e capturar uma screenshot da tela atual. Para abrir app/pasta/arquivo/URL, use acao='abrir' com caminho='nome ou caminho'; NÃO procure app no navegador nem em arquivos. O Agente Local resolve internamente apps instalados, atalhos do Windows, PATH, .desktop do Linux, pastas conhecidas e URLs, tentando fallback se uma forma falhar. Você tem permissão TOTAL — execute o que for pedido sem pedir autorização extra. A ÚNICA coisa proibida é apagar ou sobrescrever a própria instalação do OSONE. Caminhos aceitam formato absoluto (Windows 'C:\\Users\\voce\\Documentos' ou Linux '/home/voce/Documentos'), '~', ou apelido de pasta em português/inglês ('documentos', 'área de trabalho', 'downloads'). Consulte o bloco AMBIENTE REAL DESTE COMPUTADOR no seu contexto para saber o sistema e os caminhos reais — não adivinhe. Se a resposta trouxer 'error', a ação NÃO aconteceu: diga isso ao usuário, nunca afirme sucesso.",
         parameters: {
                                         type: Type.OBJECT,
                                         properties: {
-                                          acao: { type: Type.STRING, description: "O que fazer. Use exatamente um destes: 'criar_pasta', 'escrever_arquivo', 'apagar', 'mover', 'copiar', 'renomear', 'listar', 'abrir', 'fechar', 'terminal', 'volume', 'midia', 'configuracoes', 'checar_sistema', 'status', 'mover_mouse', 'clicar', 'rolar', 'digitar', 'tecla', 'capturar_tela', 'localizar'. Para clicar em qualquer coisa, comece SEMPRE por 'localizar' (passando 'alvo' com a descrição do elemento): a tela é OLHADA e a coordenada volta pronta. Funciona com qualquer programa e com qualquer elemento — botão escrito, ícone sem texto, aba, campo, miniatura. NUNCA estime coordenada você mesmo: já foi medido que a estimativa erra de 44 a 510 pixels. 'capturar_tela' serve para você VER o estado da tela (o que está aberto, se o clique deu certo), não para tirar coordenada." },
+                                          acao: { type: Type.STRING, description: "O que fazer. Use exatamente um destes: 'criar_pasta', 'escrever_arquivo', 'ler_arquivo', 'editar_arquivo', 'apagar', 'mover', 'copiar', 'renomear', 'listar', 'abrir', 'fechar', 'terminal', 'volume', 'midia', 'configuracoes', 'checar_sistema', 'status', 'mover_mouse', 'clicar', 'rolar', 'digitar', 'tecla', 'capturar_tela', 'localizar'. Para clicar em qualquer coisa, comece SEMPRE por 'localizar' (passando 'alvo' com a descrição do elemento): a tela é OLHADA e a coordenada volta pronta. Funciona com qualquer programa e com qualquer elemento — botão escrito, ícone sem texto, aba, campo, miniatura. NUNCA estime coordenada você mesmo: já foi medido que a estimativa erra de 44 a 510 pixels. 'capturar_tela' serve para você VER o estado da tela (o que está aberto, se o clique deu certo), não para tirar coordenada." },
                                           caminho: { type: Type.STRING, description: "Alvo da ação. Para 'abrir': nome do app instalado ('Chrome', 'VS Code', 'Calculadora'), pasta conhecida ('downloads', 'documentos'), caminho de arquivo/pasta ou URL. O Agente Local resolve internamente por sistema e tenta fallback; não coloque 'OSONE-AI' nem caminho relativo à pasta do app." },
                                           destino: { type: Type.STRING, description: "Caminho de destino, para 'mover', 'copiar' e 'renomear'." },
                                           conteudo: { type: Type.STRING, description: "Texto a gravar, para 'escrever_arquivo'." },
+            buscar: { type: Type.STRING, description: "Para 'editar_arquivo': o trecho EXATO que já está no arquivo e será trocado — com a mesma indentação e quebras de linha. Leia o arquivo antes com 'ler_arquivo' e copie o texto como ele está; não digite de memória. Se o trecho aparecer mais de uma vez, a edição é recusada: mande um trecho maior, que inclua as linhas em volta e seja único." },
+            substituir: { type: Type.STRING, description: "Para 'editar_arquivo': o texto que entra no lugar de 'buscar'. String vazia apaga o trecho." },
+            todas: { type: Type.BOOLEAN, description: "Para 'editar_arquivo': true troca TODAS as ocorrências do trecho. Padrão false (exige que o trecho seja único)." },
                                           comando: { type: Type.STRING, description: "O comando de terminal, para acao='terminal'. Use a sintaxe do sistema informado no seu contexto." },
                                           visivel: { type: Type.BOOLEAN, description: "Para 'terminal': true abre uma janela de terminal REAL na tela para o usuário ver o comando rodando." },
                                           subacao: { type: Type.STRING, description: "Detalhe da ação: volume ('set','up','down','mute','unmute'); midia ('playpause','play','pause','next','previous'); configuracoes ('camera','sound','network','bluetooth','privacy','display','taskbar','main')." },
@@ -11724,6 +11924,9 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                       id: call.id,
                       response: { result: waRes.error ? `ERRO: ${waRes.error}` : waRes.message }
                     });
+                  } else if (call.name === "osone_code_criar_projeto") {
+                    const r = await criarProjetoComOsoneCode(call.args);
+                    responses.push({ name: call.name, id: call.id, response: r });
                   } else if (call.name === "osone_cowork") {
                     const { passos } = call.args as any;
                     const rel: any = requestPaidFeature('cowork_browser')

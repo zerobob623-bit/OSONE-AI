@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import http from 'http';
 import crypto from 'crypto';
 import { exec, execFile, spawn } from 'child_process';
 import { Request, Response, NextFunction, Router } from 'express';
@@ -868,6 +869,232 @@ const handleWriteFile = (req: Request, res: Response) => {
   } catch (err: any) {
     logAudit('ERROR', 'WRITE_FILE_FAILED', err.message);
     return res.status(400).json({ error: err.message });
+  }
+};
+
+/**
+ * Um arquivo é texto legível ou é binário?
+ *
+ * Sem esta checagem, mandar um .png ou um .zip para o modelo despeja megabytes de lixo no
+ * contexto dele — caro, inútil, e capaz de estourar o limite de tokens sozinho. O teste do byte
+ * zero é o mesmo que o `git` usa para decidir isso, e acerta na prática para todo formato comum.
+ */
+const pareceBinario = (buffer: Buffer): boolean => {
+  const amostra = buffer.subarray(0, 8000);
+  return amostra.includes(0);
+};
+
+/** Teto de leitura: acima disso, o conteúdo vem cortado com aviso em vez de estourar o contexto. */
+const LIMITE_DE_LEITURA_BYTES = 512 * 1024;
+
+/**
+ * POST /read-file — LÊ o conteúdo de um arquivo de texto do computador.
+ *
+ * Existia escrita (`/write-file`) e listagem (`/path/list`), mas não leitura: o OSONE conseguia
+ * ACHAR e ABRIR um arquivo, e criar outro por cima, mas nunca ver o que já estava escrito. Na
+ * prática isso obrigava o usuário a compartilhar a tela para o modelo ler pela câmera o que
+ * poderia simplesmente ter lido do disco — e tornava impossível qualquer edição consciente, já
+ * que escrever sem ler antes é sempre sobrescrever às cegas.
+ */
+const handleReadFile = (req: Request, res: Response) => {
+  try {
+    const alvo = (req.body?.target || '').toString().trim();
+    if (!alvo) return res.status(400).json({ error: "Informe 'target' com o arquivo a ler." });
+
+    const caminho = path.resolve(resolveAnyPath(alvo));
+    if (!fs.existsSync(caminho)) {
+      return res.status(404).json({ error: `O arquivo '${caminho}' não existe.` });
+    }
+
+    const stats = fs.statSync(caminho);
+    if (stats.isDirectory()) {
+      return res.status(400).json({ error: `'${caminho}' é uma pasta, não um arquivo. Use a ação 'listar' para ver o que há dentro dela.` });
+    }
+
+    const buffer = fs.readFileSync(caminho);
+    if (pareceBinario(buffer)) {
+      return res.status(400).json({
+        error: `'${caminho}' é um arquivo binário (${stats.size} bytes), não texto legível. Não há conteúdo de texto para ler.`
+      });
+    }
+
+    const cortado = buffer.length > LIMITE_DE_LEITURA_BYTES;
+    const conteudo = buffer.subarray(0, LIMITE_DE_LEITURA_BYTES).toString('utf8');
+
+    logAudit('INFO', 'FILE_READ', `Arquivo lido: '${caminho}'`, { path: caminho, bytes: buffer.length, cortado });
+
+    return res.status(200).json({
+      path: caminho,
+      content: conteudo,
+      sizeBytes: stats.size,
+      lines: conteudo.split('\n').length,
+      truncated: cortado,
+      ...(cortado ? { aviso: `Arquivo grande demais: só os primeiros ${LIMITE_DE_LEITURA_BYTES} bytes foram lidos.` } : {})
+    });
+  } catch (err: any) {
+    logAudit('ERROR', 'FILE_READ_FAILED', err.message);
+    return res.status(500).json({ error: `Não foi possível ler o arquivo: ${err.message}` });
+  }
+};
+
+/**
+ * POST /edit-file — troca um trecho EXATO por outro, preservando o resto do arquivo.
+ *
+ * A alternativa que existia era reescrever o arquivo inteiro com `/write-file`, o que exige o
+ * modelo reproduzir de memória tudo que não queria mudar — e é assim que trabalho alheio some
+ * numa "edição". Aqui, o que não foi citado não é tocado.
+ *
+ * Uma ocorrência ambígua é RECUSADA em vez de resolvida por chute: se o trecho aparece cinco
+ * vezes, o modelo não disse qual delas queria, e trocar a primeira é adivinhação silenciosa.
+ * A recusa devolve a contagem, para ele reenviar um trecho maior que inclua o contexto único.
+ */
+const handleEditFile = (req: Request, res: Response) => {
+  try {
+    const alvo = (req.body?.target || '').toString().trim();
+    const buscar = req.body?.search;
+    const substituir = req.body?.replace;
+    const todas = req.body?.all === true;
+
+    if (!alvo) return res.status(400).json({ error: "Informe 'target' com o arquivo a editar." });
+    if (typeof buscar !== 'string' || buscar === '') {
+      return res.status(400).json({ error: "Informe 'search' com o trecho exato a ser substituído." });
+    }
+    if (typeof substituir !== 'string') {
+      return res.status(400).json({ error: "Informe 'replace' com o texto que entra no lugar (use string vazia para apagar o trecho)." });
+    }
+
+    const caminho = path.resolve(resolveAnyPath(alvo));
+    if (!fs.existsSync(caminho)) {
+      return res.status(404).json({ error: `O arquivo '${caminho}' não existe.` });
+    }
+    if (isProtectedInstallPath(caminho)) {
+      logAudit('SECURITY', 'EDIT_FILE_BLOCKED_SELF', `Edição bloqueada dentro da instalação do OSONE`, { caminho });
+      return res.status(403).json({ error: `Bloqueado: '${caminho}' fica dentro da instalação do OSONE em uso, o único lugar protegido.` });
+    }
+
+    const stats = fs.statSync(caminho);
+    if (stats.isDirectory()) {
+      return res.status(400).json({ error: `'${caminho}' é uma pasta, não um arquivo.` });
+    }
+
+    const buffer = fs.readFileSync(caminho);
+    if (pareceBinario(buffer)) {
+      return res.status(400).json({ error: `'${caminho}' é um arquivo binário; não dá para editar como texto.` });
+    }
+
+    const original = buffer.toString('utf8');
+    const ocorrencias = original.split(buscar).length - 1;
+
+    if (ocorrencias === 0) {
+      return res.status(404).json({
+        error: `O trecho procurado não existe em '${caminho}'. Leia o arquivo primeiro (ação 'ler_arquivo') e copie o texto EXATO, com a mesma indentação e quebras de linha.`
+      });
+    }
+    if (ocorrencias > 1 && !todas) {
+      return res.status(409).json({
+        error: `O trecho aparece ${ocorrencias} vezes em '${caminho}' — não dá para saber qual você quer. Envie um trecho maior, que inclua as linhas em volta e seja único, ou passe 'todas=true' para trocar todas as ocorrências.`,
+        ocorrencias
+      });
+    }
+
+    const novo = todas ? original.split(buscar).join(substituir) : original.replace(buscar, substituir);
+    fs.writeFileSync(caminho, novo, 'utf8');
+
+    logAudit('WARN', 'FILE_EDIT', `AÇÃO SENSÍVEL: arquivo '${caminho}' editado`, {
+      path: caminho, ocorrencias: todas ? ocorrencias : 1, bytesAntes: original.length, bytesDepois: novo.length
+    });
+
+    return res.status(200).json({
+      success: true,
+      path: caminho,
+      substituicoes: todas ? ocorrencias : 1,
+      message: `Arquivo '${path.basename(caminho)}' editado: ${todas ? ocorrencias : 1} trecho(s) substituído(s). O resto do arquivo ficou intacto.`
+    });
+  } catch (err: any) {
+    logAudit('ERROR', 'FILE_EDIT_FAILED', err.message);
+    return res.status(500).json({ error: `Não foi possível editar o arquivo: ${err.message}` });
+  }
+};
+
+/**
+ * SERVIDORES DE PREVIEW — "abre isso num localhost".
+ *
+ * Um jogo ou site gerado precisa rodar em http:// de verdade, não em file://: módulos ES, fetch,
+ * canvas com textura e praticamente todo import moderno são bloqueados pelo navegador na origem
+ * file://, e o resultado é uma página em branco que parece código quebrado sem ser.
+ *
+ * Servido pelo http nativo do Node, de propósito: `python -m http.server` não existe em toda
+ * máquina Windows e `npx serve` exige rede e download na primeira vez — os dois falham justamente
+ * no computador de quem só quer ver o jogo abrir.
+ */
+const servidoresDePreview = new Map<string, { servidor: http.Server; porta: number; pasta: string }>();
+
+const TIPOS_POR_EXTENSAO: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif', '.webp': 'image/webp', '.ico': 'image/x-icon',
+  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.mp4': 'video/mp4',
+  '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.txt': 'text/plain; charset=utf-8'
+};
+
+/**
+ * POST /serve-folder — sobe (ou reaproveita) um servidor estático para uma pasta.
+ *
+ * Só escuta em 127.0.0.1: um servidor de arquivos aberto em 0.0.0.0 exporia a pasta inteira para
+ * a rede local, e isso não é o que alguém pede ao dizer "abre num localhost".
+ */
+const handleServeFolder = async (req: Request, res: Response) => {
+  try {
+    const alvo = (req.body?.folder || '').toString().trim();
+    if (!alvo) return res.status(400).json({ error: "Informe 'folder' com a pasta a servir." });
+
+    const pasta = path.resolve(resolveAnyPath(alvo));
+    if (!fs.existsSync(pasta) || !fs.statSync(pasta).isDirectory()) {
+      return res.status(404).json({ error: `A pasta '${pasta}' não existe.` });
+    }
+
+    const jaAberto = servidoresDePreview.get(pasta);
+    if (jaAberto) {
+      return res.status(200).json({ url: `http://127.0.0.1:${jaAberto.porta}`, porta: jaAberto.porta, pasta, reaproveitado: true });
+    }
+
+    const servidor = http.createServer((requisicao, resposta) => {
+      try {
+        const caminhoPedido = decodeURIComponent((requisicao.url || '/').split('?')[0]);
+        // path.join normaliza ".." — comparar o resultado com a raiz é o que impede
+        // "GET /../../.ssh/id_rsa" de sair da pasta servida.
+        const destino = path.join(pasta, caminhoPedido);
+        if (destino !== pasta && !destino.startsWith(pasta + path.sep)) {
+          resposta.writeHead(403); return resposta.end('Fora da pasta servida.');
+        }
+        let arquivo = destino;
+        if (fs.existsSync(arquivo) && fs.statSync(arquivo).isDirectory()) arquivo = path.join(arquivo, 'index.html');
+        if (!fs.existsSync(arquivo)) {
+          resposta.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+          return resposta.end(`Não encontrado: ${caminhoPedido}`);
+        }
+        resposta.writeHead(200, { 'Content-Type': TIPOS_POR_EXTENSAO[path.extname(arquivo).toLowerCase()] || 'application/octet-stream' });
+        return resposta.end(fs.readFileSync(arquivo));
+      } catch (e: any) {
+        resposta.writeHead(500); return resposta.end(String(e?.message || e));
+      }
+    });
+
+    const porta: number = await new Promise((resolve, reject) => {
+      servidor.on('error', reject);
+      // Porta 0 = o sistema escolhe uma livre. Fixar um número daria conflito com o que já
+      // estivesse ocupando aquela porta na máquina do usuário.
+      servidor.listen(0, '127.0.0.1', () => resolve((servidor.address() as any).port));
+    });
+
+    servidoresDePreview.set(pasta, { servidor, porta, pasta });
+    logAudit('INFO', 'PREVIEW_SERVER', `Servidor de preview aberto para '${pasta}'`, { pasta, porta });
+
+    return res.status(200).json({ url: `http://127.0.0.1:${porta}`, porta, pasta, reaproveitado: false });
+  } catch (err: any) {
+    return res.status(500).json({ error: `Não foi possível abrir o servidor local: ${err.message}` });
   }
 };
 
@@ -3186,6 +3413,9 @@ agentRouter.post('/open-any', handleOpenAny);
 agentRouter.post('/close-app', handleCloseApp);
 agentRouter.post('/create-folder', handleCreateFolder);
 agentRouter.post('/write-file', handleWriteFile);
+agentRouter.post('/read-file', handleReadFile);
+agentRouter.post('/edit-file', handleEditFile);
+agentRouter.post('/serve-folder', handleServeFolder);
 agentRouter.post('/organize/plan', handleOrganizePlan);
 agentRouter.post('/organize/execute', handleOrganizeExecute);
 agentRouter.post('/file/trash', handleFileTrash);

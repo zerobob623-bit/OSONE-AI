@@ -796,6 +796,24 @@ export function useLocalAgent() {
             const pasta = caminho.startsWith('/') ? '/' + partes.join('/') : partes.join('/') || '~';
             return post('/write-file', { folder: pasta, fileName: nomeArquivo, content: conteudo ?? '' });
           }
+          case 'ler_arquivo':
+            if (!caminho) return { error: "Informe 'caminho' com o arquivo a ler (ex: '~/Documentos/nota.txt')." };
+            return post('/read-file', { target: caminho });
+          case 'servir_pasta':
+            if (!caminho) return { error: "Informe 'caminho' com a pasta a servir num localhost." };
+            return post('/serve-folder', { folder: caminho });
+          case 'editar_arquivo': {
+            if (!caminho) return { error: "Informe 'caminho' com o arquivo a editar." };
+            if (typeof args?.buscar !== 'string' || args.buscar === '') {
+              return { error: "Informe 'buscar' com o trecho EXATO a ser trocado. Leia o arquivo antes (acao='ler_arquivo') e copie o texto como ele está." };
+            }
+            return post('/edit-file', {
+              target: caminho,
+              search: args.buscar,
+              replace: typeof args?.substituir === 'string' ? args.substituir : '',
+              all: args?.todas === true
+            });
+          }
           case 'apagar':
             if (!caminho) return { error: "Informe 'caminho' do arquivo ou pasta a apagar." };
             return post('/path/delete', { target: caminho });

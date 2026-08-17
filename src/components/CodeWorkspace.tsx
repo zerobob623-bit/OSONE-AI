@@ -15,7 +15,7 @@ import { CodePreview } from './CodePreview';
 import { CodeGithubPanel } from './CodeGithubPanel';
 import { ApiKeys, CodeRepositoryFile } from '../types';
 import { buildCodeEditSystemInstruction, applyModelCodeResponse, parseSections, pareceDocumentoIncompleto } from '../lib/codeEdits';
-import { INSTRUCAO_DE_PROJETO_MULTIARQUIVO, aplicarArquivosDoModelo } from '../lib/projetoMultiArquivo';
+import { INSTRUCAO_DE_PROJETO_MULTIARQUIVO, OSONE_CODE_MODELO_PRINCIPAL, aplicarArquivosDoModelo } from '../lib/projetoMultiArquivo';
 import { montarPreview } from '../lib/montarPreview';
 import { ProblemaDoPreview, juntarProblemas, montarPedidoDeCorrecao } from '../lib/errosDoPreview';
 import { separarProjeto } from '../lib/separarArquivos';
@@ -25,11 +25,11 @@ import { compararProjeto, apenasOsTrechosQueMudaram, ComparacaoDeArquivo } from 
 import { caminhoDisponivel, chaveDeCaminho, nomeBaseDoCaminho, normalizarCaminhoDoCode, pastaDoCaminho } from '../lib/caminhosDoCode';
 import { GithubImportResult } from '../lib/githubDoCode';
 
-// Geração/edição de código (Hunter e Enxame/Swarm) sempre usa o melhor modelo GRATUITO
-// disponível para código (gemini-3.7-flash: o mais recente, sucessor direto do 3.6-flash e
-// líder em benchmarks de código/agentes entre os modelos gratuitos), independente do modelo configurado nos Ajustes
-// gerais do chat — qualidade de código não pode ficar refém de um modelo lite mais fraco.
-const OSONE_CODE_BEST_MODEL = "gemini-3.7-flash";
+// Geração/edição de código (Hunter e Enxame/Swarm) sempre usa o melhor modelo disponível para
+// código, independente do modelo configurado nos Ajustes gerais do chat. A constante vive em
+// lib/projetoMultiArquivo para a construção de projetos pedida por voz usar exatamente o mesmo
+// modelo — ver o comentário na definição.
+const OSONE_CODE_BEST_MODEL = OSONE_CODE_MODELO_PRINCIPAL;
 
 /**
  * Chama /api/generate com retentativas automáticas (backoff simples) para falhas
