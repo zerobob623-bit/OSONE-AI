@@ -1321,6 +1321,7 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
   - Use os caminhos reais do bloco AMBIENTE REAL DESTE COMPUTADOR (acima) e a sintaxe do sistema indicado ali. Não adivinhe o sistema operacional nem invente nomes de pasta em inglês se as pastas reais estiverem em português.
   - Em dúvida sobre o que existe numa pasta, chame antes com acao='listar' e aja sobre o que voltou, em vez de chutar nomes de arquivo.
   - LER ARQUIVO: para saber o que há DENTRO de um arquivo de texto, use acao='ler_arquivo' com o caminho. Você lê direto do disco — não peça ao usuário para compartilhar a tela, não abra o arquivo num editor para olhar por cima do ombro dele, e nunca diga que não consegue ver o conteúdo de um arquivo.
+    ARQUIVO GRANDE VEM EM PEDAÇOS: se a resposta trouxer 'aviso' dizendo que o arquivo não acabou, ele NÃO acabou. Chame 'ler_arquivo' de novo com 'linhaInicial' na linha seguinte à última lida, até chegar ao fim. Nunca afirme que algo não existe no arquivo tendo lido só o primeiro pedaço — a função que você procura pode estar na parte que você ainda não leu.
   - EDITAR ARQUIVO: para mudar parte de um arquivo existente, use acao='editar_arquivo' com 'buscar' (o trecho exato que está lá hoje) e 'substituir' (o que entra no lugar). SEMPRE leia o arquivo antes com 'ler_arquivo' e copie o trecho como ele está, com a mesma indentação — trecho digitado de memória não bate e a edição é recusada. Se o trecho aparecer mais de uma vez, mande um pedaço maior que inclua as linhas em volta.
     NÃO use 'escrever_arquivo' para editar algo que já existe: aquilo sobrescreve o arquivo inteiro, e tudo que você não reproduzir é perdido. 'escrever_arquivo' é só para arquivo novo ou para substituir o conteúdo inteiro de propósito.
   - Quando o usuário quiser VER o comando rodando ("abre o terminal", "mostra no terminal"), use acao='terminal' com visivel=true, que abre uma janela real na tela.
@@ -8194,55 +8195,134 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
         };
       }
 
+      const agente = (acao: string, extras: any = {}) => executeLocalAgentCall(
+        'controlar_pc', { acao, ...extras },
+        apiKeys.localAgentToken, false,
+        { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.7-flash' }
+      );
+
       const gravados: string[] = [];
       const falharam: string[] = [];
-      for (const arquivo of leitura.arquivos) {
-        const destino = `${pastaAlvo.replace(/\/+$/, '')}/${arquivo.caminho}`;
-        const r = await executeLocalAgentCall(
-          'controlar_pc',
-          { acao: 'escrever_arquivo', caminho: destino, conteudo: arquivo.conteudo },
-          apiKeys.localAgentToken, false,
-          { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.7-flash' }
-        );
-        if (r?.error) falharam.push(`${arquivo.caminho} (${r.error})`); else gravados.push(arquivo.caminho);
-      }
+      const gravarArquivos = async (arquivos: Array<{ caminho: string; conteudo: string }>) => {
+        for (const arquivo of arquivos) {
+          const destino = `${pastaAlvo.replace(/\/+$/, '')}/${arquivo.caminho}`;
+          const r = await agente('escrever_arquivo', { caminho: destino, conteudo: arquivo.conteudo });
+          if (r?.error) falharam.push(`${arquivo.caminho} (${r.error})`);
+          else if (!gravados.includes(arquivo.caminho)) gravados.push(arquivo.caminho);
+        }
+      };
+      await gravarArquivos(leitura.arquivos);
 
       if (gravados.length === 0) {
         return { error: `Nenhum arquivo pôde ser gravado em '${pastaAlvo}'. Motivos: ${falharam.join('; ')}` };
       }
+
+      /**
+       * LAÇO DE CONSERTO — confere o que acabou de ser gerado e manda corrigir.
+       *
+       * Sem isto o gerador era tiro único: se a resposta viesse cortada no meio de um script ou
+       * o html apontasse para um arquivo com outro nome, o projeto era gravado, o navegador abria
+       * em branco e ninguém ficava sabendo do erro — nem o usuário (que vê tela preta sem
+       * mensagem) nem o modelo (que já tinha respondido "pronto").
+       *
+       * A conferência é DETERMINÍSTICA e roda sem modelo nenhum: sintaxe de JavaScript, index.html
+       * presente e referências locais existentes. Não é o modelo se auto-avaliando — é o
+       * compilador do Node dizendo se o arquivo sequer é executável. O que ela não pega (bug de
+       * lógica, jogo injogável) continua não pego, e isso está dito na resposta em vez de
+       * subentendido.
+       */
+      const problemasFinais: Array<{ arquivo: string; problema: string }> = [];
+      let rodadasDeConserto = 0;
+      for (let rodada = 1; rodada <= 2; rodada++) {
+        const conferencia: any = await agente('conferir_projeto', { caminho: pastaAlvo });
+        if (conferencia?.error || conferencia?.ok !== false) break;
+
+        const problemas: Array<{ arquivo: string; problema: string }> = conferencia.problemas || [];
+        if (problemas.length === 0) break;
+        problemasFinais.splice(0, problemasFinais.length, ...problemas);
+
+        addNotification(`OSONE CODE achou ${problemas.length} defeito(s) e está corrigindo...`, 'info');
+        rodadasDeConserto = rodada;
+
+        // Só os arquivos com problema voltam para o modelo: mandar o projeto inteiro a cada
+        // rodada gasta contexto e aumenta a chance de a resposta ser cortada de novo — que é
+        // justamente o defeito que estamos consertando.
+        const paraCorrigir = [...new Set(problemas.map(p => p.arquivo))];
+        const trechos: string[] = [];
+        for (const rel of paraCorrigir) {
+          const lido: any = await agente('ler_arquivo', { caminho: `${pastaAlvo.replace(/\/+$/, '')}/${rel}` });
+          trechos.push(`--- ${rel} ---\n${lido?.content ?? '(não foi possível ler; pode estar faltando)'}`);
+        }
+
+        const conserto = await fetch('/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            codeAiProvider: 'gemini',
+            clientApiKey: apiKeys.gemini || '',
+            model: OSONE_CODE_MODELO_PRINCIPAL,
+            modeloDeReserva: apiKeys.geminiModel || '',
+            unrestricted: true,
+            systemInstruction:
+              `Você é o motor de código do OSONE CODE, corrigindo um projeto que acabou de gerar e NÃO ABRE.\n\n` +
+              `Reescreva por completo apenas os arquivos com defeito. Não invente arquivos novos sem necessidade e ` +
+              `não mude o que já funciona. Se um arquivo referenciado não existe, ou você o cria, ou corrige a ` +
+              `referência para o nome do arquivo que existe de fato.\n\n` +
+              INSTRUCAO_DE_PROJETO_MULTIARQUIVO,
+            prompt:
+              `O projeto foi gerado a partir deste pedido: "${descricao}"\n\n` +
+              `Arquivos existentes na pasta: ${(conferencia.arquivos || []).join(', ')}\n\n` +
+              `DEFEITOS ENCONTRADOS:\n${problemas.map(p => `- ${p.arquivo}: ${p.problema}`).join('\n')}\n\n` +
+              `CONTEÚDO ATUAL DOS ARQUIVOS COM DEFEITO:\n${trechos.join('\n\n')}`
+          })
+        });
+
+        const dadosConserto: any = await conserto.json().catch(() => ({}));
+        if (!conserto.ok) break;
+        const correcoes = lerArquivosDoModelo(String(dadosConserto?.text || ''));
+        if (correcoes.arquivos.length === 0) break;
+        await gravarArquivos(correcoes.arquivos);
+      }
+
+      // Última palavra é da conferência, não da tentativa: se ainda houver defeito depois das
+      // rodadas, isso vai na resposta em vez de o modelo anunciar sucesso.
+      const conferenciaFinal: any = await agente('conferir_projeto', { caminho: pastaAlvo });
+      const aindaComDefeito: Array<{ arquivo: string; problema: string }> =
+        conferenciaFinal?.ok === false ? (conferenciaFinal.problemas || []) : [];
 
       // Sem localhost, um index.html com módulos ES ou fetch abre em branco no file:// — o que
       // parece projeto quebrado sem ser. Servir é o padrão, não um extra.
       let url: string | null = null;
       let avisoDoServidor: string | null = null;
       if (args?.servir !== false) {
-        const s = await executeLocalAgentCall(
-          'controlar_pc', { acao: 'servir_pasta', caminho: pastaAlvo },
-          apiKeys.localAgentToken, false,
-          { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.7-flash' }
-        );
+        const s: any = await agente('servir_pasta', { caminho: pastaAlvo });
         if (s?.url) {
           url = s.url;
-          await executeLocalAgentCall(
-            'controlar_pc', { acao: 'abrir', caminho: s.url },
-            apiKeys.localAgentToken, false,
-            { chaveGemini: apiKeys.gemini || '', modeloGemini: apiKeys.geminiModel || 'gemini-3.7-flash' }
-          );
+          await agente('abrir', { caminho: s.url });
         } else {
           avisoDoServidor = s?.error || 'Não foi possível subir o servidor local.';
         }
       }
 
       addNotification(
-        url ? `Projeto pronto e aberto em ${url}` : `Projeto gravado em ${pastaAlvo}`,
-        'success'
+        aindaComDefeito.length > 0
+          ? `Projeto gravado em ${pastaAlvo}, mas com ${aindaComDefeito.length} defeito(s) que não consegui corrigir.`
+          : url ? `Projeto pronto e aberto em ${url}` : `Projeto gravado em ${pastaAlvo}`,
+        aindaComDefeito.length > 0 ? 'error' : 'success'
       );
 
       return {
-        result: `Projeto criado pelo OSONE CODE (modelo ${dados?.modeloUsado || OSONE_CODE_MODELO_PRINCIPAL}).`,
+        result: aindaComDefeito.length > 0
+          ? `Projeto criado pelo OSONE CODE, mas a conferência ainda aponta defeitos — avise o usuário disso em vez de dizer que ficou pronto.`
+          : `Projeto criado e conferido pelo OSONE CODE (modelo ${dados?.modeloUsado || OSONE_CODE_MODELO_PRINCIPAL}).`,
         pasta: pastaAlvo,
         arquivos: gravados,
         url,
+        conferencia: aindaComDefeito.length === 0
+          ? 'Sem erro de sintaxe no JavaScript, index.html presente e nenhuma referência quebrada. (Esta conferência não testa a jogabilidade nem a lógica — se algo estiver estranho ao usar, é só pedir o ajuste.)'
+          : undefined,
+        ...(rodadasDeConserto > 0 ? { rodadasDeConserto } : {}),
+        ...(aindaComDefeito.length ? { defeitosNaoResolvidos: aindaComDefeito } : {}),
         ...(falharam.length ? { naoGravados: falharam } : {}),
         ...(leitura.cortada ? { aviso: `A resposta foi cortada: o arquivo '${leitura.caminhoCortado || '?'}' ficou de fora.` } : {}),
         ...(avisoDoServidor ? { avisoDoServidor } : {})
@@ -9173,6 +9253,8 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
             caminho: { type: Type.STRING, description: "Alvo da ação. Para 'abrir': nome do app instalado ('Chrome', 'VS Code', 'Calculadora'), pasta conhecida ('downloads', 'documentos'), caminho de arquivo/pasta ou URL. O Agente Local resolve internamente por sistema e tenta fallback; não coloque 'OSONE-AI' nem caminho relativo à pasta do app." },
             destino: { type: Type.STRING, description: "Caminho de destino, para 'mover', 'copiar' e 'renomear'." },
             conteudo: { type: Type.STRING, description: "Texto a gravar, para 'escrever_arquivo'." },
+            linhaInicial: { type: Type.NUMBER, description: "Para 'ler_arquivo': a partir de qual linha ler (a primeira linha é 1). Arquivo grande vem em pedaços — se a resposta disser que o arquivo não acabou, chame de novo com a linha seguinte à última lida. Omita para começar do início." },
+            linhaFinal: { type: Type.NUMBER, description: "Para 'ler_arquivo': até qual linha ler. Omita para ir até o fim (respeitando o tamanho máximo de uma leitura)." },
             buscar: { type: Type.STRING, description: "Para 'editar_arquivo': o trecho EXATO que já está no arquivo e será trocado — com a mesma indentação e quebras de linha. Leia o arquivo antes com 'ler_arquivo' e copie o texto como ele está; não digite de memória. Se o trecho aparecer mais de uma vez, a edição é recusada: mande um trecho maior, que inclua as linhas em volta e seja único." },
             substituir: { type: Type.STRING, description: "Para 'editar_arquivo': o texto que entra no lugar de 'buscar'. String vazia apaga o trecho." },
             todas: { type: Type.BOOLEAN, description: "Para 'editar_arquivo': true troca TODAS as ocorrências do trecho. Padrão false (exige que o trecho seja único)." },
@@ -11130,6 +11212,8 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                                           caminho: { type: Type.STRING, description: "Alvo da ação. Para 'abrir': nome do app instalado ('Chrome', 'VS Code', 'Calculadora'), pasta conhecida ('downloads', 'documentos'), caminho de arquivo/pasta ou URL. O Agente Local resolve internamente por sistema e tenta fallback; não coloque 'OSONE-AI' nem caminho relativo à pasta do app." },
                                           destino: { type: Type.STRING, description: "Caminho de destino, para 'mover', 'copiar' e 'renomear'." },
                                           conteudo: { type: Type.STRING, description: "Texto a gravar, para 'escrever_arquivo'." },
+            linhaInicial: { type: Type.NUMBER, description: "Para 'ler_arquivo': a partir de qual linha ler (a primeira linha é 1). Arquivo grande vem em pedaços — se a resposta disser que o arquivo não acabou, chame de novo com a linha seguinte à última lida. Omita para começar do início." },
+            linhaFinal: { type: Type.NUMBER, description: "Para 'ler_arquivo': até qual linha ler. Omita para ir até o fim (respeitando o tamanho máximo de uma leitura)." },
             buscar: { type: Type.STRING, description: "Para 'editar_arquivo': o trecho EXATO que já está no arquivo e será trocado — com a mesma indentação e quebras de linha. Leia o arquivo antes com 'ler_arquivo' e copie o texto como ele está; não digite de memória. Se o trecho aparecer mais de uma vez, a edição é recusada: mande um trecho maior, que inclua as linhas em volta e seja único." },
             substituir: { type: Type.STRING, description: "Para 'editar_arquivo': o texto que entra no lugar de 'buscar'. String vazia apaga o trecho." },
             todas: { type: Type.BOOLEAN, description: "Para 'editar_arquivo': true troca TODAS as ocorrências do trecho. Padrão false (exige que o trecho seja único)." },

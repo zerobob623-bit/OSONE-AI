@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import http from 'http';
+import vm from 'vm';
 import crypto from 'crypto';
 import { exec, execFile, spawn } from 'child_process';
 import { Request, Response, NextFunction, Router } from 'express';
@@ -884,8 +885,18 @@ const pareceBinario = (buffer: Buffer): boolean => {
   return amostra.includes(0);
 };
 
-/** Teto de leitura: acima disso, o conteúdo vem cortado com aviso em vez de estourar o contexto. */
-const LIMITE_DE_LEITURA_BYTES = 512 * 1024;
+/**
+ * Teto de UMA leitura. Não é o teto do arquivo: o que não couber é pedido por faixa de linhas.
+ *
+ * O primeiro valor (512 KB) foi escolhido de olho no contexto do modelo e não sobreviveu ao caso
+ * real mais importante — o próprio App.tsx do OSONE tem 770 KB, então "leia seu próprio código"
+ * devolvia dois terços do arquivo e nada avisava que faltava o resto. Ler tudo de uma vez também
+ * não é a resposta: 770 KB numa única resposta de ferramenta é contexto queimado à toa.
+ *
+ * A saída é a faixa de linhas: cada pedido traz um pedaço legível e diz onde parou, e o modelo
+ * pede o resto quando precisa. 256 KB por vez é o suficiente para uns 6 mil linhas de código.
+ */
+const LIMITE_DE_LEITURA_BYTES = 256 * 1024;
 
 /**
  * POST /read-file — LÊ o conteúdo de um arquivo de texto do computador.
@@ -918,18 +929,72 @@ const handleReadFile = (req: Request, res: Response) => {
       });
     }
 
-    const cortado = buffer.length > LIMITE_DE_LEITURA_BYTES;
-    const conteudo = buffer.subarray(0, LIMITE_DE_LEITURA_BYTES).toString('utf8');
+    /**
+     * O corte é por LINHA, nunca por byte.
+     *
+     * Cortar no byte 262144 tem duas consequências ruins, e as duas são silenciosas. A primeira é
+     * partir um caractere multibyte no meio — em português isso acontece em qualquer "ç" ou "ã"
+     * que caia na fronteira, e o modelo recebe um caractere corrompido. A segunda é pior para o
+     * uso principal desta rota: a última linha vem pela metade, o modelo a copia achando que é o
+     * texto real do arquivo, usa como 'buscar' numa edição, e a edição é recusada por não bater —
+     * sem nada indicando que a causa foi o corte da leitura.
+     */
+    const todasAsLinhas = buffer.toString('utf8').split('\n');
+    const total = todasAsLinhas.length;
 
-    logAudit('INFO', 'FILE_READ', `Arquivo lido: '${caminho}'`, { path: caminho, bytes: buffer.length, cortado });
+    const pedidoInicio = Number(req.body?.linhaInicial);
+    const pedidoFim = Number(req.body?.linhaFinal);
+    const temFaixa = Number.isFinite(pedidoInicio) || Number.isFinite(pedidoFim);
+
+    // Faixa em base 1, como o usuário e os editores contam linhas — não base 0.
+    let inicio = Number.isFinite(pedidoInicio) ? Math.max(1, Math.floor(pedidoInicio)) : 1;
+    let fim = Number.isFinite(pedidoFim) ? Math.min(total, Math.floor(pedidoFim)) : total;
+    if (inicio > total) {
+      return res.status(400).json({
+        error: `O arquivo tem ${total} linhas; a linha inicial pedida (${inicio}) está além do fim.`,
+        totalDeLinhas: total
+      });
+    }
+    if (fim < inicio) fim = total;
+
+    // Mesmo com faixa explícita, o orçamento de bytes vale: pedir 1..999999 num arquivo enorme
+    // não pode devolver o arquivo inteiro por um detalhe de formulação.
+    const selecionadas: string[] = [];
+    let bytes = 0;
+    let ultimaLinhaLida = inicio - 1;
+    for (let i = inicio; i <= fim; i++) {
+      const linha = todasAsLinhas[i - 1] ?? '';
+      const custo = Buffer.byteLength(linha, 'utf8') + 1;
+      if (bytes + custo > LIMITE_DE_LEITURA_BYTES && selecionadas.length > 0) break;
+      selecionadas.push(linha);
+      bytes += custo;
+      ultimaLinhaLida = i;
+    }
+
+    const faltaDepois = ultimaLinhaLida < total;
+    const conteudo = selecionadas.join('\n');
+
+    logAudit('INFO', 'FILE_READ', `Arquivo lido: '${caminho}'`, {
+      path: caminho, bytes: buffer.length, linhas: `${inicio}-${ultimaLinhaLida}/${total}`
+    });
 
     return res.status(200).json({
       path: caminho,
       content: conteudo,
       sizeBytes: stats.size,
-      lines: conteudo.split('\n').length,
-      truncated: cortado,
-      ...(cortado ? { aviso: `Arquivo grande demais: só os primeiros ${LIMITE_DE_LEITURA_BYTES} bytes foram lidos.` } : {})
+      totalDeLinhas: total,
+      linhaInicial: inicio,
+      linhaFinal: ultimaLinhaLida,
+      truncated: faltaDepois || inicio > 1,
+      ...(faltaDepois
+        ? {
+            aviso: `Você leu as linhas ${inicio} a ${ultimaLinhaLida} de ${total}. O arquivo NÃO acabou aqui. ` +
+              `Para continuar, chame 'ler_arquivo' de novo com linhaInicial=${ultimaLinhaLida + 1}. ` +
+              `Não conclua nada sobre o que existe ou não no arquivo antes de ler o resto.`
+          }
+        : temFaixa
+          ? { aviso: `Linhas ${inicio} a ${ultimaLinhaLida} de ${total} (fim do arquivo).` }
+          : {})
     });
   } catch (err: any) {
     logAudit('ERROR', 'FILE_READ_FAILED', err.message);
@@ -1095,6 +1160,110 @@ const handleServeFolder = async (req: Request, res: Response) => {
     return res.status(200).json({ url: `http://127.0.0.1:${porta}`, porta, pasta, reaproveitado: false });
   } catch (err: any) {
     return res.status(500).json({ error: `Não foi possível abrir o servidor local: ${err.message}` });
+  }
+};
+
+/**
+ * POST /check-project — procura, numa pasta de projeto estático, os defeitos que deixam a
+ * página EM BRANCO.
+ *
+ * Isto não julga se o jogo é divertido nem se o código é bonito: é uma checagem determinística,
+ * sem modelo nenhum envolvido, dos três jeitos mais comuns de um projeto gerado nascer morto —
+ * e os três se parecem exatamente igual para o usuário (tela preta, sem mensagem):
+ *
+ *   1. JS COM ERRO DE SINTAXE. É o efeito clássico da resposta cortada no meio do arquivo: uma
+ *      chave que não fecha e o navegador não executa NADA daquele script.
+ *   2. FALTA index.html. Sem ele o servidor devolve 404 na raiz.
+ *   3. REFERÊNCIA A ARQUIVO QUE NÃO EXISTE. O html chama "game.js" e o modelo gravou "main.js";
+ *      a página carrega vazia e o erro fica escondido no console.
+ *
+ * O que ele NÃO pega: bug de lógica, jogo injogável, física errada. Para isso não há atalho
+ * honesto sem de fato rodar o jogo — e dizer que pega seria pior do que não ter a checagem.
+ */
+const erroDeSintaxeNoJs = (codigo: string, nome: string): string | null => {
+  /**
+   * `new vm.Script` compila sem executar nada — é a checagem de sintaxe do próprio Node, sem
+   * rodar uma linha do jogo. A ressalva é que ela usa a gramática de script clássico, onde
+   * `import`/`export` de topo são inválidos por definição; um projeto moderno perfeitamente
+   * correto seria reprovado por isso. Por isso o módulo é compilado embrulhado numa função
+   * assíncrona, forma que aceita a sintaxe de módulo e ainda pega chave sem fechar — que é o
+   * defeito real atrás de uma resposta cortada.
+   */
+  const tentar = (fonte: string): string | null => {
+    try { new vm.Script(fonte, { filename: nome }); return null; }
+    catch (e: any) { return e?.message || String(e); }
+  };
+  const direto = tentar(codigo);
+  if (!direto) return null;
+  if (!/^\s*(import|export)\s/m.test(codigo)) return direto;
+  return tentar(`(async () => {\n${codigo.replace(/^\s*(import|export)\b.*$/gm, '')}\n})`);
+};
+
+const handleCheckProject = (req: Request, res: Response) => {
+  try {
+    const alvo = (req.body?.folder || '').toString().trim();
+    if (!alvo) return res.status(400).json({ error: "Informe 'folder' com a pasta do projeto." });
+
+    const pasta = path.resolve(resolveAnyPath(alvo));
+    if (!fs.existsSync(pasta) || !fs.statSync(pasta).isDirectory()) {
+      return res.status(404).json({ error: `A pasta '${pasta}' não existe.` });
+    }
+
+    const problemas: Array<{ arquivo: string; problema: string }> = [];
+
+    const listarRecursivo = (dir: string, prefixo = ''): string[] => {
+      const saida: string[] = [];
+      for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (item.name === 'node_modules' || item.name.startsWith('.')) continue;
+        const rel = prefixo ? `${prefixo}/${item.name}` : item.name;
+        if (item.isDirectory()) saida.push(...listarRecursivo(path.join(dir, item.name), rel));
+        else saida.push(rel);
+      }
+      return saida;
+    };
+
+    const arquivos = listarRecursivo(pasta);
+
+    if (!arquivos.some(a => a.toLowerCase() === 'index.html')) {
+      problemas.push({ arquivo: 'index.html', problema: "Não existe um 'index.html' na raiz do projeto — o servidor não tem o que abrir." });
+    }
+
+    for (const rel of arquivos) {
+      const completo = path.join(pasta, rel);
+      const ext = path.extname(rel).toLowerCase();
+
+      if (ext === '.js' || ext === '.mjs') {
+        const codigo = fs.readFileSync(completo, 'utf8');
+        const erro = erroDeSintaxeNoJs(codigo, rel);
+        if (erro) problemas.push({ arquivo: rel, problema: `Erro de sintaxe no JavaScript: ${erro}` });
+      }
+
+      if (ext === '.html') {
+        const html = fs.readFileSync(completo, 'utf8');
+        const referencias = [...html.matchAll(/(?:src|href)\s*=\s*["']([^"']+)["']/gi)].map(m => m[1]);
+        for (const ref of referencias) {
+          // Só referências locais: http(s), //cdn, data: e âncoras não são arquivos desta pasta.
+          if (/^(https?:)?\/\//i.test(ref) || ref.startsWith('data:') || ref.startsWith('#') || ref.startsWith('mailto:')) continue;
+          const limpo = ref.split('?')[0].split('#')[0].replace(/^\.?\//, '');
+          if (!limpo) continue;
+          if (!fs.existsSync(path.join(pasta, limpo))) {
+            problemas.push({ arquivo: rel, problema: `Aponta para '${ref}', que não existe na pasta do projeto.` });
+          }
+        }
+      }
+    }
+
+    return res.status(200).json({
+      pasta,
+      arquivos,
+      ok: problemas.length === 0,
+      problemas,
+      resumo: problemas.length === 0
+        ? `Nenhum defeito estrutural: ${arquivos.length} arquivo(s), JavaScript sem erro de sintaxe e nenhuma referência quebrada.`
+        : `${problemas.length} problema(s) que impediriam o projeto de abrir.`
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: `Não foi possível conferir o projeto: ${err.message}` });
   }
 };
 
@@ -3416,6 +3585,7 @@ agentRouter.post('/write-file', handleWriteFile);
 agentRouter.post('/read-file', handleReadFile);
 agentRouter.post('/edit-file', handleEditFile);
 agentRouter.post('/serve-folder', handleServeFolder);
+agentRouter.post('/check-project', handleCheckProject);
 agentRouter.post('/organize/plan', handleOrganizePlan);
 agentRouter.post('/organize/execute', handleOrganizeExecute);
 agentRouter.post('/file/trash', handleFileTrash);
