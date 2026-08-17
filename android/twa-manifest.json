@@ -21,7 +21,7 @@
     "alias": "osone"
   },
   "appVersionCode": 10504,
-  "appVersion": "1.6.1",
+  "appVersion": "1.6.2",
   "shortcuts": [],
   "generatorApp": "@bubblewrap/cli",
   "webManifestUrl": "https://osone-ai-six.vercel.app/manifest.json",
