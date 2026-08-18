@@ -48,6 +48,15 @@ interface TokenStore {
   authCodes: Record<string, { createdAt: number; used: boolean }>;
   accessTokens: Record<string, { refreshToken: string; expiresAt: number }>;
   refreshTokens: Record<string, { issuedAt: number }>;
+  /**
+   * Prova de que quem está aprovando o vínculo é o dono desta instalação, não um visitante
+   * qualquer que alcançou a tela de consentimento. Sem isto, /api/google-home/approve emitia
+   * o código de autorização para QUALQUER requisição com um redirect_uri válido do Google —
+   * a tela HTML pedia o código, mas nada no servidor de fato o exigia. Mesma ideia do
+   * pairingCode do modo nuvem (googleHomeCloudService.ts), só que guardado neste arquivo
+   * local em vez do Firestore.
+   */
+  pairingCodes: Record<string, { expiresAt: number }>;
 }
 
 function loadTokenStore(): TokenStore {
@@ -59,13 +68,14 @@ function loadTokenStore(): TokenStore {
       return {
         authCodes: bruto?.authCodes || {},
         accessTokens: bruto?.accessTokens || {},
-        refreshTokens: bruto?.refreshTokens || {}
+        refreshTokens: bruto?.refreshTokens || {},
+        pairingCodes: bruto?.pairingCodes || {}
       };
     }
   } catch (e) {
     console.error('Erro ao ler google-home-tokens.json:', e);
   }
-  return { authCodes: {}, accessTokens: {}, refreshTokens: {} };
+  return { authCodes: {}, accessTokens: {}, refreshTokens: {}, pairingCodes: {} };
 }
 
 /**
@@ -87,6 +97,11 @@ function pruneTokenStore(store: TokenStore): TokenStore {
   for (const [token, entry] of Object.entries(store.accessTokens)) {
     if (entry.expiresAt <= now) {
       delete store.accessTokens[token];
+    }
+  }
+  for (const [codigo, entry] of Object.entries(store.pairingCodes || {})) {
+    if (entry.expiresAt <= now) {
+      delete store.pairingCodes[codigo];
     }
   }
   return store;
@@ -122,12 +137,49 @@ export function checkGoogleHomeConfig() {
   };
 }
 
+function normalizePairingCode(code: string): string {
+  return String(code || '').toUpperCase().replace(/[^A-Z2-9]/g, '');
+}
+
+/**
+ * Código de 8 caracteres exibido só para quem já alcança este servidor pela própria máquina
+ * (rota GET /api/google-home/pairing-code, protegida por somenteDaPropriaMaquina em
+ * server.ts). É a prova de dono que faltava: /approve passou a exigi-lo antes de emitir
+ * qualquer código de autorização. Vale 10 minutos e é de uso único, mesmo padrão do
+ * pairingCode do modo nuvem em googleHomeCloudService.ts.
+ */
+export function issueLocalPairingCode(): { code: string; expiresAt: number } {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const chars = Array.from(crypto.randomBytes(8), byte => alphabet[byte % alphabet.length]).join('');
+  const code = `${chars.slice(0, 4)}-${chars.slice(4)}`;
+  const expiresAt = Date.now() + 10 * 60 * 1000;
+
+  const store = loadTokenStore();
+  store.pairingCodes[normalizePairingCode(code)] = { expiresAt };
+  saveTokenStore(store);
+  return { code, expiresAt };
+}
+
 /**
  * Gera um código de autorização de curta duração (10 min) após o usuário aprovar o vínculo
- * na tela de consentimento local.
+ * na tela de consentimento local — só depois de confirmar o código de pareamento gerado pela
+ * própria máquina (ver issueLocalPairingCode). Sem essa confirmação, qualquer requisição HTTP
+ * a /api/google-home/approve com um redirect_uri válido do Google recebia um código de
+ * autorização de volta, sem prova nenhuma de que quem pediu é o dono da casa.
  */
-export function issueAuthCode(): string {
+export function issueAuthCode(pairingCodeInformado: string): string {
+  const normalized = normalizePairingCode(pairingCodeInformado);
+  if (normalized.length !== 8) {
+    throw new Error('Digite o código de 8 caracteres mostrado no OSONE (Ajustes > Google Home).');
+  }
+
   const store = loadTokenStore();
+  const entry = store.pairingCodes[normalized];
+  if (!entry || entry.expiresAt <= Date.now()) {
+    throw new Error('Código de pareamento inválido ou vencido. Gere um novo no OSONE (Ajustes > Google Home) e tente de novo.');
+  }
+  delete store.pairingCodes[normalized]; // uso único
+
   const code = crypto.randomBytes(24).toString('hex');
   store.authCodes[code] = { createdAt: Date.now(), used: false };
   saveTokenStore(store);
@@ -196,7 +248,7 @@ export function isValidAccessToken(token: string): boolean {
 }
 
 export function revokeAllTokens(): void {
-  saveTokenStore({ authCodes: {}, accessTokens: {}, refreshTokens: {} });
+  saveTokenStore({ authCodes: {}, accessTokens: {}, refreshTokens: {}, pairingCodes: {} });
 }
 
 /**

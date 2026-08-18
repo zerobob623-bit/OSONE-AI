@@ -59,6 +59,9 @@
     <div id="pairingBlock">
       <label for="pairingCode">Código mostrado no OSONE instalado</label>
       <input id="pairingCode" inputmode="text" autocomplete="one-time-code" maxlength="9" placeholder="ABCD-EFGH" />
+      <p style="font-size:11px;color:#71717a;margin:6px 0 0;text-align:left;">
+        Abra o OSONE no computador onde ele está instalado (Ajustes &gt; Google Home) para gerar este código. Ele prova que quem está aprovando é o dono desta instalação.
+      </p>
     </div>
     <button id="approveBtn">Concordar e vincular</button>
     <button id="cancelBtn">Cancelar</button>
@@ -69,10 +72,11 @@
     const redirectUri = params.get('redirect_uri');
     const state = params.get('state') || '';
     const clientId = params.get('client_id') || '';
-    const cloudMode = params.get('cloud') === '1';
     const statusEl = document.getElementById('status');
     const pairingInput = document.getElementById('pairingCode');
-    if (!cloudMode) document.getElementById('pairingBlock').style.display = 'none';
+    // O código de pareamento prova quem é o dono da instalação — necessário nos dois modos.
+    // Antes era pulado fora do modo nuvem, e era exatamente essa brecha que permitia aprovar
+    // o vínculo sem prova nenhuma de identidade no modo self-host.
 
     pairingInput.addEventListener('input', () => {
       const clean = pairingInput.value.toUpperCase().replace(/[^A-Z2-9]/g, '').slice(0, 8);
@@ -92,7 +96,7 @@
         statusEl.textContent = 'redirect_uri ausente na URL — não é possível continuar.';
         return;
       }
-      if (cloudMode && pairingInput.value.replace(/[^A-Z2-9]/g, '').length !== 8) {
+      if (pairingInput.value.replace(/[^A-Z2-9]/g, '').length !== 8) {
         statusEl.textContent = 'Digite o código de 8 caracteres exibido no OSONE.';
         pairingInput.focus();
         return;

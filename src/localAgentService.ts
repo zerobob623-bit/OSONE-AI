@@ -362,8 +362,14 @@ agentRouter.use((req: Request, res: Response, next: NextFunction) => {
   }
 
   const authHeader = req.headers['authorization'] || '';
-  const expectedToken = CONFIG.token;
-  const tokenMatch = authHeader === `Bearer ${expectedToken}`;
+  const expected = `Bearer ${CONFIG.token}`;
+  // Comparação em tempo constante: "===" vaza, pelo tempo de resposta, em qual posição a
+  // string recebida deixa de bater com o token — uma diferença pequena, mas real, para quem
+  // já alcança esta rota (ela deveria ser só a máquina local, mas essa é a última linha de
+  // defesa se algum dia não for). timingSafeEqual exige buffers do MESMO tamanho; o
+  // comprimento em si não é segredo, então checá-lo antes não vaza nada de novo.
+  const tokenMatch = authHeader.length === expected.length &&
+    crypto.timingSafeEqual(Buffer.from(authHeader), Buffer.from(expected));
 
   if (!tokenMatch) {
     logAudit('SECURITY', 'AUTH_FAILED', `Tentativa de acesso não autorizada em ${req.originalUrl}`, {

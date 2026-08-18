@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { PendingTuyaConfirmation } from '../components/TuyaConfirmModal';
+import { auth } from '../firebase';
 import {
   ComandosOuFalha,
   RecursosDoAparelho,
@@ -9,6 +10,21 @@ import {
   recursosDosDps,
   semAcento
 } from '../lib/tuyaDispositivos';
+
+/**
+ * As rotas /api/tuya/* agora exigem prova de acesso (ver requireTuyaAccess em server.ts): a
+ * própria máquina passa livre, mas numa implantação hospedada (Vercel) é este cabeçalho —
+ * o token da sessão OSONE já logada — que identifica quem está pedindo. Sem ele, o painel de
+ * casa inteligente pararia de funcionar para quem usa o OSONE pela versão hospedada.
+ */
+async function cabecalhosDaCasaInteligente(): Promise<Record<string, string>> {
+  try {
+    const token = await auth?.currentUser?.getIdToken?.();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
+  }
+}
 
 /**
  * Controle de dispositivos Tuya reais via /api/tuya/*. Fechaduras exigem confirmação
@@ -21,7 +37,8 @@ export function useTuyaSmartHome() {
   const pendingTuyaTimerRef = useRef<any>(null);
 
   useEffect(() => {
-    fetch('/api/tuya/status')
+    cabecalhosDaCasaInteligente()
+      .then(headers => fetch('/api/tuya/status', { headers }))
       .then(res => res.json())
       .then(data => setIsTuyaConfigured(!!data?.configured))
       .catch(() => setIsTuyaConfigured(false));
@@ -46,7 +63,7 @@ export function useTuyaSmartHome() {
     const term = semAcento(query);
     if (!term) return null;
     try {
-      const res = await fetch('/api/tuya/devices');
+      const res = await fetch('/api/tuya/devices', { headers: await cabecalhosDaCasaInteligente() });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data) return null;
       const devices: any[] = data.devices || [];
@@ -69,7 +86,7 @@ export function useTuyaSmartHome() {
    */
   const lerRecursosDoAparelho = async (deviceId: string): Promise<RecursosDoAparelho | null> => {
     try {
-      const statusRes = await fetch(`/api/tuya/device/${encodeURIComponent(deviceId)}/status`);
+      const statusRes = await fetch(`/api/tuya/device/${encodeURIComponent(deviceId)}/status`, { headers: await cabecalhosDaCasaInteligente() });
       const statusData = await statusRes.json().catch(() => null);
       if (!statusRes.ok || !Array.isArray(statusData?.status)) return null;
       return recursosDosDps(statusData.status);
@@ -116,7 +133,7 @@ export function useTuyaSmartHome() {
     const sendCommand = async (confirmed: boolean) => {
       const res = await fetch('/api/tuya/command', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(await cabecalhosDaCasaInteligente()) },
         body: JSON.stringify({ deviceId: device.id, commands, confirmed })
       });
       const data = await res.json().catch(() => null);
@@ -231,7 +248,7 @@ export function useTuyaSmartHome() {
 
   const getTuyaConnectedDevicesList = async (): Promise<{ text: string; raw: any[] }> => {
     try {
-      const res = await fetch('/api/tuya/devices');
+      const res = await fetch('/api/tuya/devices', { headers: await cabecalhosDaCasaInteligente() });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data) {
         return { text: "", raw: [] };

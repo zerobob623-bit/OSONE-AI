@@ -1,6 +1,6 @@
 export type OsonePlanId = 'free' | 'plus' | 'pro' | 'max';
 export type BillingInterval = 'month' | 'year';
-export type PaidFeature = 'cowork_browser' | 'hear' | 'osone_code' | 'whatsapp' | 'agentic_research';
+export type PaidFeature = 'cowork_browser' | 'hear' | 'osone_code' | 'whatsapp' | 'agentic_research' | 'osone_ide';
 
 export interface OsonePlanDetail {
   title: string;
@@ -120,15 +120,24 @@ export const OSONE_PLANS: Record<OsonePlanId, OsonePlan> = {
     tagline: 'Pesquisa agêntica e trabalho pesado.',
     monthlyPrice: 119.90,
     yearlyPrice: 1199.90,
-    features: ['cowork_browser', 'hear', 'osone_code', 'whatsapp', 'agentic_research'],
+    features: ['cowork_browser', 'hear', 'osone_code', 'whatsapp', 'agentic_research', 'osone_ide'],
     highlights: [
       'Tudo do plano Pro',
+      'OSONE IDE: edite uma pasta do seu PC de verdade',
       'OSONE PESQUISA com book de fontes',
       'Coleta de fontes, conversa e Estúdio de relatórios',
       'Tarefas longas com mais autonomia',
       'Economize no plano anual'
     ],
     details: [
+      {
+        title: 'OSONE IDE',
+        items: [
+          'Vincule uma pasta real do computador e trabalhe nela como num VS Code: árvore de arquivos, editor com realce e salvamento direto no disco.',
+          'O OSONE passa a saber o caminho do projeto sem precisar caçar pasta: o que você pedir por chat ou voz é aplicado no projeto vinculado.',
+          'Painel de problemas conferindo sintaxe e referências quebradas, terminal integrado na pasta do projeto e preview em localhost.'
+        ]
+      },
       {
         title: 'OSONE PESQUISA',
         items: [
@@ -155,7 +164,7 @@ export const planHasFeature = (plan: OsonePlanId, feature: PaidFeature): boolean
   OSONE_PLANS[plan].features.includes(feature);
 
 export const minimumPlanForFeature = (feature: PaidFeature): OsonePlanId => {
-  if (feature === 'agentic_research') return 'max';
+  if (feature === 'agentic_research' || feature === 'osone_ide') return 'max';
   if (feature === 'whatsapp' || feature === 'osone_code') return 'pro';
   return 'plus';
 };
@@ -165,6 +174,7 @@ export const paidFeatureForWorkspace = (mode: string): PaidFeature | null => {
   if (mode === 'cowork') return 'cowork_browser';
   if (mode === 'hear') return 'hear';
   if (mode === 'code') return 'osone_code';
+  if (mode === 'ide') return 'osone_ide';
   if (mode === 'whatsapp') return 'whatsapp';
   if (mode === 'research' || mode === 'web_research') return 'agentic_research';
   return null;

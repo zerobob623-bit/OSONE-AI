@@ -61,6 +61,18 @@ export default defineConfig(({mode}) => {
             if (id.includes('/lucide-react/')) {
               return 'vendor-icons';
             }
+            /**
+             * O editor da OSONE IDE em chunk próprio.
+             *
+             * Sem esta regra o CodeMirror cai em 'vendor-misc', que é carregado na abertura do
+             * app por todo mundo — e aí os ~200 kB do editor pesam até para quem nunca abriu a
+             * aba da IDE, justamente o oposto do motivo de a aba ser carregada por React.lazy.
+             * Em chunk separado ele só desce quando a IDE é aberta pela primeira vez.
+             */
+            if (id.includes('/@codemirror/') || id.includes('/codemirror/') ||
+                id.includes('/@lezer/') || id.includes('/style-mod/') || id.includes('/w3c-keyname/')) {
+              return 'vendor-editor';
+            }
             if (id.includes('/three/')) {
               return 'vendor-three';
             }
