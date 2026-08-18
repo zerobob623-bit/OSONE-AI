@@ -346,6 +346,20 @@ jobs:
             '{jdkPath: $jdk, androidSdkPath: $sdk}' > "$config"
           npm run android:prepare -- --config="$config"
 
+      # NÃO REMOVA "@jimp/plugin-color" das devDependencies do package.json.
+      #
+      # Nenhum código do OSONE importa esse pacote, então ele parece dependência esquecida — mas
+      # quem o usa é o @bubblewrap/core, que faz require("@jimp/plugin-color") em ImageHelper.js
+      # SEM declará-lo nas próprias dependências. Isso é uma "phantom dependency": só funciona
+      # quando o npm por acaso iça o pacote para a raiz do node_modules.
+      #
+      # Foi assim que a v1.6.3 quebrou aqui: um npm install de pacotes sem relação nenhuma
+      # (o editor da aba OSONE IDE) re-resolveu a árvore, o @jimp/plugin-color passou a ficar
+      # aninhado dentro de @jimp/plugins, e o require do bubblewrap falhou com MODULE_NOT_FOUND —
+      # derrubando só o APK, com o .exe e o AppImage publicando normalmente.
+      #
+      # Declarar o pacote na raiz do projeto é o que garante o içamento e torna o build imune a
+      # como o npm decide organizar a árvore.
       - name: Compilar e assinar APK
         shell: bash
         env:
