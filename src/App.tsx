@@ -205,6 +205,9 @@ const RAGConnector = React.lazy(() =>
 const OsoneResearchWorkspace = React.lazy(() =>
   import('./components/OsoneResearchWorkspace').then(module => ({ default: module.OsoneResearchWorkspace }))
 );
+const OsoneIdeSection = React.lazy(() =>
+  import('./components/OsoneIdeSection').then(module => ({ default: module.OsoneIdeSection }))
+);
 const ContentCreator = React.lazy(() =>
   import('./components/ContentCreator').then(module => ({ default: module.ContentCreator }))
 );
@@ -681,6 +684,7 @@ const getFriendlyModeName = (mode: WorkspaceMode): string => {
     case 'cameras': return 'OSONE VIGIA — câmeras de segurança ao vivo e o registro do que aconteceu';
     case 'hear': return 'OSONE HEAR — escuta ativa, transcrição do discurso e elaboração adaptativa';
     case 'web_research': return 'OSONE PESQUISA — book de fontes, conversa e estúdio de relatórios';
+    case 'ide': return 'OSONE IDE — a pasta de projeto do computador aberta para edição direta';
     default: return String(mode);
   }
 };
@@ -1015,6 +1019,44 @@ export default function App() {
     contextoDaPesquisaParaVozRef.current = contextoDaPesquisaParaVoz;
   }, [contextoDaPesquisaParaVoz]);
 
+  /**
+   * O PROJETO VINCULADO NO OSONE IDE — o fim da caçada por pasta.
+   *
+   * Enquanto isto não existia, pedir "arruma o menu do site" obrigava o modelo a descobrir onde o
+   * site mora: listar a pasta pessoal, abrir uma candidata, listar de novo, às vezes desistir e
+   * criar um projeto novo do zero. Nada disso é raciocínio — é procura por um dado que a pessoa
+   * já sabia e não tinha onde escrever.
+   *
+   * Vinculando a pasta uma vez na aba OSONE IDE, o caminho absoluto passa a viajar junto do
+   * pedido, tanto no chat quanto na voz. O modelo não precisa achar nada: ele já recebe o
+   * endereço e age com 'controlar_pc' direto ali (ler_arquivo, editar_arquivo, terminal).
+   *
+   * Fica num ref além do estado porque as sessões de voz leem isto de dentro de callbacks que
+   * capturaram o escopo no momento da conexão — um estado comum chegaria lá sempre vazio.
+   */
+  const [projetoDaIde, setProjetoDaIde] = useState<{ caminho: string; nome: string } | null>(null);
+  const projetoDaIdeRef = useRef<{ caminho: string; nome: string } | null>(null);
+  useEffect(() => {
+    projetoDaIdeRef.current = projetoDaIde;
+  }, [projetoDaIde]);
+
+  /**
+   * O bloco que entra no contexto do modelo. Vale em QUALQUER aba, não só na IDE: o valor de ter
+   * um projeto vinculado é justamente poder pedir a alteração de onde você estiver — inclusive
+   * por voz, no meio de outra coisa.
+   */
+  const blocoDoProjetoDaIde = (): string => {
+    const alvo = projetoDaIdeRef.current;
+    if (!alvo?.caminho) return '';
+    return `\n\nPROJETO VINCULADO NO OSONE IDE — VOCÊ JÁ SABE ONDE ELE FICA:
+  - Nome: "${alvo.nome}"
+  - Caminho exato no computador: ${alvo.caminho}
+  - Quando o usuário falar "o projeto", "o site", "o jogo", "o código", "esse arquivo" ou pedir uma alteração sem dizer onde, é DESTA pasta que ele está falando.
+  - NÃO procure a pasta com 'listar' pela casa do usuário, NÃO pergunte onde fica e NÃO crie um projeto novo com 'osone_code_criar_projeto'. O caminho está aqui, pronto.
+  - Para mexer nele use 'controlar_pc': acao='listar' com este caminho para ver os arquivos, acao='ler_arquivo' antes de qualquer edição, acao='editar_arquivo' (buscar/substituir) para alterar, e acao='terminal' com caminho='${alvo.caminho}' para rodar comandos na pasta certa.
+  - Depois de editar, o usuário vê a mudança na aba OSONE IDE. Se ele tiver o arquivo aberto lá com edições não salvas, avise que o arquivo mudou no disco.`;
+  };
+
   const enfileirarPedidoDeVozDoCode = (promptRecebido: unknown): string | null => {
     const prompt = typeof promptRecebido === 'string' ? promptRecebido.trim() : '';
     if (!prompt) return null;
@@ -1033,7 +1075,8 @@ export default function App() {
     hear: 'OSONE HEAR',
     osone_code: 'OSONE CODE',
     whatsapp: 'OSONE ZAP',
-    agentic_research: 'OSONE PESQUISA'
+    agentic_research: 'OSONE PESQUISA',
+    osone_ide: 'OSONE IDE'
   };
 
   const paidFeaturePlanName = (feature: PaidFeature): string => {
@@ -1355,6 +1398,7 @@ ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    $
     NÃO use 'escrever_arquivo' para editar algo que já existe: aquilo sobrescreve o arquivo inteiro, e tudo que você não reproduzir é perdido. 'escrever_arquivo' é só para arquivo novo ou para substituir o conteúdo inteiro de propósito.
   - Quando o usuário quiser VER o comando rodando ("abre o terminal", "mostra no terminal"), use acao='terminal' com visivel=true, que abre uma janela real na tela.
   - CONSTRUIR SOFTWARE NÃO É COM VOCÊ: se o pedido for criar um jogo, site, app ou página, chame 'osone_code_criar_projeto' e deixe o modelo de código do OSONE CODE escrever. NUNCA escreva o código você mesmo e mande por 'escrever_arquivo' ou por 'terminal' — você é o modelo de conversa, e o que sai daí é primário perto do que o OSONE CODE entrega. Isso vale mesmo quando o usuário disser "faz no terminal" ou "põe num localhost": a ferramenta já grava os arquivos e abre o servidor local sozinha.
+    UMA CHAMADA POR PEDIDO, NÃO UMA POR FRASE: por voz, uma fala contínua chega em vários turnos (uma pausa para respirar já conta como um turno novo). Se você JÁ chamou esta ferramenta nesta conversa e o usuário continua falando sobre o MESMO jogo/site/app — acrescentando detalhe, corrigindo algo, pedindo um ajuste — isso NÃO é um pedido novo: é o mesmo pedido continuando. NÃO chame a ferramenta de novo nesse caso. Espere ela terminar (ela avisa se ainda está rodando) e, se for preciso mudar algo depois de pronta, use 'controlar_pc' com 'ler_arquivo'/'editar_arquivo' no projeto que já existe, em vez de construir um projeto do zero de novo. Só chame de novo quando o usuário pedir, de forma explícita, algo DIFERENTE do que acabou de ser construído.
   - COMO CLICAR: chame acao='localizar' com 'alvo' descrevendo o elemento como você descreveria para uma pessoa, e clique EXATAMENTE na coordenada que voltar, sem somar nem subtrair nada. É só isso — não existe procedimento de mira em dois tempos, nem grade para ler, nem etapa de ampliação.
     'localizar' OLHA a tela e acha qualquer coisa: botão escrito, ícone sem texto, aba, campo, item de menu, miniatura de vídeo, em qualquer programa. Descreva com o que distingue o alvo dos vizinhos ("o ícone de lupa no topo à direita", "a aba Conteúdo do menu lateral", "o botão vermelho de gravar"). Se a descrição servir para vários elementos, ele responde que não achou em vez de chutar — nesse caso descreva melhor, não insista igual.
     NUNCA invente uma coordenada olhando uma imagem: já foi medido que a estimativa erra de 44 a 510 pixels, e o clique cai no botão vizinho ou em nada. Se 'localizar' não achar, diga ao usuário o que voltou na resposta em vez de tentar adivinhar a posição.
@@ -8200,9 +8244,38 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
    * Exclusivo de assinante (mesma trava 'osone_code' da aba CODE): é o mesmo motor de geração de
    * código, e liberá-lo pela voz seria uma porta lateral para o recurso pago.
    */
+  /**
+   * TRAVA CONTRA PROJETO DUPLICADO — sem isto, cada frase de uma mesma fala longa virava um
+   * projeto novo.
+   *
+   * A voz (Live ou ElevenLabs) segmenta uma fala contínua em vários "turnos finais" por VAD:
+   * quem descreve o jogo em etapas ("cria um jogo de nave... com power-up... e tela de game
+   * over...") gera um turno por pausa. Como a diretriz manda chamar esta ferramenta SEMPRE que
+   * o pedido soar como "construir um jogo/site/app", e a pasta de destino é derivada do texto de
+   * CADA turno, cada fragmento virava um projeto próprio — daí vários jogos idênticos na mesma
+   * conversa. As duas travas abaixo cobrem os dois jeitos disso acontecer: uma chamada chegando
+   * enquanto a anterior ainda está rodando (turnos que se sobrepõem), e uma chamada nova logo
+   * depois de uma que acabou de terminar (o usuário só continuando a descrever o mesmo pedido).
+   */
+  const criandoProjetoOsoneCodeRef = useRef(false);
+  const ultimoProjetoOsoneCodeRef = useRef<{ pasta: string; descricao: string; quando: number } | null>(null);
+  const JANELA_DE_COOLDOWN_PROJETO_MS = 45_000;
+
   const criarProjetoComOsoneCode = async (args: any): Promise<any> => {
     const descricao = String(args?.descricao || '').trim();
     if (!descricao) return { error: "Informe 'descricao' com o que deve ser construído." };
+
+    if (criandoProjetoOsoneCodeRef.current) {
+      return {
+        error: "Já existe um projeto sendo escrito agora mesmo nesta mesma conversa. NÃO chame esta ferramenta de novo enquanto isso: espere a resposta anterior terminar. Se o usuário continuar descrevendo o mesmo pedido, apenas diga que já está construindo."
+      };
+    }
+    const projetoRecente = ultimoProjetoOsoneCodeRef.current;
+    if (projetoRecente && (Date.now() - projetoRecente.quando) < JANELA_DE_COOLDOWN_PROJETO_MS) {
+      return {
+        error: `Um projeto ('${projetoRecente.descricao}') acabou de ser criado em '${projetoRecente.pasta}' há poucos segundos, nesta mesma conversa. Se o usuário está apenas continuando a descrever o MESMO pedido (adicionando detalhe, corrigindo algo, pedindo um ajuste), NÃO crie um projeto novo: use 'controlar_pc' com acao='ler_arquivo' e acao='editar_arquivo' para AJUSTAR o que já existe em '${projetoRecente.pasta}'. Só chame esta ferramenta de novo se o usuário pedir explicitamente algo DIFERENTE do que acabou de ser construído.`
+      };
+    }
 
     if (!hasPaidFeatureRef.current('osone_code')) {
       // Abre a tela de planos junto: a recusa por si só deixaria o usuário sem o caminho da
@@ -8220,6 +8293,7 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
         .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'projeto'
     }`;
 
+    criandoProjetoOsoneCodeRef.current = true;
     try {
       addNotification('OSONE CODE está escrevendo o projeto...', 'info');
 
@@ -8375,6 +8449,10 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
         aindaComDefeito.length > 0 ? 'error' : 'success'
       );
 
+      // Alimenta a trava de cooldown acima: só depois de um projeto REALMENTE gravado, para não
+      // bloquear uma nova tentativa logo após uma falha.
+      ultimoProjetoOsoneCodeRef.current = { pasta: pastaAlvo, descricao, quando: Date.now() };
+
       return {
         result: aindaComDefeito.length > 0
           ? `Projeto criado pelo OSONE CODE, mas a conferência ainda aponta defeitos — avise o usuário disso em vez de dizer que ficou pronto.`
@@ -8393,6 +8471,8 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
       };
     } catch (err: any) {
       return { error: `Falha ao criar o projeto: ${err?.message || err}` };
+    } finally {
+      criandoProjetoOsoneCodeRef.current = false;
     }
   };
 
@@ -9505,6 +9585,10 @@ Por favor, FALE AGORA com o usuário sobre essa dúvida por voz, de forma clara 
 
       activeSystemInstruction += `\n\n${buildMemoryContextBlock()}`;
 
+      // O projeto vinculado na aba OSONE IDE. Entra em toda conversa, e não só quando a aba está
+      // aberta: quem vinculou a pasta quer poder pedir a alteração de qualquer lugar do app.
+      activeSystemInstruction += blocoDoProjetoDaIde();
+
       // Estado do Canvas: calculado acima (canvasSummary) mas nunca chegava a entrar aqui — só a
       // sessão de voz (startLiveSession) injeta a mesma variável no próprio prompt. Sem isto, uma
       // pergunta sobre o que está desenhado feita pelo chat de texto não tinha como ser
@@ -10536,6 +10620,9 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
       const researchContextBlock = contextoPesquisaAtivo
         ? `\n\nBOOK ATIVO DO OSONE PESQUISA:\n${contextoPesquisaAtivo.slice(0, 18000)}`
         : '';
+      // Vale em qualquer aba: o projeto vinculado é o alvo de "muda isso aqui" dito por voz de
+      // onde a pessoa estiver, e não só enquanto a aba da IDE está aberta.
+      const ideContextBlock = blocoDoProjetoDaIde();
 
       let liveSystemInstruction = "";
       if (isTranslationMode) {
@@ -10667,6 +10754,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
         - NAVEGAÇÃO DE ABAS: Você pode abrir ou fechar QUALQUER aba instantaneamente via ferramentas 'switch_workspace_mode' ou 'close_workspace_tab'.
           • 'writing': Aba de Prosa, Redação e Escrita de Texto (Textos, Documentos, Artigos).
           • 'code': OSONE CODE (Ambiente de Desenvolvimento de Programação, Software e Jogos HTML/JS/React).
+          • 'ide': OSONE IDE — a aba onde o usuário VINCULA uma pasta de projeto que já existe no computador dele e a edita direto no disco (árvore de arquivos, editor, terminal na pasta, conferência de erros). Abra quando ele falar em "abrir meu projeto", "vincular a pasta", "editar a pasta tal", "abrir o repositório" ou pedir para trabalhar num código que já está no PC.
           • 'home': Fecha qualquer aba aberta e volta para a Tela Inicial (Início).
           • 'sounds': Biblioteca de Sons.
           • 'canvas': Lousa e Quadro Interativo.
@@ -10676,6 +10764,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
           • 'creator': Criador de Conteúdo Viral.
           • 'cowork': OSONE COWORK — a aba onde o usuário PEDE uma tarefa no computador ("abre o YouTube e procura tal coisa"), vê o plano de passos, aprova, e acompanha o agente clicando e digitando. Quando ele pedir uma automação no computador e quiser ACOMPANHAR o que vai ser feito antes de acontecer, abra esta aba em vez de executar direto.
         - Se o usuário disser "Abra o OSONE CODE" ou "Abra a aba de código", chame 'switch_workspace_mode' com mode 'code'.
+        - Se ele disser "Abra a IDE", "OSONE IDE", "abre meu projeto", "vincula a pasta" ou "quero editar a pasta X", chame 'switch_workspace_mode' com mode 'ide'.
         - Se o usuário disser "Abra pesquisa", "OSONE PESQUISA", "Notebook", "book de fontes" ou "pesquisa Max", chame 'switch_workspace_mode' com mode 'web_research'.
         - Se o usuário disser "Abra a aba de escrita" ou "Prosa", chame 'switch_workspace_mode' com mode 'writing'.
         - Se o usuário disser "Feche a aba", "Volte para o início" ou "Sair da aba", chame 'close_workspace_tab' ou 'switch_workspace_mode' com mode 'home'.
@@ -10688,7 +10777,7 @@ IMPORTANTE: Se a opção "Auto-responder" ou auto-pilot estiver ligada de forma 
         CONTEXTO:
         - Workspace: ${workspaceMode}
         - Canvas: ${canvasSummary}${healthContext}
-        ${researchContextBlock}
+        ${researchContextBlock}${ideContextBlock}
         ${memoryContext}
         Aja com base nas memórias: ${recentChatContext}
         `;
@@ -11101,8 +11190,8 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                     properties: {
                       mode: {
                         type: Type.STRING,
-                        enum: ["home", "writing", "code", "sounds", "canvas", "wellness", "whatsapp", "creator", "smarthome", "tiktok", "map", "cowork", "hear", "cameras", "web_research"],
-                        description: "O modo para o qual alternar: 'writing' (Aba de Prosa e Escrita de Texto/Documentos), 'code' (Aba OSONE CODE - Programação, Desenvolvimento de Jogos e Software), 'web_research' (OSONE PESQUISA - book de fontes, pesquisa web Max, conversa com fontes e estúdio), 'home' (Fechar aba atual / Voltar ao Início), 'canvas' (Lousa Interativa), 'sounds' (Biblioteca de Sons), 'wellness' (Saúde), 'whatsapp' (OSONE ZAP - Atendimento pelo WhatsApp), 'cowork' (OSONE COWORK - a aba onde o usuário pede uma tarefa no computador, aprova o plano e vê o agente clicar e digitar sozinho), 'hear' (OSONE HEAR - escuta ativa que transcreve um discurso falado e depois o organiza; abra quando o usuário pedir para ouvir, gravar, transcrever, anotar uma reunião/aula, ou 'escutar o que eu vou falar'), 'cameras' (OSONE VIGIA — as câmeras de segurança: mostra o vídeo ao vivo e a lista do que foi detectado. Abra quando ele perguntar o que está acontecendo na garagem/portão/loja, pedir para ver uma câmera, ou quiser rever uma gravação)."
+                        enum: ["home", "writing", "code", "ide", "sounds", "canvas", "wellness", "whatsapp", "creator", "smarthome", "tiktok", "map", "cowork", "hear", "cameras", "web_research"],
+                        description: "O modo para o qual alternar: 'writing' (Aba de Prosa e Escrita de Texto/Documentos), 'code' (Aba OSONE CODE - Programação, Desenvolvimento de Jogos e Software), 'ide' (OSONE IDE - vincular uma pasta de projeto que JÁ EXISTE no computador do usuário e editá-la direto no disco, com árvore de arquivos, editor, terminal na pasta e conferência de erros; abra quando ele falar em abrir o projeto dele, vincular pasta, ou editar um código que já está no PC), 'web_research' (OSONE PESQUISA - book de fontes, pesquisa web Max, conversa com fontes e estúdio), 'home' (Fechar aba atual / Voltar ao Início), 'canvas' (Lousa Interativa), 'sounds' (Biblioteca de Sons), 'wellness' (Saúde), 'whatsapp' (OSONE ZAP - Atendimento pelo WhatsApp), 'cowork' (OSONE COWORK - a aba onde o usuário pede uma tarefa no computador, aprova o plano e vê o agente clicar e digitar sozinho), 'hear' (OSONE HEAR - escuta ativa que transcreve um discurso falado e depois o organiza; abra quando o usuário pedir para ouvir, gravar, transcrever, anotar uma reunião/aula, ou 'escutar o que eu vou falar'), 'cameras' (OSONE VIGIA — as câmeras de segurança: mostra o vídeo ao vivo e a lista do que foi detectado. Abra quando ele perguntar o que está acontecendo na garagem/portão/loja, pedir para ver uma câmera, ou quiser rever uma gravação)."
                       }
                     },
                     required: ["mode"]
@@ -13323,6 +13412,7 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
         whatsapp: "Sintonizada! Estou sintonizando suas interações no OSONE ZAP. Pronta para disparar mensagens ou responder seus contatos com inteligência de ponta.",
         map: "Sintonizada! Estou atenta ao Mapa OS de satélite. Diga o nome de uma cidade ou localidade para eu traçar um dossiê geográfico completo com pontos históricos interessantes!",
         web_research: "Sintonizada! Estou no OSONE PESQUISA. Podemos montar um book de fontes, conversar usando apenas esse material e gerar relatório, tabela, gráfico textual, cartões e documento Word.",
+        ide: "OSONE IDE aberta. Vincule a pasta do seu projeto e eu passo a trabalhar direto nela — daí é só me pedir a alteração, que eu já sei onde os arquivos estão.",
         rag: "Sintonizada! Estou no painel de RAG e Conectividade de Arquivos do Computador. Lembra-se: tenho acesso total e integrado a todos os arquivos que você compartilhou aqui no IndexedDB. Posso carregar novos arquivos, ler dados, sincronizar ideias e salvá-los localmente em tempo real.",
         creator: "Sintonizada! Estou pronta no Estúdio Neural de Criação Viral. Defina o nicho e referências do canal do seu computador e eu irei pesquisar e raciocinar sobre 9 ideias incríveis, destacar as 3 melhores e criar um roteiro em 3 estágios dramáticos de retenção para o seu próximo vídeo viral!"
       };
@@ -14224,6 +14314,21 @@ IMPORTANTE PARA O AGENTE DE VOZ E CHAT:
                 isVoiceActive={liveState.status === 'connected' || isElevenLabsLiveActive}
                 isVoiceConnecting={liveState.status === 'connecting'}
                 onContextChange={setContextoDaPesquisaParaVoz}
+              />
+            </motion.div>
+          ) : workspaceMode === 'ide' ? (
+            <motion.div
+              key="workspace-ide"
+              initial={{ opacity: 0, scale: 0.985 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.985 }}
+              className="w-full flex-1 flex flex-col min-h-0"
+            >
+              <OsoneIdeSection
+                localAgentToken={apiKeys.localAgentToken}
+                onBack={() => setWorkspaceMode('home')}
+                onNotification={addNotification}
+                onProjetoChange={setProjetoDaIde}
               />
             </motion.div>
           ) : workspaceMode === 'rag' ? (

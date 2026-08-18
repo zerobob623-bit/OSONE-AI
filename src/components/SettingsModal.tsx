@@ -107,6 +107,9 @@ export const SettingsModal = ({
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('idle');
   const [connectionMessage, setConnectionMessage] = useState('');
   const [googlePairing, setGooglePairing] = useState<{ code: string; expiresAt: number; deviceCount: number } | null>(null);
+  const [pareamentoLocalGoogleHome, setPareamentoLocalGoogleHome] = useState<{ code: string; expiresAt: number } | null>(null);
+  const [gerandoPareamentoLocal, setGerandoPareamentoLocal] = useState(false);
+  const [erroPareamentoLocal, setErroPareamentoLocal] = useState('');
   const [elVerificationStatus, setElVerificationStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [elVerificationMessage, setElVerificationMessage] = useState('');
   const [geminiVerificationStatus, setGeminiVerificationStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
@@ -401,6 +404,28 @@ export const SettingsModal = ({
     } catch (error: any) {
       setConnectionStatus('error');
       setConnectionMessage(error?.message || String(error));
+    }
+  };
+
+  /**
+   * Vínculo direto (avançado): para quem configurou o próprio projeto no Actions on Google
+   * apontando para ESTE servidor (por túnel), em vez de usar a ponte pública compartilhada.
+   * O código gerado aqui é a prova de que quem está aprovando o vínculo, na tela de
+   * consentimento, é o dono desta instalação — sem ele, /api/google-home/approve recusa.
+   * A rota só responde à própria máquina, por isso só funciona a partir deste computador.
+   */
+  const gerarPareamentoLocalGoogleHome = async () => {
+    setGerandoPareamentoLocal(true);
+    setErroPareamentoLocal('');
+    try {
+      const res = await fetch('/api/google-home/pairing-code');
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.code) throw new Error(data?.error || 'Não foi possível gerar o código.');
+      setPareamentoLocalGoogleHome({ code: String(data.code), expiresAt: Number(data.expiresAt || 0) });
+    } catch (error: any) {
+      setErroPareamentoLocal(error?.message || String(error));
+    } finally {
+      setGerandoPareamentoLocal(false);
     }
   };
 
@@ -2003,6 +2028,53 @@ export const SettingsModal = ({
                           </p>
                         </div>
                       )}
+
+                      {/*
+                        Vínculo direto (avançado): só para quem apontou o PRÓPRIO projeto do
+                        Actions on Google para este servidor (por túnel), em vez da ponte
+                        pública compartilhada acima. A maioria nunca precisa disto.
+                      */}
+                      <details className="text-[10px] text-her-muted">
+                        <summary className="cursor-pointer uppercase tracking-widest font-bold text-her-muted/70 hover:text-her-muted">
+                          Avançado: vínculo direto sem a ponte pública
+                        </summary>
+                        <div className="mt-3 space-y-3">
+                          <p className="leading-relaxed">
+                            Só use isto se você configurou o seu próprio projeto no Actions on Google apontando
+                            direto para este computador (por túnel). Gere o código aqui e digite-o na tela de
+                            consentimento que abrir no celular — ele prova que quem aprova o vínculo é quem está
+                            usando este OSONE agora.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={gerarPareamentoLocalGoogleHome}
+                            disabled={gerandoPareamentoLocal}
+                            className="w-full py-2.5 rounded-lg text-[10px] uppercase tracking-[0.2em] font-bold bg-white/5 hover:bg-white/10 text-her-muted hover:text-white transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                          >
+                            {gerandoPareamentoLocal ? <Loader2 size={14} className="animate-spin" /> : <Home size={14} />}
+                            Gerar código de vínculo direto
+                          </button>
+                          {erroPareamentoLocal && (
+                            <p className="text-amber-300">{erroPareamentoLocal}</p>
+                          )}
+                          {pareamentoLocalGoogleHome && (
+                            <div className="bg-black/30 p-4 rounded-lg border border-sky-500/25 flex items-center justify-between gap-3">
+                              <div>
+                                <span className="uppercase tracking-widest text-sky-300/70 font-bold">Código de vínculo direto</span>
+                                <div className="text-2xl font-mono font-bold text-white mt-1">{pareamentoLocalGoogleHome.code}</div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => navigator.clipboard?.writeText(pareamentoLocalGoogleHome.code)}
+                                className="p-2.5 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-300 transition-colors"
+                                title="Copiar código"
+                              >
+                                <Copy size={16} />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </details>
                     </div>
                   </motion.div>
                 )}

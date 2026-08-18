@@ -292,9 +292,32 @@ const executar = (id, command, params) =>
     `${r.commands[0]?.errorCode}, ${casa.enviados.length} comando(s) enviado(s)`);
 }
 
+// 15.5) SEM CÓDIGO DE PAREAMENTO, /approve NÃO PODE EMITIR NADA — era exatamente essa falta
+//       de prova de dono que deixava qualquer requisição HTTP aprovar o vínculo sozinha.
+{
+  let recusou = false;
+  try {
+    ponte.issueAuthCode('');
+  } catch {
+    recusou = true;
+  }
+  registrar('issueAuthCode sem código de pareamento é recusado',
+    recusou, recusou ? 'recusou como esperado' : 'EMITIU CÓDIGO DE AUTORIZAÇÃO SEM PROVA DE DONO');
+
+  let recusouCodigoErrado = false;
+  try {
+    ponte.issueAuthCode('ZZZZ-ZZZZ');
+  } catch {
+    recusouCodigoErrado = true;
+  }
+  registrar('issueAuthCode com código de pareamento inventado é recusado',
+    recusouCodigoErrado, recusouCodigoErrado ? 'recusou como esperado' : 'EMITIU CÓDIGO DE AUTORIZAÇÃO COM PAREAMENTO FALSO');
+}
+
 // 16) DESVINCULAR PRECISA DESVINCULAR.
 {
-  const codigo = ponte.issueAuthCode();
+  const pareamento = ponte.issueLocalPairingCode();
+  const codigo = ponte.issueAuthCode(pareamento.code);
   const tokens = ponte.exchangeToken({
     grantType: 'authorization_code',
     code: codigo,

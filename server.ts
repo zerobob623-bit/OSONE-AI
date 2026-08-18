@@ -38,6 +38,7 @@ import {
 import {
   checkGoogleHomeConfig,
   issueAuthCode,
+  issueLocalPairingCode,
   exchangeToken,
   isValidAccessToken,
   revokeAllTokens,
@@ -244,6 +245,64 @@ async function startServer() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerBillingApi(app);
+
+  /**
+   * LIMITADOR DE REQUISIÇÕES EM MEMÓRIA — sem dependência nova, mesmo padrão já usado em
+   * limitarCargaDeMemoria (mais abaixo), generalizado para qualquer rota.
+   *
+   * Não substitui autenticação nenhuma: é a rede de segurança contra abuso/negação de
+   * serviço enquanto uma rota específica não tem controle de acesso próprio — e, mais
+   * concretamente, contra o esgotamento da cota paga do servidor nas rotas de geração de IA
+   * (ver limitarGeracaoDeIA abaixo), que hoje aceitam a chave do próprio servidor quando o
+   * cliente não manda a sua.
+   */
+  function criarLimitadorPorIp(opcoes: { janelaMs: number; maxTentativas: number; mensagem: string }) {
+    const tentativasPorIp = new Map<string, { contagem: number; expiraEm: number }>();
+    setInterval(() => {
+      const agora = Date.now();
+      for (const [chave, registro] of tentativasPorIp) {
+        if (registro.expiraEm < agora) tentativasPorIp.delete(chave);
+      }
+    }, 5 * 60 * 1000).unref();
+
+    return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+      const chave = req.ip || req.socket?.remoteAddress || "desconhecido";
+      const agora = Date.now();
+      const registro = tentativasPorIp.get(chave);
+      if (!registro || registro.expiraEm < agora) {
+        tentativasPorIp.set(chave, { contagem: 1, expiraEm: agora + opcoes.janelaMs });
+        return next();
+      }
+      if (registro.contagem >= opcoes.maxTentativas) {
+        return res.status(429).json({ error: opcoes.mensagem });
+      }
+      registro.contagem++;
+      next();
+    };
+  }
+
+  // Rede geral: bem generosa, só para conter abuso grosseiro/DoS em qualquer rota.
+  app.use(criarLimitadorPorIp({
+    janelaMs: 60 * 1000,
+    maxTentativas: 300,
+    mensagem: "Muitas requisições vindas deste endereço em pouco tempo. Aguarde um minuto e tente de novo."
+  }));
+
+  // Rotas de geração de IA custam dinheiro de verdade (cota paga do Gemini/ElevenLabs/OpenAI/
+  // Anthropic) e caem na chave do próprio servidor quando o cliente não informa a sua. Sem
+  // limite nenhum, um único visitante sem conta poderia esgotar essa cota sozinho.
+  const limitarGeracaoDeIA = criarLimitadorPorIp({
+    janelaMs: 60 * 1000,
+    maxTentativas: 20,
+    mensagem: "Muitas gerações de IA em pouco tempo vindas deste endereço. Aguarde um minuto — ou use sua própria chave de API nos Ajustes para não ter este limite."
+  });
+  app.use([
+    "/api/generate", "/api/generate-stream", "/api/tts",
+    "/api/gemini/generateContent", "/api/gemini/generateImages", "/api/gemini/verify",
+    "/api/audiovisual/generate-image", "/api/audiovisual/generate-video",
+    "/api/hear/transcribe", "/api/chat-intel", "/api/chat-intel-stream",
+    "/api/lens/query", "/api/dossier/analyze", "/api/elevenlabs/verify"
+  ], limitarGeracaoDeIA);
 
   // Rotas do Agente Local Unificado no Servidor Express Principal. Na Vercel, "a máquina que
   // o servidor está rodando" é o contêiner efêmero da função serverless, não o PC do usuário —
@@ -6652,6 +6711,46 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
   });
 
   // ====== TUYA CLOUD OPENAPI INTEGRATION ENDPOINTS ======
+  /**
+   * CASA INTELIGENTE — sem isto, era a rota mais aberta do servidor.
+   *
+   * Diferente de /api/whatsapp e /api/cameras (que já tinham requireWhatsAppAccess/
+   * requireCameraAccess), estas rotas não passavam por nenhuma checagem: numa implantação
+   * pública (Vercel) com TUYA_CLIENT_ID/SECRET configurados nas variáveis de ambiente — o
+   * caminho que a própria tela de Ajustes recomenda para hospedagem remota — qualquer
+   * visitante da internet, sem login nenhum, conseguia listar e comandar os aparelhos reais
+   * da casa por POST /api/tuya/command, inclusive fechaduras (o campo "confirmed: true" não
+   * protege nada porque quem o envia é o próprio requisitante, não uma confirmação genuína
+   * do dono).
+   *
+   * Três portas de entrada, na ordem em que fazem sentido: a própria máquina (Electron/
+   * self-host), um token de acesso compartilhado (para quem expõe o OSONE por túnel, mesmo
+   * padrão do CAMERA_ACCESS_TOKEN) ou uma sessão OSONE autenticada (o caso normal na Vercel,
+   * onde o painel React chama estas rotas em nome de quem está logado).
+   */
+  const TUYA_ACCESS_TOKEN = process.env.TUYA_ACCESS_TOKEN || "";
+  const requireTuyaAccess = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (isLoopbackAddress(req.socket?.remoteAddress)) return next();
+
+    const tokenEnviado = req.headers["x-tuya-token"];
+    if (TUYA_ACCESS_TOKEN && tokenEnviado === TUYA_ACCESS_TOKEN) return next();
+
+    const authHeader = String(req.headers.authorization || "");
+    if (authHeader.startsWith("Bearer ")) {
+      try {
+        await verifyFirebaseBearer(authHeader);
+        return next();
+      } catch {
+        // cai para a recusa abaixo — token do Firebase ausente, inválido ou expirado
+      }
+    }
+
+    return res.status(403).json({
+      error: "Acesso à casa inteligente negado. Esta área só é acessível a partir do próprio computador, autenticado com sua conta OSONE, ou com um TUYA_ACCESS_TOKEN válido configurado no servidor."
+    });
+  };
+  app.use("/api/tuya", requireTuyaAccess);
+
   function isTuyaLockCategory(category: string): boolean {
     if (!category) return false;
     const cat = String(category).toLowerCase().trim();
@@ -6969,12 +7068,24 @@ Não inclua nenhuma formatação markdown extra fora do JSON bruto.`;
             clientId: String(req.body?.client_id || ''),
             redirectUri: redirect_uri
           })
-        : issueAuthCode();
+        : issueAuthCode(String(req.body?.pairing_code || ''));
       const params = new URLSearchParams({ code, state: state || "" });
       return res.json({ redirectTo: `${redirect_uri}?${params.toString()}` });
     } catch (err: any) {
       return cloudError(res, err);
     }
+  });
+
+  /**
+   * Prova de que quem está aprovando o vínculo é o dono desta instalação (ver issueAuthCode
+   * em googleHomeService.ts). Só a própria máquina pode pedir o código — mesma trava de
+   * somenteDaPropriaMaquina usada em /api/credenciais — e é ele que a pessoa digita na tela
+   * de consentimento, mesmo vindo de outro aparelho (telefone no app Google Home), para provar
+   * que tem acesso a ESTE OSONE.
+   */
+  app.get("/api/google-home/pairing-code", (req, res) => {
+    if (!somenteDaPropriaMaquina(req, res, 'A geração do código de pareamento do Google Home')) return;
+    return res.json(issueLocalPairingCode());
   });
 
   app.post("/api/google-home/token", async (req, res) => {

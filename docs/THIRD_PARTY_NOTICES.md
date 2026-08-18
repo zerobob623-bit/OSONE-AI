@@ -15,3 +15,18 @@ continua sujeito às restrições de uso responsável estabelecidas pela OpenRAI
 
 O Piper permanece como motor local de reserva. Seus binários, modelo e avisos são distribuídos
 na pasta `vendor/piper` conforme as licenças dos projetos e vozes de origem.
+
+# Editor de código (OSONE IDE)
+
+## CodeMirror 6
+
+- Licença MIT (Copyright (c) by Marijn Haverbeke e demais colaboradores).
+- Fonte: https://github.com/codemirror/dev
+- Pacotes usados: `codemirror`, `@codemirror/lang-javascript`, `@codemirror/lang-html`,
+  `@codemirror/lang-css`, `@codemirror/lang-python`, `@codemirror/lang-json`,
+  `@codemirror/lang-markdown` e as dependências que eles trazem (`@lezer/*`, `style-mod`,
+  `w3c-keyname`), todas MIT.
+
+A licença MIT permite uso comercial e redistribuição, o que cobre a distribuição do OSONE nos
+planos pagos. É o editor da aba OSONE IDE, empacotado no chunk `vendor-editor` — ele só é baixado
+por quem abre essa aba.

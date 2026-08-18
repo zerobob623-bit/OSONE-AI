@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   X, Volume2, FileText, Code2, Music, Gamepad2, Zap, Activity, LogOut, MessageSquare,
   Compass, Crown, Database, Video, Radio, Eye, Heart, BookOpen, Settings, MousePointerClick, Ear,
-  Search,
+  Search, HardDrive,
   type LucideIcon
 } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -120,6 +120,16 @@ const GRUPOS: GrupoDoMenu[] = [
         rotulo: 'OSONE CODE', icone: Code2, modo: 'code',
         ativo: "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.12)]",
         corDoIcone: "text-cyan-400"
+      },
+      {
+        /**
+         * Fica logo abaixo do OSONE CODE porque é o par dele: o CODE escreve projeto novo num
+         * espaço do próprio OSONE, a IDE trabalha numa pasta que já existe no computador da
+         * pessoa. Quem chega procurando "onde eu abro o meu projeto" olha primeiro aqui.
+         */
+        rotulo: 'OSONE IDE', icone: HardDrive, modo: 'ide',
+        ativo: "bg-sky-500/10 text-sky-300 border border-sky-500/25 shadow-[0_0_15px_rgba(14,165,233,0.15)]",
+        corDoIcone: "text-sky-400"
       },
       {
         rotulo: 'TikTok Live Co-piloto', icone: Radio, modo: 'tiktok',
