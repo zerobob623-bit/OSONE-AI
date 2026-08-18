@@ -1360,8 +1360,16 @@ export default function App() {
 ${Object.entries(localAgentEnvironment.userFolders || {}).map(([k, v]) => `    ${k}: ${v}`).join('\n') || '    (nenhuma detectada)'}
   - Caminho protegido (única coisa que você NÃO pode apagar/sobrescrever): ${localAgentEnvironment.protectedPath}
   Use a sintaxe do sistema acima em todo comando de terminal. Nunca misture comandos de Windows com Linux. Nunca invente caminhos em inglês se as pastas acima estiverem em português.
+  ${localAgentEnvironment.platform === 'win32'
+    ? 'Este é um WINDOWS: use dir, type, copy, move, del, tasklist, taskkill, findstr, where, %VARIAVEL% e barras invertidas (C:\\Users\\...). NÃO use ls, cat, rm, cp, mv, grep, sudo, apt, pkill nem caminhos /home/...'
+    : `Este é um ${localAgentEnvironment.osName.toUpperCase()}: use ls, cat, cp, mv, rm, ps, grep, which, $VARIAVEL e barras normais (/home/...). NÃO use dir, type, copy, del, tasklist, taskkill, ipconfig, findstr, PowerShell (Get-*/Set-*) nem caminhos C:\\...`}
 
-` : ''}${superficieCompartilhada ? `  ESTADO ATUAL DO COMPARTILHAMENTO DE TELA: ${superficieCompartilhada === 'monitor'
+` : `  SISTEMA OPERACIONAL DESTE COMPUTADOR: AINDA NÃO DETECTADO.
+  Você NÃO sabe se esta máquina é Windows, Linux ou macOS — e portanto NÃO PODE escolher a sintaxe de comando por conta própria. Chutar aqui é o erro clássico: mandar 'dir' num Linux ou 'ls' num Windows faz a ação falhar com uma mensagem que não explica a causa.
+  ANTES do primeiro comando de terminal ou caminho de arquivo, descubra o sistema chamando 'controlar_pc' com acao='status'. A resposta traz osName, shell, pathSeparator e as pastas reais do usuário. Use isso e só então aja.
+  Se o Agente Local não responder, diga ao usuário que ele precisa estar ligado — não tente adivinhar o sistema.
+
+`}${superficieCompartilhada ? `  ESTADO ATUAL DO COMPARTILHAMENTO DE TELA: ${superficieCompartilhada === 'monitor'
     ? `TELA INTEIRA. O que você vê e o lugar onde o clique age são a mesma área, então dá para medir posição pela imagem compartilhada. Ainda assim, 'capturar_tela' é mais confiável porque traz a grade numerada.`
     : `APENAS UMA ABA/JANELA (recorte). Você PODE ver e descrever o que aparece, mas NÃO PODE tirar coordenadas daí: você estaria medindo dentro do recorte enquanto o clique age na tela inteira, e o clique cairia acima do alvo, em barra de título ou de endereço. Para clicar, chame 'capturar_tela' e meça pela grade dela. Se o usuário insistir em clicar por aqui, explique que ele precisa refazer o compartilhamento escolhendo 'Tela inteira'.`}
 
@@ -7026,24 +7034,57 @@ ${isBad
    * não chamava — saía chutando sintaxe do Windows num Linux e caminhos em inglês num sistema
    * em português. Sabendo o ambiente de antemão, ele age direto e para de "procurar" caminho.
    */
+  /**
+   * INSISTE ATÉ DESCOBRIR O SISTEMA — uma tentativa só não bastava, e o preço do silêncio era alto.
+   *
+   * A versão anterior tentava UMA vez e, se falhasse, o comentário dizia "tenta de novo quando o
+   * token mudar" — só que o token praticamente nunca muda depois de configurado. Como as
+   * dependências deste efeito são o token e o próprio ambiente (que continua nulo justamente
+   * porque falhou), ele nunca rodava de novo: uma falha na abertura condenava a sessão inteira.
+   *
+   * E a falha é o caso COMUM, não a exceção: no app instalado a interface sobe junto com o
+   * servidor, e o Agente Local costuma levar um instante a mais para atender. A primeira
+   * requisição pega esse instante.
+   *
+   * A consequência disso é exatamente o defeito relatado — o agente misturando comando de Windows
+   * com Linux. Sem este dado, o bloco "AMBIENTE REAL DESTE COMPUTADOR" some do prompt por
+   * completo, e o modelo fica sem NENHUMA forma de saber o sistema: não existe ferramenta para
+   * ele perguntar isso ('getUserEnvironment' é clima e hora, não sistema operacional). Sobra
+   * chutar — e chutar erra metade das vezes.
+   */
   useEffect(() => {
     const token = (apiKeys.localAgentToken || '').trim();
     if (!token || localAgentEnvironment) return;
 
     let cancelled = false;
-    (async () => {
+    let tentativas = 0;
+    let timer: any = null;
+
+    const tentar = async () => {
+      if (cancelled) return;
+      tentativas++;
       try {
         const res = await fetch('/api/agent/status', { headers: { Authorization: `Bearer ${token}` } });
-        if (!res.ok) return;
-        const data = await res.json().catch(() => null);
-        if (cancelled || !data?.osName) return;
-        setLocalAgentEnvironment(data);
+        if (res.ok) {
+          const data = await res.json().catch(() => null);
+          if (cancelled) return;
+          if (data?.osName) {
+            setLocalAgentEnvironment(data);
+            return;
+          }
+        }
       } catch {
-        // Agente indisponível agora; tenta de novo quando o token mudar.
+        // Agente ainda não respondeu; reagenda abaixo.
       }
-    })();
+      if (cancelled) return;
+      // Rápido no começo (o agente costuma subir em segundos) e espaçado depois, para o caso de
+      // ele só ser ligado bem mais tarde — sem ficar batendo na porta para sempre.
+      const espera = tentativas <= 5 ? 2000 : tentativas <= 12 ? 10000 : 60000;
+      if (tentativas <= 40) timer = setTimeout(tentar, espera);
+    };
 
-    return () => { cancelled = true; };
+    void tentar();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
   }, [apiKeys.localAgentToken, localAgentEnvironment]);
 
   useEffect(() => {
