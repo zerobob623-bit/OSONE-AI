@@ -256,6 +256,27 @@ async function startServer() {
    * (ver limitarGeracaoDeIA abaixo), que hoje aceitam a chave do próprio servidor quando o
    * cliente não manda a sua.
    */
+  /**
+   * De quem veio o pedido, sem confiar em `req.ip` cegamente.
+   *
+   * `req.ip` é um getter do Express que resolve o endereço por `proxy-addr`, e ele LANÇA quando
+   * `req.socket` não existe — não devolve undefined. Um `req.ip || outraCoisa` parece cobrir esse
+   * caso e não cobre: a exceção acontece ao ler a propriedade, antes de o `||` chegar a valer.
+   *
+   * Isso não é teórico: o handler serverless da Vercel é invocado com um objeto de requisição que
+   * nem sempre traz socket, e é exatamente o que scripts/conferir-build-vercel.mjs reproduz ao
+   * chamar /api/health durante o build. Com o limitador global lendo req.ip direto, TODA requisição
+   * passava por essa leitura — e o build da Vercel quebrava antes de publicar qualquer coisa.
+   */
+  const enderecoDoPedido = (req: express.Request): string => {
+    try {
+      if (req.ip) return req.ip;
+    } catch {
+      // sem socket: cai para as alternativas abaixo
+    }
+    return req.socket?.remoteAddress || "desconhecido";
+  };
+
   function criarLimitadorPorIp(opcoes: { janelaMs: number; maxTentativas: number; mensagem: string }) {
     const tentativasPorIp = new Map<string, { contagem: number; expiraEm: number }>();
     setInterval(() => {
@@ -266,7 +287,7 @@ async function startServer() {
     }, 5 * 60 * 1000).unref();
 
     return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-      const chave = req.ip || req.socket?.remoteAddress || "desconhecido";
+      const chave = enderecoDoPedido(req);
       const agora = Date.now();
       const registro = tentativasPorIp.get(chave);
       if (!registro || registro.expiraEm < agora) {
@@ -3711,7 +3732,7 @@ Retorne SOMENTE o objeto JSON conforme o esquema.
   }, 5 * 60 * 1000).unref();
 
   const limitarCargaDeMemoria = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    const chave = req.ip || req.socket?.remoteAddress || "desconhecido";
+    const chave = enderecoDoPedido(req);
     const agora = Date.now();
     const janelaMs = 60 * 1000;
     const maxTentativas = 20;
