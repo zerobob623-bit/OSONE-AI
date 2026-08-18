@@ -1970,12 +1970,91 @@ function isProtectedInstallPath(targetPath: string): boolean {
  * "importantes" por classifyCommandRisk() exigem 'confirmed: true' no corpo da requisição
  * (o cliente mostra um modal de confirmação para o usuário antes de reenviar com confirmed).
  */
+/**
+ * COMANDO DO SISTEMA ERRADO — barrado ANTES de rodar, com o certo dito na resposta.
+ *
+ * O sintoma que isto ataca: o agente rodando um `dir` num Linux ou um `ls` num Windows. Quando
+ * isso acontecia, o shell devolvia "command not found" ou "não é reconhecido como um comando
+ * interno" — mensagens que dizem QUE falhou e não POR QUE, e que não dão ao modelo nenhuma pista
+ * de que o problema foi ter escolhido a família errada de comando. Sem essa pista ele costuma
+ * tentar de novo com uma variação do mesmo comando errado, e a tarefa trava numa repetição.
+ *
+ * A checagem é conservadora de propósito: só marca comandos que são inconfundivelmente da OUTRA
+ * família e que NÃO existem nesta. `ls`, por exemplo, não entra na lista de "só Linux" porque
+ * quem tem Git para Windows instalado tem `ls` funcionando; já `dir`/`Get-ChildItem` num Linux
+ * não existem em instalação nenhuma. Um falso positivo aqui bloquearia um comando legítimo, o que
+ * é pior que a mensagem ruim que estamos consertando.
+ */
+const SO_EXISTE_NO_WINDOWS = [
+  { re: /^\s*dir(\s|$)/i, certo: 'ls' },
+  { re: /^\s*type\s+/i, certo: 'cat' },
+  { re: /^\s*copy\s+/i, certo: 'cp' },
+  { re: /^\s*move\s+/i, certo: 'mv' },
+  { re: /^\s*del\s+/i, certo: 'rm' },
+  { re: /^\s*ren\s+/i, certo: 'mv' },
+  { re: /^\s*md\s+/i, certo: 'mkdir' },
+  { re: /^\s*rd\s+/i, certo: 'rmdir' },
+  { re: /^\s*cls(\s|$)/i, certo: 'clear' },
+  { re: /^\s*tasklist(\s|$)/i, certo: 'ps aux' },
+  { re: /^\s*taskkill(\s|$)/i, certo: 'kill / pkill' },
+  { re: /^\s*ipconfig(\s|$)/i, certo: 'ip addr / ifconfig' },
+  { re: /^\s*powershell(\s|$)/i, certo: 'bash' },
+  { re: /^\s*(Get|Set|New|Remove)-[A-Z]/, certo: 'o comando equivalente de shell POSIX' },
+  { re: /%[A-Za-z_]+%/, certo: '$VARIAVEL (no lugar de %VARIAVEL%)' }
+];
+
+const SO_EXISTE_NO_POSIX = [
+  { re: /^\s*ls(\s|$)/, certo: 'dir' },
+  { re: /^\s*cat\s+/, certo: 'type' },
+  { re: /^\s*rm\s+/, certo: 'del (arquivo) ou rmdir /s (pasta)' },
+  { re: /^\s*cp\s+/, certo: 'copy' },
+  { re: /^\s*mv\s+/, certo: 'move' },
+  { re: /^\s*touch\s+/, certo: 'type nul >' },
+  { re: /^\s*chmod(\s|$)/, certo: 'icacls' },
+  { re: /^\s*chown(\s|$)/, certo: 'icacls' },
+  { re: /^\s*sudo(\s|$)/, certo: 'abrir o terminal como administrador' },
+  { re: /^\s*apt(-get)?(\s|$)/, certo: 'winget' },
+  { re: /^\s*(pkill|killall)(\s|$)/, certo: 'taskkill /IM nome.exe /F' },
+  { re: /^\s*ps\s+aux/, certo: 'tasklist' },
+  { re: /^\s*grep\s+/, certo: 'findstr' },
+  { re: /^\s*which\s+/, certo: 'where' }
+];
+
+function comandoDeOutroSistema(command: string): { certo: string } | null {
+  const ehWindows = process.platform === 'win32';
+  // No Windows, um comando POSIX pode existir de verdade (Git Bash, WSL, MSYS no PATH). Só
+  // acusamos quando o shell padrão é o cmd — que é o que o exec() usa aqui.
+  const lista = ehWindows ? SO_EXISTE_NO_POSIX : SO_EXISTE_NO_WINDOWS;
+  for (const item of lista) {
+    if (item.re.test(command)) return { certo: item.certo };
+  }
+  return null;
+}
+
 const handleExec = async (req: Request, res: Response) => {
   const command = (req.body?.command || '').toString();
   const confirmed = req.body?.confirmed === true;
 
   if (!command.trim()) {
     return res.status(400).json({ error: "Parâmetro 'command' é obrigatório." });
+  }
+
+  const deOutroSistema = comandoDeOutroSistema(command);
+  if (deOutroSistema) {
+    const ehWindows = process.platform === 'win32';
+    const nomeDoSistema = ehWindows ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux';
+    const outro = ehWindows ? 'Linux/macOS' : 'Windows';
+    logAudit('WARN', 'EXEC_SISTEMA_ERRADO', `Comando de ${outro} recusado numa máquina ${nomeDoSistema}`, { command });
+    return res.status(400).json({
+      error:
+        `Este computador é ${nomeDoSistema} (${process.platform}), e o comando enviado é de ${outro}: "${command.trim().slice(0, 80)}". ` +
+        `Nada foi executado. Aqui o equivalente é: ${deOutroSistema.certo}. ` +
+        `Reescreva o comando na sintaxe de ${nomeDoSistema} e tente de novo — não repita o mesmo comando nem tente variações dele.`,
+      sistemaOperacional: nomeDoSistema,
+      platform: process.platform,
+      shell: ehWindows ? 'cmd/powershell' : 'bash/sh',
+      comandoEquivalente: deOutroSistema.certo
+    });
   }
 
   if (targetsOwnInstallation(command)) {
