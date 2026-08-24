@@ -1,0 +1,213 @@
+name: Construir Gemma 3 4B Visão Q3_K_M
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gemma-3-4b-q3km
+  cancel-in-progress: false
+
+env:
+  LLAMA_REVISION: b10516
+  MODEL_REPOSITORY: ggml-org/gemma-3-4b-it-GGUF
+  MODEL_REVISION: b1605dd982113d3403176c2d9e52b7d619fac96a
+  SOURCE_MODEL: gemma-3-4b-it-f16.gguf
+  SOURCE_SHA256: 29f4b518b636635613894282bda2a01bad964c8d474c4147343057b7ac442d50
+  MMPROJ_MODEL: mmproj-model-f16.gguf
+  MMPROJ_SHA256: 8c0fb064b019a6972856aaae2c7e4792858af3ca4561be2dbf649123ba6c40cb
+  OUTPUT_MODEL: gemma-3-4b-it-OSONE-Q3_K_M.gguf
+  MODEL_RELEASE_TAG: model-gemma-3-4b-q3km-v1
+
+jobs:
+  quantizar:
+    name: Quantizar, testar texto e visão
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Conferir a máquina temporária
+        shell: bash
+        run: |
+          set -euo pipefail
+          free -h
+          df -h /
+          mkdir -p "$RUNNER_TEMP/gemma-build/runtime" "$RUNNER_TEMP/gemma-build/model"
+
+      - name: Baixar llama.cpp fixado
+        shell: bash
+        run: |
+          set -euo pipefail
+          pacote="$RUNNER_TEMP/gemma-build/llama.tar.gz"
+          curl --fail --location --retry 5 --retry-all-errors \
+            "https://github.com/ggml-org/llama.cpp/releases/download/$LLAMA_REVISION/llama-$LLAMA_REVISION-bin-ubuntu-x64.tar.gz" \
+            --output "$pacote"
+          tar -xzf "$pacote" -C "$RUNNER_TEMP/gemma-build/runtime"
+          rm -f "$pacote"
+
+          quantizador="$(find "$RUNNER_TEMP/gemma-build/runtime" -type f -name llama-quantize -print -quit)"
+          servidor="$(find "$RUNNER_TEMP/gemma-build/runtime" -type f -name llama-server -print -quit)"
+          test -n "$quantizador"
+          test -n "$servidor"
+          chmod +x "$quantizador" "$servidor"
+          biblioteca="$(find "$RUNNER_TEMP/gemma-build/runtime" -type f -name 'libllama.so*' -printf '%h\n' -quit)"
+          test -n "$biblioteca"
+          {
+            echo "LLAMA_QUANTIZE=$quantizador"
+            echo "LLAMA_SERVER=$servidor"
+            echo "LLAMA_RUNTIME_DIR=$biblioteca"
+          } >> "$GITHUB_ENV"
+
+      - name: Baixar F16 e projetor visual com hashes fixos
+        shell: bash
+        run: |
+          set -euo pipefail
+          pasta="$RUNNER_TEMP/gemma-build/model"
+          base="https://huggingface.co/$MODEL_REPOSITORY/resolve/$MODEL_REVISION"
+          curl --fail --location --retry 8 --retry-all-errors \
+            "$base/$SOURCE_MODEL?download=true" --output "$pasta/$SOURCE_MODEL"
+          curl --fail --location --retry 8 --retry-all-errors \
+            "$base/$MMPROJ_MODEL?download=true" --output "$pasta/$MMPROJ_MODEL"
+          printf '%s  %s\n' "$SOURCE_SHA256" "$pasta/$SOURCE_MODEL" | sha256sum --check -
+          printf '%s  %s\n' "$MMPROJ_SHA256" "$pasta/$MMPROJ_MODEL" | sha256sum --check -
+          df -h /
+
+      - name: Quantizar corretamente a partir do F16
+        shell: bash
+        run: |
+          set -euo pipefail
+          pasta="$RUNNER_TEMP/gemma-build/model"
+          export LD_LIBRARY_PATH="$LLAMA_RUNTIME_DIR:${LD_LIBRARY_PATH:-}"
+          "$LLAMA_QUANTIZE" \
+            --override-kv "general.name=str:Gemma 3 4B IT - Q3_K_M quantizado pelo OSONE" \
+            "$pasta/$SOURCE_MODEL" "$pasta/$OUTPUT_MODEL" Q3_K_M 4
+          test -s "$pasta/$OUTPUT_MODEL"
+          rm -f "$pasta/$SOURCE_MODEL"
+          df -h /
+
+      - name: Testar texto e visão de verdade
+        shell: bash
+        run: |
+          set -euo pipefail
+          pasta="$RUNNER_TEMP/gemma-build/model"
+          export LD_LIBRARY_PATH="$LLAMA_RUNTIME_DIR:${LD_LIBRARY_PATH:-}"
+          log="$RUNNER_TEMP/gemma-build/llama-server.log"
+          "$LLAMA_SERVER" --jinja \
+            -m "$pasta/$OUTPUT_MODEL" \
+            --mmproj "$pasta/$MMPROJ_MODEL" --no-mmproj-offload \
+            --host 127.0.0.1 --port 11435 -c 2048 -ngl 0 >"$log" 2>&1 &
+          pid_servidor=$!
+          encerrar() {
+            kill -TERM "$pid_servidor" 2>/dev/null || true
+            wait "$pid_servidor" 2>/dev/null || true
+          }
+          trap encerrar EXIT
+
+          pronto=0
+          for _ in $(seq 1 240); do
+            if ! kill -0 "$pid_servidor" 2>/dev/null; then
+              sed -n '1,240p' "$log"
+              exit 1
+            fi
+            if curl --fail --silent --max-time 2 http://127.0.0.1:11435/health >/dev/null; then
+              pronto=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$pronto" != 1 ]; then
+            sed -n '1,240p' "$log"
+            exit 1
+          fi
+
+          curl --fail --silent --show-error --max-time 180 \
+            -H 'Content-Type: application/json' \
+            -d '{"model":"Gemma 3 4B Q3_K_M","temperature":0,"max_tokens":16,"messages":[{"role":"user","content":"Responda somente: OK"}]}' \
+            http://127.0.0.1:11435/v1/chat/completions > "$RUNNER_TEMP/gemma-build/texto.json"
+          node -e "const d=require(process.argv[1]); const t=d?.choices?.[0]?.message?.content?.trim(); if(!t) throw Error('Autoteste textual vazio'); console.log('Texto:',t)" "$RUNNER_TEMP/gemma-build/texto.json"
+
+          curl --fail --silent --show-error --max-time 240 \
+            -H 'Content-Type: application/json' \
+            -d '{"model":"Gemma 3 4B Q3_K_M","temperature":0,"max_tokens":24,"messages":[{"role":"user","content":[{"type":"text","text":"Responda apenas com a palavra IMAGEM."},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII="}}]}]}' \
+            http://127.0.0.1:11435/v1/chat/completions > "$RUNNER_TEMP/gemma-build/visao.json"
+          node -e "const d=require(process.argv[1]); const t=d?.choices?.[0]?.message?.content?.trim(); if(!t) throw Error('Autoteste visual vazio'); console.log('Visão:',t)" "$RUNNER_TEMP/gemma-build/visao.json"
+
+      - name: Criar manifesto, licença e partes publicáveis
+        shell: bash
+        run: |
+          set -euo pipefail
+          pasta="$RUNNER_TEMP/gemma-build/model"
+          saida="$RUNNER_TEMP/gemma-build/release"
+          mkdir -p "$saida"
+
+          cat > "$saida/NOTICE.txt" <<'NOTICE'
+          Gemma is provided under and subject to the Gemma Terms of Use found at ai.google.dev/gemma/terms
+
+          MODIFICATION NOTICE:
+          OSONE quantized the Gemma 3 4B IT F16 weights to Q3_K_M with llama.cpp b10516.
+          The base model architecture and training were not changed.
+          NOTICE
+          curl --fail --location --retry 5 --retry-all-errors \
+            https://ai.google.dev/gemma/terms --output "$saida/GEMMA_TERMS.html"
+
+          tamanho="$(stat -c %s "$pasta/$OUTPUT_MODEL")"
+          if [ "$tamanho" -lt 2147483648 ]; then
+            mv "$pasta/$OUTPUT_MODEL" "$saida/$OUTPUT_MODEL"
+          else
+            split --bytes=1900M --numeric-suffixes=1 --suffix-length=2 \
+              "$pasta/$OUTPUT_MODEL" "$saida/$OUTPUT_MODEL.part-"
+            rm -f "$pasta/$OUTPUT_MODEL"
+          fi
+
+          (
+            cd "$saida"
+            sha256sum "$OUTPUT_MODEL"* > SHA256SUMS.txt
+          )
+          node - "$saida" "$tamanho" "$MODEL_REVISION" "$LLAMA_REVISION" "$OUTPUT_MODEL" <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const [dir, size, modelRevision, llamaRevision, output] = process.argv.slice(2);
+          const parts = fs.readdirSync(dir)
+            .filter(name => name === output || name.startsWith(output + '.part-'))
+            .sort()
+            .map(name => ({ name, bytes: fs.statSync(path.join(dir, name)).size }));
+          fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({
+            model: 'Gemma 3 4B IT',
+            quantization: 'Q3_K_M',
+            capabilities: ['text', 'vision'],
+            modifiedBy: 'OSONE',
+            sourceRevision: modelRevision,
+            llamaCppRevision: llamaRevision,
+            reconstructedBytes: Number(size),
+            parts
+          }, null, 2) + '\n');
+          NODE
+
+          cat > "$RUNNER_TEMP/gemma-build/RELEASE_NOTES.md" <<'NOTES'
+          ## Gemma 3 4B Visão Q3_K_M — candidato de teste
+
+          Gerado pelo OSONE a partir do F16 oficial fixado, usando llama.cpp b10516.
+          O workflow validou o SHA-256 da origem, inferência textual e inferência visual real.
+
+          Esta release permanece em **rascunho** até o teste no computador de destino.
+          O arquivo é uma modificação por quantização; consulte NOTICE.txt e GEMMA_TERMS.html.
+          NOTES
+
+      - name: Guardar em Release de modelo como rascunho
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          saida="$RUNNER_TEMP/gemma-build/release"
+          if ! gh release view "$MODEL_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$MODEL_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --draft \
+              --title "Gemma 3 4B Visão Q3_K_M — teste" \
+              --notes-file "$RUNNER_TEMP/gemma-build/RELEASE_NOTES.md"
+          fi
+          mapfile -t arquivos < <(find "$saida" -maxdepth 1 -type f -print | sort)
+          gh release upload "$MODEL_RELEASE_TAG" "${arquivos[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          gh release view "$MODEL_RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
